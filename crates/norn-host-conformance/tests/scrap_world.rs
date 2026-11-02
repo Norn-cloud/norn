@@ -17,7 +17,7 @@ fn authenticated_timed_world_fits_and_october_bulk_world_retains_leakage() {
     for bulk in [false, true] {
         let world = source::world(bulk, None);
         let docs = Digest::of_json_document(
-            br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1}"#,
+            br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1,"independence":"not established for business observations","confounding":"not identified by this synthetic recipe","diagnosticRemedy":"descriptive only; withhold inference","causalClaim":false}"#,
         )
         .expect("preregistered assumptions and remedy");
         let export = ForecastExport {
@@ -45,6 +45,12 @@ fn authenticated_timed_world_fits_and_october_bulk_world_retains_leakage() {
         assert_eq!(summary.error_unit, "g");
         assert_eq!(world.evidence.len(), 128);
         for proof in &world.evidence {
+            assert!(proof.receipt().body.written.iter().any(|row| {
+                row.object_type == proof.snapshot().object_type && row.key == proof.snapshot().key
+                    && row.version == proof.snapshot().version
+                    && row.snapshot_sha256.as_deref() == Some(proof.snapshot_sha256())
+            }), "exported source digest is bound to its producing receipt");
+            if bulk { assert_eq!(proof.receipt().body.written.len(), 240); }
             let encoded = serde_json::to_value(proof).expect("receipt-preserving export");
             assert_eq!(encoded["snapshotSha256"], proof.snapshot_sha256());
             assert_eq!(encoded["receipt"]["hash"], proof.receipt().hash);

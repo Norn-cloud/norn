@@ -101,23 +101,23 @@ pub(crate) fn world(
     .expect("ontology units");
     let mut store = CellStore::open_in_memory(model(&artifacts)).expect("cell");
     preregister(&mut store, &plan, proposal);
-    for (logical_time, key, values) in source_events(bulk) {
-        store
-            .commit(&CommitBatch {
-                world: "main".into(),
-                scope: SCOPE.into(),
-                logical_time,
-                writes: vec![FactWriteRow::Put {
-                    object_type: "demo.Measurement".into(),
-                    key,
-                    values,
-                }],
+    if bulk {
+        let writes = source_events(true).into_iter().map(|(_, key, values)| FactWriteRow::Put {
+            object_type: "demo.Measurement".into(), key, values,
+        }).collect();
+        store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(),
+            logical_time: millis(BULK_AT), writes, ..CommitBatch::default()
+        }).expect("record the bulk population at one authenticated knowledge time");
+    } else {
+        for (logical_time, key, values) in source_events(false) {
+            store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(), logical_time,
+                writes: vec![FactWriteRow::Put { object_type: "demo.Measurement".into(), key, values }],
                 ..CommitBatch::default()
-            })
-            .expect("record source incarnation");
+            }).expect("record timed source incarnation");
+        }
     }
     let limits = ReactiveLimits {
-        max_candidate_bytes_per_commit: 2_000_000,
+        max_candidate_bytes_per_commit: 16_000_000,
         ..ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1())
     };
     let mut budget = DecodeBudget::new(&limits);

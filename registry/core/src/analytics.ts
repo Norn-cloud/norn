@@ -11,7 +11,7 @@ const Evidence = Schema.Struct({
   receipt_digest: Schema.String,
   result_table_version: Schema.String, result_table_digest: Schema.String, result_source_digest: Schema.String,
   result_split_at_ms: Schema.Int, result_model_digest: Schema.String, result_parameters_digest: Schema.String,
-  complete: Schema.Boolean, quarantined_count: Schema.Int,
+  complete: Schema.Boolean, fresh: Schema.Boolean, quarantined_count: Schema.Int,
   frontier_age_ms: Schema.Int, max_frontier_age_ms: Schema.Int,
   late_feature_count: Schema.Int, latest_training_label_ms: Schema.Int, temporal_leakage: Schema.Boolean,
   training_count: Schema.Int, holdout_count: Schema.Int, non_forward_outcome_count: Schema.Int,
@@ -29,7 +29,7 @@ export const PublicationEvidence = Norn.interfaceType({
       self.result_source_digest === self.source_digest && self.result_split_at_ms === self.split_at_ms &&
       self.model_digest !== "" && self.parameters_digest !== "" &&
       self.result_model_digest === self.model_digest && self.result_parameters_digest === self.parameters_digest &&
-      self.complete && self.quarantined_count === 0 && self.frontier_age_ms >= 0 &&
+      self.complete && self.quarantined_count === 0 && self.fresh && self.frontier_age_ms >= 0 &&
       self.max_frontier_age_ms >= 0 && self.frontier_age_ms <= self.max_frontier_age_ms &&
       !self.temporal_leakage && self.late_feature_count === 0 && self.latest_training_label_ms < self.split_at_ms &&
       self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0 &&
@@ -58,7 +58,7 @@ export const Publication = Norn.type({
         Norn.expression(Evidence, self => self.model_digest !== "" && self.parameters_digest !== "" &&
           self.result_model_digest === self.model_digest && self.result_parameters_digest === self.parameters_digest),
         Norn.expression(Evidence, self => self.complete && self.quarantined_count === 0),
-        Norn.expression(Evidence, self => self.frontier_age_ms >= 0 && self.max_frontier_age_ms >= 0 &&
+        Norn.expression(Evidence, self => self.fresh && self.frontier_age_ms >= 0 && self.max_frontier_age_ms >= 0 &&
           self.frontier_age_ms <= self.max_frontier_age_ms),
         Norn.expression(Evidence, self => !self.temporal_leakage),
         Norn.expression(Evidence, self => self.late_feature_count === 0),
@@ -89,7 +89,7 @@ export const Publish = Norn.action({
         result_table_version: "table_version", result_table_digest: "table_digest", result_source_digest: "source_digest",
         result_split_at_ms: "split_at_ms", result_model_digest: "implementation_digest", result_parameters_digest: "parameters_digest",
         result_assumptions_digest: "assumptions_digest", result_remedy_digest: "remedy_digest",
-        complete: "complete", quarantined_count: "quarantine_count", frontier_age_ms: "frontier_age_ms",
+        complete: "complete", fresh: "fresh", quarantined_count: "quarantine_count", frontier_age_ms: "frontier_age_ms",
         late_feature_count: "late_features", latest_training_label_ms: "latest_training_label_ms", temporal_leakage: "temporal_leakage",
         training_count: "training_rows", holdout_count: "holdout_rows", non_forward_outcome_count: "non_forward_outcome_count",
         holdout_error_nanos: "rmse_nanos", result_error_unit: "error_unit", diagnostics_passed: "diagnostics_passed",

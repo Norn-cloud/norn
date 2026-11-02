@@ -30,7 +30,7 @@ test("ANALYSIS-PUBLISH-1 declares publication states, law and reference-only gov
     inputSchema: { additionalProperties: false, properties: { id: { type: "string" }, receipt: { type: "string" } }, required: ["id", "receipt"] },
     effectProgram: { kind: "fire_transition", transition: "publish", acceptReceipt: {
       referenceField: "receipt", manifestDigest: FORECAST_MANIFEST_DIGEST, digestProperty: "receipt_digest",
-      resultBindings: { temporal_leakage: "temporal_leakage", holdout_error_nanos: "rmse_nanos" },
+      resultBindings: { fresh: "fresh", temporal_leakage: "temporal_leakage", holdout_error_nanos: "rmse_nanos" },
     } },
   })
   expect(artifacts.find(artifact => artifact.artifactId === "core.analytics.publication_policy.law")?.payload).toMatchObject({

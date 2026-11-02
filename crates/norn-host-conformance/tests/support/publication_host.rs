@@ -27,10 +27,10 @@ pub(crate) struct Host {
     pub(crate) prepared: norn_metrics::host::ForecastSummary,
     pub(crate) model: norn_cell::Model,
 }
-fn dispatch(bulk: bool) -> (source::SourceWorld, Checks, DispatchedCommand) {
+fn dispatch(bulk: bool, fresh: bool) -> (source::SourceWorld, Checks, DispatchedCommand) {
     let mut world = source::world(bulk, Some(proposal));
     assert_eq!(world.evidence.len(), 128);
-    let export = export(&world);
+    let export = export(&world, fresh);
     let (input, blob) = export
         .input(source::micros(source::SPLIT))
         .expect("bound input");
@@ -74,7 +74,7 @@ fn dispatch(bulk: bool) -> (source::SourceWorld, Checks, DispatchedCommand) {
     ],effects:vec![EffectRow::Enqueue{command:OutboxCommand {command_id:command.id.0.clone(),generation:1,idempotency_key:command.idempotency_key.0.clone(),deadline:None,command:norn_ir::runtime::encode(&command).expect("command")}}],..CommitBatch::default() }).expect("pin and dispatch");
     (world, checks, dispatched)
 }
-fn native_cell(world: source::SourceWorld) -> Cell {
+fn native_cell(world: source::SourceWorld, fresh: bool) -> Cell {
     let now = source::millis(source::BULK_AT);
     let source::SourceWorld {
         store,
@@ -105,7 +105,7 @@ fn native_cell(world: source::SourceWorld) -> Cell {
                     assumptions_digest: docs(),
                     remedy_digest: docs(),
                     frontier_age_ms: 0,
-                    fresh: true,
+                    fresh,
                 };
                 norn_ir::runtime::encode(
                     &norn_metrics::performer::perform_forecast(
@@ -126,10 +126,10 @@ fn native_cell(world: source::SourceWorld) -> Cell {
     cell.advance_to(LogicalTime::from_millis(now));
     cell
 }
-pub(crate) fn retained_host(bulk: bool) -> Host {
-    let (world, checks, dispatched) = dispatch(bulk);
+pub(crate) fn retained_host(bulk: bool, fresh: bool) -> Host {
+    let (world, checks, dispatched) = dispatch(bulk, fresh);
     let model = source::model(&source::artifacts());
-    let mut cell = native_cell(world);
+    let mut cell = native_cell(world, fresh);
     let performed = cell.perform().expect("perform").expect("result");
     let receipt: FunctionReceipt =
         norn_ir::runtime::decode(&Value::Object(performed.input)).expect("receipt");

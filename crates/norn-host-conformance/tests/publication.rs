@@ -23,16 +23,16 @@ use norn_kernel::{
 use policy::reviewer;
 use std::collections::BTreeMap;
 #[test]
-fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
+fn governed_publish_accepts_timed_and_refuses_bulk_or_stale_without_partial_effects() {
     let action = policy::admitted_publish();
-    for bulk in [false, true] {
+    for (bulk, fresh) in [(false, true), (true, true), (false, false)] {
         let host::Host {
             mut cell,
             receipt,
             reference,
             prepared,
             model,
-        } = host::retained_host(bulk);
+        } = host::retained_host(bulk, fresh);
         let now = source::millis(source::BULK_AT);
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let request = ActionCall {
@@ -75,11 +75,11 @@ fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
             &request,
             &reviewer(&action, &model, true),
         );
-        if bulk {
-            let detail = format!("{:?}", outcome.expect_err("bulk refuses"));
+        if bulk || !fresh {
+            let detail = format!("{:?}", outcome.expect_err("invalid evidence refuses"));
             assert!(
                 detail.contains("core.projection.publication_guard")
-                    && detail.contains("temporal_leakage"),
+                    && detail.contains(if bulk { "temporal_leakage" } else { "fresh" }),
                 "{detail}"
             );
             assert_eq!(

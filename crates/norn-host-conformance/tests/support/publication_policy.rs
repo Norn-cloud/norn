@@ -22,11 +22,11 @@ use norn_kernel::result_reconciliation::{
 };
 use norn_metrics::producer::ForecastExport;
 use std::collections::BTreeMap;
-const REGISTRATION: &[u8] = br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1}"#;
+const REGISTRATION: &[u8] = br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1,"independence":"not established for business observations","confounding":"not identified by this synthetic recipe","diagnosticRemedy":"descriptive only; withhold inference","causalClaim":false}"#;
 pub(crate) fn docs() -> Digest {
     Digest::of_json_document(REGISTRATION).expect("declared before fitting")
 }
-pub(crate) fn export(world: &source::SourceWorld) -> ForecastExport<'_> {
+pub(crate) fn export(world: &source::SourceWorld, fresh: bool) -> ForecastExport<'_> {
     ForecastExport {
         tenant: source::SCOPE,
         world: "main",
@@ -41,7 +41,7 @@ pub(crate) fn export(world: &source::SourceWorld) -> ForecastExport<'_> {
         assumptions_digest: docs(),
         remedy_digest: docs(),
         frontier_age_ms: 0,
-        fresh: true,
+        fresh,
     }
 }
 pub(crate) fn proposal(plan: &norn_metrics::temporal::TemporalPlan) -> RuntimeObject {
@@ -84,7 +84,7 @@ pub(crate) fn proposal(plan: &norn_metrics::temporal::TemporalPlan) -> RuntimeOb
     ] {
         values.insert(field.into(), Value::from(0));
     }
-    for field in ["complete", "temporal_leakage", "diagnostics_passed"] {
+    for field in ["complete", "fresh", "temporal_leakage", "diagnostics_passed"] {
         values.insert(field.into(), Value::from(false));
     }
     values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","parameters_digest"=>norn_metrics::producer::parameter_digest(plan,source::micros(source::SPLIT)).expect("preregister parameters before holdout").0,"source_digest"=>format!("sha256:{}",source::TABLE_SHA),"model_digest"=>norn_metrics::host::implementation_digest().expect("configured method before observing holdout").0,"split_at_ms"=>i64::try_from(source::millis(source::SPLIT)).expect("split"),"assumptions_digest"=>docs().0,"remedy_digest"=>docs().0}.as_object().expect("policy").clone());
