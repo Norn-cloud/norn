@@ -553,6 +553,9 @@ fn check_expression_with_sources_and_root_bounds(
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || expected_exact_type(expected, env);
         if exact_enabled && exact {
+            if expected_exact_type(expected, env) && decimal_destination(expected).is_none() {
+                checker.report::<()>(ast, "core.values.inexact", "structured Decimal destinations require member-wise store binding".to_owned());
+            }
             checker.diagnostics.extend(exact_admission(
                 ast,
                 metadata,
