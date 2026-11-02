@@ -413,8 +413,10 @@ fn entry_obligations(directory: &Path) -> Result<BTreeSet<String>, String> {
         {
             return Err("invalid obligation entry envelope".to_owned());
         }
-        let encoded = serde_json::to_vec(id).map_err(|e| e.to_string())?;
-        let expected = format!("{:x}.json", Sha256::digest(encoded));
+        let mut hash = Sha256::new();
+        hash.update(b"entry:string\0");
+        hash.update(id.as_bytes());
+        let expected = format!("{:x}.json", hash.finalize());
         if entry.file_name().to_str() != Some(expected.as_str()) || !result.insert(id.to_owned()) {
             return Err("duplicate or mismatched obligation entry identity".to_owned());
         }
