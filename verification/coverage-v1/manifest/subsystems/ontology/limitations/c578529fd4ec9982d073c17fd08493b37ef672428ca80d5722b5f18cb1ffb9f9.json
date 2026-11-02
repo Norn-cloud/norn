@@ -1,0 +1,4 @@
+{
+  "order": 6,
+  "value": "Temporal analytical tables check supplied ontology-bound rows only. Their tests do not authenticate source receipts, authorize exports, or extend the formal ontology claims to analytics."
+}
