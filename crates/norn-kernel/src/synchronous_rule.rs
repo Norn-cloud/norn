@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 /// A checked `RuleIR` graph and its exact helper closure, sealed against mutation.
 #[derive(Debug)]
 pub struct SynchronousRule {
-    pub(crate) reference: ActionRuleRef,
+    reference: ActionRuleRef,
     decision: AdmittedDecision,
     digest: String,
     scopes: Vec<String>,
