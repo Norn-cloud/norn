@@ -369,23 +369,15 @@ async fn wipe_restore_preserves_all_tables_receipts_links_and_export_continuatio
         let manifest = exporter.verify().await.expect("verify");
         drop(store);
         std::fs::remove_file(&path).expect("wipe");
-        let report = {
-            let expected_bindings = {
-                let mut expected = bindings();
-                let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
-                expected
-            };
-            CellStore::restore_from(
-                &mut exporter,
-                &path,
-                model(),
-                "org_demo/dev",
-                &expected_bindings,
-                options,
-            )
-            .await
-        }
+        let report = CellStore::restore_from(
+            &mut exporter,
+            &path,
+            model(),
+            "org_demo/dev",
+            &manifest.bindings,
+            options,
+        )
+        .await
         .expect("restore");
         assert_eq!(report.manifest, manifest);
         assert_eq!(report.ledger_head, head);
@@ -584,63 +576,39 @@ async fn wrong_model_scope_bindings_existing_target_and_self_consistent_false_re
     let mut exporter = Exporter::local(&export).expect("exporter");
     let other_model = Model::from_definitions(&[], &[]).expect("empty model");
     assert!(matches!(
-        {
-            let expected_bindings = {
-                let mut expected = bindings();
-                let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
-                expected
-            };
-            CellStore::restore_from(
-                &mut exporter,
-                &target,
-                other_model,
-                "org_demo/dev",
-                &expected_bindings,
-                StoreOptions::default(),
-            )
-            .await
-        },
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            other_model,
+            "org_demo/dev",
+            &original.bindings,
+            StoreOptions::default(),
+        )
+        .await,
         Err(RestoreError::ModelMismatch)
     ));
     assert!(matches!(
-        {
-            let expected_bindings = {
-                let mut expected = bindings();
-                let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
-                expected
-            };
-            CellStore::restore_from(
-                &mut exporter,
-                &target,
-                model(),
-                "other/dev",
-                &expected_bindings,
-                StoreOptions::default(),
-            )
-            .await
-        },
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model(),
+            "other/dev",
+            &original.bindings,
+            StoreOptions::default(),
+        )
+        .await,
         Err(RestoreError::IdentityMismatch)
     ));
     assert!(matches!(
-        {
-            let expected_bindings = {
-                let mut expected = BTreeMap::new();
-                let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
-                expected
-            };
-            CellStore::restore_from(
-                &mut exporter,
-                &target,
-                model(),
-                "org_demo/dev",
-                &expected_bindings,
-                StoreOptions::default(),
-            )
-            .await
-        },
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model(),
+            "org_demo/dev",
+            &BTreeMap::from([("cell_id".to_owned(), cell_id.clone())]),
+            StoreOptions::default(),
+        )
+        .await,
         Err(RestoreError::IdentityMismatch)
     ));
     assert!(!target.exists());
