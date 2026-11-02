@@ -280,7 +280,6 @@
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
-    "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
@@ -499,6 +498,7 @@
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-cell/tests/temporal_source_world.rs"
   ]
 }
