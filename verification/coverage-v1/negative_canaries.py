@@ -592,6 +592,31 @@ def workflow_verdict_canaries(source: str) -> None:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
 
 
+def workflow_cleanup_canaries(source: str) -> None:
+    command = yaml.safe_load(source)["jobs"]["core"]["steps"][0]["run"]
+    # Substitute commands rather than touching any runner SDK directory.
+    with tempfile.TemporaryDirectory() as directory:
+        for initial, after, success, reclaimed in ((12582912, 12582912, True, False),
+                                                    (12582911, 12582912, True, True),
+                                                    (1, 12582911, False, True)):
+            marker = Path(directory) / "reclaimed"
+            marker.unlink(missing_ok=True)
+            preamble = f"""df() {{
+  if [ "$1" = -Pk ]; then
+    if [ -f '{marker}' ]; then free={after}; else free={initial}; fi
+    printf 'Filesystem blocks Used Available Capacity Mounted\\nroot 99999999 0 %s 0 /\\n' "$free"
+  fi
+}}
+sudo() {{
+  [ "$*" = 'rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL' ] || return 99
+  touch '{marker}'
+}}
+"""
+            result = subprocess.run(["bash", "-c", preamble + command], capture_output=True, timeout=10)
+            if (result.returncode == 0) != success or marker.exists() != reclaimed:
+                raise AssertionError(f"cleanup preflight drift: {initial}/{after}: {result.stderr!r}")
+
+
 def workflow_context_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     if True in workflow:
@@ -615,8 +640,8 @@ def workflow_context_canaries(source: str) -> None:
             for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
                 for draft in (False, True):
                     for action in ("opened", "synchronize", "reopened", "ready_for_review"):
-                        # Evaluate the checked expression over event snapshots, including a new
-                        # head synchronized after READY; plan bindings are exercised by the verdict.
+                        if event == "pull_request" and action not in workflow["on"]["pull_request"]["types"]:
+                            raise AssertionError(f"missing PR activity: {action}")
                         candidate_expression = expression.replace("github.event_name", repr(event)).replace(
                             "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
                             "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
@@ -625,6 +650,10 @@ def workflow_context_canaries(source: str) -> None:
                             name == "plan" and event == "pull_request" and draft)
                         if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST", "PHASE"):
+            document = copy.deepcopy(workflow)
+            document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
+            rejected(f"forged verdict input {key}", document)
         for name in ("plan", "full"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["if"] = "!cancelled()"
@@ -720,6 +749,7 @@ def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
+    workflow_cleanup_canaries(source)
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
@@ -1406,6 +1436,7 @@ def main() -> int:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
+        workflow_cleanup_canaries(source)
         print("workflow contract: admission, verdict and context canaries passed")
         return 0
     if len(sys.argv) != 1:

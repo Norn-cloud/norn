@@ -203,7 +203,7 @@ def self_test():
             pass
         else:
             raise AssertionError("metrics corruption accepted")
-    with patch.dict(globals(), gh=lambda path: {"jobs": list(range(100)) if "page=1" in path else [100]}):
+    with patch.dict(globals(), gh=lambda path: {"jobs": list(range(100)) if path.endswith("&page=1") else [100]}):
         assert pages("actions/runs/1/attempts/2/jobs", "jobs") == list(range(101))
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
         assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
