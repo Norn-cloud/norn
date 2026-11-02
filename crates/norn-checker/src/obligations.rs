@@ -810,6 +810,7 @@ fn admit_with_authority(
         {
             return Err(ChallengeError::NotAdmitted);
         }
+        let receipt = admit_candidate(source, context)?;
         crate::verification::effective_law_instances(
             &source.artifacts,
             context,
@@ -819,8 +820,17 @@ fn admit_with_authority(
                 max_steps: 1_048_576,
             },
         )
-        .map_err(|_error| ChallengeError::Closure)?;
-        admit_candidate(source, context)
+        .map_err(|findings| {
+            if findings
+                .iter()
+                .any(|d| d.code.as_str() == crate::verification::codes::UNRESOLVED_SCOPE)
+            {
+                ChallengeError::NotAdmitted
+            } else {
+                ChallengeError::Closure
+            }
+        })?;
+        Ok(receipt)
     } else {
         admit(source, context)
     }

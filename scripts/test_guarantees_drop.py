@@ -9,6 +9,16 @@ from guarantees_drop import dependency_closure, pack_rows  # noqa: E402
 
 
 class PackInventoryScenarios(unittest.TestCase):
+    def test_absent_optional_dependencies_do_not_abort_the_admitted_inventory(self):
+        dependency = {"artifactId": "optional", "version": "1", "required": False}
+        law = {"artifactId": "law", "version": "1", "dependencies": [dependency]}
+        self.assertEqual(dependency_closure([law], [law]), [law])
+        target = {"artifactId": "optional", "version": "1"}
+        self.assertEqual(dependency_closure([law, target], [law]), [law, target])
+        dependency["required"] = True
+        with self.assertRaises(ValueError):
+            dependency_closure([law], [law])
+
     def test_exact_dependency_closure_excludes_unrelated_incomplete_declarations(self):
         target = {"artifactId": "target", "version": "1"}
         law = {"artifactId": "law", "version": "1", "dependencies": [target]}
