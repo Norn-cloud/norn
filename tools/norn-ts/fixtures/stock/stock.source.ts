@@ -3,26 +3,29 @@ import { Norn } from "@norn/authoring"
 
 export const Company = Norn.type({
   name: "stock.Company", title: "Company", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, name: Schema.String, currency: Schema.Literal("USD"), book_id: Schema.String }),
+  implements: ["core.Agent"],
+  properties: Schema.Struct({ id: Norn.ref("core.code"), display_name: Norn.ref("core.display_name"),
+    kind: Schema.Literals(["person", "organization", "system"]), currency: Norn.ref("core.code"), book_id: Norn.ref("core.code") }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 export const Warehouse = Norn.type({
   name: "stock.Warehouse", title: "Warehouse", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, name: Schema.String, stock_account: Schema.String }),
+  properties: Schema.Struct({ id: Norn.ref("core.code"), name: Norn.ref("core.display_name"), stock_account: Norn.ref("core.code") }),
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "company", target: Company, cardinality: { to: "one", from: "many", required: true } }],
 })
 export const Item = Norn.type({
   name: "stock.Item", title: "Stock item", version: "0.1.0",
   properties: Schema.Struct({
-    id: Schema.String, name: Schema.String, uom: Schema.String,
-    valuation_method: Schema.Literals(["fifo", "moving-average"]),
+    id: Norn.ref("core.code"), name: Norn.ref("core.display_name"), uom: Norn.ref("ucum.unit_code"),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 export const Party = Norn.type({
   name: "stock.Party", title: "Stock counterparty", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, name: Schema.String, role: Schema.Literals(["supplier", "customer"]) }),
+  implements: ["core.Agent"],
+  properties: Schema.Struct({ id: Norn.ref("core.code"), display_name: Norn.ref("core.display_name"),
+    kind: Schema.Literals(["person", "organization", "system"]) }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 
@@ -30,7 +33,7 @@ export const Voucher = Norn.type({
   name: "stock.Voucher", title: "Stock voucher", version: "0.1.0",
   description: "Structural lifecycle only. Submit/cancel actions require declared atomic stock and GL posting laws.",
   properties: Schema.Struct({
-    id: Schema.String, request_id: Schema.String, effective_at: Norn.timestamp("utc"),
+    id: Norn.ref("core.document_number"), request_id: Norn.ref("core.code"), effective_at: Norn.ref("iso8601.timestamp"),
     status: Schema.Literals(["draft", "submitted", "cancelled"]),
   }),
   identity: [{ name: "primary", properties: ["id"] }], defaults: { status: "draft" },
@@ -39,7 +42,7 @@ export const Voucher = Norn.type({
     { id: "amended_from", target: "stock.Voucher", cardinality: { to: "one", from: "many" }, acyclic: true },
   ],
   lifecycles: [{
-    property: "status", initial: ["draft"], terminal: ["cancelled"],
+    property: "status", initial: ["draft"], terminal: ["cancelled"], immutable: ["submitted", "cancelled"],
     transitions: [
       { id: "submit", from: ["draft"], to: "submitted" },
       { id: "cancel", from: ["submitted"], to: "cancelled" },
@@ -78,7 +81,7 @@ export const VoucherLine = Norn.type({
 })
 export const ReceiptLine = Norn.type({
   name: "stock.ReceiptLine", title: "Receipt line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ quantity: Norn.decimal(6), rate: Norn.decimal(6) }),
+  properties: Schema.Struct({ quantity: Norn.ref("core.quantity"), rate: Norn.ref("core.money_amount") }),
   links: [
     { id: "voucher", target: PurchaseReceipt, cardinality: { to: "one", from: "many", required: true } },
     { id: "destination", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
@@ -86,7 +89,7 @@ export const ReceiptLine = Norn.type({
 })
 export const DeliveryLine = Norn.type({
   name: "stock.DeliveryLine", title: "Delivery line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ quantity: Norn.decimal(6) }),
+  properties: Schema.Struct({ quantity: Norn.ref("core.quantity") }),
   links: [
     { id: "voucher", target: DeliveryNote, cardinality: { to: "one", from: "many", required: true } },
     { id: "source", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
@@ -94,7 +97,7 @@ export const DeliveryLine = Norn.type({
 })
 export const TransferLine = Norn.type({
   name: "stock.TransferLine", title: "Transfer line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ quantity: Norn.decimal(6) }),
+  properties: Schema.Struct({ quantity: Norn.ref("core.quantity") }),
   links: [
     { id: "voucher", target: StockEntry, cardinality: { to: "one", from: "many", required: true } },
     { id: "source", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
@@ -103,7 +106,7 @@ export const TransferLine = Norn.type({
 })
 export const ReturnLine = Norn.type({
   name: "stock.ReturnLine", title: "Return line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ quantity: Norn.decimal(6) }),
+  properties: Schema.Struct({ quantity: Norn.ref("core.quantity") }),
   links: [
     { id: "voucher", target: SalesReturn, cardinality: { to: "one", from: "many", required: true } },
     { id: "original_line", target: DeliveryLine, cardinality: { to: "one", from: "many", required: true } },
@@ -112,9 +115,98 @@ export const ReturnLine = Norn.type({
 })
 export const ReconciliationLine = Norn.type({
   name: "stock.ReconciliationLine", title: "Reconciliation line", version: "0.1.0", extends: VoucherLine,
-  properties: Schema.Struct({ counted_quantity: Norn.decimal(6), target_value: Norn.decimal(6) }),
+  properties: Schema.Struct({ counted_quantity: Norn.ref("core.quantity"), target_value: Norn.ref("core.money_amount") }),
   links: [
     { id: "voucher", target: StockReconciliation, cardinality: { to: "one", from: "many", required: true } },
     { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
   ],
+})
+
+export const Holding = Norn.type({
+  name: "stock.Holding", title: "Stock holding", description: "A lot partitioned by item, location and owner; resource_code identifies the lot.", version: "0.1.0", implements: ["core.Resource"],
+  properties: Schema.Struct({
+    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity"),
+    unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
+    valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
+  }),
+  identity: [{ name: "primary", properties: ["resource_code"] }],
+  links: [
+    { id: "item", target: Item, cardinality: { to: "one", from: "many", required: true } },
+    { id: "location", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
+    { id: "owner", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "custodian", target: "core.Agent", cardinality: { to: "one", from: "many" } },
+  ],
+})
+export const OrderLine = Norn.type({
+  name: "stock.OrderLine", title: "Order commitment", version: "0.1.0", implements: ["core.Commitment"],
+  properties: Schema.Struct({
+    status: Schema.Literals(["requested", "promised", "fulfilled", "cancelled", "breached"]),
+    due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
+    unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
+  }),
+  defaults: { status: "requested" },
+  lifecycles: [{ property: "status", initial: ["requested"], terminal: ["fulfilled", "cancelled", "breached"],
+    transitions: [
+      { id: "promise", from: ["requested"], to: "promised" },
+      { id: "fulfil", from: ["promised"], to: "fulfilled" },
+      { id: "cancel", from: ["requested", "promised"], to: "cancelled" },
+      { id: "breach", from: ["promised"], to: "breached" },
+    ],
+  }],
+  links: [
+    { id: "provider", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "receiver", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "resource", target: Holding, cardinality: { to: "one", from: "many" } },
+    { id: "item", target: Item, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+export const Reservation = Norn.type({
+  name: "stock.Reservation", title: "Stock reservation", version: "0.1.0", implements: ["core.Hold"],
+  properties: Schema.Struct({
+    status: Schema.Literals(["open", "released", "consumed", "expired"]), quantity: Norn.ref("core.quantity"),
+    unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
+    expires_at: Schema.NullOr(Norn.ref("iso8601.timestamp")),
+  }),
+  defaults: { status: "open" },
+  lifecycles: [{ property: "status", initial: ["open"], terminal: ["released", "consumed", "expired"],
+    transitions: [
+      { id: "release", from: ["open"], to: "released" },
+      { id: "consume", from: ["open"], to: "consumed" },
+      { id: "expire", from: ["open"], to: "expired" },
+    ],
+  }],
+  links: [
+    { id: "resource", target: Holding, cardinality: { to: "one", from: "many", required: true } },
+    { id: "holder", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "secures", target: OrderLine, cardinality: { to: "one", from: "many" } },
+  ],
+})
+export const Movement = Norn.type({
+  name: "stock.Movement", title: "Stock movement", version: "0.1.0", implements: ["core.EconomicEvent"],
+  properties: Schema.Struct({
+    status: Schema.Literal("posted"),
+    action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
+    occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
+    unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
+  }),
+  defaults: { status: "posted" },
+  lifecycles: [{ property: "status", initial: ["posted"], terminal: ["posted"], immutable: ["posted"], transitions: [] }],
+  links: [
+    { id: "provider", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "receiver", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "resource", target: Holding, cardinality: { to: "one", from: "many", required: true } },
+    { id: "fulfils", target: OrderLine, cardinality: { to: "one", from: "many" } },
+    { id: "reverses", target: "stock.Movement", cardinality: { to: "one", from: "one" } },
+    { id: "voucher", target: Voucher, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+export const GLEntry = Norn.type({
+  name: "stock.GLEntry", title: "Signed GL entry", version: "0.1.0", implements: ["core.LedgerEffect"],
+  properties: Schema.Struct({
+    status: Schema.Literal("posted"),
+    account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount"), currency: Norn.ref("core.code"),
+  }),
+  defaults: { status: "posted" },
+  lifecycles: [{ property: "status", initial: ["posted"], terminal: ["posted"], immutable: ["posted"], transitions: [] }],
+  links: [{ id: "event", target: Movement, cardinality: { to: "one", from: "many", required: true } }],
 })

@@ -3682,6 +3682,15 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }
             if receipt.body.quantity.is_some() != receipt.body.quantity_result.is_some()
                 || (receipt.body.quantity_intent.is_some() && receipt.body.quantity.is_none())
+                || receipt.body.quantity.as_ref().is_some_and(|requests| {
+                    requests.is_empty()
+                        || requests.len() > 100
+                        || receipt
+                            .body
+                            .quantity_result
+                            .as_ref()
+                            .is_none_or(|results| results.len() != requests.len())
+                })
             {
                 return Err(corrupt("quantity receipt provenance is incomplete"));
             }
@@ -3739,12 +3748,24 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     {
                         return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
                     }
-                    if seq.checked_add(1) == Some(end) {
-                        let request = receipt
-                            .body
-                            .quantity
-                            .as_ref()
-                            .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
+                    let requests = receipt
+                        .body
+                        .quantity
+                        .as_ref()
+                        .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
+                    let start = end
+                        .checked_sub(
+                            u64::try_from(requests.len())
+                                .map_err(|_range| norn_kernel::quantity::QuantityError::Corrupt)?,
+                        )
+                        .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
+                    if seq >= start {
+                        let request =
+                            requests
+                                .get(usize::try_from(seq.saturating_sub(start)).map_err(
+                                    |_range| norn_kernel::quantity::QuantityError::Corrupt,
+                                )?)
+                                .ok_or(norn_kernel::quantity::QuantityError::Corrupt)?;
                         if boundary
                             .is_none_or(|boundary| receipt.body.first_event_seq < boundary.seq)
                             || entry.event != crate::quantity::transition_event(request)?
@@ -3763,17 +3784,22 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             if receipt.body.ledger_head != prev {
                 return Err(corrupt("receipt head does not match the ledger"));
             }
-            if let Some(request) = &receipt.body.quantity {
-                if receipt.body.event_count == 0 {
+            if let Some(requests) = &receipt.body.quantity {
+                if receipt.body.event_count
+                    < u64::try_from(requests.len())
+                        .map_err(|_range| norn_kernel::quantity::QuantityError::Corrupt)?
+                {
                     return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
                 }
                 if base > 0 {
-                    crate::quantity::verify_transition_projection(
-                        self.conn,
-                        &receipt.body.world,
-                        receipt.body.commit_seq,
-                        request,
-                    )?;
+                    for request in requests.iter() {
+                        crate::quantity::verify_transition_projection(
+                            self.conn,
+                            &receipt.body.world,
+                            receipt.body.commit_seq,
+                            request,
+                        )?;
+                    }
                 }
             }
         }

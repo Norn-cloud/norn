@@ -942,6 +942,21 @@ pub trait CellHost {
         Ok(None)
     }
 
+    /// Resolve and authenticate an unconsumed receipt within this cell's scope,
+    /// world and pinned Function manifest. Action JSON supplies only a reference.
+    /// RECEIPT-EFFECT-1: unsupported hosts return no evidence; acceptance alone
+    /// does not commit effects or consume the receipt.
+    ///
+    /// # Errors
+    /// Host storage, authentication or manifest-binding failure.
+    fn resolve_accepted_receipt(
+        &self,
+        _reference: &crate::receipt_binding::ReceiptReference,
+        _manifest: &norn_ir::function::Digest,
+    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+        Ok(None)
+    }
+
     /// Reads the committed state of one link (not an effect verb).
     /// Temporal properties follow the same read contract as [`Self::load`].
     ///
@@ -995,15 +1010,16 @@ pub trait CellHost {
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
 
-    /// Atomically commit an authorized business action and its checked quantity
-    /// intent. Unsupported hosts fail closed without publishing business writes.
+    /// Atomically commit one authorized proposal and its ordered partition postings.
+    /// Fact/link and balance fences cover the entire proposal, including absences.
+    /// Unsupported hosts fail closed without publishing business writes.
     ///
     /// # Errors
     /// A commit refusal; nothing was applied.
     fn commit_action_quantity(
         &mut self,
         _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _request: &norn_ir::quantity_ledger::QuantityRequest,
+        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
         _idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::ObservationAuthorization)
@@ -1026,7 +1042,7 @@ pub trait CellHost {
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         if let Some((request, key)) = quantity {
-            self.commit_action_quantity(commit, request, key)
+            self.commit_action_quantity(commit, std::slice::from_ref(request), key)
         } else {
             self.commit(commit)
         }

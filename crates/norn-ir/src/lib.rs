@@ -41,6 +41,7 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod definition_catalog;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
@@ -90,8 +91,9 @@ pub use business_pack::{
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
     OntologyLinkRoot, OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape,
     OntologyShapeField, OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind,
-    OntologyTermStatus, PackArtifactKind, PackArtifactRef, ResidualReason, SemanticAuthority,
-    ShapeValueType, SourceImportMode, SourceImporter, SourceRedistribution, TermCorrespondence,
+    OntologyTermStatus, PackArtifactKind, PackArtifactRef, PackInstance, PackInstanceRef,
+    ResidualReason, SemanticAuthority, ShapeValueType, SourceImportMode, SourceImporter,
+    SourceRedistribution, TermCorrespondence,
 };
 pub use connector::{
     ApiKeyFormat, ConnectorAuth, ConnectorChildMergeProfile, ConnectorCommand,
@@ -253,7 +255,9 @@ pub use verification::{
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     Entity,
@@ -410,6 +414,9 @@ pub struct ArtifactProvenance {
     pub actor_id: Option<String>,
     pub created_at: Option<String>,
 }
+
+mod policy_value;
+pub use policy_value::PolicyValue;
 
 // Generic JSON carried inside IR payloads.
 //
@@ -638,6 +645,14 @@ pub enum ActionEffectProgram {
         entity_artifact_version: String,
         lifecycle: PropertyId,
         transition: TransitionId,
+        /// Bind a host-authenticated Function result before firing the transition.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::members::present_non_null"
+        )]
+        #[schemars(with = "ReceiptAcceptance")]
+        accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
     /// Membership and order are checked against the host's protected
@@ -660,6 +675,21 @@ pub enum ActionEffectProgram {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         collections: Vec<OwnedCollectionAction>,
     },
+}
+
+/// RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReceiptAcceptance {
+    /// Required string input member naming the immutable receipt digest.
+    pub reference_field: String,
+    /// Exact admitted Function manifest the host must authenticate.
+    pub manifest_digest: function::Digest,
+    /// Writable text property receiving the checked receipt digest.
+    pub digest_property: PropertyId,
+    /// Writable target property to accepted result member. Target property
+    /// types govern decoding; action input supplies none of these values.
+    pub result_bindings: BTreeMap<PropertyId, PropertyId>,
 }
 
 /// Trusted row-level conditions and derivations for one owned collection.
@@ -857,12 +887,12 @@ impl JsonValue {
 /// per-member diagnostics into one opaque decode error per envelope (a
 /// diagnostic contract change), so the lenient root stays the wire decoder
 /// and the strict root stays the typed view of an accepted payload.
-pub struct PayloadField<T> {
-    value: Option<JsonValue>,
+pub struct PayloadField<T, V = JsonValue> {
+    value: Option<V>,
     contract: PhantomData<fn() -> T>,
 }
 
-impl<T> PayloadField<T> {
+impl<T, V> PayloadField<T, V> {
     /// A member that was not present on the wire.
     #[must_use]
     pub const fn absent() -> Self {
@@ -874,14 +904,14 @@ impl<T> PayloadField<T> {
 
     /// A member that was present on the wire with this raw JSON value.
     #[must_use]
-    pub const fn present(value: JsonValue) -> Self {
+    pub const fn present(value: V) -> Self {
         Self {
             value: Some(value),
             contract: PhantomData,
         }
     }
 
-    const fn from_option(value: Option<JsonValue>) -> Self {
+    const fn from_option(value: Option<V>) -> Self {
         Self {
             value,
             contract: PhantomData,
@@ -896,30 +926,30 @@ impl<T> PayloadField<T> {
 
     /// Borrow the declared JSON value when this field was present on the wire.
     #[must_use]
-    pub const fn as_value(&self) -> Option<&JsonValue> {
+    pub const fn as_value(&self) -> Option<&V> {
         self.value.as_ref()
     }
 }
 
-impl<T> Default for PayloadField<T> {
+impl<T, V> Default for PayloadField<T, V> {
     fn default() -> Self {
         Self::absent()
     }
 }
 
-impl<T> Clone for PayloadField<T> {
+impl<T, V: Clone> Clone for PayloadField<T, V> {
     fn clone(&self) -> Self {
         Self::from_option(self.value.clone())
     }
 }
 
-impl<T> PartialEq for PayloadField<T> {
+impl<T, V: PartialEq> PartialEq for PayloadField<T, V> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
 
-impl<T> std::fmt::Debug for PayloadField<T> {
+impl<T, V: std::fmt::Debug> std::fmt::Debug for PayloadField<T, V> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.value {
             None => formatter.write_str("Absent"),
@@ -928,7 +958,7 @@ impl<T> std::fmt::Debug for PayloadField<T> {
     }
 }
 
-impl<T: JsonSchema> JsonSchema for PayloadField<T> {
+impl<T: JsonSchema, V> JsonSchema for PayloadField<T, V> {
     fn inline_schema() -> bool {
         T::inline_schema()
     }
@@ -946,7 +976,7 @@ impl<T: JsonSchema> JsonSchema for PayloadField<T> {
     }
 }
 
-impl<T> Serialize for PayloadField<T> {
+impl<T, V: Serialize> Serialize for PayloadField<T, V> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -958,17 +988,20 @@ impl<T> Serialize for PayloadField<T> {
     }
 }
 
-impl<'de, T> Deserialize<'de> for PayloadField<T> {
+impl<'de, T, V: Deserialize<'de>> Deserialize<'de> for PayloadField<T, V> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        JsonValue::deserialize(deserializer).map(Self::present)
+        V::deserialize(deserializer).map(Self::present)
     }
 }
 
 macro_rules! define_payload_root {
-    (
+    ($(#[$container:meta])* $name:ident $body:tt) => {
+        define_payload_root!(@storage JsonValue; $(#[$container])* $name $body);
+    };
+    (@storage $wire:ident;
         $(#[$container:meta])*
         $name:ident {
             required {
@@ -989,14 +1022,11 @@ macro_rules! define_payload_root {
         // declared `as Type` publishes `Type` as its schema contract while its storage
         // stays the raw wire value. A root whose members depend on each other (forms,
         // tagged values) publishes its strict typed root instead (`schemars(with)`).
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+        #[derive(Debug, Clone, PartialEq, JsonSchema)]
         #[serde(
-            from = "BTreeMap<String, JsonValue>",
-            into = "JsonValue",
             rename_all = "camelCase",
             deny_unknown_fields
         )]
-        #[schemars(!from, !into)]
         $(#[$container])*
         pub struct $name {
             $(
@@ -1004,16 +1034,16 @@ macro_rules! define_payload_root {
                 // through `from_json_object`, which keeps a missing member as `Absent` so the
                 // validators report it.
                 #[serde(skip_serializing_if = "PayloadField::is_absent")]
-                pub $required_field: PayloadField<$required_ty>,
+                pub $required_field: PayloadField<$required_ty, $wire>,
             )*
             $(
                 #[serde(default, skip_serializing_if = "PayloadField::is_absent")]
-                pub $optional_field: PayloadField<$optional_ty>,
+                pub $optional_field: PayloadField<$optional_ty, $wire>,
             )*
             /// Reserved extension slots keyed by `<name>/<semver>`.
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[schemars(with = "BTreeMap<String, JsonValue>")]
-            pub extensions: Option<BTreeMap<String, JsonValue>>,
+            pub extensions: Option<BTreeMap<String, $wire>>,
             #[schemars(skip)]
             #[serde(skip)]
             unknown_fields: BTreeSet<String>,
@@ -1022,22 +1052,34 @@ macro_rules! define_payload_root {
             invalid_extensions: bool,
         }
 
-        impl From<BTreeMap<String, JsonValue>> for $name {
-            fn from(object: BTreeMap<String, JsonValue>) -> Self {
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.to_json_value().serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                BTreeMap::<String, $wire>::deserialize(deserializer).map(Self::from_json_object)
+            }
+        }
+
+        impl From<BTreeMap<String, $wire>> for $name {
+            fn from(object: BTreeMap<String, $wire>) -> Self {
                 Self::from_json_object(object)
             }
         }
 
-        impl From<$name> for JsonValue {
+        impl From<$name> for $wire {
             fn from(root: $name) -> Self {
                 root.to_json_value()
             }
         }
 
         impl $name {
-            fn from_json_object(mut object: BTreeMap<String, JsonValue>) -> Self {
+            fn from_json_object(mut object: BTreeMap<String, $wire>) -> Self {
                 let (extensions, invalid_extensions) = match object.remove("extensions") {
-                    Some(JsonValue::Object(extensions)) => (Some(extensions), false),
+                    Some($wire::Object(extensions)) => (Some(extensions), false),
                     Some(_) => (None, true),
                     None => (None, false),
                 };
@@ -1059,7 +1101,7 @@ macro_rules! define_payload_root {
             }
 
             #[must_use]
-            pub fn to_json_value(&self) -> JsonValue {
+            pub fn to_json_value(&self) -> $wire {
                 let mut object = BTreeMap::new();
                 $(
                     if let Some(value) = self.$required_field.as_value() {
@@ -1074,10 +1116,10 @@ macro_rules! define_payload_root {
                 if let Some(extensions) = &self.extensions {
                     object.insert(
                         "extensions".to_string(),
-                        JsonValue::Object(extensions.clone()),
+                        $wire::Object(extensions.clone()),
                     );
                 }
-                JsonValue::Object(object)
+                $wire::Object(object)
             }
 
             /// Top-level payload members that are not declared by this closed root.
@@ -1280,6 +1322,7 @@ define_payload_root!(
         pack_kind => "packKind" as BusinessPackKind,
         provides => "provides" as Vec<String>,
         artifacts => "artifacts" as Vec<PackArtifactRef>,
+        instances => "instances" as Vec<PackInstance>,
         sources => "sources" as Vec<OntologySource>,
         terms => "terms" as Vec<OntologyTerm>,
         mappings => "mappings" as Vec<OntologyMapping>,

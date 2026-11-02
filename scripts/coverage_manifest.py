@@ -29,8 +29,15 @@ class InvalidCoverageLayout(ValueError):
 def _object(path: Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise InvalidCoverageLayout(f"{path.name}: not a regular file")
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise InvalidCoverageLayout(f"{path}: duplicate JSON key {key}")
+            result[key] = value
+        return result
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise InvalidCoverageLayout(f"{path.name}: {error}") from error
     if not isinstance(value, dict):
@@ -48,30 +55,104 @@ def files(directory: Path = COVERAGE) -> list[Path]:
     subsystems = directory / SUBSYSTEMS
     if subsystems.is_symlink() or not subsystems.is_dir():
         raise InvalidCoverageLayout(f"{SUBSYSTEMS}: not a directory")
-    entries = sorted(subsystems.iterdir())
-    unknown = [entry.name for entry in entries if not SUBSYSTEM_FILE.match(entry.name)]
-    if unknown:
-        raise InvalidCoverageLayout(f"unknown subsystem files: {unknown}")
-    return [directory / INDEX, *entries]
+    result = [directory / INDEX]
+    identities = set()
+    for entry in sorted(subsystems.iterdir()):
+        identity = entry.stem if entry.is_file() else entry.name
+        if entry.is_symlink():
+            raise InvalidCoverageLayout(f"{entry.name}: not a regular file")
+        if not SUBSYSTEM_FILE.fullmatch(f"{identity}.json"):
+            raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
+        if identity in identities:
+            raise InvalidCoverageLayout(f"duplicate subsystem: {identity}")
+        identities.add(identity)
+        if entry.is_file():
+            if entry.suffix != ".json":
+                raise InvalidCoverageLayout(f"unknown subsystem files: {entry.name}")
+            result.append(entry)
+        elif entry.is_dir():
+            result.extend(_entry_files(entry))
+        else:
+            raise InvalidCoverageLayout(f"not a regular subsystem: {entry.name}")
+    return result
+
+
+def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
+    fields, result = set(), [directory / INDEX]
+    def restore(value, parts):
+        if isinstance(value, dict):
+            if "$entries" not in value:
+                return {key: restore(item, [*parts, key]) for key, item in value.items()}
+            field = ".".join(parts)
+            if value != {"$entries": field} or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field) or field in fields:
+                raise InvalidCoverageLayout(f"invalid or duplicate entry field {field}")
+            fields.add(field)
+            folder = directory / field
+            if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+                raise InvalidCoverageLayout(f"{field}: not an entry directory")
+            entries = []
+            for path in sorted(folder.iterdir()) if folder.exists() else []:
+                entry = _object(path)
+                if set(entry) != {"order", "value"} or type(entry["order"]) is not int or entry["order"] < 0:
+                    raise InvalidCoverageLayout(f"{path}: invalid entry envelope")
+                item = restore(entry["value"], [*parts, "entry" + path.stem])
+                keyed = not isinstance(item, dict) or "id" in item
+                identity = re.fullmatch(r"([0-9a-f]{64})(?:dup[1-9][0-9]*)?\.json", path.name)
+                if not identity or (keyed and identity[1] != entry_id(item)) or (field == "obligations" and path.stem != identity[1]):
+                    raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
+                result.append(path)
+                entries.append((entry["order"], path.name, item))
+            return [item for _, _, item in sorted(entries)]
+        if isinstance(value, list):
+            raise InvalidCoverageLayout(f"{directory}: shared arrays must be entry files")
+        return value
+    body = restore(_object(directory / INDEX), [])
+    if not {p.name for p in directory.iterdir()}.issubset({INDEX, *fields}):
+        raise InvalidCoverageLayout(f"{directory}: unknown entry fields")
+    return body, sorted(result)
+
+
+def _entry_files(directory: Path) -> list[Path]:
+    return _assemble(directory)[1]
+
+
+def entry_id(value: Any) -> str:
+    """Assign a declared/scalar identity, or an opaque initial-value ID.
+
+    Unkeyed object IDs stay fixed when their nested entry directories change.
+    """
+    if isinstance(value, str):
+        return hashlib.sha256(b"entry:string\0" + value.encode("utf-8")).hexdigest()
+    identity = {"id": value["id"]} if isinstance(value, dict) and "id" in value else value
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+
+
+def _subsystem(directory: Path) -> dict[str, Any]:
+    return _assemble(directory)[0]
 
 
 def load(directory: Path = COVERAGE) -> dict[str, Any]:
     """Assemble the manifest, its subsystems in id order."""
-    index, *entries = files(directory)
-    document = _object(index)
+    files(directory)
+    document = _object(directory / INDEX)
     if "subsystems" in document:
         raise InvalidCoverageLayout(f"{INDEX} must not list subsystems; each has its own file")
     subsystems = []
-    for entry in entries:
-        body = _object(entry)
+    for entry in sorted((directory / SUBSYSTEMS).iterdir(), key=lambda path: path.name if path.is_file() else path.name + ".json"):
+        body = _subsystem(entry) if entry.is_dir() else _object(entry)
         if "id" in body:
-            raise InvalidCoverageLayout(f"{entry.name}: the file name is the subsystem id; drop the id field")
-        subsystems.append({"id": SUBSYSTEM_FILE.match(entry.name)[1], **body})
+            raise InvalidCoverageLayout(f"{entry.name}: file name is the subsystem id; drop the id field")
+        identity = entry.name if entry.is_dir() else entry.stem
+        subsystems.append({"id": identity, **body})
     document["subsystems"] = subsystems
     return document
 
 
-def write(document: dict[str, Any], directory: Path) -> None:
+def entry_bytes(value: Any) -> bytes:
+    return (json.dumps(value, indent=2) + "\n").encode("utf-8")
+
+
+def write(document: dict[str, Any], directory: Path, *, split_entries: bool = False) -> None:
     """Replace `directory` with `document` in the split layout (codemod and canaries)."""
     index = {key: value for key, value in document.items() if key != "subsystems"}
     bodies: dict[str, dict[str, Any]] = {}
@@ -83,9 +164,39 @@ def write(document: dict[str, Any], directory: Path) -> None:
         bodies[identity] = body
     shutil.rmtree(directory, ignore_errors=True)
     (directory / SUBSYSTEMS).mkdir(parents=True)
-    (directory / INDEX).write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    (directory / INDEX).write_bytes(entry_bytes(index))
     for identity, body in bodies.items():
-        (directory / SUBSYSTEMS / f"{identity}.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+        if not split_entries:
+            (directory / SUBSYSTEMS / f"{identity}.json").write_bytes(entry_bytes(body))
+            continue
+        target = directory / SUBSYSTEMS / identity
+        target.mkdir()
+        fields = set()
+        def split(value, parts):
+            if isinstance(value, list):
+                field = ".".join(parts)
+                if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*", field) or field in fields:
+                    raise InvalidCoverageLayout(f"invalid or duplicate entry field {field}")
+                fields.add(field)
+                folder = target / field
+                folder.mkdir()
+                seen = {}
+                for order, item in enumerate(value):
+                    name = entry_id(item)
+                    occurrence = seen.get(name, 0)
+                    seen[name] = occurrence + 1
+                    if occurrence:
+                        name += f"dup{occurrence}"
+                    (folder / f"{name}.json").write_bytes(entry_bytes({"order": order, "value": split(item, [*parts, "entry" + name])}))
+                return {"$entries": field}
+            if isinstance(value, dict):
+                return {key: split(item, [*parts, key]) for key, item in value.items()}
+            return value
+        (target / INDEX).write_bytes(entry_bytes(split(body, [])))
+
+
+def write_entries(document: dict[str, Any], directory: Path) -> None:
+    write(document, directory, split_entries=True)
 
 
 def digest(directory: Path = COVERAGE) -> str:
@@ -97,3 +208,56 @@ def digest(directory: Path = COVERAGE) -> str:
         total.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
         total.update(b"\n")
     return total.hexdigest()
+
+
+read_entry = _object
+
+def apply_entries(root: Path, updates: dict, legacy=()) -> None:
+    """Validate staged coverage, then apply registry updates with rollback on failure."""
+    import tempfile
+    relative = COVERAGE.relative_to(ROOT)
+    if any(Path(p).is_absolute() or ".." in Path(p).parts or not (root / p).resolve().is_relative_to(root.resolve()) for p in (*updates, *legacy)):
+        raise ValueError("registry updates must stay within the repository")
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary) / "coverage"
+        shutil.copytree(root / relative, staged, symlinks=True)
+        for path in legacy:
+            if path.startswith(str(relative) + "/"):
+                (staged / Path(path).relative_to(relative)).unlink(missing_ok=True)
+        if any((staged / "subsystems").glob("*.json")):
+            raise ValueError("coverage target has not migrated")
+        for path, content in updates.items():
+            if path.startswith(str(relative) + "/"):
+                target = staged / Path(path).relative_to(relative)
+                if content is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+        for folder in sorted(staged.rglob("*"), reverse=True):
+            if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                folder.rmdir()
+        load(staged)
+        backups = {p: (root / p).read_bytes() if (root / p).exists() else None for p in updates}
+        try:
+            for path, content in updates.items():
+                target = root / path
+                if content is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+            for folder in sorted((root / relative).rglob("*"), reverse=True):
+                if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                    folder.rmdir()
+        except BaseException:
+            for path, content in backups.items():
+                if content is None:
+                    (root / path).unlink(missing_ok=True)
+                else:
+                    (root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (root / path).write_bytes(content)
+            for folder in sorted((root / relative).rglob("*"), reverse=True):
+                if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                    folder.rmdir()
+            raise

@@ -41,7 +41,7 @@ use norn_ir::identifier_limits::HISTORICAL_IDENTIFIER_PROFILE;
 pub use norn_ir::identifier_limits::IDENTIFIER_ADMISSION_PROFILE;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticRemediation, DiagnosticSeverity, FlowSourceMap, LimitProfileRef,
-    PropertyTypeDef, ResourceLimitProfile,
+    PropertyTypeDef, PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
@@ -298,6 +298,54 @@ impl From<CanonicalJsonError> for ReceiptError {
     }
 }
 
+/// Retained exact candidate and base sources, prepared together for receipt issuance.
+#[derive(Debug, Clone)]
+pub struct ReceiptSources {
+    artifacts: Vec<ArtifactEnvelope>,
+    base: Vec<ArtifactEnvelope>,
+    identity: ArtifactSetRef,
+}
+
+impl ReceiptSources {
+    /// Prepare candidate and base sources for the current legacy receipt profile.
+    /// # Errors
+    /// Refuses undecodable sources or values outside Norn1.
+    pub fn new(artifacts: &[RuntimeValue], base: &[RuntimeValue]) -> Result<Self, ReceiptError> {
+        let decode = |sources: &[RuntimeValue]| {
+            sources
+                .iter()
+                .map(|source| {
+                    crate::layout::prepare_artifact_source(source.clone())
+                        .map(|prepared| prepared.artifact)
+                        .or_else(|_| norn_ir::runtime::decode(source))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|errors| invalid_receipt(format!("{errors:?}")))
+        };
+        let artifacts = decode(artifacts)?;
+        let base = decode(base)?;
+        let identity = ArtifactSetRef::of(&artifacts, &base)?;
+        Ok(Self {
+            artifacts,
+            base,
+            identity,
+        })
+    }
+
+    fn context<'a>(
+        &'a self,
+        context: &EntityArtifactSetContext<'a>,
+    ) -> Result<EntityArtifactSetContext<'a>, ReceiptError> {
+        if ArtifactSetRef::of(&[], &self.base)? != ArtifactSetRef::of(&[], context.base)? {
+            return Err(invalid_receipt("receipt base/context mismatch"));
+        }
+        Ok(EntityArtifactSetContext {
+            base: &self.base,
+            ..*context
+        })
+    }
+}
+
 /// Check `artifacts` against `context` ([`crate::check_artifact_set`]) under
 /// `limits`, derive the set's type environment when the set is clean, and
 /// issue the [`CheckReceipt`]. See the module docs.
@@ -309,17 +357,40 @@ impl From<CanonicalJsonError> for ReceiptError {
 /// profile admits). The check itself never fails; its findings are in
 /// [`CheckedArtifactSet::diagnostics`].
 pub fn check_artifact_set_with_receipt(
-    artifacts: &[ArtifactEnvelope],
+    artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     check_artifact_set_with_profile(
-        artifacts,
-        context,
+        &artifacts.artifacts,
+        &artifacts.context(context)?,
         limits,
+        artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         None,
     )
+}
+
+/// Check retained exact semantic sources and bind their Norn1 bytes.
+/// Inline editor layout is extracted by the existing admission boundary.
+///
+/// # Errors
+/// Invalid source/envelope, canonicalization, or receipt construction fails.
+pub fn check_artifact_sources_with_receipt(
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    registry: &BTreeSet<PropertyTypeName>,
+    tenant: Option<crate::TenantLayer<'_>>,
+    limits: &ResourceLimitProfile,
+    flow_source_map: Option<&FlowSourceMap>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    let sources = ReceiptSources::new(artifacts, base)?;
+    let context = EntityArtifactSetContext {
+        registry,
+        base: &sources.base,
+        tenant,
+    };
+    check_artifact_set_with_flow_source_map(&sources, &context, limits, flow_source_map)
 }
 
 /// Check a candidate artifact set and bind an optional non-executable flow
@@ -331,15 +402,16 @@ pub fn check_artifact_set_with_receipt(
 /// # Errors
 /// As [`check_artifact_set_with_receipt`].
 pub fn check_artifact_set_with_flow_source_map(
-    artifacts: &[ArtifactEnvelope],
+    artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     check_artifact_set_with_profile(
-        artifacts,
-        context,
+        &artifacts.artifacts,
+        &artifacts.context(context)?,
         limits,
+        artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
     )
@@ -354,26 +426,21 @@ pub fn check_artifact_set_with_flow_source_map(
 /// As [`check_artifact_set_with_receipt`], or when `version` does not bind the
 /// supplied artifacts and base.
 pub fn check_artifact_set_with_verified_receipt(
-    artifacts: &[ArtifactEnvelope],
+    artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
     version: &ReceiptVersion,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let artifact_set = ArtifactSetRef::of(artifacts, context.base)?;
-    let retained_identity = if version.checker_version == LEGACY_INLINE_LAYOUT_CHECKER_VERSION {
-        &version.semantic_artifact_set
-    } else {
-        &version.artifact_set
-    };
-    if retained_identity != &artifact_set || version.semantic_artifact_set != artifact_set {
+    if version.semantic_artifact_set != artifacts.identity {
         return Err(invalid_receipt(
             "verified receipt profile does not bind the supplied artifact set",
         ));
     }
     check_artifact_set_with_profile(
-        artifacts,
-        context,
+        &artifacts.artifacts,
+        &artifacts.context(context)?,
         limits,
+        artifacts.identity.clone(),
         &version.identifier_profile,
         version.flow_source_map.as_ref(),
     )
@@ -391,7 +458,7 @@ pub fn check_artifact_set_with_verified_receipt(
 /// As [`check_artifact_set_with_receipt`], or when an unchanged candidate is
 /// not bound by `verified_active`.
 pub fn check_artifact_set_for_install(
-    artifacts: &[ArtifactEnvelope],
+    artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
     verified_active: Option<&ReceiptVersion>,
@@ -412,15 +479,15 @@ pub fn check_artifact_set_for_install(
 /// # Errors
 /// As [`check_artifact_set_for_install`].
 pub fn check_artifact_set_for_install_with_flow_source_map(
-    artifacts: &[ArtifactEnvelope],
+    artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
     verified_active: Option<&ReceiptVersion>,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     if let Some(version) = verified_active {
-        let artifact_set = ArtifactSetRef::of(artifacts, context.base)?;
-        if artifact_set == version.semantic_artifact_set {
+        let artifact_set = &artifacts.identity;
+        if artifact_set == &version.semantic_artifact_set {
             let mut install_version = version.clone();
             install_version.flow_source_map = flow_source_map.cloned();
             return check_artifact_set_with_verified_receipt(
@@ -438,10 +505,10 @@ fn check_artifact_set_with_profile(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
+    artifact_set: ArtifactSetRef,
     identifier_profile: &str,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let artifact_set = ArtifactSetRef::of(artifacts, context.base)?;
     let limit_profile = limits.reference()?;
     let mut diagnostics = crate::check_artifact_set(artifacts, context);
     if let Some(flow_source_map) = flow_source_map {
@@ -526,16 +593,54 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
 /// integrity, its exact versioned checker identity, and its bindings to the
 /// supplied definitions, base, limits, and derived type environment. Historic
 /// versions are accepted only when explicitly listed by this crate. A
-/// retained-definition caller can use the returned token to recheck current
-/// semantics while preserving the attested identifier profile; new installs
-/// separately use [`check_artifact_set_with_receipt`] and current limits.
+/// retained-definition caller uses [`verify_admission_receipt_sources`] for
+/// recheck authority. Typed verification validates historical integrity only.
 ///
 /// # Errors
 ///
 /// [`ReceiptError`] if the body is malformed or tampered with, names an
 /// unknown checker/profile pair, is not an admitted receipt, or is bound to
 /// different artifacts, limits, or type environment.
+/// Validate historical typed receipts without granting recheck authority.
+/// # Errors
+/// Refuses invalid receipts or mismatched definitions.
 pub fn verify_admission_receipt(
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<(), ReceiptError> {
+    verify_receipt(stored, expected_sha256, artifacts, base, limits).map(drop)
+}
+
+/// Verify retained candidate and base sources for subsequent rechecks.
+/// # Errors
+/// Refuses undecodable sources or invalid historical receipts.
+pub fn verify_admission_receipt_sources(
+    stored: &str,
+    expected_sha256: &str,
+    artifacts: &[RuntimeValue],
+    base: &[RuntimeValue],
+    limits: &ResourceLimitProfile,
+) -> Result<ReceiptVersion, ReceiptError> {
+    let decode = |sources: &[RuntimeValue]| {
+        sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
+            .map_err(invalid_receipt)
+    };
+    verify_receipt(
+        stored,
+        expected_sha256,
+        &decode(artifacts)?,
+        &decode(base)?,
+        limits,
+    )
+}
+
+fn verify_receipt(
     stored: &str,
     expected_sha256: &str,
     artifacts: &[ArtifactEnvelope],
@@ -733,7 +838,14 @@ pub fn recover_legacy_admission_receipt(
         base,
         tenant: None,
     };
-    let checked = check_artifact_set_with_receipt(artifacts, &context, limits)?;
+    let checked = check_artifact_set_with_profile(
+        artifacts,
+        &context,
+        limits,
+        ArtifactSetRef::of(artifacts, base)?,
+        IDENTIFIER_ADMISSION_PROFILE,
+        None,
+    )?;
 
     if checked.receipt.admitted {
         let bytes = checked.receipt.canonical_json()?;
@@ -749,6 +861,7 @@ pub fn recover_legacy_admission_receipt(
         artifacts,
         &context,
         limits,
+        ArtifactSetRef::of(artifacts, base)?,
         HISTORICAL_IDENTIFIER_PROFILE,
         None,
     )?;
@@ -1569,7 +1682,7 @@ mod tests {
         ArtifactRef, ArtifactSetRef, CHECKER_NAME, CheckReceipt, HISTORIC_ADMISSION_PROFILES,
         HISTORICAL_IDENTIFIER_PROFILE, LEGACY_INLINE_LAYOUT_CHECKER_VERSION, LEGACY_RECEIPT_FORMAT,
         derive_type_env, diagnostics_digest_for_version, recover_legacy_admission_receipt,
-        verify_admission_receipt,
+        verify_receipt as verify_admission_receipt,
     };
     use crate::EntityArtifactSetContext;
 
@@ -1714,10 +1827,8 @@ mod tests {
 
         let mut normalized_raw = raw;
         crate::layout::extract_inline_layout(&mut normalized_raw).expect("inline layout migration");
-        let normalized: ArtifactEnvelope =
-            norn_ir::runtime::decode(&normalized_raw).expect("normalized artifact");
         let rechecked = super::check_artifact_set_with_verified_receipt(
-            &[normalized],
+            &super::ReceiptSources::new(&[normalized_raw], &[]).expect("source"),
             &context,
             &limits,
             &verified,

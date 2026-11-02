@@ -340,6 +340,22 @@ impl<'a> TypeCatalog<'a> {
             .and_then(|object_type| object_type.property(property.as_str()))
     }
 
+    pub(crate) fn declared_links(&self, owner: &ObjectTypeName) -> Vec<&'a norn_ir::Link> {
+        let mut links: Vec<_> = self
+            .types
+            .get(owner.as_str())
+            .copied()
+            .into_iter()
+            .flat_map(|definition| &definition.links)
+            .collect();
+        for extension in self.extensions.iter().copied() {
+            if extension.target == *owner {
+                links.extend(&extension.links);
+            }
+        }
+        links
+    }
+
     /// The effective object type in this catalog, if it resolves.
     pub(crate) fn effective_type(
         &self,
@@ -573,6 +589,9 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
+            // LawIR is not retained by this catalog. A law pin must not borrow
+            // the verified status of a similarly named EntityIR invariant.
+            DataQualityRuleRef::Law { .. } => Ok(DataQualityRuleClassification::Unverified),
             DataQualityRuleRef::Builtin { id, version } => {
                 Ok(if is_supported_builtin_rule(id, version) {
                     DataQualityRuleClassification::Builtin

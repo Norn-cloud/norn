@@ -99,7 +99,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
-    PackArtifactKind, PackArtifactRef, ScopeRef,
+    PackArtifactKind, PackArtifactRef, PackInstance, ScopeRef,
 };
 
 use crate::action_set::check_action_set;
@@ -320,9 +320,8 @@ pub fn check_artifact_set(
         Ok(_resolved) => check_entity_artifacts(&normalized_artifacts, &normalized_context)
             .into_iter()
             .chain(scope_findings(&normalized_artifacts, &normalized_base))
-            .chain(
-                crate::controls_adapter::check_controls(&normalized_artifacts, &normalized_base).1,
-            )
+            .chain(crate::controls_adapter::check_controls(&normalized_artifacts, &normalized_base).1)
+            .chain(check_pack_instances(&normalized_artifacts, &normalized_base))
             .chain(check_sub_decision_closures(
                 &normalized_artifacts,
                 &normalized_base,
@@ -642,6 +641,101 @@ const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::Mapping => ArtifactKind::Mapping,
         PackArtifactKind::Law => ArtifactKind::Law,
     }
+}
+
+/// PACK-PIN-1: unique scoped IDs, exact endpoints and an acyclic instance graph.
+fn check_pack_instances(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let pool: Vec<_> = base.iter().chain(artifacts).collect();
+    let mut declarations = Vec::new();
+    for owner in &pool {
+        if let ArtifactPayload::BusinessPack(payload) = &owner.payload {
+            let instances: Vec<PackInstance> = payload
+                .instances
+                .as_value()
+                .and_then(|value| serde_json::to_value(value).ok())
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default();
+            for (index, instance) in instances.into_iter().enumerate() {
+                declarations.push((*owner, format!("/payload/instances/{index}"), instance));
+            }
+        }
+    }
+    let mut findings = Vec::new();
+    let mut edges = BTreeMap::new();
+    for (index, (owner, pointer, instance)) in declarations.iter().enumerate() {
+        let mut reject =
+            |code, reason: &str| findings.push(finding(code, reason.into(), owner, pointer));
+        if instance.instance_id.trim().is_empty()
+            || declarations.iter().take(index).any(|(_, _, other)| {
+                other.instance_id == instance.instance_id && other.scope == instance.scope
+            })
+        {
+            reject(
+                "core.composition.duplicate_instance",
+                "instance ID must be non-empty and unique in its scoped graph",
+            );
+        }
+        let matches = pool
+            .iter()
+            .filter(|pack| {
+                pack.kind() == ArtifactKind::BusinessPack
+                    && pack.artifact_id == instance.pack.artifact_id
+                    && pack.version == instance.pack.version
+                    && scope_conflict(&instance.scope, &pack.scope).is_none()
+                    && crate::receipt::ArtifactRef::of(pack)
+                        .is_ok_and(|pin| pin.sha256 == instance.pack.sha256)
+            })
+            .count();
+        if matches != 1 || scope_conflict(&instance.scope, &owner.scope).is_some() {
+            reject(
+                "core.composition.unresolved_pin",
+                "instance pack must resolve uniquely by scope, exact version and semantic digest",
+            );
+        }
+        if instance.imports.keys().any(|alias| alias.trim().is_empty()) {
+            reject(
+                "core.composition.unresolved_pin",
+                "instance import aliases must be non-empty",
+            );
+        }
+        let targets = edges.entry(index).or_insert_with(BTreeSet::new);
+        for reference in instance.imports.values().chain(&instance.instances) {
+            let resolved: Vec<_> = declarations
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, _, target))| {
+                    target.scope == instance.scope
+                        && target.instance_id == reference.instance_id
+                        && target.pack == reference.pack
+                })
+                .map(|(target, _)| target)
+                .collect();
+            if let [target] = resolved.as_slice() {
+                targets.insert(*target);
+            } else {
+                reject(
+                    "core.composition.unresolved_pin",
+                    "instance reference must resolve uniquely in the same scope with its exact pack pin",
+                );
+            }
+        }
+    }
+    let (_, blocked) = topological_order(&edges, |index| index);
+    for group in cycle_groups(&edges, &blocked) {
+        if let Some((owner, pointer, _)) = group.first().and_then(|index| declarations.get(*index))
+        {
+            findings.push(finding(
+                "core.composition.instance_cycle",
+                "instance imports and containment must be acyclic".into(),
+                owner,
+                pointer,
+            ));
+        }
+    }
+    findings
 }
 
 /// The wire name of a kind (`business_pack`).

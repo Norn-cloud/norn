@@ -12,10 +12,13 @@ use sha2::{Digest, Sha256};
 
 use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
+mod induction;
+
 /// Generator semantics; changing the obligation rules invalidates all challenges.
-/// Profile 7 admits verbatim Unicode with exact-byte commitments; profile 8 is
-/// reserved for induction obligations. Profiles 5/6 required NFC at proof ingress.
-pub const GENERATOR_PROFILE: &str = "norn.application-obligations/7";
+/// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
+/// and induction statements; profile 7 is the distinct inventory-only format.
+/// Profiles 5/6 required NFC at proof ingress.
+pub const GENERATOR_PROFILE: &str = "norn.application-obligations/8";
 
 /// Why a fixed challenge could not be reconstructed or a submission was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +66,8 @@ pub struct DefinitionSource {
     artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
     exact_digest: String,
+    receipt_sources: Vec<norn_ir::RuntimeValue>,
+    base_sources: Vec<norn_ir::RuntimeValue>,
 }
 
 impl DefinitionSource {
@@ -74,7 +79,7 @@ impl DefinitionSource {
         if artifacts.len().saturating_add(base.len()) > 8_388_608 {
             return Err(ChallengeError::Limit);
         }
-        let decode = |text: &str| -> Result<Vec<ArtifactEnvelope>, ChallengeError> {
+        let decode = |text: &str| -> Result<_, ChallengeError> {
             numeric_budget(text)?;
             let exact = norn_canonical::parse_json_verbatim(text.as_bytes())
                 .map_err(|_error| ChallengeError::LossyInput)?;
@@ -85,7 +90,12 @@ impl DefinitionSource {
             let projected = norn_canonical::parse_json_verbatim(&projected_bytes)
                 .map_err(|_error| ChallengeError::LossyInput)?;
             check_numbers(&exact, &projected)?;
-            Ok(typed)
+            let exact = norn_ir::RuntimeValue::from_canonical(&exact)
+                .map_err(|_error| ChallengeError::LossyInput)?;
+            let norn_ir::RuntimeValue::Array(sources) = exact else {
+                return Err(ChallengeError::NotAdmitted);
+            };
+            Ok((typed, sources))
         };
         // Commit the original UTF-8 documents, including escapes, whitespace and
         // exact number spellings. Never pass executable text through Norn1 first.
@@ -93,8 +103,8 @@ impl DefinitionSource {
             b"definition-source",
             &[artifacts.as_bytes(), base.as_bytes()],
         )?;
-        let artifacts = decode(artifacts)?;
-        let base = decode(base)?;
+        let (artifacts, receipt_sources) = decode(artifacts)?;
+        let (base, base_sources) = decode(base)?;
         // Qualify inputs before ordinary admission can construct diagnostics or
         // dependency closures. This is a proof-ingress resource profile, not an
         // expansion of the ordinary definition admission surface.
@@ -117,6 +127,8 @@ impl DefinitionSource {
             artifacts,
             base,
             exact_digest,
+            receipt_sources,
+            base_sources,
         })
     }
 }
@@ -280,7 +292,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        admit(artifacts, context)?;
+        admit(source, context)?;
         for profile in [&semantics, &assumptions, &assurance] {
             if profile.as_object().is_none_or(serde_json::Map::is_empty) {
                 return Err(ChallengeError::MissingProfile);
@@ -324,7 +336,7 @@ impl ApprovedContract {
             base: &source.base,
             tenant: None,
         };
-        let receipt = admit(artifacts, context)?;
+        let receipt = admit(source, context)?;
         if law_refs(artifacts, context.base)? != self.laws
             || reference_contracts(artifacts, context.base)? != self.reference_contracts
         {
@@ -364,7 +376,7 @@ impl ApprovedContract {
             return Err(ChallengeError::Limit);
         }
         preflight_goal_bytes(&self.laws, &writers, &boundaries)?;
-        let obligations = self.obligations(&pool, &writers, &boundaries);
+        let induction = induction::build(&pool, &self.laws, &writers, &boundaries, registry)?;
         let body = json!({
             "generator": GENERATOR_PROFILE,
             "admissionReceipt": receipt,
@@ -375,7 +387,10 @@ impl ApprovedContract {
             "semantics": self.semantics,
             "assumptions": self.assumptions,
             "assurance": self.assurance,
-            "obligations": obligations,
+            "inductionRules": induction::rules(),
+            "lawStatements": induction.laws,
+            "writerStatements": induction.writers,
+            "obligations": induction.goals,
         });
         let bytes = norn_canonical::serialize_json_verbatim(&body)
             .map_err(|_error| ChallengeError::Closure)?;
@@ -389,45 +404,6 @@ impl ApprovedContract {
             sha256,
             writers,
         })
-    }
-
-    /// Every required goal of every law, in canonical order.
-    fn obligations(
-        &self,
-        pool: &[ArtifactEnvelope],
-        writers: &BTreeSet<crate::verification::LawWriter>,
-        boundaries: &BTreeSet<String>,
-    ) -> Vec<Value> {
-        let mut obligations = Vec::new();
-        for law in pool.iter().filter(|a| a.kind() == ArtifactKind::Law) {
-            // These are goals, not generated proofs. Temporal laws additionally
-            // require their temporal semantics; safety induction alone cannot
-            // discharge eventually/strong-until.
-            let mut goals = vec![
-                json!({"kind":"initialization"}),
-                json!({"kind":"non_vacuity"}),
-                json!({"kind":"law_semantics"}),
-            ];
-            goals.extend(
-                writers
-                    .iter()
-                    .map(|writer| json!({"kind":"preservation","writer":writer.to_json()})),
-            );
-            goals.extend(
-                boundaries
-                    .iter()
-                    .map(|boundary| json!({"kind":"open_boundary","boundary":boundary})),
-            );
-            for goal in goals {
-                obligations.push(json!({
-                    "law": law.artifact_id,
-                    "lawDigest": self.laws.get(&law.artifact_id),
-                    "goal": goal,
-                }));
-            }
-        }
-        obligations.sort_by_key(Value::to_string);
-        obligations
     }
 }
 
@@ -461,7 +437,7 @@ fn preflight_goal_bytes(
 }
 
 fn admit(
-    artifacts: &[ArtifactEnvelope],
+    source: &DefinitionSource,
     context: &EntityArtifactSetContext<'_>,
 ) -> Result<String, ChallengeError> {
     if !context.base.is_empty() {
@@ -473,7 +449,8 @@ fn admit(
             ..*context
         };
         let checked = check_artifact_set_with_receipt(
-            context.base,
+            &crate::receipt::ReceiptSources::new(&source.base_sources, &[])
+                .map_err(|_error| ChallengeError::NotAdmitted)?,
             &full_context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
@@ -499,7 +476,8 @@ fn admit(
         }
     }
     let checked = check_artifact_set_with_receipt(
-        artifacts,
+        &crate::receipt::ReceiptSources::new(&source.receipt_sources, &source.base_sources)
+            .map_err(|_error| ChallengeError::NotAdmitted)?,
         context,
         &ResourceLimitProfile::norn_limits_v1(),
     )
