@@ -17,6 +17,9 @@
           ]
         }
       ],
+      "implements": [
+        "core.analytics.RestatementEvidence"
+      ],
       "lifecycles": [
         {
           "initial": [

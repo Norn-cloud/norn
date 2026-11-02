@@ -40,10 +40,14 @@ pub struct RestatementSlice<'a> {
 pub struct RestatementDelta {
     /// Previous interpretation, mapping and source frontier, when present.
     pub previous_query: Option<String>,
+    /// Previous admitted definition pin.
+    pub previous_definition: Option<String>,
     /// Previous mapping pin.
     pub previous_mapping: Option<String>,
     /// Inclusive old source frontier.
     pub previous_frontier: Option<u64>,
+    /// Inclusive previous knowledge clock, paired with the source frontier.
+    pub previous_knowledge_time_ms: Option<u64>,
     /// Exact old buckets, including versioned numeric contributions to retract.
     pub retract: BTreeMap<String, QueryRow>,
     /// Exact replacement buckets; unchanged contributions retain their identities.
@@ -63,6 +67,10 @@ struct Generation {
 pub struct RestatementView {
     /// Content identity of the entire output bundle and dry-run differences.
     pub generation: String,
+    /// Prior complete generation, retained for drill-through.
+    pub previous_generation: Option<String>,
+    /// Recorded analytical reason.
+    pub reason: String,
     /// Always `restated`; no posted-book reconciliation is implied.
     pub label: &'static str,
     /// A replacement is building or awaiting governed approval/activation.
@@ -308,7 +316,9 @@ impl<E: SqlEngine> CellStore<E> {
                 slice.id.into(),
                 RestatementDelta {
                     previous_query: old.map(|a| a.result.query_pin.clone()),
+                    previous_definition: old.map(|a| a.result.definition_pin.clone()),
                     previous_mapping: old.map(|a| a.result.context.mapping_pin.clone()),
+                    previous_knowledge_time_ms: old.map(|a| a.knowledge_time_ms),
                     previous_frontier: old.map(|a| a.result.known_as_of),
                     retract: old.map_or_else(BTreeMap::new, |a| a.result.rows.clone()),
                     replace: answer.result.rows.clone(),
@@ -494,6 +504,8 @@ impl<E: SqlEngine> CellStore<E> {
         }
         Ok(RestatementView {
             generation: digest.into(),
+            previous_generation: generation.previous,
+            reason: generation.reason,
             label: "restated",
             stale: text(&values, "status")? != "active",
             outputs: generation.outputs,

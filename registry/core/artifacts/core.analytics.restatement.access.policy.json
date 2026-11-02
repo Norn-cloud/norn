@@ -1,0 +1,44 @@
+{
+  "artifactId": "core.analytics.restatement.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Analytical restatement reviewer",
+  "namespace": "core",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "core.analytics.restatement.access",
+    "rules": [
+      {
+        "actions": [
+          "core.analytics.restatement.approve",
+          "core.analytics.restatement.activate"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "AnalyticsReviewer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "core.analytics.Restatement",
+        "ruleId": "reviewer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.restatement.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

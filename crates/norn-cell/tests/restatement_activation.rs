@@ -243,7 +243,11 @@ fn governed(path: &Path, model: &Model, transition: &str, key: &str, allow: bool
             consumes: None,
         },
     };
-    commit_action(&mut cell, &catalog, &call, &Authority(allow)).is_ok()
+    let result = commit_action(&mut cell, &catalog, &call, &Authority(allow));
+    if allow && result.is_err() {
+        eprintln!("governed {transition}: {result:?}");
+    }
+    result.is_ok()
 }
 fn activate(path: &Path, model: &Model, key: &str) {
     assert!(governed(

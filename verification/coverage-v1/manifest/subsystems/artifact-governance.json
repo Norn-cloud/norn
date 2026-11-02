@@ -210,6 +210,9 @@
     "registry/core/src/restatement.ts",
     "registry/core/artifacts/core.analytics.Restatement.entity.json",
     "registry/core/artifacts/core.analytics.restatement.approve.action.json",
-    "registry/core/artifacts/core.analytics.restatement.activate.action.json"
+    "registry/core/artifacts/core.analytics.restatement.activate.action.json",
+    "registry/core/artifacts/core.analytics.restatement_policy.law.json",
+    "registry/core/artifacts/core.analytics.restatement.access.policy.json",
+    "registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
   ]
 }
