@@ -147,3 +147,14 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
+
+// VAL-DECIMAL-BIND-1: compiling an interface preserves an unresolved group, never a scalar.
+test("interface Decimal groups survive the admitted authoring profile", () => {
+  const result = compile(`import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Conversion = Norn.interfaceType({name: "toy.Conversion", title: "Conversion", version: "1.0.0",
+  properties: Schema.Struct({quantity: Norn.boundDecimal("conversion")})})`)
+  expect(result).toMatchObject({ok: true, artifacts: [{payload: {interface: {
+    properties: [{id: "quantity", type: {kind: "decimal-binding", group: "conversion"}}],
+  }}}]})
+})
