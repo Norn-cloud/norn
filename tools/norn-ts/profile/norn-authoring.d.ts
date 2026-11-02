@@ -59,7 +59,8 @@ declare module "@norn/authoring" {
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
      * authoritative currency is the named sibling property (`{ currency }`,
      * EntityIR `currencySource`; required by metric SUM). Typed as a
-     * number for authoring only; on the wire it is an exact number token and
+     * number for authoring expressions; ActionIR inputs carry decimal text
+     * decoded by the kernel. Stored entity values are exact number tokens and
      * never a binary float. `scale` is a non-negative integer literal.
      */
     function decimal(scale: number, options?: { readonly unit?: UnitRef } | { readonly currency: string }): Schema.Finite
