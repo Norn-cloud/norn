@@ -561,8 +561,8 @@ def core_physics_closure_canaries() -> None:
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
-    full_plan = {"mode": "full", "shard": ["rest-1"], "phase": ["clippy"]}
-    affected = {"mode": "affected", "shard": ["rest-1"], "phase": []}
+    full_plan = {"mode": "full", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["clippy"]}
+    affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
     passed = dict.fromkeys(("CORE", "PLANNED", "TEST", "PHASE"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, {**passed, "PHASE": "skipped"}, True))
@@ -572,12 +572,20 @@ def workflow_verdict_canaries(source: str) -> None:
                  for key in passed for result in ("failure", "cancelled", "skipped"))
     cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
     # Affected merge groups pass only while the always-run phases stay in the plan.
-    merge_affected = {"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
+    merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
     cases.append(("merge_group", merge_affected, passed, True))
     cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance"]}, passed, False))
     cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance", "clippy-extra"]}, passed, False))
+    cases.append(("pull_request", full_plan, {**passed, "DRAFT": "true"}, False))
+    cases.append(("pull_request", full_plan, passed, True))
+    for plan in ({}, None, [], {**affected, "mode": "unknown"},
+                 {**affected, "shard": "rest-1"}, {**affected, "phase": None},
+                 {**affected, "shard": ["rest-1", "rest-1"]},
+                 {**affected, "base_sha": "old-base"}, {**affected, "head_sha": "old-head"}):
+        cases.append(("pull_request", plan, passed, False))
+    cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
-        environment = {**os.environ, **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        environment = {**os.environ, "DRAFT": "false", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
                                 capture_output=True, text=True, timeout=10, check=False)
         if (result.returncode == 0) != accepted:
@@ -601,6 +609,38 @@ def workflow_context_canaries(source: str) -> None:
             except validator.InvalidCoverage:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
+
+        for name in ("core", "plan", "full"):
+            expression = workflow["jobs"][name]["if"]
+            for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
+                for draft in (False, True):
+                    for action in ("opened", "synchronize", "reopened", "ready_for_review"):
+                        # Evaluate the checked expression over event snapshots, including a new
+                        # head synchronized after READY; plan bindings are exercised by the verdict.
+                        candidate_expression = expression.replace("github.event_name", repr(event)).replace(
+                            "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
+                            "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
+                        candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
+                        expected = event not in ("pull_request_target", "issue_comment") and not (
+                            name == "plan" and event == "pull_request" and draft)
+                        if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
+                            raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+        for name in ("plan", "full"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["if"] = "!cancelled()"
+            rejected(f"{name} cancellation/admission mutation", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request"]["types"].remove("ready_for_review")
+        rejected("missing READY activity", document)
+        for name in ("core", "test", "phase"):
+            for before, after in (("12 * 1024 * 1024", "1 * 1024 * 1024"),
+                                  ('if [ "$(available)" -lt "$minimum" ]; then', "if true; then"),
+                                  ('[ "$(available)" -ge "$minimum" ]', "true"),
+                                  ("df -h /", "sudo docker image prune -af")):
+                document = copy.deepcopy(workflow)
+                step = document["jobs"][name]["steps"][0]
+                step["run"] = step["run"].replace(before, after)
+                rejected(f"{name} cleanup mutation {before}", document)
 
         def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
             return next(step for step in document["jobs"][job]["steps"]
@@ -1362,8 +1402,14 @@ def evidence_inventory_canaries() -> None:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--workflow-contract"]:
+        source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+        workflow_verdict_canaries(source)
+        workflow_context_canaries(source)
+        print("workflow contract: admission, verdict and context canaries passed")
+        return 0
     if len(sys.argv) != 1:
-        raise SystemExit("usage: negative_canaries.py")
+        raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
     manifest_canaries()
     coverage_layout_canaries()
     central_obligation_closure_canaries()

@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""CI Pareto frontier for the hosted `Public core` gates (Norn-cloud/norn-platform#3541).
+"""CI Pareto frontier for the `Public core` gates.
 
     python3 scripts/ci/frontier.py collect RUN_ID[:ATTEMPT]... > .github/ci/frontier.json
     python3 scripts/ci/frontier.py check .github/ci/frontier.json
 
 `collect` reads run, job and step timings (and, for failed jobs, the job log)
 through `gh api`, classifies each verdict and writes rows plus series
-statistics. `check` recomputes the statistics from the stored rows offline and
+statistics. v3 records every paginated per-attempt job, including cancelled service and
+reclamation overlap, job queue time and READY-to-plan latency. Merge throughput
+counts distinct merged PRs in the measured window; it is separate from successful
+qualification identities. Missing READY timestamps remain unknown.
+`check` recomputes the statistics from the stored rows offline and
 fails on drift, so the summary can never disagree with its evidence.
 
 Time to verdict is the attempt's start to the last job's completion (queue + wall).
-Only first attempts enter the timing series: a rerun keeps the run's original
+The historical v2 series includes only first attempts: a rerun keeps the run's original
 `created_at`, so measuring it would count the wait before the rerun as queue
 time. Reruns are counted in their own `reruns` column instead, split into
 `harness` (the first attempt was refused by the harness) and `flake` (the rerun
@@ -30,18 +34,8 @@ from datetime import datetime
 REPO = "Norn-cloud/norn"
 SCHEMA = "norn.ci-frontier/v2"
 WORKFLOW = ".github/workflows/ci-policy.yml"
-GATES = {"core", "trusted-policy"}
 RESAMPLES = 2000
 RUNNER = "ubuntu-24.04"
-# Every substring present in one log or annotation -> cause. First match wins.
-CAUSES = [
-    (("recent account payments have failed",), "harness-billing"),
-    (("has exceeded the maximum execution time",), "timeout"),
-    (("exceeds timeout-minutes budget",), "known-norn#9"),
-    (("Diff in /", "/crates/norn-skeleton-guard/src/ci/mod.rs:203:"), "known-norn#8"),
-    (("Diff in /",), "fmt-other"),
-    (("public-cut .github/workflows/ci-policy.yml",), "scratch-workflow-edit"),
-]
 
 
 def gh(path, raw=False):
@@ -55,43 +49,173 @@ def ts(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
-def classify(job):
-    if job["conclusion"] == "success":
-        return "pass"
-    texts = [a["message"] for a in gh(f"check-runs/{job['id']}/annotations")]
-    if any(s["conclusion"] == "failure" for s in job["steps"]):
-        texts.append(gh(f"actions/jobs/{job['id']}/logs", raw=True))
-    for needles, cause in CAUSES:
-        if any(all(n in text for n in needles) for text in texts):
-            return cause
-    return "harness-other" if not job["steps"] else "unknown"
+def pages(path, key=None):
+    """Read every API page, including jobs beyond the first 100."""
+    result = []
+    page = 1
+    while True:
+        data = gh(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+        batch = data[key] if key else data
+        result.extend(batch)
+        if len(batch) < 100:
+            return result
+        page += 1
+
+
+def duration(start, end):
+    return max(0, ts(end) - ts(start)) if start and end else 0
 
 
 def row(spec):
     run_id, _, attempt = str(spec).partition(":")
     attempt = int(attempt or 1)
     run = gh(f"actions/runs/{run_id}/attempts/{attempt}")
-    jobs = [j for j in gh(f"actions/runs/{run_id}/attempts/{attempt}/jobs")["jobs"]
-            if j["conclusion"] != "skipped"]
-    if (run["path"].split("@", 1)[0] != WORKFLOW or run["status"] != "completed" or len(jobs) != 1
-            or jobs[0]["name"] not in GATES or jobs[0]["labels"] != [RUNNER]):
-        raise SystemExit(f"run {run_id}: expected one completed Public core gate job")
-    job = jobs[0]
-    # A rerun keeps the first attempt's created_at; time each attempt from its own start.
-    created = ts(run["created_at"] if run["run_attempt"] == 1 else run["run_started_at"])
-    started, completed = ts(job["started_at"]), ts(job["completed_at"])
-    failed = [s["name"] for s in job["steps"] if s["conclusion"] == "failure"]
-    return {
-        "run_id": run["id"], "attempt": run["run_attempt"], "event": run["event"],
-        "ref": run["head_branch"], "head_sha": run["head_sha"], "gate": job["name"],
-        "created_at": run["created_at"], "queue_s": round(started - created),
-        "wall_s": round(completed - started), "verdict_s": round(completed - created),
-        "conclusion": job["conclusion"], "failed_step": failed[0] if failed else None,
-        "cause": classify(job),
-        "steps": [{"name": s["name"], "conclusion": s["conclusion"],
-                   "number": s["number"], "s": round(ts(s["completed_at"]) - ts(s["started_at"]))}
-                  for s in job["steps"] if s.get("started_at") and s.get("completed_at")],
-    }
+    if run["path"].split("@", 1)[0] != WORKFLOW or run["status"] != "completed":
+        raise ValueError(f"run {run_id}: expected completed Public core attempt")
+    jobs = pages(f"actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+    if len({j["id"] for j in jobs}) != len(jobs):
+        raise ValueError("duplicate job identity")
+    created = run["created_at"] if attempt == 1 else run["run_started_at"]
+    ready = []
+    for pr in run.get("pull_requests", []):
+        events = pages(f"issues/{pr['number']}/timeline")
+        ready += [e["created_at"] for e in events
+                  if e.get("event") == "ready_for_review" and e["created_at"] <= created]
+    entries = []
+    for job in jobs:
+        start, end = job.get("started_at"), job.get("completed_at")
+        steps = [{"name": step["name"], "conclusion": step["conclusion"],
+                  "s": duration(step.get("started_at"), step.get("completed_at"))}
+                 for step in job.get("steps", [])]
+        service = duration(start, end) if job["conclusion"] != "skipped" else 0
+        entries.append({"id": job["id"], "name": job["name"], "conclusion": job["conclusion"],
+                        "created_at": job.get("created_at", created), "started_at": start, "completed_at": end,
+                        "service_s": service,
+                        "queue_s": duration(job.get("created_at", created), start)
+                        if job["conclusion"] != "skipped" else 0,
+                        "cancelled_s": service if job["conclusion"] == "cancelled" else 0,
+                        "reclaim_s": sum(step["s"] for step in steps
+                                         if step["name"] == "Reclaim runner disk space"),
+                        "steps": steps})
+    plan_starts = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
+    return {"run_id": run["id"], "attempt": attempt, "event": run["event"],
+            "head_sha": run["head_sha"], "created_at": created,
+            "completed_at": run["updated_at"], "conclusion": run["conclusion"],
+            "ready_at": max(ready) if ready else None,
+            "admitted_at": min(plan_starts) if plan_starts else None, "jobs": entries}
+
+
+def attempt_document(rows, merges):
+    identities = set()
+    for r in rows:
+        identity = (r["run_id"], r["attempt"])
+        if identity in identities:
+            raise ValueError("duplicate run attempt")
+        identities.add(identity)
+        if len({j["id"] for j in r["jobs"]}) != len(r["jobs"]):
+            raise ValueError("duplicate job")
+        for job in r["jobs"]:
+            if min(job[k] for k in ("service_s", "queue_s", "cancelled_s", "reclaim_s")) < 0:
+                raise ValueError("negative job duration")
+            expected = duration(job["started_at"], job["completed_at"]) if job["conclusion"] != "skipped" else 0
+            queue = duration(job["created_at"], job["started_at"]) if job["conclusion"] != "skipped" else 0
+            if job["queue_s"] != queue:
+                raise ValueError("job queue drift")
+            if job["service_s"] != expected or job["cancelled_s"] != (expected if job["conclusion"] == "cancelled" else 0):
+                raise ValueError("job service/cancellation drift")
+            if job["reclaim_s"] != sum(s["s"] for s in job["steps"] if s["name"] == "Reclaim runner disk space"):
+                raise ValueError("reclaim drift")
+            if sum(s["s"] for s in job["steps"]) > expected:
+                raise ValueError("steps exceed job service")
+    rows = sorted(rows, key=lambda r: (r["created_at"], r["run_id"], r["attempt"]))
+    start = min((r["created_at"] for r in rows), default=None)
+    end = max((r["completed_at"] for r in rows), default=None)
+    merged = {}
+    for pr in merges:
+        if not start or not start <= pr["merged_at"] <= end:
+            raise ValueError("merge outside measurement window")
+        if pr["number"] in merged and pr != merged[pr["number"]]:
+            raise ValueError("conflicting merge identity")
+        merged[pr["number"]] = pr
+    jobs = [j for r in rows for j in r["jobs"]]
+    # Reclaim inside a cancelled job is included in both costs, never added twice.
+    totals = {key: sum(j[key] for j in jobs)
+              for key in ("service_s", "queue_s", "cancelled_s", "reclaim_s")}
+    totals["retained_service_s"] = totals["service_s"] - totals["cancelled_s"]
+    totals["cancelled_share"] = totals["cancelled_s"] / totals["service_s"] if totals["service_s"] else 0
+    admission = [duration(r["ready_at"], r["admitted_at"]) for r in rows if r["ready_at"] and r["admitted_at"]]
+    window = duration(start, end)
+    qualifications = {(r["head_sha"], r["event"]) for r in rows
+                      if r["conclusion"] == "success" and any(j["name"] == "full" and j["conclusion"] == "success" for j in r["jobs"])}
+    return {"schema": "norn.ci-frontier/v3", "repo": REPO, "workflow": "Public core",
+            "rows": rows, "merges": sorted(merged.values(), key=lambda pr: pr["number"]),
+            "summary": {**totals, "attempts": len(rows), "jobs": len(jobs),
+                        "window_start": start, "window_end": end, "window_s": window,
+                        "admission_latency_s": dist(admission) if admission else None,
+                        "job_service_s": dist([j["service_s"] for j in jobs]) if jobs else None,
+                        "job_queue_s": dist([j["queue_s"] for j in jobs]) if jobs else None,
+                        "successful_qualifications": len(qualifications),
+                        "merged_prs": len(merged), "merges_per_hour": len(merged) * 3600 / window if window else 0}}
+
+
+def collect_merges(rows):
+    start = min(r["created_at"] for r in rows)
+    end = max(r["completed_at"] for r in rows)
+    result = []
+    page = 1
+    while True:
+        batch = gh(f"pulls?state=closed&sort=updated&direction=desc&per_page=100&page={page}")
+        result += [{"number": pr["number"], "merged_at": pr["merged_at"]} for pr in batch
+                   if pr.get("merged_at") and start <= pr["merged_at"] <= end]
+        if len(batch) < 100 or batch[-1]["updated_at"] < start:
+            return result
+        page += 1
+
+
+def self_test():
+    from unittest.mock import patch
+    stamp = "2026-11-02T00:00:00Z"
+    finish = "2026-11-02T00:01:00Z"
+    job = {"id": 1, "name": "full", "conclusion": "cancelled", "started_at": stamp,
+           "created_at": "2026-11-01T23:59:50Z", "completed_at": finish, "service_s": 60, "queue_s": 10, "cancelled_s": 60,
+           "reclaim_s": 20, "steps": [{"name": "Reclaim runner disk space", "s": 20}]}
+    first = {"run_id": 1, "attempt": 1, "event": "pull_request", "head_sha": "head",
+             "created_at": stamp, "completed_at": finish, "conclusion": "cancelled",
+             "ready_at": stamp, "admitted_at": finish, "jobs": [job]}
+    import copy
+    second = copy.deepcopy(first)
+    second.update(attempt=2, conclusion="success")
+    second["jobs"][0].update(id=2, conclusion="success", cancelled_s=0)
+    merge = {"number": 7, "merged_at": finish}
+    result = attempt_document([first, second], [merge, merge])["summary"]
+    assert result["service_s"] == 120 and result["cancelled_s"] == 60
+    assert result["retained_service_s"] == 60 and result["reclaim_s"] == 40
+    assert result["queue_s"] == 20 and result["merged_prs"] == 1 and result["merges_per_hour"] == 60
+    assert result["admission_latency_s"]["p50"] == 60 and result["successful_qualifications"] == 1
+    for mutate in (lambda r: r.append(r[0]), lambda r: r[0]["jobs"].append(r[0]["jobs"][0]),
+                   lambda r: r[0]["jobs"][0].update(service_s=61),
+                   lambda r: r[0]["jobs"][0].update(reclaim_s=21)):
+        broken = copy.deepcopy([first])
+        mutate(broken)
+        try:
+            attempt_document(broken, [])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("metrics corruption accepted")
+    with patch.dict(globals(), gh=lambda path: {"jobs": list(range(100)) if "page=1" in path else [100]}):
+        assert pages("actions/runs/1/attempts/2/jobs", "jobs") == list(range(101))
+    with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
+        assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
+    print("frontier: pagination, attempt deduplication and cost reconciliation passed")
+
+
+def collect_attempts(specs):
+    unique = set()
+    for spec in specs:
+        run, _, attempt = str(spec).partition(":")
+        unique.add((int(run), int(attempt or 1)))
+    return [row(f"{run}:{attempt}") for run, attempt in sorted(unique)]
 
 
 def pct(values, q):
@@ -185,7 +309,9 @@ def series(rows):
     return out
 
 
-def document(rows):
+def document(rows, merges=None):
+    if merges is not None or (rows and "jobs" in rows[0]):
+        return attempt_document(rows, merges or [])
     validate_rows(rows)
     rows = sorted(rows, key=lambda r: (r["created_at"], r["run_id"], r["attempt"]))
     return {"schema": SCHEMA, "repo": REPO, "workflow": "Public core",
@@ -194,23 +320,22 @@ def document(rows):
 
 
 def main(argv):
+    if argv == ["self-test"]:
+        self_test()
+        return 0
     if len(argv) >= 2 and argv[0] == "collect":
-        rows = [row(r) for r in argv[1:]]
-        # A rerun needs its first attempt for the harness/flake split: collect it too.
-        have = {(r["run_id"], r["attempt"]) for r in rows}
-        missing = sorted({r["run_id"] for r in rows if r["attempt"] > 1 and (r["run_id"], 1) not in have})
-        rows += [row(run_id) for run_id in missing]
-        json.dump(document(rows), sys.stdout, indent=1)
+        rows = collect_attempts(argv[1:])
+        json.dump(document(rows, collect_merges(rows)), sys.stdout, indent=1)
         sys.stdout.write("\n")
         return 0
     if len(argv) == 2 and argv[0] == "check":
         stored = json.load(open(argv[1], encoding="utf-8"))
         try:
-            recomputed = document(stored["rows"])
+            recomputed = document(stored["rows"], stored.get("merges"))
         except ValueError as error:
             print(f"{argv[1]}: {error}", file=sys.stderr)
             return 1
-        if stored.get("schema") != SCHEMA or stored != recomputed:
+        if stored.get("schema") not in (SCHEMA, "norn.ci-frontier/v3") or stored != recomputed:
             print(f"{argv[1]}: series drift from rows; rerun collect", file=sys.stderr)
             return 1
         return 0

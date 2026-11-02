@@ -10,12 +10,13 @@ type Obligations = BTreeMap<String, BTreeSet<String>>;
 const MAINTAINED_REPOSITORY: &str = "Norn-cloud/norn";
 
 /// Gate files pinned to the trusted base, besides every workflow.
-const GATE_FILES: [&str; 10] = [
+const GATE_FILES: [&str; 11] = [
     "scripts/ci/core.sh",
     ".config/nextest.toml",
     "scripts/ci/validate-runner-policy.py",
     "scripts/proof_enrollment.py",
     "verification/coverage-v1/validate.py",
+    "verification/coverage-v1/negative_canaries.py",
     "scripts/coverage_manifest.py",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/check-proof-holes.py",
@@ -518,6 +519,11 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn workflow_canaries_are_a_trusted_gate_input() {
+        assert!(super::GATE_FILES.contains(&"verification/coverage-v1/negative_canaries.py"));
+    }
+
     #[test]
     fn runner_routing_is_merge_only_opt_in_in_the_public_core_jobs() {
         let path = ".github/workflows/ci-policy.yml";
