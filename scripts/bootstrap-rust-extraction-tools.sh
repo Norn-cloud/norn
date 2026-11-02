@@ -101,7 +101,7 @@ installation_digest() {
   # Build/download caches are deliberately excluded; they are never executed.
   sha256sum "${BASH_SOURCE[0]}"
   "$opam_binary" list --installed --short --columns=name,version
-  find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" \
+  find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" "$OPAMROOT/$OPAM_SWITCH/share" \
     "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
     "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
     "$fstar_root" -type f -print0 | sort -z | xargs -0 -r sha256sum
@@ -146,7 +146,7 @@ eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
 
 (
   cd "$source_root/hax"
-  ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-2}" --no-cleanup
+  ./setup.sh -j "$OPAMJOBS" --no-cleanup
 )
 ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
 ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
@@ -191,6 +191,7 @@ for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/char
   fi
 done
 
+"$fstar_binary" --version | grep -Fx "F* $FSTAR_VERSION"
 test "$("$opam_binary" var ocaml-version)" = 5.4.1
 test "$("$opam_binary" list --installed --short --columns=version hax-engine)" = 0.3.7
 test "$("$source_root/aeneas/bin/aeneas" -version)" = 'aeneas 74a460a2'
