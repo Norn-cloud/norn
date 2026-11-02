@@ -580,6 +580,10 @@ impl<'a> TypeCatalog<'a> {
         {
             return Ok(None);
         }
+        let mut property_types: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
+        property_types.sort_by_key(|declaration| &declaration.name);
+        let mut extensions = self.extensions.clone();
+        extensions.sort_by_key(|declaration| (&declaration.target, &declaration.namespace));
         let declarations = (
             PROPERTY_DOMAIN_RULE_ID,
             1_u16,
@@ -587,8 +591,8 @@ impl<'a> TypeCatalog<'a> {
             property,
             self.ancestry(object_type),
             self.interfaces.values().collect::<Vec<_>>(),
-            self.property_types.unwrap_or(&[]),
-            &self.extensions,
+            property_types,
+            extensions,
         );
         let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
         Ok(Some(DataQualityRuleRef::Builtin {
