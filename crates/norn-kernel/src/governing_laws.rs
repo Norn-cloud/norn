@@ -24,8 +24,8 @@ pub enum LawEvaluationError {
     #[error("core.laws.unsupported_semantics: governing-law evaluation budget exhausted")]
     BudgetExceeded,
     /// A native write violates a directly attached safety law.
-    #[error("core.laws.violated: {0}")]
-    Violated(String),
+    #[error("core.laws.violated: {}", .0.message)]
+    Violated(Box<LawFailure>),
 }
 impl LawEvaluationError {
     /// Stable Core 05 diagnostic, independent of diagnostic detail.
@@ -110,7 +110,44 @@ fn supported(law: &LawIR) -> bool {
         && law.scope.lifecycle_states.is_empty()
         && law.scope.commitments.is_empty()
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-        && matches!(law.response, LawResponse::Predicate { .. })
+        && match law.response {
+            LawResponse::Predicate { .. } => true,
+            LawResponse::Invariant { .. } => {
+                matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
+            }
+            LawResponse::Action { .. } | LawResponse::Transition { .. } => false,
+        }
+}
+
+fn invariant_binding<'a>(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    law: &'a LawIR,
+) -> Result<Option<&'a str>, LawEvaluationError> {
+    let LawResponse::Invariant {
+        object_type,
+        invariant_id,
+    } = &law.response
+    else {
+        return Ok(None);
+    };
+    let invariants = catalog
+        .invariants(subject)
+        .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))?;
+    if object_type != &law.subject
+        || subject.as_str() != law.subject
+        || invariants
+            .iter()
+            .filter(|item| item.id.as_str() == invariant_id)
+            .count()
+            != 1
+    {
+        return Err(LawEvaluationError::Invalid(format!(
+            "{}: invariant reference is missing, ambiguous or outside its retained subject",
+            law.id
+        )));
+    }
+    Ok(Some(invariant_id))
 }
 fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, LawEvaluationError> {
     let bytes = norn_ir::canonical::canonical_json_of(law)
@@ -138,6 +175,7 @@ pub(crate) fn classify(
         if catalog
             .governing_laws(&ObjectTypeName(law.subject.clone()))
             .is_ok()
+            && invariant_binding(catalog, &ObjectTypeName(law.subject.clone()), &law).is_ok()
         {
             return match law.severity {
                 LawSeverity::Error => DataQualityRuleClassification::Integrity,
@@ -173,6 +211,7 @@ pub fn evaluate(
         if !supported(&law) {
             return Err(LawEvaluationError::Unsupported(law.id));
         }
+        let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
         let activation = match &law.condition {
             Some(expr) => boolean(expr.as_str(), &context, remaining)?,
             None => Ok(true),
@@ -180,18 +219,37 @@ pub fn evaluate(
         let result = match activation {
             Ok(false) => continue,
             Err(outcome) => Err(outcome),
-            Ok(true) => {
-                let LawResponse::Predicate { expression } = &law.response else {
+            Ok(true) => match &law.response {
+                LawResponse::Predicate { expression } => {
+                    boolean(expression.as_str(), &context, remaining)?.and_then(|value| {
+                        if value == matches!(law.modality, LawModality::Always {}) {
+                            Ok(())
+                        } else {
+                            Err(DataQualityOutcome::NotSatisfied)
+                        }
+                    })
+                }
+                LawResponse::Invariant { .. } => {
+                    let id =
+                        invariant_id.ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
+                    let failures = crate::commit_check::evaluate_named_invariant(
+                        catalog, key, values, remaining, id,
+                    )
+                    .map_err(|error| match error {
+                        crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
+                            LawEvaluationError::BudgetExceeded
+                        }
+                        other => LawEvaluationError::Invalid(format!("{other:?}")),
+                    })?;
+                    failures
+                        .into_iter()
+                        .next()
+                        .map_or(Ok(()), |failure| Err(failure.outcome))
+                }
+                LawResponse::Action { .. } | LawResponse::Transition { .. } => {
                     return Err(LawEvaluationError::Unsupported(law.id));
-                };
-                boolean(expression.as_str(), &context, remaining)?.and_then(|value| {
-                    if value == matches!(law.modality, LawModality::Always {}) {
-                        Ok(())
-                    } else {
-                        Err(DataQualityOutcome::NotSatisfied)
-                    }
-                })
-            }
+                }
+            },
         };
         if let Err(outcome) = result {
             failures.push(LawFailure {

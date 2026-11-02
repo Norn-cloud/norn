@@ -3071,6 +3071,275 @@ fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
     serde_json::from_value(law.clone()).expect("direct law")
 }
 
+fn invariant_amount_law() -> norn_ir::ArtifactEnvelope {
+    let mut law = serde_json::to_value(direct_amount_law()).expect("law");
+    law["payload"]["modality"] = json!({"kind":"always"});
+    law["payload"]["condition"] = Value::Null;
+    law["payload"]["response"] = json!({
+        "kind":"invariant", "objectType":ITEM, "invariantId":"positive_amount"
+    });
+    serde_json::from_value(law).expect("retained invariant law")
+}
+
+#[test]
+fn law_invariant_runtime_valid_response_admits() {
+    let laws = vec![invariant_amount_law()];
+    let mut native = cell()
+        .with_types(vec![quality_item_type()])
+        .with_governing_laws(laws);
+    let key = FactKey::new(ITEM, "invariant-law-valid");
+    native
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: object(json!({"item_id":"valid", "amount":1})),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .expect("supported invariant law admits");
+    assert!(native.load(&key).unwrap().values.is_some());
+}
+
+#[test]
+fn law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin() {
+    let laws = vec![invariant_amount_law()];
+    let types = vec![quality_item_type()];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let key = FactKey::new(ITEM, "invariant-law-invalid");
+    let values = object(json!({"item_id":"invalid", "amount":0}));
+    let failure = norn_kernel::governing_laws::evaluate(
+        &catalog,
+        &key,
+        &values,
+        &mut EvaluationBudget::default().units(),
+    )
+    .expect("law evaluates")
+    .pop()
+    .expect("violation");
+    assert_eq!(failure.outcome, DataQualityOutcome::NotSatisfied);
+    assert!(
+        matches!(&failure.rule_ref, DataQualityRuleRef::Law {artifact_id, law_id, version}
+        if artifact_id == "invariant.amount.law" && law_id == "amount_bounded" && version.starts_with("sha256:"))
+    );
+    assert_eq!(
+        catalog
+            .classify_data_quality_rule(&failure.rule_ref)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Integrity
+    );
+    let mut native = cell().with_types(types).with_governing_laws(laws);
+    let other = FactKey::new(ITEM, "also-refused");
+    let refusal = native
+        .commit(CellCommit {
+            writes: vec![
+                FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values },
+                },
+                FactWrite {
+                    key: other.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: object(json!({"item_id":"other", "amount":1})),
+                    },
+                },
+            ],
+            ..CellCommit::empty()
+        })
+        .expect_err("retained law refuses a quality-class invariant violation");
+    assert!(
+        matches!(refusal, CommitError::Law {reason: norn_kernel::governing_laws::LawEvaluationError::Violated(ref retained), ..}
+        if retained.rule_ref == failure.rule_ref)
+    );
+    assert!(native.load(&key).unwrap().values.is_none());
+    assert!(native.load(&other).unwrap().values.is_none());
+    assert!(native.ledger().is_empty());
+    assert!(native.outbox().is_empty());
+}
+
+#[test]
+fn law_invariant_runtime_other_responses_still_refuse_before_activation() {
+    for response in [
+        json!({"kind":"action", "artifactId":"invariant.approve.action"}),
+        json!({"kind":"transition", "objectType":ITEM, "property":"status", "transitionId":"approve"}),
+    ] {
+        let mut law = serde_json::to_value(invariant_amount_law()).unwrap();
+        law["payload"]["response"] = response;
+        law["payload"]["condition"] = json!("false");
+        let mut native = cell()
+            .with_types(vec![quality_item_type()])
+            .with_governing_laws(vec![serde_json::from_value(law).unwrap()]);
+        let refusal = native
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: FactKey::new(ITEM, "unsupported"),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: object(json!({"item_id":"valid", "amount":1})),
+                    },
+                }],
+                ..CellCommit::empty()
+            })
+            .expect_err("unsupported response cannot disappear behind false activation");
+        assert_eq!(refusal.code(), "core.laws.unsupported_semantics");
+        assert!(native.ledger().is_empty());
+    }
+}
+
+#[test]
+fn law_invariant_runtime_misbound_missing_and_negated_references_refuse() {
+    for (field, value, code) in [
+        (
+            "objectType",
+            json!("invariant.Other"),
+            "core.laws.unresolved_scope",
+        ),
+        (
+            "invariantId",
+            json!("missing"),
+            "core.laws.unresolved_scope",
+        ),
+        (
+            "modality",
+            json!({"kind":"never"}),
+            "core.laws.unsupported_semantics",
+        ),
+        (
+            "condition",
+            json!("false"),
+            "core.laws.unsupported_semantics",
+        ),
+    ] {
+        let mut law = serde_json::to_value(invariant_amount_law()).unwrap();
+        if matches!(field, "modality" | "condition") {
+            law["payload"][field] = value;
+        } else {
+            law["payload"]["response"][field] = value;
+        }
+        let laws = [serde_json::from_value(law).unwrap()];
+        let types = [quality_item_type()];
+        let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+        let error = norn_kernel::governing_laws::evaluate(
+            &catalog,
+            &FactKey::new(ITEM, "invalid-binding"),
+            &object(json!({"item_id":"valid", "amount":1})),
+            &mut EvaluationBudget::default().units(),
+        )
+        .expect_err("invalid retained reference refuses");
+        assert_eq!(error.code(), code);
+    }
+}
+
+#[test]
+fn law_invariant_runtime_resolves_the_retained_subjects_interface_member() {
+    let (mut types, mut interfaces) = definitions();
+    types[0].invariants.clear();
+    interfaces[0].invariants[0].classification = norn_ir::ConstraintClass::Quality;
+    let mut law = serde_json::to_value(invariant_amount_law()).unwrap();
+    law["payload"]["response"]["invariantId"] = json!("named_item");
+    let mut native = cell()
+        .with_types(types)
+        .with_interfaces(interfaces)
+        .with_governing_laws(vec![serde_json::from_value(law).unwrap()]);
+    let result = native.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(ITEM, "interface-member"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({"item_id":"", "amount":1})),
+            },
+        }],
+        ..CellCommit::empty()
+    });
+    assert!(matches!(
+        result,
+        Err(CommitError::Law {
+            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(_),
+            ..
+        })
+    ));
+    assert!(native.ledger().is_empty());
+}
+
+#[test]
+fn law_invariant_runtime_exhausted_budget_refuses() {
+    let laws = [invariant_amount_law()];
+    let types = [quality_item_type()];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let mut budget = 0;
+    assert_eq!(
+        norn_kernel::governing_laws::evaluate(
+            &catalog,
+            &FactKey::new(ITEM, "no-fuel"),
+            &object(json!({"item_id":"valid", "amount":1})),
+            &mut budget
+        ),
+        Err(norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded)
+    );
+    assert_eq!(budget, 0);
+}
+
+#[test]
+fn law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin() {
+    let laws = [invariant_amount_law()];
+    let mut types = [quality_item_type()];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let pin = norn_kernel::governing_laws::evaluate(
+        &catalog,
+        &FactKey::new(ITEM, "pin"),
+        &object(json!({"item_id":"pin", "amount":0})),
+        &mut EvaluationBudget::default().units(),
+    )
+    .unwrap()
+    .pop()
+    .unwrap()
+    .rule_ref;
+    types[0].invariants.clear();
+    assert_eq!(
+        TypeCatalog::new(&types)
+            .with_governing_laws(&laws)
+            .classify_data_quality_rule(&pin)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Unverified
+    );
+    types[0] = quality_item_type();
+    types[0].implements = vec![norn_ir::InterfaceName(INTERFACE.into())];
+    let interface: InterfaceDef = serde_json::from_value(json!({"name":INTERFACE,
+        "invariants":[{"id":"positive_amount", "classification":"quality", "expression":"true", "message":"duplicate id"}]})).unwrap();
+    assert_eq!(
+        TypeCatalog::new(&types)
+            .with_interfaces([&interface])
+            .with_governing_laws(&laws)
+            .classify_data_quality_rule(&pin)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Unverified
+    );
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn law_invariant_runtime_matches_the_existing_evaluator(amount in -1000i64..1000) {
+        use norn_testkit::proptest::prelude::*;
+        let laws = [invariant_amount_law()];
+        let types = [quality_item_type()];
+        let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+        let key = FactKey::new(ITEM, "generated-invariant-law");
+        let values = object(json!({"item_id":"generated", "amount":amount}));
+        let mut shared_budget = EvaluationBudget::default().units();
+        let shared = norn_kernel::commit_check::evaluate_invariants(&catalog, &key, &values, &mut shared_budget).unwrap();
+        let mut law_budget = EvaluationBudget::default().units();
+        let governed = norn_kernel::governing_laws::evaluate(&catalog, &key, &values, &mut law_budget).unwrap();
+        prop_assert_eq!(governed.is_empty(), amount > 0);
+        prop_assert_eq!(shared.into_iter().map(|failure| failure.outcome).collect::<Vec<_>>(),
+            governed.into_iter().map(|failure| failure.outcome).collect::<Vec<_>>());
+        prop_assert_eq!(law_budget, shared_budget);
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #[test]
     fn law_commit_direct_positive_and_refusal_cases_are_atomic(amount in 1i64..200) {
