@@ -122,11 +122,7 @@ mod host {
     fn capture(file: &mut File, limit: usize) -> Result<String, &'static str> {
         file.rewind().map_err(|_error| "io")?;
         let mut bytes = Vec::new();
-        file.take(
-            u64::try_from(limit)
-                .map_err(|_error| "invalid_bound")?
-                .saturating_add(1),
-        )
+        file.take(u64::try_from(limit.saturating_add(1)).map_err(|_error| "invalid_bound")?)
         .read_to_end(&mut bytes)
         .map_err(|_error| "io")?;
         if bytes.len() > limit {
