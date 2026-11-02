@@ -7,10 +7,9 @@ export const Melt = Norn.type({
   implements: ["core.Conversion"],
   properties: Schema.Struct({
     id: Schema.String,
-    input_quantity: Norn.decimal(3),
-    output_quantity: Norn.decimal(3),
-    loss_quantity: Norn.decimal(3),
-    quantity_unit: Norn.ref("ucum.unit_code"),
+    input_quantity: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    output_quantity: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    loss_quantity: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
     status: Schema.Literals(["draft", "measured", "approved", "posted", "rejected"]),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
