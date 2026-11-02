@@ -45,6 +45,7 @@ pub mod quantity;
 pub mod reactive;
 mod reactive_read;
 pub mod read;
+mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod store;
