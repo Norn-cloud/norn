@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use http::StatusCode;
 use norn_cell::Model;
 use norn_checker::{
-    check_artifact_sources_with_receipt, prepare_artifact_source,
+    prepare_artifact_source, receipt::check_artifact_sources_with_receipt,
 };
 use norn_ir::{ArtifactEnvelope, EntityRoot, ResourceLimitProfile, RuntimeValue};
 
