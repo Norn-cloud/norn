@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 
-import coverage_manifest
 from verification_attestation import canonical_command, collect_git_identity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,21 +27,29 @@ def digest(value: object) -> str:
                                      ensure_ascii=False).encode()).hexdigest()
 
 
-def inputs() -> tuple[dict, dict, dict]:
-    coverage = coverage_manifest.load()
+def inputs(commit: str) -> tuple[dict, dict, dict]:
+    """Read one immutable Git tree, never mix live declarations and their pins."""
+    directory = "verification/coverage-v1/manifest"
+    raw = subprocess.run(["git", "archive", commit, "--", directory, *REGISTRIES,
+                          Path(__file__).resolve().relative_to(ROOT).as_posix()],
+                         cwd=ROOT, check=True, capture_output=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        blobs = {item.name: archive.extractfile(item).read() for item in archive if item.isfile()}
+    coverage = json.loads(blobs[f"{directory}/index.json"])
+    coverage["subsystems"] = [{"id": Path(name).stem, **json.loads(value)}
+                              for name, value in sorted(blobs.items())
+                              if name.startswith(f"{directory}/subsystems/")]
     statements = {}
-    paths = [*coverage_manifest.files(), *(ROOT / name for name in REGISTRIES), Path(__file__).resolve()]
     for name in REGISTRIES:
-        for item in json.loads((ROOT / name).read_bytes())["obligations"]:
+        for item in json.loads(blobs[name])["obligations"]:
             if item["id"] in statements:
                 raise ValueError(f"duplicate obligation: {item['id']}")
             statements[item["id"]] = item
-    pins = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in paths}
+    pins = {name: hashlib.sha256(value).hexdigest() for name, value in blobs.items()}
     return coverage, statements, pins
 
 
-def checked_result(path: Path | None, pins: dict) -> dict | None:
+def checked_result(path: Path | None, pins: dict, source: dict) -> dict | None:
     """Use the existing full result validator, including logs, tools and clean source."""
     if path is None:
         return None
@@ -51,10 +60,10 @@ def checked_result(path: Path | None, pins: dict) -> dict | None:
             [sys.executable, str(ROOT / "verification/coverage-v1/validate_result.py"), str(path)],
             cwd=ROOT, capture_output=True, timeout=300, check=False,
         )
-        if checked.returncode or path.read_bytes() != before or inputs()[2] != pins:
+        if checked.returncode or path.read_bytes() != before or inputs(source["commit"])[2] != pins:
             return None
         result = json.loads(before)
-        if collect_git_identity(ROOT) != result["git"]:
+        if collect_git_identity(ROOT) != source or result["git"] != source:
             return None
         return result
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
@@ -107,7 +116,21 @@ def project(coverage: dict, statements: dict, pins: dict, checked: dict | None) 
             "evidenceDigest": digest(checked) if checked else None,
             "toolPins": checked["tools"] if checked else {},
             "sourceIdentity": checked["git"] if checked else None,
-            "evidenceStatus": "current" if checked else "unknown_or_stale", "rows": rows}
+            "evidenceStatus": "checked_snapshot" if checked else "unknown_or_stale", "rows": rows}
+
+
+def generate(result: Path | None) -> dict:
+    """PROOF-STALE: a workspace change discards evidence; rows bind a frozen tree."""
+    source = collect_git_identity(ROOT)
+    coverage, statements, pins = inputs(source["commit"])
+    checked = checked_result(result, pins, source)
+    document = project(coverage, statements, pins, checked)
+    if checked and collect_git_identity(ROOT) != source:
+        document = project(coverage, statements, pins, None)
+    document["sourceIdentity"] = source
+    document["inputDigest"] = digest({"inputs": pins, "source": source,
+                                      "evidence": document["evidenceDigest"]})
+    return document
 
 
 def challenge_rows(challenge: dict) -> list[dict]:
@@ -131,15 +154,7 @@ def main() -> None:
     parser.add_argument("--result", type=Path, help="existing verification result; stale/missing means unknown")
     parser.add_argument("--challenge", type=Path, help="generated Challenge JSON; unsupported evidence stays unknown")
     args = parser.parse_args()
-    coverage, statements, pins = inputs()
-    source = collect_git_identity(ROOT)
-    checked = checked_result(args.result, pins)
-    if checked and checked["git"] != source:
-        checked = None
-    document = project(coverage, statements, pins, checked)
-    document["sourceIdentity"] = source
-    binding = {"inputs": pins, "source": source, "evidence": document["evidenceDigest"]}
-    document["inputDigest"] = digest(binding)
+    document = generate(args.result)
     if args.challenge:
         raw = sys.stdin.buffer.read() if str(args.challenge) == "-" else args.challenge.read_bytes()
         try:
@@ -148,7 +163,7 @@ def main() -> None:
             parser.error(str(error))
         challenge_digest = hashlib.sha256(raw).hexdigest()
         document["challengeDigest"] = challenge_digest
-        document["inputDigest"] = digest({**binding, "challenge": challenge_digest})
+        document["inputDigest"] = digest({"matrix": document["inputDigest"], "challenge": challenge_digest})
         document["generatedObligations"] = rows
     os.set_blocking(sys.stdout.fileno(), True)
     print(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2))

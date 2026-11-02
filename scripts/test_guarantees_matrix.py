@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """PROOF-BIND-1: named scenarios and generated projection properties."""
 import copy
+import json
 import random
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -48,7 +51,7 @@ class GuaranteesScenarios(unittest.TestCase):
     def test_proof_stale_validator_refusal_discards_all_evidence(self):
         with patch.object(matrix.subprocess, "run") as run, patch.object(Path, "read_bytes", return_value=b"{}"):
             run.return_value.returncode = 1
-            self.assertIsNone(matrix.checked_result(Path("old-result.json"), {}))
+            self.assertIsNone(matrix.checked_result(Path("old-result.json"), {}, {"commit": "frozen"}))
         run.assert_called_once()
         self.assertIn("validate_result.py", run.call_args.args[0][1])
 
@@ -56,7 +59,36 @@ class GuaranteesScenarios(unittest.TestCase):
         with patch.object(matrix.subprocess, "run") as run, patch.object(Path, "read_bytes", return_value=b"{}"), \
                 patch.object(matrix, "inputs", return_value=({}, {}, {"new": "digest"})):
             run.return_value.returncode = 0
-            self.assertIsNone(matrix.checked_result(Path("result.json"), {"old": "digest"}))
+            self.assertIsNone(matrix.checked_result(Path("result.json"), {"old": "digest"}, {"commit": "frozen"}))
+
+    def test_guarantees_committed_inputs_are_immutable_during_workspace_edits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = {"verification/coverage-v1/manifest/index.json": {},
+                     "verification/coverage-v1/manifest/subsystems/core.json": {"obligations": ["LAW"]},
+                     **{name: {"obligations": []} for name in matrix.REGISTRIES},
+                     "scripts/guarantees_matrix.py": {"snapshot": True}}
+            for name, value in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(value))
+            for command in [["git", "init", "-q"], ["git", "add", "."],
+                            ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"]]:
+                subprocess.run(command, cwd=root, check=True, capture_output=True)
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            with patch.object(matrix, "ROOT", root), patch.object(matrix, "__file__", str(root / "scripts/guarantees_matrix.py")):
+                before = matrix.inputs(commit)
+                (root / "verification/coverage-v1/manifest/subsystems/core.json").write_text("forged")
+                self.assertEqual(before, matrix.inputs(commit))
+
+    def test_guarantees_workspace_change_during_projection_discards_evidence(self):
+        coverage, statements, pins, checked = fixture()
+        with patch.object(matrix, "inputs", return_value=(coverage, statements, pins)), \
+                patch.object(matrix, "checked_result", return_value=checked), \
+                patch.object(matrix, "collect_git_identity", side_effect=[checked["git"], {"commit": "changed"}]):
+            result = matrix.generate(Path("result.json"))
+        self.assertEqual(result["rows"][0]["level"], "unknown")
+        self.assertEqual(result["evidenceStatus"], "unknown_or_stale")
 
     def test_guarantees_unclaimed_obligation_remains_visible_and_unknown(self):
         coverage, statements, pins, checked = fixture()
