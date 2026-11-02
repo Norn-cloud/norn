@@ -657,7 +657,7 @@ fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_fo
     let mut entity: norn_ir::EntityRootV2 = payload(target);
     let mut marker = entity.object_type.properties[0].clone();
     marker.id = PropertyId("registry_label".into());
-    marker.property_type = PropertyType::Ref { name: norn_ir::PropertyTypeName("demo.registry_code".into()) };
+    marker.property_type = PropertyType::Ref { name: norn_ir::PropertyTypeName("iso4217.currency_code".into()) };
     marker.constraints.nullable = true;
     entity.object_type.properties.push(marker);
     target.payload = ArtifactPayload::from_kind_json(&ArtifactKind::Entity, serde_json::from_value(serde_json::to_value(entity).expect("entity")).expect("wire")).expect("payload");
@@ -666,7 +666,7 @@ fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_fo
     let mut pack: CompositionPackRoot = payload(owner);
     pack.instances.as_mut().expect("instances")[0].type_unit_bindings.get_mut("Ledger").expect("binding").target = exact;
     set_pack(owner, pack);
-    let registry = BTreeSet::from([norn_ir::PropertyTypeName("demo.registry_code".into())]);
+    let registry = BTreeSet::from([norn_ir::PropertyTypeName("iso4217.currency_code".into())]);
     let mut law = base
         .iter()
         .find(|a| a.artifact_id == "demo.ledger.balance.law")
