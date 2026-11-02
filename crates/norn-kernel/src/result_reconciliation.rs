@@ -461,8 +461,9 @@ pub struct ResultRecord {
     pub reason: Option<RefusalReason>,
 }
 
-/// An accepted result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An accepted result. Deserialization is storage data, never authentication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Acceptance {
     /// The delivery the accepting commit consumes.
     pub consumed: Consumed,
