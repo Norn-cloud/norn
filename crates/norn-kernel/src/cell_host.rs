@@ -741,8 +741,6 @@ pub enum CommitError<X> {
         key: FactKey,
         /// The required role.
         link: String,
-        /// Whether the host proved absence, rather than returning unknown.
-        complete: bool,
     },
     /// An object is written through a type other than its live concrete type
     /// (#3018: one object, one concrete type; delete it first).

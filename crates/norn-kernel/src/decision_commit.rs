@@ -1741,7 +1741,7 @@ impl<X> DecisionRefusal<X> {
                 format!("link {key} exceeds its cardinality at {endpoint}"),
             ),
             CommitError::LinkRequired { parent: key, link }
-            | CommitError::RequiredLinkProof { key, link, .. } => Self::InvalidGraphLink {
+            | CommitError::RequiredLinkProof { key, link } => Self::InvalidGraphLink {
                 reason: format!("required link `{link}` has no proven target at {key}"),
                 key,
                 link,

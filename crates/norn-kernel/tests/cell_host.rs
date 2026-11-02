@@ -1104,7 +1104,7 @@ fn required_extension_links_refuse_missing_or_removed_last_targets()
         };
         let checked = check_commit(&missing, &required_model, &ExtensionView(None));
         assert!(
-            matches!(&checked, Err(CommitError::RequiredLinkProof { link, complete: true, .. }) if link == "demo__peer"),
+            matches!(&checked, Err(CommitError::RequiredLinkProof { link, .. }) if link == "demo__peer"),
             "POST-LINK-REQUIRED: missing on create: {checked:?}"
         );
         let remove = CellCommit::<(), (), ()> {
@@ -1122,10 +1122,27 @@ fn required_extension_links_refuse_missing_or_removed_last_targets()
                     &required_model,
                     &ExtensionView(Some(ObjectTypeName(source_type.into())))
                 ),
-                Err(CommitError::RequiredLinkProof { link, complete: true, .. }) if link == "demo__peer"
+                Err(CommitError::RequiredLinkProof { link, .. }) if link == "demo__peer"
             ),
             "POST-LINK-REQUIRED: last target removal"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn graph_link_unknown_required_presence_proof_refuses_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let types = law_object_types();
+    let extension = extension_link(true)?;
+    let catalog = TypeCatalog::new(&types).with_extensions([&extension]);
+    let commit = CellCommit::<(), (), ()> {
+        writes: vec![put(0, 1, 7)],
+        ..CellCommit::empty()
+    };
+    assert!(
+        matches!(check_commit(&commit, &CommitModel::new(&catalog), &FixedView),
+        Err(CommitError::RequiredLinkProof { link, .. }) if link == "demo__peer")
+    );
     Ok(())
 }

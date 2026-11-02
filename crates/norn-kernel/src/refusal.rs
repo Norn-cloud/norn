@@ -255,7 +255,7 @@ impl<X> Refusable for CommitError<X> {
             | Self::LinkTarget { key }
             | Self::LinkCardinality { key, .. } => Some((&key.source, key.link.as_str())),
             Self::LinkRequired { parent, link } => Some((parent, link.as_str())),
-            Self::RequiredLinkProof { key, link, .. } => Some((key, link.as_str())),
+            Self::RequiredLinkProof { key, link } => Some((key, link.as_str())),
             Self::DuplicateKey { .. }
             | Self::NotPending { .. }
             | Self::Conflict { .. }

@@ -1864,7 +1864,6 @@ fn check_required_links<E, C, T, V: CommitView + ?Sized>(
                 return Err(CommitError::RequiredLinkProof {
                     key: source,
                     link: role.to_owned(),
-                    complete: present.is_some(),
                 });
             }
         }

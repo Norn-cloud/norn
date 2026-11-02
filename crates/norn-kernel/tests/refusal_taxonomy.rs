@@ -537,7 +537,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
 proptest! {
     #[test]
     fn graph_link_codes_preserve_transport_and_exact_operands(
-        id in "[a-z0-9]{1,12}", role in "[a-z]{1,12}", complete in any::<bool>(),
+        id in "[a-z0-9]{1,12}", role in "[a-z]{1,12}",
     ) {
         let source = FactKey::new("test.Happening", id);
         let target = FactKey::new("test.Resource", "resource");
@@ -547,7 +547,7 @@ proptest! {
             CommitError::LinkTarget { key: link.clone() },
             CommitError::LinkCardinality { key: link, endpoint: target },
             CommitError::LinkRequired { parent: source.clone(), link: role.clone() },
-            CommitError::RequiredLinkProof { key: source.clone(), link: role.clone(), complete },
+            CommitError::RequiredLinkProof { key: source.clone(), link: role.clone() },
         ];
         for error in errors {
             let wire = error.refusal();
