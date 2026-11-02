@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-RULE-HIT-POLICY-SAFETY",
+    "runtime": "deferred",
+    "model": "deferred",
+    "proof": "deferred",
+    "residual": "Retired from active engine assurance by #3303. Original UPE/RuleIR evidence is archived for mathematics; current cell verification is kernel-v2, current evaluator is ZEN.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entryd0ded52d4c883379f2f4687208d08b36188155cb05fb875e8fb8168bbcc67fa6.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryd0ded52d4c883379f2f4687208d08b36188155cb05fb875e8fb8168bbcc67fa6.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryd0ded52d4c883379f2f4687208d08b36188155cb05fb875e8fb8168bbcc67fa6.evidence.proof"
+      }
+    }
+  }
+}

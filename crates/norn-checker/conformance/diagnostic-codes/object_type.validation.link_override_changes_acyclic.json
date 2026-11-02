@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.link_override_changes_acyclic",
+  "message": "link {link} overrides the one {owner} declares and changes its acyclic constraint; an override must preserve the inherited value",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

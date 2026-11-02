@@ -1,0 +1,4 @@
+{
+  "order": 5,
+  "value": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8"
+}

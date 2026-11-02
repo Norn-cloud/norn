@@ -24,8 +24,6 @@ use std::{
 
 use norn_checker::codes::{self, REGISTRY};
 
-const UPDATE_ENV: &str = "NORN_CHECKER_UPDATE_GOLDENS";
-
 /// Dotted lower-case literals in checker source that are not diagnostic
 /// codes. Every entry must still occur in the source, and the list must equal
 /// `tests/non_code_literals.baseline.json`, which CI keeps shrink-only
@@ -128,7 +126,7 @@ fn every_emitted_code_is_registered() {
         .collect();
     assert!(
         unregistered.is_empty(),
-        "dotted literals that are neither registered codes (src/codes.rs REGISTRY) nor \
+        "dotted literals that are neither registered codes (conformance/diagnostic-codes/) nor \
          listed non-code literals:\n{}",
         unregistered.join("\n")
     );
@@ -186,7 +184,7 @@ fn non_code_literals_match_the_shrink_only_baseline() {
     assert!(
         unbaselined.is_empty(),
         "NON_CODE_LITERALS entries missing from {} (the baseline is shrink-only; register \
-         new codes in src/codes.rs instead): {unbaselined:?}",
+         new codes in conformance/diagnostic-codes/ instead): {unbaselined:?}",
         path.display()
     );
     let stale: Vec<&&str> = baseline.difference(&listed).collect();
@@ -197,24 +195,74 @@ fn non_code_literals_match_the_shrink_only_baseline() {
     );
 }
 
+#[path = "../build.rs"]
+mod registry_build;
+
 #[test]
-fn conformance_manifest_is_checked_in_and_current() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance/diagnostic-codes.json");
-    let manifest = codes::conformance_manifest();
-    if std::env::var_os(UPDATE_ENV).is_some() {
-        let mut rendered =
-            serde_json::to_string_pretty(&manifest).expect("manifest should serialize");
-        rendered.push('\n');
-        fs::write(&path, rendered).expect("manifest should be writable");
-        return;
-    }
-    // Compared as JSON values, so the check is independent of key order.
-    let checked_in: Option<serde_json::Value> = fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok());
-    assert!(
-        checked_in.as_ref() == Some(&manifest),
-        "{} is stale; regenerate with `{UPDATE_ENV}=1 cargo test -p norn-checker --test code_registry`",
-        path.display()
+fn conformance_directory_matches_the_public_manifest() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance/diagnostic-codes");
+    let mut files: Vec<_> = fs::read_dir(path)
+        .expect("code directory")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    files.sort();
+    let codes: Vec<serde_json::Value> = files
+        .iter()
+        .map(|path| {
+            serde_json::from_str(&fs::read_to_string(path).expect("code bytes")).expect("code JSON")
+        })
+        .collect();
+    assert_eq!(
+        codes::conformance_manifest()["codes"],
+        serde_json::json!(codes)
     );
+}
+
+#[test]
+fn registry_generation_refuses_invalid_entries() {
+    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0"});
+    for change in [
+        "valid",
+        "identity",
+        "tier",
+        "severity",
+        "message",
+        "missing",
+        "unknown",
+        "duplicate-key",
+        "directory",
+    ] {
+        let temp =
+            std::env::temp_dir().join(format!("norn-registry-{}-{change}", std::process::id()));
+        fs::create_dir(&temp).expect("fixture directory");
+        let path = temp.join("toy.validation.invalid.json");
+        let mut value = base.clone();
+        match change {
+            "identity" => value["code"] = serde_json::json!("other.validation.invalid"),
+            "tier" => value["tier"] = serde_json::json!("T8"),
+            "severity" => value["severity"] = serde_json::json!("fatal"),
+            "message" => value["message"] = serde_json::json!(""),
+            "missing" => {
+                value.as_object_mut().expect("object").remove("since");
+            }
+            "unknown" => value["extra"] = serde_json::json!(true),
+            _ => {}
+        }
+        if change == "directory" {
+            fs::create_dir(&path).expect("invalid directory");
+        } else {
+            let text = if change == "duplicate-key" {
+                format!(
+                    "{{\"code\":\"toy.validation.invalid\",{}",
+                    value.to_string().strip_prefix('{').expect("object prefix")
+                )
+            } else {
+                value.to_string()
+            };
+            fs::write(&path, text).expect("fixture entry");
+        }
+        let result = registry_build::generate(&temp);
+        fs::remove_dir_all(temp).expect("cleanup fixture");
+        assert_eq!(result.is_ok(), change == "valid", "{change}: {result:?}");
+    }
 }

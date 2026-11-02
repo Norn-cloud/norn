@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.kind_mismatch",
+  "message": "envelope kind '{kind}' does not match its payload root '{payloadKind}'",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
