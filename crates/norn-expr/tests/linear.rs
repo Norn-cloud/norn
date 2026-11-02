@@ -49,8 +49,7 @@ fn linear_profile_refuses_calls_nonlinearity_and_dynamic_or_opaque_operands() {
     ] {
         assert!(linear_guard(expression, &env()).is_err(), "{expression}");
     }
-    let short = linear_guard("true or 1 / 0 > 0", &env()).expect("short-circuit definedness");
-    assert!(short.predicate().contains("(or true"));
+    assert!(linear_guard("true or 1 / 0 > 0", &env()).is_err());
 }
 proptest::proptest! {
     #[test]
