@@ -45,6 +45,8 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
                 "core.Hold.interface",
                 "core.LedgerEffect.interface",
                 "core.Claim.interface",
+                "core.Conversion.interface",
+                "core.law.conversion_conservation.law",
             ]
             .contains(&a.artifact_id.as_str())
     });
