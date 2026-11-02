@@ -414,7 +414,8 @@ impl rusqlite::types::ToSql for SqlValue {
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
-        let external = self.conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let external: i64 = self.conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let external = u64::try_from(external).map_err(|_negative| CellError::OutOfRange("SQLite cache revision"))?;
         Ok(Some((self.conn.total_changes(), external)))
     }
 

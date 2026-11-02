@@ -1233,7 +1233,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self
     }
 
-    pub(crate) const fn with_transaction_source_disputes(mut self, index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>) -> Self {
+    pub(crate) const fn with_transaction_source_disputes(
+        mut self,
+        index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    ) -> Self {
         self.source_disputes = Some(index);
         self.source_disputes_transaction = true;
         self
