@@ -656,7 +656,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: norn_kernel::LogicalTime,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
-        let Some(receipt) = self.receipt_for_fact_version_with_budget(
+        let Some(evidence) = self.fact_version_evidence_with_budget(
             world,
             fact.object_type.as_str(),
             &fact.key,
@@ -666,16 +666,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         };
-        if receipt.body.logical_time > known_as_of.as_millis() {
+        if evidence.receipt.body.logical_time > known_as_of.as_millis() {
             return Err(CellError::TemporalLeakage);
         }
-        self.object_at_version_with_budget(
-            world,
-            fact.object_type.as_str(),
-            &fact.key,
-            version,
-            budget,
-        )
+        let snapshot = evidence.snapshot;
+        Ok(match snapshot.values {
+            Some(values) => crate::reactive::BudgetedRead::Found(ObjectRecord {
+                object_type: snapshot.object_type,
+                id: snapshot.key,
+                scope: snapshot.scope,
+                version: snapshot.version,
+                values,
+            }),
+            None => crate::reactive::BudgetedRead::Missing,
+        })
     }
 
     /// Authenticate a complete snapshot against engine-materialized committed values.
