@@ -459,7 +459,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     ] {
         let mut before = cell.store().read().dump().expect("before");
         assert!(
-            commit_action(&mut cell, &catalog, &call(usd, &all, key, values(input)), &Policy).is_err()
+            commit_action(&mut cell, &catalog, &call(usd, &all, key, values(input)), &Policy).is_err(), "{key} must refuse"
         );
         let mut after = cell.store().read().dump().expect("atomic refusal");
         for event in after["_norn_ledger"].iter().skip(before["_norn_ledger"].len()) {
