@@ -1301,7 +1301,7 @@ fn graph_state_posted_observation(object_type: &ObjectTypeDef, posted: &str, rep
         |event| matches!(event, ObservationEvent::DataQualityFinding { fact }
         if matches!(&fact.outcome, DataQualityOutcome::ObservedOutOfBand { from, state, .. }
             if from.as_deref() == Some(posted) && state == reported)
-        && fact.provenance[0].source == provenance)
+        && fact.provenance == vec![DataQualityLineage::new(provenance.clone(), vec!["report".into()])])
     ));
     assert!(
         !events
