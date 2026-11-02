@@ -36,7 +36,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     set_pack(&mut pack, CompositionPackRoot {
         pack_id: "demo.ledger.pack".into(), pack_version: "1.0.0".into(), pack_kind: None, provides: None,
         type_parameters: [ ("Ledger", "demo.GenericLedger"), ("Account", "demo.GenericAccount") ].into_iter().map(|(slot, name)| (slot.into(), MemberRef { artifact_id: format!("{name}.interface"), version: "1.0.0".into(), member: Member::Type { type_name: name.into() } })).collect(),
-        artifacts: ["demo.GenericLedger.interface", "demo.GenericAccount.interface"].into_iter().map(|id| PackArtifactRef { artifact_id: id.into(), version: "1.0.0".into(), kind: PackArtifactKind::Entity, additional: BTreeMap::new() }).collect(), instances: None, extensions: None,
+        artifacts: [("demo.GenericLedger.interface", PackArtifactKind::Entity), ("demo.GenericAccount.interface", PackArtifactKind::Entity), ("demo.ledger.balance.law", PackArtifactKind::Law)].into_iter().map(|(id, kind)| PackArtifactRef { artifact_id: id.into(), version: "1.0.0".into(), kind, additional: BTreeMap::new() }).collect(), instances: None, extensions: None,
     });
     let instances = [("ledger-usd", "Usd"), ("ledger-fine", "Fine")].into_iter().map(|(id, prefix)| {
         let bindings = [("Ledger", "Transfer"), ("Account", "Account")].into_iter().map(|(slot, suffix)| {
