@@ -12,12 +12,13 @@
 //! execution decodes them to exact runtime numbers. Numeric JSON tokens refuse.
 //! PARAM-EXACT-1: numeric settings retain their literal through admission and
 //! decode to the common exact runtime profile without rounding. Other value
-//! kinds retain their existing wire representation.
+//! kinds retain their existing value representation. Wire version 0.2 refuses
+//! retained 0.1 payloads; callers must explicitly re-author and supersede them.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::members::{IrVersion01, present_non_null};
+use crate::members::{IrVersion02, present_non_null};
 use crate::rule::JsonObject;
 use crate::{Decimal, DecimalLiteral, JsonValue, RuntimeValue, RuntimeValueError};
 
@@ -25,7 +26,7 @@ use crate::{Decimal, DecimalLiteral, JsonValue, RuntimeValue, RuntimeValueError}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "SettingRootWire", into = "SettingRootWire")]
 pub struct SettingRoot {
-    pub setting_version: IrVersion01,
+    pub setting_version: IrVersion02,
     pub setting_key: String,
     /// The value, tagged by its wire `valueType`.
     pub value: SettingValue,
@@ -128,7 +129,7 @@ impl SettingValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SettingRoot")]
 struct SettingRootWire {
-    setting_version: IrVersion01,
+    setting_version: IrVersion02,
     setting_key: String,
     value_type: SettingValueType,
     /// Numbers use exact `DecimalLiteral` strings; other branches retain their

@@ -5,7 +5,7 @@ use norn_checker::parameter::{
     ParameterCandidate, ParameterContext, ParameterError, resolve_parameter,
 };
 use norn_ir::{
-    DecimalLiteral, IrVersion01, RuntimeObject, RuntimeValue, ScopeRef, SettingReview,
+    DecimalLiteral, IrVersion02, RuntimeObject, RuntimeValue, ScopeRef, SettingReview,
     SettingReviewState, SettingRoot, SettingValue,
 };
 
@@ -35,7 +35,7 @@ fn project(record: &Record) -> Result<(SettingRoot, ScopeRef), ParameterError> {
     };
     Ok((
         SettingRoot {
-            setting_version: IrVersion01::V0_1,
+            setting_version: IrVersion02::V0_2,
             setting_key: required("setting_key")?,
             value: SettingValue::Number(DecimalLiteral(value.canonical())),
             effective_from: required("effective_from")?,
