@@ -131,6 +131,7 @@ fn prepare(
 
 /// ANALYTICS-FUNCTION-2: real metered evidence for `CellHost::perform`.
 /// RSS is the Linux process peak; invalid temporal evidence leaves scores absent.
+/// Oversized reports yield `ResourceExhausted`, without a successful summary.
 /// # Errors
 /// Invalid scope/dispatch/table pins, metering, or encoding.
 pub fn perform_forecast(
@@ -259,6 +260,31 @@ mod tests {
             })
             .expect("enqueue");
         store
+    }
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn oversized_real_report_returns_a_valid_exhaustion_receipt(holdouts in 160usize..192) {
+            let (plan, mut rows) = crate::producer::tests::fixture();
+            let held_out = rows.last().expect("holdout").clone();
+            for i in 0..holdouts {
+                let mut row = held_out.clone();
+                row.key = format!("{}-{i}", "x".repeat(240));
+                rows.push(row);
+            }
+            let digest = crate::host::implementation_digest().expect("code");
+            let export = export(&plan, &rows, &digest, 1);
+            let admitted = norn_checker::function::admit_function_manifest(&crate::host::manifest().expect("manifest")).expect("admission");
+            let (input, blob) = export.input(6_000_000).expect("bounded input");
+            let mut invocation: FunctionInvocation = serde_json::from_str(include_str!("../../../fixtures/function/invocation.effectful.json")).expect("invocation");
+            invocation.manifest = admitted.digest.clone(); invocation.retry.max_attempts = 1; invocation.provenance_commit = 1;
+            invocation.inputs = norn_ir::runtime::encode(&input).expect("input").as_object().expect("object").clone();
+            invocation.blobs = [("table".into(), blob)].into();
+            let result = perform_forecast(&invocation, &export, "unit-host", 10_000).expect("measured attempt");
+            proptest::prop_assert!(matches!(result.outcome, FunctionOutcome::ResourceExhausted { resource: ExhaustedResource::Output }), "oversized report must exhaust output");
+            proptest::prop_assert!(result.resources.output_bytes > norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES);
+            proptest::prop_assert!(norn_checker::function::check_function_receipt(&result, &invocation, &admitted).is_empty());
+        }
     }
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(16))]

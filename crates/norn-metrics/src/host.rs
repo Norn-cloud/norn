@@ -31,7 +31,7 @@ pub struct ForecastInput {
 
 /// Typed summary accepted by a governed publication action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "receipt schema carries independent source-quality and diagnostic facts"
@@ -164,9 +164,9 @@ pub fn manifest() -> Result<FunctionManifest, CanonicalJsonError> {
     Ok(FunctionManifest {
         abi: FUNCTION_ABI_V1.into(),
         function_id: "core.analytics.ols_forecast".into(),
-        version: 3,
+        version: 4,
         input_schema: schema::<ForecastInput>("core.analytics.ForecastInput", 1)?,
-        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 3)?,
+        output_schema: schema::<ForecastSummary>("core.analytics.ForecastSummary", 4)?,
         error_schema: schema::<ForecastFailure>("core.analytics.ForecastFailure", 1)?,
         implementation: Implementation {
             format: ImplementationFormat::Host,
