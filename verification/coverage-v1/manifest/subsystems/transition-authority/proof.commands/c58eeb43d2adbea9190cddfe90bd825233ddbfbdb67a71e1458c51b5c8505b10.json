@@ -1,4 +1,0 @@
-{
-  "order": 5,
-  "value": "kani --harness foreign_cell_never_matches verification/cell-boundary-v1/origin_kani.rs"
-}

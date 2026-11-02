@@ -1,10 +1,7 @@
 //! CELL-QUALIFY-1: exported commands and foreign inbox deduplication use envelopes.
 
 use crate::{CellError, CellStore, EffectRow, OutboxCommand, engine::SqlEngine};
-use norn_ir::{
-    RuntimeValue,
-    cell_reference::{CellReference, QualifiedCommit, ReferenceNamespace},
-};
+use norn_ir::cell_reference::{CellReference, QualifiedCommit, ReferenceNamespace};
 use serde::{Deserialize, Serialize};
 
 /// A committed outgoing command with portable identity and foreign deduplication key.
@@ -99,14 +96,14 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// Wrong reference namespace, invalid payload, or storage failure.
-    pub fn inject_foreign(
+    pub fn inject_foreign<I: Serialize>(
         &mut self,
         reference: &CellReference,
-        observed: &RuntimeValue,
+        observed: &norn_kernel::Observed<I>,
     ) -> Result<bool, CellError> {
-        if reference.namespace != ReferenceNamespace::Inbox {
+        if reference.namespace != ReferenceNamespace::Inbox || reference.local != observed.id.0 {
             return Err(CellError::Encoding(
-                "foreign delivery requires an inbox reference".to_owned(),
+                "foreign delivery requires its matching inbox reference".to_owned(),
             ));
         }
         if self.cell_id()?.is_none() {
@@ -114,6 +111,13 @@ impl<E: SqlEngine> CellStore<E> {
                 "foreign delivery requires a bound target cell".to_owned(),
             ));
         }
-        self.inject(reference.content_digest()?.as_str(), observed)
+        let identity = reference.content_digest()?;
+        let qualified = norn_kernel::Observed {
+            id: norn_kernel::ObservationId(identity.0.clone()),
+            provenance: observed.provenance.clone(),
+            input: &observed.input,
+        };
+        let payload = norn_ir::runtime::encode(&qualified).map_err(CellError::Encoding)?;
+        self.inject(identity.as_str(), &payload)
     }
 }

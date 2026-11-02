@@ -409,6 +409,19 @@ impl<E, C, I: Serialize, S: SqlEngine> SqliteCell<E, C, I, S> {
     pub fn inject(&mut self, observed: &Observed<I>) -> Result<bool, CellError> {
         self.store.inject(&observed.id.0, &to_runtime(observed)?)
     }
+
+    /// Ingest a delivery from an authenticated foreign cell. Its observation id
+    /// is qualified in both the inbox and the delivery consumed by the kernel.
+    ///
+    /// # Errors
+    /// Invalid origin reference, unbound target, serialization or storage failure.
+    pub fn inject_foreign(
+        &mut self,
+        reference: &norn_ir::cell_reference::CellReference,
+        observed: &Observed<I>,
+    ) -> Result<bool, CellError> {
+        self.store.inject_foreign(reference, observed)
+    }
 }
 
 /// The store's consumption reference for a kernel one.

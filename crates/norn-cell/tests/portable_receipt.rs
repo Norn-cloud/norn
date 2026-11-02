@@ -92,7 +92,21 @@ fn same_local_commit_and_operation_have_distinct_portable_identities() {
 
 #[test]
 fn foreign_inbox_deduplication_uses_cell_and_world() {
-    let mut target = store(3);
+    use norn_kernel::{
+        CellCommit, CellHost as _, Consumed, LogicalTime, ObservationId, Observed, Provenance,
+    };
+    let mut target: norn_cell::SqliteCell<(), (), RuntimeValue> =
+        norn_cell::SqliteCell::new(store(3), "", |_| RuntimeValue::Null).expect("host");
+    let observed = Observed {
+        id: ObservationId("same-id".into()),
+        provenance: Provenance {
+            source: "synthetic".into(),
+            source_id: "same-id".into(),
+            observed_at: LogicalTime::from_millis(0),
+            mapping_version: "v1".into(),
+        },
+        input: RuntimeValue::Null,
+    };
     let first = CellReference::new(
         id(1),
         "main".into(),
@@ -103,25 +117,36 @@ fn foreign_inbox_deduplication_uses_cell_and_world() {
     second.cell = id(2);
     let mut fork = first.clone();
     fork.world = "fork".into();
+    assert!(target.inject_foreign(&first, &observed).expect("first"));
+    assert!(!target.inject_foreign(&first, &observed).expect("retry"));
     assert!(
         target
-            .inject_foreign(&first, &RuntimeValue::Null)
-            .expect("first")
-    );
-    assert!(
-        !target
-            .inject_foreign(&first, &RuntimeValue::Null)
-            .expect("retry")
-    );
-    assert!(
-        target
-            .inject_foreign(&second, &RuntimeValue::Null)
+            .inject_foreign(&second, &observed)
             .expect("other cell")
     );
     assert!(
         target
-            .inject_foreign(&fork, &RuntimeValue::Null)
+            .inject_foreign(&fork, &observed)
             .expect("other world")
+    );
+    for origin in [&first, &second, &fork] {
+        let delivery = target.observe().expect("observe").expect("pending");
+        assert_eq!(
+            delivery.id.0,
+            origin.content_digest().expect("qualified id").0
+        );
+        target
+            .commit(CellCommit {
+                consumes: Some(Consumed::Observation { id: delivery.id }),
+                ..CellCommit::empty()
+            })
+            .expect("consume qualified delivery");
+    }
+    assert!(target.observe().expect("empty inbox").is_none());
+    assert!(
+        !target
+            .inject_foreign(&first, &observed)
+            .expect("consumed retry")
     );
 }
 
