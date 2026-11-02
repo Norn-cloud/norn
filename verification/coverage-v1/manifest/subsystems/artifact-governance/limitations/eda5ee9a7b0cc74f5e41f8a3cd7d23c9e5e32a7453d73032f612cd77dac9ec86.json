@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "The Turso snapshot store, its pre-v7 receipt-less snapshot decoding path, and HTTP transport authentication were removed in PR #2764; no persisted-snapshot migration or transport-authentication claim is retained. Only the in-memory legacy-artifact case (visible for migration, not executable) remains tested."
+}

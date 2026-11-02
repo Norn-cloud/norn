@@ -1,0 +1,4 @@
+{
+  "order": 7,
+  "value": "quint verify verification/quantity-batch-atomicity-v1/models/quantity-batch-atomicity.qnt --backend apalache --invariants typeOk sequentialVersions batchAllOrNone stableReceipt --max-steps 8"
+}

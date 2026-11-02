@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/authz-v1/models/authorization-scope-exactness.qnt",
+    "command": "quint verify verification/authz-v1/models/authorization-scope-exactness.qnt --backend apalache --invariants typeOk allowIffExact omittedGrantTenantRejectsPresentRequest omittedGrantSessionRejectsPresentRequest --max-steps 4",
+    "selectors": {
+      "$entries": "obligationClaims.entry2748324a5f1db7755c7f65e155708b3a86a58a18d8db082feb461f9bf54d6393.evidence.model.entryab436efeb679174aa0de18ffa1355c3d13363697fff15564aab76ddd8fe86495.selectors"
+    }
+  }
+}

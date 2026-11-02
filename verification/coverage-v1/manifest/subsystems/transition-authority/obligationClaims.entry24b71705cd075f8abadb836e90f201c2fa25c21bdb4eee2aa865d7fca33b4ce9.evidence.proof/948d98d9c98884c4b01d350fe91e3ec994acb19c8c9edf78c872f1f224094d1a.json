@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+    "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/DomainEngineBoundary.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry24b71705cd075f8abadb836e90f201c2fa25c21bdb4eee2aa865d7fca33b4ce9.evidence.proof.entry948d98d9c98884c4b01d350fe91e3ec994acb19c8c9edf78c872f1f224094d1a.selectors"
+    }
+  }
+}

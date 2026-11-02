@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "INV-AUTH-SCOPE-CLOSED remains partial until every authoritative store trait, primary/unique identity, and lookup path passes a scoped-key audit; the public ScopeKey/scope registry alias checks and cell tenant-binding regression are only closed slices."
+}

@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-QL-AUTHORITY-BRIDGE-ATOMIC",
+    "runtime": "partial",
+    "model": "exhaustive_bounded",
+    "proof": "missing",
+    "residual": "The pure reopen-observation checker exhausts the admitted partial-record state space, with bounded/reference formal evidence. The Norn-owned snapshot port's failure/lost-reply/reopen tests were removed in #2764 (not currently covered) together with the Turso adapter. No persisted CALA posting transaction or normalized same-transaction CALA bridge exists.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrydd5842017bb93daf0e852d704f2ada72154faff3518be0f48d1dfbe7c0abab98.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrydd5842017bb93daf0e852d704f2ada72154faff3518be0f48d1dfbe7c0abab98.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrydd5842017bb93daf0e852d704f2ada72154faff3518be0f48d1dfbe7c0abab98.evidence.proof"
+      }
+    }
+  }
+}
