@@ -258,9 +258,6 @@
     "crates/norn-api/src/contracts.rs",
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/openapi.rs",
-    "crates/norn-api/src/refusal.rs",
-    "crates/norn-api/src/scope.rs",
-    "crates/norn-api/tests/host_perimeter.rs",
     "crates/norn-canonical/Cargo.toml",
     "crates/norn-canonical/src/lib.rs",
     "crates/norn-canonical/src/number.rs",
@@ -284,7 +281,6 @@
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
-    "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
@@ -504,6 +500,10 @@
     "verification/kernel-l1/VersionProof.lean",
     "verification/kernel-l1/history_selection_kani.rs",
     "verification/kernel-l1/version_kani.rs",
-    "verification/kernel-l1/version_verus.rs"
+    "verification/kernel-l1/version_verus.rs",
+    "crates/norn-cell/tests/temporal_source_world.rs",
+    "crates/norn-api/src/refusal.rs",
+    "crates/norn-api/src/scope.rs",
+    "crates/norn-api/tests/host_perimeter.rs"
   ]
 }
