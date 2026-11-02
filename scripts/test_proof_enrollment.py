@@ -276,8 +276,8 @@ class AffectedPlanTests(unittest.TestCase):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
         plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
         plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
-        tools = self.root / "tools"
-        tools.mkdir()
+        tools = self.root / "cargo-home" / "bin"
+        tools.mkdir(parents=True)
         cargo = tools / "cargo"
         cargo.write_text('''#!/usr/bin/env python3
 import json, os, sys
@@ -295,7 +295,7 @@ else:
 ''')
         cargo.chmod(0o755)
         for fail in ("0", "1"):
-            environment = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            environment = {**os.environ, "CARGO_HOME": str(tools.parent),
                            "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
             result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
                                     env=environment, capture_output=True, text=True, timeout=10)
