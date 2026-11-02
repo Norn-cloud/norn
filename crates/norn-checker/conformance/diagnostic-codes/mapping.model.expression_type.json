@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.expression_type",
+  "message": "{expression}: {detail} ({code})",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

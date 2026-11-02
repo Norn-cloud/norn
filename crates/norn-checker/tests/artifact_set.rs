@@ -526,3 +526,114 @@ fn a_narrower_scope_sees_a_broader_one_but_not_the_reverse() {
     // An unscoped artifact sees only unscoped ones.
     assert!(scope_conflict(&ScopeRef::default(), &registry).is_some());
 }
+
+fn instance_case(cycle: bool, suffix: &str) -> Value {
+    let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
+    let original = read_json(&fixtures().join("ir/retail-core.business_pack.json"));
+    let mut leaf = original["payload"].clone();
+    leaf["packId"] = json!("retail.pack.leaf");
+    let entry = json!({"fixture":"ir/retail-core.business_pack.json",
+        "patch":{"artifactId":"retail.pack.leaf", "payload":leaf}});
+    let pin = norn_checker::receipt::ArtifactRef::of(&artifact(&entry)).expect("pin");
+    let pin = json!({"artifactId":pin.artifact_id,"version":pin.version,"sha256":pin.sha256});
+    let a = json!({"instanceId":format!("a:{suffix}"), "pack":pin});
+    let b = json!({"instanceId":format!("b:{suffix}"), "pack":pin});
+    let declarations = json!([
+        {"instanceId":a["instanceId"],"scope":original["scope"],"pack":pin,"imports":{},"instances":[b]},
+        {"instanceId":b["instanceId"],"scope":original["scope"],"pack":pin,
+         "imports":if cycle {json!({"back":a})} else {json!({})},"instances":[]}
+    ]);
+    let mut payload = original["payload"].clone();
+    payload["instances"] = declarations;
+    case["artifacts"][0] =
+        json!({"fixture":"ir/retail-core.business_pack.json","patch":{"payload":payload}});
+    case["artifacts"]
+        .as_array_mut()
+        .expect("artifacts")
+        .push(entry);
+    case
+}
+
+#[test]
+fn pack_pin_1_shared_contract_and_structural_refusals() {
+    let valid = instance_case(false, "opaque");
+    assert_eq!(run(&valid), Vec::<Vec<String>>::new());
+    for (field, value, code) in [
+        (
+            "instanceId",
+            json!("a:opaque"),
+            "core.composition.duplicate_instance",
+        ),
+        (
+            "pack",
+            json!({"artifactId":"absent","version":"0.1.0","sha256":"0".repeat(64)}),
+            "core.composition.unresolved_pin",
+        ),
+        (
+            "scope",
+            json!({"orgId":"different"}),
+            "core.composition.unresolved_pin",
+        ),
+        (
+            "instances",
+            json!([{"instanceId":"missing","pack":valid["artifacts"][0]["patch"]["payload"]["instances"][0]["pack"]}]),
+            "core.composition.unresolved_pin",
+        ),
+    ] {
+        let mut case = valid.clone();
+        case["artifacts"][0]["patch"]["payload"]["instances"][1][field] = value;
+        assert!(
+            run(&case).iter().any(|finding| finding[1] == code),
+            "{field}"
+        );
+    }
+    assert!(
+        run(&instance_case(true, "opaque"))
+            .iter()
+            .any(|finding| finding[1] == "core.composition.instance_cycle")
+    );
+    let declaration = valid["artifacts"][0]["patch"]["payload"]["instances"][0].clone();
+    for pointer in [
+        "/unexpected",
+        "/pack/unexpected",
+        "/scope/unexpected",
+        "/instances/0/unexpected",
+    ] {
+        let mut wire = declaration.clone();
+        let (parent, key) = pointer.rsplit_once('/').expect("pointer");
+        wire.pointer_mut(parent)
+            .expect("parent")
+            .as_object_mut()
+            .expect("object")
+            .insert(key.into(), json!(true));
+        assert!(serde_json::from_value::<norn_ir::PackInstance>(wire).is_err());
+    }
+    let decoded: norn_ir::PackInstance =
+        serde_json::from_value(declaration.clone()).expect("contract");
+    assert_eq!(serde_json::to_value(decoded).expect("wire"), declaration);
+    let mut retained = valid.clone();
+    let leaf = retained["artifacts"]
+        .as_array_mut()
+        .expect("artifacts")
+        .pop()
+        .expect("leaf");
+    retained["base"] = json!([leaf]);
+    assert!(run(&retained).is_empty());
+    let mut self_cycle = valid;
+    let node = &mut self_cycle["artifacts"][0]["patch"]["payload"]["instances"][0];
+    node["instances"][0]["instanceId"] = node["instanceId"].clone();
+    assert!(
+        run(&self_cycle)
+            .iter()
+            .any(|f| f[1] == "core.composition.instance_cycle")
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn pack_pin_1_generated_graph_cycles_refuse(cycle in proptest::bool::ANY, suffix in "[a-z0-9]{1,12}") {
+        let findings = run(&instance_case(cycle, &suffix));
+        proptest::prop_assert_eq!(findings.iter().any(|finding| finding[1] == "core.composition.instance_cycle"), cycle);
+        if !cycle { proptest::prop_assert!(findings.is_empty()); }
+    }
+}

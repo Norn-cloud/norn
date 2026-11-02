@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.unknown_slice_kind",
+  "message": "the action slice names an object type that is not in the artifact set or installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

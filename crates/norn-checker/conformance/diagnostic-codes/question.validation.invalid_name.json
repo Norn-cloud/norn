@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.invalid_name",
+  "message": "Question names must be lower-case identifiers, optionally namespaced.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

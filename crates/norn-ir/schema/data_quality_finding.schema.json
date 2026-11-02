@@ -278,6 +278,35 @@
       "description": "A stable reference to the constraint or rule that produced a finding.",
       "oneOf": [
         {
+          "description": "OBS-EVIDENCE-1: preserve the governing law identity and exact definition\npin when imported truth produces a finding rather than a refusal.\nA reference alone does not establish evaluation or enforcement.",
+          "type": "object",
+          "properties": {
+            "artifactId": {
+              "description": "Artifact containing the governing LawIR.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "lawId": {
+              "description": "Stable LawIR identity, independent of its artifact name.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Canonical declaration digest, including its scope and predicate.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId",
+            "lawId",
+            "version"
+          ]
+        },
+        {
           "description": "An EntityIR invariant pinned by artifact version or declaration digest.",
           "type": "object",
           "properties": {

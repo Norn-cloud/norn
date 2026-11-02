@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unknown_node_type",
+  "message": "node type {type} is not a JDM node type; the Norn profile admits inputNode, outputNode, expressionNode, decisionTableNode, switchNode, and decisionNode",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

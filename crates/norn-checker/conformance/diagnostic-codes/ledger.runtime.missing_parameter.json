@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.missing_parameter",
+  "message": "missing runtime parameter `{parameterId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}
