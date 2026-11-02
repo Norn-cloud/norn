@@ -6305,7 +6305,7 @@ fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
     let pending = store.read().pending_observations().expect("inbox");
     assert_eq!(pending.len(), 1);
     let captured: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("guard envelope");
-    let proof = captured.input.to_json_value();
+    let proof = serde_json::to_value(&captured.input).expect("JSON proof");
     assert_eq!(proof["identity"][1], json!([101, 204, 129]));
     assert_eq!(proof["bundle"]["input"]["partition"], "é");
     let mut altered = captured.clone();
