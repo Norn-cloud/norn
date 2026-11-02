@@ -61,11 +61,12 @@ impl VM {
         let policy = self
             .meter
             .as_ref()
-            .filter(|m| m.arithmetic().is_some() || m.exact_arithmetic());
-        if let Some(meter) = policy.filter(|m| !m.exact_arithmetic()) {
-            check_scaled_value(scope.base(), meter)?;
+            .filter(|meter| !meter.exact_arithmetic())
+            .and_then(|m| m.arithmetic().map(|p| (m, p)));
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(scope.base(), meter, profile)?;
             for (_, local) in scope.locals() {
-                check_scaled_value(local, meter)?;
+                check_scaled_value(local, meter, profile)?;
             }
         }
         #[allow(unused_mut)]
@@ -75,29 +76,24 @@ impl VM {
         }
 
         let output = inner.run(scope)?;
-        if let Some(meter) = policy {
-            check_scaled_value(&output, meter)?;
+        if let Some((meter, profile)) = policy {
+            check_scaled_value(&output, meter, profile)?;
         }
         Ok(output)
     }
 }
 
-fn check_scaled_value(value: &Variable, meter: &crate::meter::Meter) -> VMResult<()> {
+fn check_scaled_value(
+    value: &Variable,
+    meter: &crate::meter::Meter,
+    profile: crate::scaled::ScaledArithmetic,
+) -> VMResult<()> {
     let mut pending = vec![value.clone()];
     while let Some(value) = pending.pop() {
         meter.charge(1).map_err(BudgetExhausted)?;
         match value {
             Number(number) => {
-                let result = if meter.exact_arithmetic() {
-                    crate::scaled::ScaledArithmetic::exact_result_scale("Add", number.scale(), 0)
-                        .map(|_| ())
-                } else {
-                    meter
-                        .arithmetic()
-                        .ok_or("missing arithmetic site")
-                        .and_then(|p| p.coefficient(number).map(|_| ()))
-                };
-                result.map_err(|message| OpcodeErr {
+                profile.coefficient(number).map_err(|message| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
                 })?;
@@ -223,6 +219,16 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     }
                     Opcode::In if exact => {
                         return Err(failure("membership outside the exact arithmetic profile"))
+                    }
+                    Opcode::Negate if exact => {
+                        if let Some(Number(number)) = self.peek(0) {
+                            crate::scaled::ScaledArithmetic::exact_result_scale(
+                                "Add",
+                                number.scale(),
+                                0,
+                            )
+                            .map_err(failure)?;
+                        }
                     }
                     Opcode::Equal | Opcode::Compare(_) if exact => {
                         if let (Some(Number(a)), Some(Number(b))) = (self.peek(1), self.peek(0)) {

@@ -1686,6 +1686,20 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
             .evaluate(&Value::Null, EvaluationBudget::default())
             .is_ok()
     );
+    let budget_probe = norn_expr::Expression::compile("1.25 * 0.1 > 0").unwrap();
+    let legacy = budget_probe
+        .evaluate(&Value::Null, EvaluationBudget::default())
+        .unwrap();
+    assert!(
+        budget_probe
+            .evaluate_exact_metered(
+                &Value::Null,
+                EvaluationBudget::new(legacy.units_used()),
+                None
+            )
+            .result
+            .is_ok()
+    );
     let failed = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), None);
     assert!(failed.result.is_err() && failed.units_used > 0);
 }
