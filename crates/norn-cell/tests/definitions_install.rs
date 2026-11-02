@@ -6308,7 +6308,7 @@ fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
     let proof = serde_json::to_value(&captured.input).expect("JSON proof");
     assert_eq!(proof["identity"][1], json!([101, 204, 129]));
     assert_eq!(proof["bundle"]["input"]["partition"], "é");
-    let mut altered = captured.clone();
+    let mut altered = captured;
     altered.id.0.push_str("-forged");
     altered.input.as_object_mut().expect("input").get_mut("finding").expect("finding").as_object_mut().expect("object").insert("status".into(), Value::from("resolved"));
     store.inject(&altered.id.0, &norn_ir::runtime::encode(&altered).expect("encode")).expect("untrusted inbox evidence");
