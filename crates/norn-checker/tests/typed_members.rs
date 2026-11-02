@@ -231,10 +231,9 @@ fn derived_scope_required_is_scope_dimensions() {
     }
 }
 
-/// The setting value was already checked against `valueType`; typing it as a
-/// tagged union leaves those diagnostics byte-identical.
+/// Numeric settings use exact decimal strings; type mismatches stay located.
 #[test]
-fn setting_value_diagnostics_are_unchanged() {
+fn setting_value_diagnostics_are_located() {
     const CODE: &str = "setting.validation.invalid_payload";
     let cases = [
         (
@@ -244,8 +243,8 @@ fn setting_value_diagnostics_are_unchanged() {
         ),
         (
             "number",
-            json!("5"),
-            "payload.value must be a finite number for number settings",
+            json!(5),
+            "payload.value must be an exact decimal string for number settings",
         ),
         (
             "boolean",
@@ -267,4 +266,29 @@ fn setting_value_diagnostics_are_unchanged() {
     setting["payload"]["valueType"] = json!("json");
     setting["payload"]["value"] = json!({ "quietHours": null });
     assert_eq!(findings(setting), []);
+}
+
+#[test]
+fn parameter_exact_1_reuses_exact_decimal_refusals() {
+    for literal in [
+        "1e-29",
+        "0.00000000000000000000000000001",
+        "79228162514264337593543950336",
+        "NaN",
+    ] {
+        let mut setting = fixture(SETTING_FIXTURE);
+        setting["payload"]["value"] = json!(literal);
+        let errors = findings(setting);
+        assert!(
+            errors
+                .iter()
+                .any(|(code, path, _)| code == "core.values.inexact" && path == "payload.value"),
+            "{errors:?}"
+        );
+    }
+    for literal in ["9007199254740993", "0.10", "0.1000000000000000000000000001"] {
+        let mut setting = fixture(SETTING_FIXTURE);
+        setting["payload"]["value"] = json!(literal);
+        assert_eq!(findings(setting), []);
+    }
 }
