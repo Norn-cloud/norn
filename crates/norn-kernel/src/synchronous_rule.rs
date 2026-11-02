@@ -129,13 +129,12 @@ impl SynchronousRule {
     }
 }
 
-// TXN-RULE-1: evaluator fuel exhaustion retains the shared action limit code.
 impl<X> From<norn_decisions::DecisionError> for ActionRefusal<X> {
     fn from(error: norn_decisions::DecisionError) -> Self {
-        match error {
-            norn_decisions::DecisionError::BudgetExhausted { limit, .. } => Self::ExpressionBudgetExceeded { limit },
-            error => refused(error.to_string()),
+        if let norn_decisions::DecisionError::BudgetExhausted { limit, .. } = error {
+            return Self::ExpressionBudgetExceeded { limit };
         }
+        refused(error.to_string())
     }
 }
 

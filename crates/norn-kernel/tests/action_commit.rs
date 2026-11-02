@@ -4120,5 +4120,6 @@ norn_testkit::proptest::proptest! {
         let refusal: ActionRefusal<()> = norn_decisions::DecisionError::BudgetExhausted { limit, used }.into();
         norn_testkit::proptest::prop_assert_eq!(refusal.code(), "action.expression_budget_exceeded");
         norn_testkit::proptest::prop_assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
+        norn_testkit::proptest::prop_assert!(matches!(refusal, ActionRefusal::ExpressionBudgetExceeded { limit: actual } if actual == limit), "the evaluator limit is preserved");
     }
 }
