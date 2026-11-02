@@ -209,3 +209,11 @@ test("TXN-RULE-1 authoring emits a required exact synchronous writer pin", () =>
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", dependencies: [{artifactId: "demo.effects.rule", version: "1.0.0", kind: "rule", required: true}], payload: expect.objectContaining({synchronousRule: {artifactId: "demo.effects.rule", version: "1.0.0"}})}))
 })
+
+
+test("TXN-RULE-1 execution fixture is generated from typed authoring", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/action-writer.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-kernel/tests/fixtures/action-writer.json"), "utf8")))
+})
