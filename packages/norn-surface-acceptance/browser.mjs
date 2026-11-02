@@ -32,6 +32,9 @@ try {
   await form.getByRole("status").filter({ hasText: text }).waitFor()
   assert.equal(await form.getByRole("status").textContent(), text)
   assert.deepEqual(errors, [])
+  if (process.env.NORN_SURFACE_SCREENSHOT && request.idempotencyKey === "melt") {
+    await page.screenshot({ path: process.env.NORN_SURFACE_SCREENSHOT, fullPage: true })
+  }
   process.stdout.write(JSON.stringify({ status: response.status(), body: JSON.parse(text) }))
 } finally {
   await browser.close()

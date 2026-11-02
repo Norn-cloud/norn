@@ -7,7 +7,7 @@ use norn_cell::Model;
 use norn_checker::{
     EntityArtifactSetContext, check_artifact_set_with_receipt, prepare_artifact_source,
 };
-use norn_ir::{ArtifactEnvelope, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ir::{EntityRoot, ResourceLimitProfile, RuntimeValue};
 
 use crate::{refusal::Refusal, scope::CellScope};
 
@@ -41,7 +41,6 @@ impl Admitted {
         else {
             return Err(refused("definitions must be an artifact array"));
         };
-        let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
         let mut exact = Vec::new();
         let mut layout = norn_ir::LayoutSidecar::default();
         let mut objects = Vec::new();
@@ -74,7 +73,6 @@ impl Admitted {
                 }
             }
             layout.artifacts.extend(prepared.layout.artifacts);
-            artifacts.push(prepared.artifact);
             exact.push(prepared.source);
         }
         let registry = BTreeSet::new();
@@ -83,8 +81,9 @@ impl Admitted {
             base: &[],
             tenant: None,
         };
+        let sources = norn_checker::ReceiptSources::new(&exact, &[]).map_err(refused)?;
         let checked = check_artifact_set_with_receipt(
-            &artifacts,
+            &sources,
             &context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
@@ -213,7 +212,7 @@ mod tests {
 
     #[test]
     fn reserved_kernel_types_refuse_sqlite_equivalent_tenant_names() {
-        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
             "../../../fixtures/engine-alpha/sales-order.definitions.json"
         ))
         .expect("authored declarations");
