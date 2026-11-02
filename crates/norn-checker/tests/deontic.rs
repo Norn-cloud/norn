@@ -1,5 +1,5 @@
 //! Regression checks for conservative normative lowering.
-use norn_checker::deontic::{LawLoweringRefusal, lower_deontic_law};
+use norn_checker::deontic::{LawLoweringRefusal, check_requirement, lower_deontic_law};
 use norn_ir::LawModality;
 use norn_ir::deontic::{DeonticModality, DeonticRule};
 use serde_json::json;
@@ -542,7 +542,16 @@ fn wording_tags_duplicates_and_nonblank_text_are_strict() {
         serde_json::from_str(include_str!("../../../fixtures/wording/french.json"))
             .expect("fixture");
     let entry = wire.get("fr").expect("French");
-    for tag in ["en_US", "", "en--US", "en-123456789", "fr-CA-CA"] {
+    for tag in [
+        "en_US",
+        "",
+        "en--US",
+        "en-123456789",
+        "fr-CA-CA",
+        "de-CH-1901-1901",
+        "en-u-ca-gregory-u-nu-latn",
+        "en-x",
+    ] {
         let text = serde_json::json!({tag: entry});
         assert!(
             serde_json::from_value::<RequirementWording>(text).is_err(),

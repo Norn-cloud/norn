@@ -1,11 +1,12 @@
 //! Deterministic views of one structured requirement; display is never proof input.
 use crate::deontic::{DeonticModality, RequirementTiming, StructuredRequirement};
 use crate::{LawModality, LawResponse, LawRoot};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A read-only editor projection carries the original IR, not a parsed sentence.
 /// UI consumers must honor `direction()` and render text as text, never HTML.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementView {
     pub requirement: StructuredRequirement,
@@ -179,4 +180,10 @@ fn slot(law_id: &str, pointer: &str, label: &str, text: String) -> RequirementSl
         label: visible(label),
         text,
     }
+}
+
+/// Public requested-locale inspection contract.
+#[must_use]
+pub fn requirement_view_schema() -> schemars::Schema {
+    schemars::schema_for!(RequirementView)
 }

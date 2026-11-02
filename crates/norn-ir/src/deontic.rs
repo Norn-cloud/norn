@@ -146,7 +146,7 @@ impl RequirementWording {
             return Err("law.wording.incomplete_locale");
         }
         for (tag, entry) in &self.0 {
-            if language_tags::LanguageTag::parse(tag).is_err() {
+            if !valid_locale_tag(tag) {
                 return Err("law.wording.invalid_locale");
             }
             if !tags.insert(tag.to_ascii_lowercase()) {
@@ -163,7 +163,7 @@ impl RequirementWording {
     /// Refuses invalid wording or an unavailable requested locale.
     pub fn locale(&self, tag: &str) -> Result<&LocalizedRequirement, &'static str> {
         self.validate()?;
-        if language_tags::LanguageTag::parse(tag).is_err() {
+        if !valid_locale_tag(tag) {
             return Err("law.wording.invalid_locale");
         }
         self.0
@@ -227,7 +227,7 @@ impl<'de> Deserialize<'de> for RequirementWording {
                 let mut entries = std::collections::BTreeMap::new();
                 let mut tags = std::collections::BTreeSet::new();
                 while let Some(tag) = map.next_key::<String>()? {
-                    if language_tags::LanguageTag::parse(&tag).is_err() {
+                    if !valid_locale_tag(&tag) {
                         return Err(M::Error::custom("law.wording.invalid_locale"));
                     }
                     if !tags.insert(tag.to_ascii_lowercase()) {
@@ -283,4 +283,109 @@ pub struct RequirementTerms {
 #[must_use]
 pub fn structured_requirement_schema() -> schemars::Schema {
     schemars::schema_for!(StructuredRequirement)
+}
+
+// RFC 5646 §§2.1, 2.2.9: syntactic well-formedness, not registry membership.
+// Keep the parser in the IR boundary; ring zero admits no new runtime dependency.
+fn valid_locale_tag(tag: &str) -> bool {
+    const IRREGULAR: &[&str] = &[
+        "en-gb-oed",
+        "i-ami",
+        "i-bnn",
+        "i-default",
+        "i-enochian",
+        "i-hak",
+        "i-klingon",
+        "i-lux",
+        "i-mingo",
+        "i-navajo",
+        "i-pwn",
+        "i-tao",
+        "i-tay",
+        "i-tsu",
+        "sgn-be-fr",
+        "sgn-be-nl",
+        "sgn-ch-de",
+    ];
+    let lower = tag.to_ascii_lowercase();
+    if IRREGULAR.contains(&lower.as_str()) {
+        return true;
+    }
+    let mut parts = lower.split('-').peekable();
+    let Some(language) = parts.next() else {
+        return false;
+    };
+    let alnum =
+        |s: &str| !s.is_empty() && s.len() <= 8 && s.bytes().all(|b| b.is_ascii_alphanumeric());
+    let alpha = |s: &str| s.bytes().all(|b| b.is_ascii_alphabetic());
+    if language == "x" {
+        return parts.peek().is_some() && parts.all(alnum);
+    }
+    if !(2..=8).contains(&language.len()) || !alpha(language) {
+        return false;
+    }
+    if language.len() <= 3 {
+        for _ in 0..3 {
+            if parts.peek().is_some_and(|s| s.len() == 3 && alpha(s)) {
+                parts.next();
+            } else {
+                break;
+            }
+        }
+    }
+    if parts.peek().is_some_and(|s| s.len() == 4 && alpha(s)) {
+        parts.next();
+    }
+    if parts.peek().is_some_and(|s| {
+        (s.len() == 2 && alpha(s)) || (s.len() == 3 && s.bytes().all(|b| b.is_ascii_digit()))
+    }) {
+        parts.next();
+    }
+    let mut variants = std::collections::BTreeSet::new();
+    while parts.peek().is_some_and(|s| {
+        alnum(s) && (s.len() >= 5 || (s.len() == 4 && s.starts_with(|c: char| c.is_ascii_digit())))
+    }) {
+        if !variants.insert(parts.next()) {
+            return false;
+        }
+    }
+    let mut extensions = std::collections::BTreeSet::new();
+    while let Some(singleton) = parts.next() {
+        if singleton == "x" {
+            return parts.peek().is_some() && parts.all(alnum);
+        }
+        if singleton.len() != 1 || !alnum(singleton) || !extensions.insert(singleton) {
+            return false;
+        }
+        let mut count = 0;
+        while parts.peek().is_some_and(|s| s.len() >= 2 && alnum(s)) {
+            parts.next();
+            count += 1;
+        }
+        if count == 0 {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod locale_properties {
+    use super::valid_locale_tag;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn locale_parser_agrees_with_bcp47_oracle(tag in "[a-zA-Z0-9_-]{0,60}") {
+            prop_assert_eq!(valid_locale_tag(&tag), language_tags::LanguageTag::parse(&tag).is_ok());
+        }
+
+        #[test]
+        fn generated_language_tags_are_case_insensitive(language in "[a-z]{2,3}", script in "[A-Z][a-z]{3}", region in "[A-Z]{2}", private in "[a-z0-9]{1,8}") {
+            let tag = format!("{language}-{script}-{region}-x-{private}");
+            prop_assert!(valid_locale_tag(&tag));
+            prop_assert!(valid_locale_tag(&tag.to_ascii_uppercase()));
+            prop_assert!(language_tags::LanguageTag::parse(&tag).is_ok());
+        }
+    }
 }
