@@ -9,6 +9,7 @@
     "serde",
     "schemars",
     "rust_decimal",
-    "serde_json"
+    "serde_json",
+    "language_tags"
   ]
 }

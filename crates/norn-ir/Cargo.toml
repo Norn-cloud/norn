@@ -17,6 +17,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 # number tokens without `arbitrary_precision` (D37).
 rust_decimal = { version = "1.43.0", default-features = false }
 serde_json = { version = "1.0.150", features = ["raw_value"] }
+language-tags = "0.3.2"
 
 [lints]
 workspace = true
