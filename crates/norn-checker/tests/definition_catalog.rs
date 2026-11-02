@@ -35,6 +35,23 @@ fn catalog(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Definit
     project(artifacts, base, &BTreeSet::new()).expect("catalog projects")
 }
 
+fn admitted_catalog(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> DefinitionCatalog {
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        artifacts,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base,
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    catalog(artifacts, base)
+}
+
 fn sales_order() -> ArtifactEnvelope {
     envelope(read_json(
         "registry/core/artifacts/commerce.SalesOrder.entity.json",
@@ -718,9 +735,10 @@ fn approve_action(id: &str, object_kind: &str, entity: &str, version: &str) -> A
         "namespace": "shop", "name": "approve", "version": "1.0.0", "lifecycle": "draft",
         "scope": {}, "dependencies": [], "provenance": { "source": "system" },
         "payload": {
-            "actionId": "shop.approve", "scopeRequired": [], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object" },
-            "outputSchema": { "type": "object" },
+            "actionId": "shop.approve", "scopeRequired": ["orgId"], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "writes": [{ "entityKind": object_kind, "change": "modified" }],
             "effectProgram": {
                 "kind": "fire_transition", "objectIdField": "id",
                 "objectKind": object_kind, "entityArtifactId": entity,
@@ -741,7 +759,7 @@ fn an_installed_supertype_reached_only_by_name_is_projected() {
         "shop.RushRequest.entity",
         "1.0.0",
     );
-    let catalog = catalog(&[child, action], &[parent]);
+    let catalog = admitted_catalog(&[child, action], &[parent]);
     let parent = catalog
         .artifact("shop.Request.entity", "1.0.0")
         .expect("the installed supertype is pinned");
@@ -784,11 +802,12 @@ fn a_subtype_row_mutation_writes_its_inherited_child_types() {
     let action = envelope(json!({
         "irVersion": "0.1", "artifactId": "shop.edit_rush.action", "kind": "action",
         "namespace": "shop", "name": "edit", "version": "1.0.0", "lifecycle": "draft",
-        "scope": {}, "dependencies": [], "provenance": { "source": "system" },
+        "scope": {}, "dependencies": [{ "artifactId": "shop.OrderLine.entity", "kind": "entity", "required": true, "version": "1.0.0" }], "provenance": { "source": "system" },
         "payload": {
-            "actionId": "shop.edit_rush", "scopeRequired": [], "idempotent": false,
-            "ledgered": false, "inputSchema": { "type": "object" },
-            "outputSchema": { "type": "object" },
+            "actionId": "shop.edit_rush", "scopeRequired": ["orgId"], "idempotent": false,
+            "ledgered": false, "inputSchema": { "type": "object", "properties": { "id": { "type": "string" }, "values": { "type": ["null", "boolean", "number", "string", "array", "object"] }, "rows": { "type": "array", "items": { "type": ["null", "boolean", "number", "string", "array", "object"] } }, "version": { "type": "string" } }, "required": ["id", "values", "rows", "version"], "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "writes": [{ "entityKind": "shop.RushOrder", "change": "created" }, { "entityKind": "shop.RushOrder", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "created" }, { "entityKind": "shop.OrderLine", "change": "modified" }, { "entityKind": "shop.OrderLine", "change": "deleted" }],
             "effectProgram": {
                 "kind": "mutate_parent_with_rows", "objectIdField": "id",
                 "objectKind": "shop.RushOrder", "entityArtifactId": "shop.RushOrder.entity",
@@ -798,7 +817,7 @@ fn a_subtype_row_mutation_writes_its_inherited_child_types() {
             }
         }
     }));
-    let catalog = catalog(&[parent, rush, child, action], &[]);
+    let catalog = admitted_catalog(&[parent, rush, child, action], &[]);
     let targets: Vec<String> = catalog
         .writes
         .iter()
