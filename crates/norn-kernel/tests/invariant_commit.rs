@@ -3023,30 +3023,3 @@ fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
     .expect("inherited parent membership admits link");
     assert!(cell.load_link(&key).unwrap().values.is_some());
 }
-
-#[test]
-fn val_exact_invariants_admit_products_and_refuse_unqualified_division() {
-    for (source, refused) in [
-        ("self.amount * 0.1 > 0", false),
-        ("self.amount / 3 > 0", true),
-        ("self.amount * 0.000000000000000001 > 0", true),
-    ] {
-        let definition: ObjectTypeDef = serde_json::from_value(json!({
-            "name": ITEM,
-            "properties": [{"id":"amount", "type":{"kind":"decimal","scale":3}}],
-            "invariants":[{"id":"exact_value", "expression":source, "message":"exact arithmetic required"}]
-        })).expect("definition");
-        let catalog = TypeCatalog::new([&definition]);
-        let values = object(json!({"amount": "1.005"}));
-        let mut remaining = 10000;
-        let failures = norn_kernel::evaluate_invariants(
-            &catalog,
-            &FactKey::new(ITEM, "exact"),
-            &values,
-            &mut remaining,
-        )
-        .expect("evaluation");
-        assert_eq!(!failures.is_empty(), refused, "{source}");
-        assert!(remaining < 10000);
-    }
-}

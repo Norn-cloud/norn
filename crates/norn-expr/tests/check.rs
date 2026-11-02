@@ -1641,7 +1641,17 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
             .into_value(),
         Value::Bool(true)
     );
-    assert!(run("input.amount / 3 > 0", &Type::Bool).result.is_err());
+    let refused = run("input.amount / 3 > 0", &Type::Bool);
+    assert!(refused.result.is_err());
+    assert_eq!(refused.units_used, 0, "refuse before VM execution");
+    assert!(
+        Expression::compile("input.amount / 3 > 0")
+            .unwrap()
+            .check_typed(&env, &Type::Bool)
+            .unwrap_err()
+            .iter()
+            .any(|d| d.code == "core.values.inexact")
+    );
     assert!(
         run("round(input.amount, 2) > 0", &Type::Bool)
             .result
@@ -1682,12 +1692,28 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
 
 #[test]
 fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
-    let env = ZenTypeEnv::input_only(fields([("a", decimal(2)), ("b", decimal(2))]), EnvOptions::default()).unwrap();
+    let env = ZenTypeEnv::input_only(
+        fields([("a", decimal(2)), ("b", decimal(2))]),
+        EnvOptions::default(),
+    )
+    .unwrap();
     let expression = Expression::compile("input.a / input.b").unwrap();
     assert!(expression.check_typed(&env, &decimal(2)).is_ok());
-    for (denominator, success) in [("2",true),("3",false),("0",false)] {
-        let context = Value::object([("input", Value::object([("a",Value::Number("1".parse().unwrap())),("b",Value::Number(denominator.parse().unwrap()))]))]);
-        assert_eq!(expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2)).result.is_ok(), success);
+    for (denominator, success) in [("2", true), ("3", false), ("0", false)] {
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(denominator.parse().unwrap())),
+            ]),
+        )]);
+        assert_eq!(
+            expression
+                .evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2))
+                .result
+                .is_ok(),
+            success
+        );
     }
 }
 
@@ -1695,7 +1721,19 @@ fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
 fn val_exact_optional_decimal_retains_declared_null() {
     let env = ZenTypeEnv::input_only(fields([]), EnvOptions::default()).unwrap();
     let expression = Expression::compile("null").unwrap();
-    assert_eq!(expression.evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, &decimal(2).optional()).result.unwrap().into_value(), Value::Null);
+    assert_eq!(
+        expression
+            .evaluate_typed_metered(
+                &Value::Null,
+                EvaluationBudget::default(),
+                &env,
+                &decimal(2).optional()
+            )
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Null
+    );
     assert!(expression.check_typed(&env, &decimal(2)).is_err());
 }
 
