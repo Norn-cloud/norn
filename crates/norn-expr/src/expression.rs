@@ -90,7 +90,7 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        let checked = match crate::check_expression(self, env, expected) {
+        let checked = match crate::check_expression_with(self, env, expected, &ResourceLimitProfile::norn_limits_v1()) {
             Ok(checked) => checked,
             Err(found) => {
                 return EvaluationAttempt {
