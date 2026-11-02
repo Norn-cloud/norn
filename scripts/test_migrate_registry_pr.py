@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import coverage_manifest as coverage
 import migrate_registry_pr as migration
@@ -17,6 +18,7 @@ class MigrationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 migration.merge(base, current, proposed)
 
+    @patch.dict("os.environ", {"GIT_DIR": "/dev/null/repository", "GIT_WORK_TREE": "/dev/null", "GIT_INDEX_FILE": "/dev/null/index"})
     def test_real_approved_prs(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text())
         self.assertEqual(fixture["base_sha"], "5e33eab0294012f8fb683fc2bf95c571c1bf4bcd")
@@ -36,7 +38,7 @@ class MigrationTests(unittest.TestCase):
                     path.write_text(content)
                 (root / migration.COVERAGE / "index.json").write_text("{}")
                 base = commit()
-                subprocess.run(["git", "-C", str(root), "apply", "-"], input=case["patch"].encode(), check=True)
+                migration.git(root, "apply", "-", input=case["patch"].encode())
                 head = commit()
                 git("checkout", "-q", base)
                 document = {"subsystems": [{"id": p.stem, **coverage.read_entry(p)} for p in sorted((root / migration.COVERAGE / "subsystems").glob("*.json"))]}

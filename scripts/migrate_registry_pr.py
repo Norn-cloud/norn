@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,8 +19,8 @@ RECORDS = ".github/ci/provenance/artifacts/"
 MISSING = object()
 
 
-def git(root, *args, check=True):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=check, timeout=300)
+def git(root, *args, check=True, **kwargs):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=check, timeout=300, env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, **kwargs)
 
 
 def read(root, revision, path):
