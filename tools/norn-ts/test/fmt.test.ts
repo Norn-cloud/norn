@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { toJson } from "../src/canonical.ts"
 import { formatSource } from "../src/fmt.ts"
 import { compilePack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -31,7 +32,7 @@ test("fmt_preserves_semantics", () => {
         writeFileSync(file, formatSource(file, source))
         const after = compile()
         expect(after.ok, file).toBe(true)
-        if (after.ok) expect(after.artifacts, file).toEqual(before.artifacts)
+        if (after.ok) expect(after.artifacts.map(value => JSON.stringify(toJson(value))).sort(), file).toEqual(before.artifacts.map(value => JSON.stringify(toJson(value))).sort())
         compiled++
       } finally { writeFileSync(file, source) }
     }

@@ -22,30 +22,34 @@ function edits(text: string, changes: readonly ts.TextChange[]): string {
   return text
 }
 
+let currentFile = ""
+let currentText = ""
+let version = 0
+const host: ts.LanguageServiceHost = {
+  getCompilationSettings: () => COMPILER_OPTIONS,
+  getScriptFileNames: () => currentFile ? [currentFile] : [],
+  getScriptVersion: path => path === currentFile ? String(version) : "0",
+  getProjectVersion: () => String(version),
+  getScriptSnapshot: path => {
+    const source = path === currentFile ? currentText : ts.sys.readFile(path)
+    return source === undefined ? undefined : ts.ScriptSnapshot.fromString(source)
+  },
+  getCurrentDirectory: () => process.cwd(), getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
+  fileExists: ts.sys.fileExists, readFile: ts.sys.readFile, readDirectory: ts.sys.readDirectory,
+}
+// Reuse the pinned library declarations across files and formatting passes.
+const service = ts.createLanguageService(host)
+
 /** FMT-SEMANTIC-1: formatting never executes source or deletes unused imports. */
 export function formatSource(file: string, text: string): string {
-  const host: ts.LanguageServiceHost = {
-    getCompilationSettings: () => COMPILER_OPTIONS,
-    getScriptFileNames: () => [file], getScriptVersion: () => "0",
-    getScriptSnapshot: path => {
-      const source = path === file ? text : ts.sys.readFile(path)
-      return source === undefined ? undefined : ts.ScriptSnapshot.fromString(source)
-    },
-    getCurrentDirectory: () => process.cwd(), getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
-    fileExists: ts.sys.fileExists, readFile: ts.sys.readFile, readDirectory: ts.sys.readDirectory,
+  currentFile = file
+  currentText = text
+  version++
+  for (const change of service.organizeImports({ type: "file", fileName: file, skipDestructiveCodeActions: true }, FORMAT_SETTINGS, {})) {
+    if (resolve(change.fileName) === resolve(file)) currentText = edits(currentText, change.textChanges)
   }
-  const service = ts.createLanguageService(host)
-  try {
-    for (const change of service.organizeImports({ type: "file", fileName: file, skipDestructiveCodeActions: true }, FORMAT_SETTINGS, {})) {
-      if (resolve(change.fileName) === resolve(file)) text = edits(text, change.textChanges)
-    }
-  } finally { service.dispose() }
-  const formatter = ts.createLanguageService({ ...host, getScriptSnapshot: path => {
-    const source = path === file ? text : ts.sys.readFile(path)
-    return source === undefined ? undefined : ts.ScriptSnapshot.fromString(source)
-  } })
-  try { return edits(text, formatter.getFormattingEditsForDocument(file, FORMAT_SETTINGS)).replace(/\r\n/g, "\n").replace(/\n*$/, "\n") }
-  finally { formatter.dispose() }
+  version++
+  return edits(currentText, service.getFormattingEditsForDocument(file, FORMAT_SETTINGS)).replace(/\r\n/g, "\n").replace(/\n*$/, "\n")
 }
 
 function collect(path: string, files: Set<string>): void {
