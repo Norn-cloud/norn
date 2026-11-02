@@ -266,10 +266,14 @@
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
     "registry/packs/demo-erpnext/measurements.ts",
+    "crates/norn-checker/src/definition_catalog.rs",
+    "crates/norn-checker/tests/definition_catalog.rs",
     "crates/norn-metrics/Cargo.toml",
     "crates/norn-metrics/src/lib.rs",
     "crates/norn-metrics/src/temporal.rs",
     "crates/norn-metrics/tests/demand.source.ts",
-    "crates/norn-metrics/tests/temporal.rs"
+    "crates/norn-metrics/tests/temporal.rs",
+    "crates/norn-metrics/src/analysis.rs",
+    "crates/norn-metrics/tests/analysis.rs"
   ]
 }
