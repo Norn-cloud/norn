@@ -185,6 +185,13 @@ pub const CRATES: &[CrateRule] = &[
     ),
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
     CrateRule {
+        name: "norn-host-conformance",
+        ring: Ring::Tooling,
+        allowed_norn: &[],
+        dev_only_norn: &["norn-metrics", "norn-cell", "norn-kernel", "norn-authz", "norn-projections", "norn-ir", "norn-checker"],
+        third_party: &[],
+    },
+    CrateRule {
         name: "norn-testkit",
         ring: Ring::TestSupport,
         allowed_norn: &["norn-kernel"],
