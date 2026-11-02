@@ -1,6 +1,6 @@
 //! OVERLAY-LINEAR-1: bounded typed ZEN projection for the Core 06 SMT fragment.
 use crate::{ExprError, Expression, Type, ZenTypeEnv, check_expression};
-use std::{collections::BTreeMap, fmt::Write};
+use std::collections::BTreeMap;
 use zen_expression::{intellisense::IntelliSense, parser::Node};
 
 /// A typed, source-derived SMT predicate. This is a goal, never solver evidence.
@@ -27,9 +27,9 @@ impl LinearGuard {
 pub fn linear_symbol(path: &[String]) -> String {
     let mut out = String::from("v");
     for member in path {
-        let _ = write!(out, "_{}_", member.len());
+        out.push_str(&format!("_{}_", member.len()));
         for byte in member.bytes() {
-            let _ = write!(out, "{byte:02x}");
+            out.push_str(&format!("{byte:02x}"));
         }
     }
     out
@@ -47,7 +47,7 @@ fn unsupported() -> ExprError {
 /// quantifiers, and products/divisors with unsupported variable dependence.
 pub fn linear_guard(source: &str, env: &ZenTypeEnv) -> Result<LinearGuard, ExprError> {
     let expression = Expression::compile(source)?;
-    check_expression(&expression, env, &Type::Bool).map_err(|_| unsupported())?;
+    check_expression(&expression, env, &Type::Bool).map_err(|_error| unsupported())?;
     IntelliSense::new()
         .with_strict(true)
         .with_ast(source, false, |ast, _| {
@@ -128,7 +128,7 @@ impl Compiler<'_> {
             Node::String(value) => {
                 let mut text = String::from("\"");
                 for ch in value.chars() {
-                    let _ = write!(text, "\\u{{{:x}}}", u32::from(ch));
+                    text.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
                 }
                 text.push('"');
                 (text, true, Kind::Text)
