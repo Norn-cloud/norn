@@ -75,7 +75,7 @@ pub enum ObservationEvent {
         provenance: InstanceProvenance,
     },
     /// One source observation violated a declared constraint or built-in rule.
-    /// The source snapshot is retained as lineage; external state is committed.
+    /// The source snapshot is retained as lineage; lifecycle deviations stay evidence.
     DataQualityFinding {
         /// The typed, versioned finding.
         fact: DataQualityFinding,
@@ -1192,6 +1192,8 @@ pub struct ObservedSnapshot<'a> {
 /// findings or writes; an unchanged invalid state emits a finding against the
 /// current read version without bumping the object's version. Consumption of
 /// a delivered observation still commits atomically.
+/// Unreachable or ambiguous lifecycle observations retain typed findings and
+/// provenance, without replacing the canonical lifecycle state.
 ///
 /// # Errors
 ///
@@ -1707,6 +1709,7 @@ fn property_changes(
         .collect()
 }
 
+/// GRAPH-STATE-1: out-of-band observations retain evidence without changing state.
 fn reconcile(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1749,6 +1752,10 @@ fn reconcile(
                     provenance: snapshot.provenance.clone(),
                 });
             }
+            values.insert(
+                property.as_str().to_owned(),
+                JsonValue::String(snapshot.state.clone()),
+            );
         }
         Err(reason) => events.push(ObservationEvent::DataQualityFinding {
             fact: DataQualityFinding::v2(
@@ -1782,12 +1789,6 @@ fn reconcile(
             .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?,
         }),
     }
-    // Projection of the observed transition and any deviation finding, never
-    // a direct lifecycle Set. The write and evidence commit together.
-    values.insert(
-        property.as_str().to_owned(),
-        JsonValue::String(snapshot.state.clone()),
-    );
     Ok(())
 }
 

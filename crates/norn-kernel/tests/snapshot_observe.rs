@@ -26,6 +26,7 @@ use norn_kernel::{
     Observed, Provenance, TypeCatalog, World, load_slice, prepare_decision,
 };
 use norn_testkit::cell_host::MemoryCell;
+use norn_testkit::proptest::prelude::*;
 use serde_json::{Value, json};
 
 type Cell = MemoryCell<ObservationEvent, JsonObject, JsonObject>;
@@ -278,7 +279,13 @@ fn run_deviation(target: &str, transitions: &Value, reason: SnapshotDeviationRea
 
     assert_eq!(
         state(&cell, &key, "status"),
-        JsonValue::String(target.to_owned())
+        JsonValue::String("draft".to_owned())
+    );
+    assert!(
+        !cell.ledger()[0]
+            .events
+            .iter()
+            .any(|event| matches!(event, ObservationEvent::ObservedTransition { .. }))
     );
     assert!(cell.ledger()[0].events.iter().any(|event| matches!(
         event,
@@ -739,7 +746,7 @@ fn observed_snapshot_skips_false_guards_on_the_unique_declared_path() {
 }
 
 #[test]
-fn unreachable_valid_terminal_is_projected_as_out_of_band() {
+fn graph_state_unreachable_terminal_retains_evidence_without_state_projection() {
     run_deviation(
         "cancelled",
         &json!([{ "id": "approve", "from": ["draft"], "to": "approved" }]),
@@ -748,7 +755,7 @@ fn unreachable_valid_terminal_is_projected_as_out_of_band() {
 }
 
 #[test]
-fn equal_shortest_paths_are_projected_as_ambiguous_out_of_band() {
+fn graph_state_ambiguous_paths_retain_evidence_without_state_projection() {
     run_deviation(
         "approved",
         &json!([
@@ -1221,4 +1228,106 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
             .is_err()
     );
     assert!(cell.observe().unwrap().is_some());
+}
+
+fn graph_state_posted_observation(object_type: &ObjectTypeDef, posted: &str, reported: &str) {
+    let catalog = TypeCatalog::new([object_type]);
+    let key = FactKey::new(object_type.name.as_str(), "POSTED");
+    let provenance = provenance("snapshot.graph_state");
+    let values = JsonObject::default();
+    let mut cell = cell();
+    let observed = |state: &str| {
+        [ObservedLifecycleSnapshot {
+            property: PropertyId("status".into()),
+            state: state.into(),
+            provenance: provenance.clone(),
+        }]
+    };
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    commit_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &slice,
+        &unconsumed_turn("post"),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &observed(posted),
+            provenance: &provenance,
+        },
+    )
+    .unwrap();
+    let before = cell.load(&key).unwrap();
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    let assignment = serde_json::from_value(json!({
+        "facts": [{"op": "set", "objectType": object_type.name.as_str(), "key": "POSTED", "property": "status", "value": reported}],
+        "commands": [{"kind": "notify"}], "timers": [{"afterMillis": 1}]
+    })).unwrap();
+    assert!(
+        prepare_decision::<std::convert::Infallible>(
+            &catalog,
+            &slice,
+            &unconsumed_turn("assign"),
+            &assignment
+        )
+        .is_err()
+    );
+    assert_eq!(cell.load(&key).unwrap(), before);
+    let ledger_len = cell.ledger().len();
+    let receipt = commit_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &slice,
+        &unconsumed_turn("report"),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &observed(reported),
+            provenance: &provenance,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        cell.load(&key).unwrap(),
+        before,
+        "posted state and version cannot reopen"
+    );
+    assert!(receipt.written.is_empty());
+    assert_eq!(cell.ledger().len(), ledger_len + 1);
+    assert!(cell.outbox().is_empty());
+    assert!(cell.timers().is_empty());
+    let events = &cell.ledger().last().unwrap().events;
+    assert!(events.iter().any(
+        |event| matches!(event, ObservationEvent::DataQualityFinding { fact }
+        if matches!(&fact.outcome, DataQualityOutcome::ObservedOutOfBand { from, state, .. }
+            if from.as_deref() == Some(posted) && state == reported)
+        && fact.provenance[0].source == provenance)
+    ));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, ObservationEvent::ObservedTransition { .. }))
+    );
+}
+
+#[test]
+fn graph_state_posted_immutable_assignment_refuses_and_import_remains_evidence() {
+    let mut object_type = model(&json!([
+        {"id": "post", "from": ["draft"], "to": "approved"}
+    ]));
+    object_type.lifecycles[0].immutable = vec!["approved".into()];
+    graph_state_posted_observation(&object_type, "approved", "draft");
+}
+
+proptest! {
+    #[test]
+    fn graph_state_terminal_observations_never_reopen_canonical_state(
+        steps in 1usize..13,
+        previous in 0usize..13,
+    ) {
+        let (mut object_type, posted) = lifecycle_chain(steps);
+        object_type.lifecycles[0].immutable = vec![posted.clone()];
+        let reported = format!("state_{}", previous % steps);
+        graph_state_posted_observation(&object_type, &posted, &reported);
+    }
 }
