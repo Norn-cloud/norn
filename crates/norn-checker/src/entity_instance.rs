@@ -1204,15 +1204,14 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
-                rounding: candidate_rounding,
-            },
+                rounding: candidate_rounding, per_unit: candidate_per_unit, },
             PropertyType::Decimal {
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
-                rounding: previous_rounding,
-            },
-        ) if candidate_unit == previous_unit
+                rounding: previous_rounding, per_unit: previous_per_unit, },
+        ) if candidate_per_unit == previous_per_unit
+            && candidate_unit == previous_unit
             && candidate_currency == previous_currency
             && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
                 == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) =>

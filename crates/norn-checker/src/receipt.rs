@@ -760,7 +760,14 @@ pub fn recover_legacy_admission_receipt(
         .map_err(|errors| {
             invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
         })?
-        .reference()?;
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)?;
+    if checked.receipt.admitted {
+        let mut historical_current = checked.receipt.clone();
+        historical_current.type_env = Some(type_env.clone());
+        let recovered = String::from_utf8(historical_current.canonical_json()?)
+            .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
+        if admission_receipt_sha256(&recovered)? == expected_sha256 { return Ok(recovered); }
+    }
     let warnings: Vec<Diagnostic> = historical_check
         .diagnostics
         .iter()
@@ -1681,7 +1688,7 @@ mod tests {
             .expect("historical full-envelope identity");
         let type_env = derive_type_env(&artifacts, &base, &limits)
             .expect("definition environment")
-            .reference()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
             .expect("environment reference");
         let historical = CheckReceipt {
             checker: CHECKER_NAME.to_owned(),

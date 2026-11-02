@@ -177,6 +177,7 @@
     "crates/norn-checker/src/norm_precedence.rs",
     "crates/norn-checker/src/object_types.rs",
     "crates/norn-checker/src/obligations.rs",
+    "crates/norn-checker/src/obligations/induction.rs",
     "crates/norn-checker/src/property_codec.rs",
     "crates/norn-checker/src/property_types.rs",
     "crates/norn-checker/src/receipt.rs",
@@ -355,6 +356,7 @@
     "scripts/verify-kernel-l1-version-body.py",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/write-verification-result.py",
+    "tools/norn-ts/fixtures/stock/stock.source.ts",
     "tools/norn-ts/fixtures/translation-validation/markings.source.ts",
     "tools/norn-ts/src/builder/access.ts",
     "tools/norn-ts/src/builder/action.ts",
@@ -403,7 +405,9 @@
     "tools/norn-ts/test/interface-links.test.ts",
     "tools/norn-ts/test/law.test.ts",
     "tools/norn-ts/test/profile-corpus.test.ts",
+    "tools/norn-ts/test/rate.test.ts",
     "tools/norn-ts/test/schema-lowering.test.ts",
+    "tools/norn-ts/test/stock-definitions.test.ts",
     "tools/norn-ts/test/temporal-enum.test.ts",
     "tools/norn-ts/test/translation-validation.test.ts",
     "tools/norn-ts/test/vertical-fixture.test.ts",
@@ -450,9 +454,6 @@
     "verification/stripmine-2026-08-22/proofs/lean/QuantityAuthority.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
     "verification/stripmine-2026-08-22/proofs/lean/QuantityReservationAuthority.lean",
-    "verification/stripmine-2026-08-22/scripts/validate.sh",
-    "tools/norn-ts/fixtures/stock/stock.source.ts",
-    "tools/norn-ts/test/stock-definitions.test.ts",
-    "crates/norn-checker/src/obligations/induction.rs"
+    "verification/stripmine-2026-08-22/scripts/validate.sh"
   ]
 }

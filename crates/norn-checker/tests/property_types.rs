@@ -355,8 +355,7 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         scale: WholeNumber(scale),
         rounding,
         unit: None,
-        currency_source: None,
-    };
+        currency_source: None, per_unit: None, };
     for (text, rounding, expected) in [
         ("1.005", None, None),
         ("1.0100", None, Some("1.01")),
@@ -384,7 +383,7 @@ proptest::proptest! {
     fn val_round_adapter_matches_signed_integer_reference(coefficient in -1_000_000_i32..1_000_000, mode in 0..4_usize) {
         use norn_ir::{PropertyType, Rounding, WholeNumber};
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
-        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None };
+        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
         let text = format!("{}{}.{:03}", if coefficient < 0 { "-" } else { "" }, coefficient.abs()/1000, coefficient.abs()%1000);
         let result = norn_expr::rescale_decimal(&site, &text.parse().expect("number"));
         if rounding == Rounding::Refuse && coefficient % 10 != 0 { proptest::prop_assert!(result.is_err()); }

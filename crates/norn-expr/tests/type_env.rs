@@ -111,8 +111,7 @@ fn every_binding_and_option_changes_the_hash() {
         scale: norn_ir::WholeNumber(3),
         unit: None,
         currency_source: None,
-        rounding: None,
-    };
+        rounding: None, per_unit: None, };
     assert_ne!(changed.env().content_sha256().unwrap(), base_hash);
 }
 
@@ -155,8 +154,7 @@ fn properties_map_to_typed_fields() {
             scale: 2,
             rounding: norn_ir::Rounding::Refuse,
             unit: None,
-            currency_source: None,
-        })
+            currency_source: None, per_unit: None, })
     );
     // `ref` resolves; the property's own `nullable` makes it optional.
     assert_eq!(
@@ -169,8 +167,7 @@ fn properties_map_to_typed_fields() {
                     system: UnitSystem::Ucum,
                     code: "kg".to_owned()
                 }),
-                currency_source: None,
-            }
+                currency_source: None, per_unit: None, }
             .optional()
         )
     );
@@ -579,8 +576,7 @@ fn structured_property_members_have_closed_expression_types() {
             scale: 6,
             rounding: norn_ir::Rounding::Refuse,
             unit: None,
-            currency_source: None,
-        }
+            currency_source: None, per_unit: None, }
     );
     assert!(!members.contains_key("unknown"));
 }
@@ -873,8 +869,7 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
         scale: 2,
         unit: None,
         rounding,
-        currency_source: None,
-    };
+        currency_source: None, per_unit: None, };
     let bytes = fields(decimal(norn_ir::Rounding::Refuse))
         .canonical_json()
         .unwrap();
@@ -929,8 +924,7 @@ fn val_env_v2_binds_currency_sources_and_preserves_v1_projection() {
                     currency_source: Some(norn_ir::metric::DimensionPath {
                         links: Vec::new(),
                         property: norn_ir::PropertyId(property.to_owned()),
-                    }),
-                },
+                    }), per_unit: None, },
             )]),
             EnvOptions::default(),
         )
@@ -963,4 +957,17 @@ fn val_env_v2_binds_currency_sources_and_preserves_v1_projection() {
     let legacy: LegacyDecimal =
         serde_json::from_value(serde_json::json!({"kind":"decimal","scale":2})).unwrap();
     assert_eq!((legacy.kind.as_str(), legacy.scale), ("decimal", 2));
+}
+
+#[test]
+fn val_rate_env2_pins_denominator_and_refuses_historical_serialization() {
+    let env = |per: &str| ZenTypeEnv::input_only(BTreeMap::from([("price".to_owned(), Type::Decimal {
+        scale: 6, rounding: norn_ir::Rounding::Refuse, unit: None,
+        currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: norn_ir::PropertyId("currency".to_owned()) }),
+        per_unit: Some(UnitRef { system: UnitSystem::Ucum, code: per.to_owned() }),
+    })]), EnvOptions::default()).unwrap();
+    assert_ne!(env("g").reference().unwrap(), env("mg").reference().unwrap());
+    assert!(env("g").reference_at_version(norn_expr::env::TypeEnvVersion::V1).is_err());
+    let value = env("g").to_canonical_value();
+    assert_eq!(value["records"]["norn:Input"]["fields"]["price"]["type"]["perUnit"]["code"], "g");
 }

@@ -96,6 +96,8 @@ pub enum Type {
         unit: Option<UnitRef>,
         /// Money currency binding, relative to the value owner.
         currency_source: Option<norn_ir::metric::DimensionPath>,
+        /// VAL-RATE: denominator unit; requires a currency source.
+        per_unit: Option<UnitRef>,
         /// Effective destination mode; omitted declarations become Refuse.
         rounding: Rounding,
     },
@@ -185,6 +187,7 @@ impl Type {
                 unit,
                 rounding,
                 currency_source,
+                per_unit,
             } => {
                 let mut fields = vec![("scale", number(*scale))];
                 if let Some(unit) = unit {
@@ -215,6 +218,9 @@ impl Type {
                             ("property", string(source.property.as_str())),
                         ]),
                     ));
+                }
+                if version == TypeEnvVersion::V2 && let Some(unit) = per_unit {
+                    fields.push(("perUnit", object([("system", string(unit_system(unit.system))), ("code", string(&unit.code))])));
                 }
                 if let Some(mode) = rounding.canonical_field() {
                     fields.push(("rounding", string(mode)));
@@ -868,6 +874,14 @@ impl ZenTypeEnv {
         &self,
         version: TypeEnvVersion,
     ) -> Result<Vec<u8>, CanonicalJsonError> {
+        let is_rate = |mut ty: &Type| {
+            while let Type::List(inner) | Type::Optional(inner) = ty { ty = inner; }
+            matches!(ty, Type::Decimal { per_unit: Some(_), .. })
+        };
+        if version == TypeEnvVersion::V1 && (self.variables.values().any(is_rate)
+            || self.records.values().flat_map(|record| record.fields.values()).any(|field| is_rate(&field.ty))) {
+            return Err(CanonicalJsonError::Serialize { message: "Rate requires norn.expr.env/2".to_owned() });
+        }
         norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }
 
@@ -1596,11 +1610,13 @@ impl<'d, 'e> Derivation<'d, 'e> {
                     unit,
                     rounding,
                     currency_source,
+                    per_unit,
                 } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
                     rounding: Rounding::effective(*rounding),
                     currency_source: currency_source.clone(),
+                    per_unit: per_unit.clone(),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {

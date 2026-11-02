@@ -1639,8 +1639,7 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
         scale: WholeNumber(2),
         rounding,
         unit: None,
-        currency_source: None,
-    };
+        currency_source: None, per_unit: None, };
     let run = |source: &str, site: Option<&PropertyType>| {
         Expression::compile(source)
             .unwrap()
@@ -1709,7 +1708,7 @@ proptest::proptest! {
     fn val_exact_runtime_division_matches_signed_integer_reference(a in -10000_i32..10000, b in 1_i32..100, mode in 0..4_usize) {
         use norn_ir::{PropertyType, Rounding, WholeNumber};
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
-        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None };
+        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
         let expression = norn_expr::Expression::compile(&format!("{a} / {b}")).unwrap();
         let result = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), Some(&site)).result;
         let numerator = a * 100;
@@ -1730,7 +1729,7 @@ proptest::proptest! {
         use norn_ir::Rounding;
         let mode = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][selected];
         let environment = |rounding| norn_expr::ZenTypeEnv::input_only(
-            std::collections::BTreeMap::from([("amount".to_owned(), norn_expr::Type::Decimal { scale, unit: None, rounding, currency_source: None })]),
+            std::collections::BTreeMap::from([("amount".to_owned(), norn_expr::Type::Decimal { scale, unit: None, rounding, currency_source: None, per_unit: None, })]),
             norn_expr::EnvOptions::default()).unwrap();
         let omitted = environment(Rounding::effective(None));
         let explicit = environment(Rounding::effective(Some(Rounding::Refuse)));
@@ -1742,7 +1741,7 @@ proptest::proptest! {
 proptest::proptest! {
     #[test]
     fn val_exact_typed_products_preserve_integer_reference(a in -1000_i32..1000, b in -1000_i32..1000) {
-        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse, currency_source: None, })]), norn_expr::EnvOptions::default()).unwrap();
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse, currency_source: None, per_unit: None, })]), norn_expr::EnvOptions::default()).unwrap();
         let context = Value::object([("input", Value::object([("x", Value::Number(format!("{}{}.{:02}", if a<0 {"-"} else {""}, a.abs()/100, a.abs()%100).parse().unwrap()))]))]);
         let expression = norn_expr::Expression::compile(&format!("input.x * {b} > 0")).unwrap();
         let value = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &norn_expr::Type::Bool).result.unwrap().into_value();
@@ -1756,8 +1755,7 @@ proptest::proptest! {
         use norn_expr::env::TypeEnvVersion::V1;
         let env = |property: &str| norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("money".to_owned(), norn_expr::Type::Decimal {
             scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse,
-            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: norn_ir::PropertyId(property.to_owned()) }),
-        })]), norn_expr::EnvOptions::default()).unwrap();
+            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: norn_ir::PropertyId(property.to_owned()) }), per_unit: None, })]), norn_expr::EnvOptions::default()).unwrap();
         let (first_env, second_env) = (env(&first), env(&second));
         proptest::prop_assert_eq!(first_env.reference_at_version(V1).unwrap(), second_env.reference_at_version(V1).unwrap());
         proptest::prop_assert_eq!(first_env.reference().unwrap() == second_env.reference().unwrap(), first == second);

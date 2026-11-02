@@ -220,6 +220,21 @@ export class SchemaProjection {
         }
         return this.readAt(base, depth + 1)
       }
+      case "@norn/authoring#Norn.rate": {
+        const scale = this.unwrap(arg(0))
+        const value = ts.isNumericLiteral(scale) && /^(0|[1-9][0-9]*)$/.test(scale.getText()) ? Number(scale.getText()) : Number.NaN
+        if (!Number.isSafeInteger(value) || value > 18) throw new CompileError("NORN-FLOW-LITERAL", "Norn.rate scale must be an integer literal from 0 to 18", scale)
+        const options = this.objectLiteral(arg(1))
+        if ([...options.keys()].some(key => key !== "currency" && key !== "perUnit" && key !== "rounding") || !options.has("currency") || !options.has("perUnit")) throw new CompileError("NORN-FLOW-LITERAL", "Norn.rate requires exactly currency and perUnit", call)
+        const perNode = options.get("perUnit")!
+        const per = this.objectLiteral(perNode)
+        const system = this.stringLiteral(per.get("system"), perNode, "perUnit.system")
+        if (per.size !== 2 || (system !== "ucum" && system !== "qudt")) throw new CompileError("NORN-FLOW-LITERAL", "perUnit is exactly { system: ucum | qudt, code }", perNode)
+        const modeNode = options.get("rounding")
+        const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
+        if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
+        return { kind: "value-type", type: E.rate(value, this.stringLiteral(options.get("currency"), call, "currency"), { system, code: this.stringLiteral(per.get("code"), perNode, "perUnit.code") }, mode), node: call }
+      }
       case "@norn/authoring#Norn.decimal": {
         const scale = this.unwrap(arg(0))
         const value = ts.isNumericLiteral(scale) && /^(0|[1-9][0-9]*)$/.test(scale.getText()) ? Number(scale.getText()) : Number.NaN

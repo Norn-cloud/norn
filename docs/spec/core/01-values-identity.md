@@ -75,3 +75,5 @@ The shared type checker marks actual Decimal reads and declared destinations; ty
 VAL-ENV binds `currency_source` in new `norn.expr.env/2` admissions; retained receipts and pins select explicit historical `/1` recomputation, while relabelling `/1` hashes as `/2` refuses (migration: re-admit for `/2`, never rewrite an old pin).
 
 VAL-UNIT admits same-code addition, subtraction and comparison, scalar multiplication and same-code quantity division to a scalar; a numeric literal inherits the sole quantity unit with an explanation diagnostic naming that unit, while declared unitless operands, mixed codes, compound units and inverse units refuse until #351.
+
+VAL-RATE is a Decimal refinement with mandatory `currencySource` and `perUnit`, no quantity `unit`, and one declared scale/rounding: Rate<C,U> × Quantity<U> → Money<C>, Money<C> ÷ Quantity<U> → Rate<C,U>, and same-type comparison/addition/subtraction are the bounded contract; all other compound operations refuse, multiplication stores at the destination Money scale/rounding (Refuse by default), and env `/2` fingerprints both bindings while `/1` refuses rates.
