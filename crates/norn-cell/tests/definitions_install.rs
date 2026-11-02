@@ -6411,27 +6411,32 @@ fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
     );
 }
 
+fn source_dispute_world_fixture(normalized: bool) -> (tempfile::TempDir, CellStore, norn_cell::ObjectRecord, norn_cell::ObjectRecord) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("world-dispute.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    let mut original = bundle_raw("MEAS-1", "0.90");
+    original.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
+    let (id, _) = store.inject_mapping_bundle(&original, &input).expect("capture");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    cell.process_mapping_bundle(&id).expect("apply first");
+    let before = cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("eligible").expect("record");
+    let model = cell.store().model().clone();
+    drop(cell);
+    store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    store.commit(&CommitBatch {world:"fork/test".into(), scope:"org_demo/dev".into(), logical_time:store.read().clock_floor().expect("clock"), writes:vec![FactWriteRow::Put { object_type:"quality.Measurement".into(), key:"MEAS-1".into(), values:before.values.clone()}], ..CommitBatch::default()}).expect("synthetic non-main fixture");
+    let fork = store.read().object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world").expect("record");
+    let mut candidate = if normalized {original.clone()} else {bundle_raw("MEAS-1", "1.20")};
+    candidate.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(if normalized {"e\u{301}"} else {"é"}));
+    store.inject_mapping_bundle(&candidate, &input).expect("durable dispute");
+    (dir, store, before, fork)
+}
+
 #[test]
 fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
     for normalized in [false, true] {
-        let dir = tempfile::tempdir().expect("directory");
-        let path = dir.path().join("world-dispute.sqlite");
-        let mut store = mapping_bundle_store(&path);
-        let input = bundle_input();
-        let mut original = bundle_raw("MEAS-1", "0.90");
-        original.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
-        let (id, _) = store.inject_mapping_bundle(&original, &input).expect("capture");
-        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
-        cell.process_mapping_bundle(&id).expect("apply first");
-        let before = cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("eligible").expect("record");
-        let model = cell.store().model().clone();
-        drop(cell);
-        store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
-        store.commit(&CommitBatch {world:"fork/test".into(), scope:"org_demo/dev".into(), logical_time:store.read().clock_floor().expect("clock"), writes:vec![FactWriteRow::Put { object_type:"quality.Measurement".into(), key:"MEAS-1".into(), values:before.values.clone()}], ..CommitBatch::default()}).expect("synthetic non-main fixture");
-        let fork = store.read().object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world").expect("record");
-        let mut candidate = if normalized {original.clone()} else {bundle_raw("MEAS-1", "1.20")};
-        candidate.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(if normalized {"e\u{301}"} else {"é"}));
-        store.inject_mapping_bundle(&candidate, &input).expect("durable dispute");
+        let (_directory, store, before, fork) = source_dispute_world_fixture(normalized);
         let reader = store.read();
         let expected = "core.world.source_dispute_unqualified";
         assert_eq!(reader.authoritative_object("fork/test", "quality.Measurement", "MEAS-1").expect_err("object refuses").to_string(), expected);
