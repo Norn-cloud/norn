@@ -732,8 +732,8 @@ pub struct FunctionInvocation {
     pub inputs: BTreeMap<String, RuntimeValue>,
     /// Immutable input blobs by content digest.
     pub blobs: BTreeMap<String, BlobRef>,
-    /// The ledger position of the commit that dispatched the command.
-    pub provenance_commit: u64,
+    /// Versioned cell/world/commit provenance; historical scalar positions stay local-only.
+    pub provenance_commit: crate::cell_reference::CommitProvenance,
     /// The relevant-state dependency token.
     pub dependency: RelevantStateToken,
     /// The declared freshness policy.
@@ -772,7 +772,12 @@ impl FunctionInvocation {
     ///
     /// A canonicalization failure.
     pub fn content_digest(&self) -> Result<Digest, CanonicalJsonError> {
-        digest_of(INVOCATION_DOMAIN, self)
+        let domain = if self.provenance_commit.qualified().is_some() {
+            b"norn.function/invocation/v2\0".as_slice()
+        } else {
+            INVOCATION_DOMAIN
+        };
+        digest_of(domain, self)
     }
 
     fn blob_digests(&self) -> BTreeMap<&str, &Digest> {

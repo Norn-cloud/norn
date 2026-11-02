@@ -243,6 +243,8 @@ impl Default for ReconcilePolicy {
 /// The cell a result is reconciled in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReconcileContext<'a> {
+    /// Logical cell for qualified invocations; absent only for local legacy hosts.
+    pub cell: Option<&'a norn_ir::cell_id::CellId>,
     /// The cell's tenant.
     pub tenant: &'a str,
     /// The world reconciling (only `main` accepts results).
@@ -455,6 +457,9 @@ pub struct ResultRecord {
     pub receipt: Digest,
     /// The result identity.
     pub result_identity: Digest,
+    /// Authenticated qualified dispatch origin; old records omit it unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<norn_ir::cell_reference::QualifiedCommit>,
     /// `None` when accepted, else the classification.
     pub classification: Option<Classification>,
     /// `None` when accepted, else the reason.
@@ -650,7 +655,7 @@ where
     A: ResultAuthorizer + ?Sized,
     R: ReceiptValidator + ?Sized,
 {
-    let record = record_of(completion.receipt).map_err(ReconcileError::Canonical)?;
+    let mut record = record_of(completion.receipt).map_err(ReconcileError::Canonical)?;
     let refuse = |classification, reason| {
         Ok(Reconciliation::Refused(refusal(
             completion,
@@ -711,6 +716,7 @@ where
             );
         }
     };
+    record.origin = dispatched.invocation.provenance_commit.qualified().cloned();
     let accepted = AcceptedResult {
         generation: completion.generation,
         result_identity: record.result_identity.clone(),
@@ -738,6 +744,7 @@ fn record_of(receipt: &FunctionReceipt) -> Result<ResultRecord, CanonicalJsonErr
         result_identity: receipt.result_identity()?,
         classification: None,
         reason: None,
+        origin: None,
     })
 }
 
@@ -795,6 +802,24 @@ fn check_dispatch<R: ReceiptValidator + ?Sized>(
             Classification::Rejected,
             RefusalReason::OutOfScope {
                 detail: format!("tenant {}", invocation.tenant),
+            },
+        ));
+    }
+    if invocation.provenance_commit.qualified().is_some()
+        && invocation.content_digest().ok().as_ref() != Some(&dispatched.dispatch)
+    {
+        return Some(mismatch("qualified dispatch"));
+    }
+    if let Some(origin) = invocation.provenance_commit.qualified()
+        && (origin.world != invocation.world
+            || context
+                .cell
+                .is_none_or(|cell| !origin.belongs_to(cell, context.world)))
+    {
+        return Some((
+            Classification::Rejected,
+            RefusalReason::OutOfScope {
+                detail: "cell-qualified provenance".to_owned(),
             },
         ));
     }

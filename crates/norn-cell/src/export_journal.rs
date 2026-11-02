@@ -14,7 +14,7 @@ use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord};
 use crate::model::Model;
 use crate::read::{StoreReader, to_i64, to_u64};
-use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord, Receipt};
+use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord};
 use crate::system::{GENESIS_HASH, META};
 
 pub(crate) const JOURNAL_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_export_journal" (
@@ -158,10 +158,11 @@ pub(crate) fn record<E: SqlEngine>(
     model: &Model,
     batch: &CommitBatch,
     quantity_input: Option<Value>,
-    receipt: &Receipt,
+    journal: crate::portable_receipt::JournalReceipt<'_>,
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
 ) -> Result<(), CellError> {
+    let receipt = journal.receipt;
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
         .query_optional(
@@ -212,6 +213,7 @@ pub(crate) fn record<E: SqlEngine>(
         }
     }
 
+    let portable_receipt = journal.envelope(crate::cell_identity::from_bindings(&bindings)?);
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),
         store_format: engine.query_row(
@@ -227,6 +229,7 @@ pub(crate) fn record<E: SqlEngine>(
         batch: batch.clone(),
         quantity_input,
         receipt: receipt.clone(),
+        portable_receipt,
         entries,
         consumed_input,
         initial_model: (commit_seq == 1 && definition_install.is_none())

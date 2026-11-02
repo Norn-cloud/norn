@@ -85,6 +85,9 @@ pub struct ExportRecord {
     pub quantity_input: Option<Value>,
     /// Original commit receipt, including its request hash and ledger head.
     pub receipt: Receipt,
+    /// Versioned evidence issued atomically with new commits; absent in old history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_receipt: Option<crate::portable_receipt::PortableReceipt>,
     /// Original event chain links for this commit's ledger span.
     pub entries: Vec<LedgerEntry>,
     /// The consumed delivery's preimage, if any (observation, result, or timer).
@@ -136,6 +139,13 @@ impl ExportRecord {
             .is_none()
         {
             return Err(ExportError::IdentityMismatch);
+        }
+        if let Some(portable) = &self.portable_receipt {
+            let cell = crate::cell_identity::from_bindings(&self.bindings)?
+                .ok_or(ExportError::IdentityMismatch)?;
+            if !portable.validates(&cell, &self.receipt) {
+                return Err(ExportError::IdentityMismatch);
+            }
         }
         if self.ddl_hash != hash_json(&self.ddl_sql)? {
             return Err(invalid("DDL hash mismatch"));

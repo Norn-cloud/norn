@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod boundary_identity;
 pub mod cell_identity;
 mod codec;
 pub mod engine;
@@ -40,6 +41,7 @@ pub mod host;
 mod migration;
 pub mod model;
 mod payload_storage;
+pub mod portable_receipt;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;

@@ -36,8 +36,10 @@ use serde_json::value::RawValue;
 
 pub mod access;
 pub mod action;
+pub mod boundary_context;
 pub mod business_pack;
 pub mod cell_id;
+pub mod cell_reference;
 pub mod connector;
 pub mod customization;
 pub mod data_quality;

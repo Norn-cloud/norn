@@ -72,6 +72,11 @@ pub enum ReceiptResolution<'a> {
 pub trait AcceptedReceiptStore {
     /// Host storage failure.
     type Error;
+    /// Authenticated cell/world for new portable references. Legacy adapters
+    /// cannot resolve qualified evidence until they supply this context.
+    fn origin_context(&self) -> Option<(&norn_ir::cell_id::CellId, &str)> {
+        None
+    }
     /// Resolve within current tenant, world and authority; inaccessible evidence
     /// is `Unknown`. The accepting action must fence this read at commit.
     ///
@@ -146,12 +151,15 @@ pub fn bind_receipt<T: DeserializeOwned, S: AcceptedReceiptStore>(
         } => (acceptance, receipt),
     };
     let record = &acceptance.record;
+    if !crate::cell_provenance::local_origin(record, store.origin_context()) {
+        return Err(ReceiptBindingError::Mismatch);
+    }
     if record.classification.is_some() || record.reason.is_some() {
         return Err(ReceiptBindingError::NotAccepted);
     }
     let digest = receipt.content_digest()?;
     let result_identity = receipt.result_identity()?;
-    if digest != reference.0
+    if crate::cell_provenance::receipt_reference(record)? != reference.0
         || digest != record.receipt
         || result_identity != record.result_identity
         || record.command.0 != receipt.command_id

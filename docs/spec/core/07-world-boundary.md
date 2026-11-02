@@ -82,3 +82,33 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 FUNCTION-HOST-1: `implementation.format: host` declares host-provided native code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The host must resolve its configured implementation by these exact pins or refuse.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
+
+### CELL-QUALIFY-1 — portable provenance, local storage identities
+
+A portable reference contains an explicit format, CellId, world, namespace and
+unchanged local key. Its digest binds every field. A local key, operation ID,
+command ID, inbox ID or sequence is not a universal name. Immutable definition,
+input and output content digests remain unchanged.
+
+Function invocation provenance is either the retained v1 scalar (local-only), or
+`norn.cell.commit/v2` containing cell, world and local commit. V1 dispatch bytes
+and digests are preserved. Qualified invocations use the invocation/v2 domain;
+reconciliation requires a matching authenticated host cell/world and retains the
+origin through authenticated receipt lookup and action binding. A qualified
+receipt cannot be accepted by an unbound or different host. A supplied receipt
+body still confers no authority.
+
+New commits atomically retain a versioned portable receipt envelope with the
+local receipt hash and qualified position in the export journal. A missing
+envelope remains local-only. Verified replay preserves that absence and never
+mints portable evidence for old history. Neither the old receipt nor its hash is
+rewritten. Portable validation checks envelope, originating cell/world, local
+sequence and exact receipt hash together.
+
+Named scenarios: **CELL-QUALIFY-NO-ALIAS** (same key/sequence/operation in distinct
+same-scope cells has distinct boundary identity); **CELL-QUALIFY-WRONG-CELL**
+(foreign result cannot satisfy local acceptance); **CELL-QUALIFY-LEGACY** (old
+invocation/receipt bytes and hashes remain unchanged and local-only);
+**CELL-QUALIFY-REPLAY** (mixed old/new export history restores byte-for-byte).
+Proptests provide sampled digest separation; a bounded Kani harness checks the
+production origin predicate. Neither is a claim of collision-free SHA-256.

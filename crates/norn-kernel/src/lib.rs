@@ -66,6 +66,7 @@ pub mod limits;
 pub mod naming_series;
 mod partition_slice;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
+pub mod cell_provenance;
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
