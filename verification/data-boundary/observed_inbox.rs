@@ -275,45 +275,28 @@ fn checked_scrap_yield_submission_is_mapped_then_quarantined_by_the_cell() {
 
 fn demo_measurement_definitions() -> (String, Model) {
     use norn_ir::{ArtifactEnvelope, EntityRoot};
-    let mut artifacts = Vec::<ArtifactEnvelope>::new();
-    for directory in [
-        "registry/core/artifacts",
-        "registry/packs/demo-erpnext/artifacts",
-    ] {
-        for entry in std::fs::read_dir(directory).expect("synthetic declarations") {
-            let source = RuntimeValue::from_json_text(
-                std::fs::read(entry.expect("entry").path()).expect("artifact bytes"),
-            )
-            .expect("exact source");
-            let artifact: ArtifactEnvelope = norn_ir::runtime::decode(&source).expect("artifact");
-            if [
-                "demo.erpnext.StockEntryMeasurement.entity",
-                "demo.erpnext.Measurement.interface",
-                "demo.erpnext.classifications.entity",
-                "demo.erpnext.purity.law",
-                "demo.erpnext.fine_mass_definition.law",
-                "demo.erpnext.measurements.source",
-                "demo.erpnext.measurements.mapping",
-            ]
-            .contains(&artifact.artifact_id.as_str())
-                || [
-                    "core.value_types.entity",
-                    "std.value_types.entity",
-                    "core.Agent.interface",
-                    "core.AgentRole.interface",
-                    "core.Resource.interface",
-                    "core.EconomicEvent.interface",
-                    "core.Commitment.interface",
-                    "core.Hold.interface",
-                    "core.LedgerEffect.interface",
-                    "core.Claim.interface",
-                ]
-                .contains(&artifact.artifact_id.as_str())
-            {
-                artifacts.push(artifact);
-            }
-        }
-    }
+    let artifacts: Vec<ArtifactEnvelope> = [
+        include_str!("../../registry/core/artifacts/core.value_types.entity.json"),
+        include_str!("../../registry/core/artifacts/std.value_types.entity.json"),
+        include_str!("../../registry/core/artifacts/core.Agent.interface.json"),
+        include_str!("../../registry/core/artifacts/core.AgentRole.interface.json"),
+        include_str!("../../registry/core/artifacts/core.Resource.interface.json"),
+        include_str!("../../registry/core/artifacts/core.EconomicEvent.interface.json"),
+        include_str!("../../registry/core/artifacts/core.Commitment.interface.json"),
+        include_str!("../../registry/core/artifacts/core.Hold.interface.json"),
+        include_str!("../../registry/core/artifacts/core.LedgerEffect.interface.json"),
+        include_str!("../../registry/core/artifacts/core.Claim.interface.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.StockEntryMeasurement.entity.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.Measurement.interface.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.classifications.entity.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.fine_mass_definition.law.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json"),
+        include_str!("../../registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json"),
+    ].into_iter().map(|bytes| {
+        let value = RuntimeValue::from_json_text(bytes).expect("compiled artifact source");
+        norn_ir::runtime::decode(&value).expect("typed artifact")
+    }).collect();
     let diagnostics = norn_checker::check_artifact_set(
         &artifacts,
         &norn_checker::EntityArtifactSetContext {
