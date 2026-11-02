@@ -43,13 +43,14 @@ pub(crate) struct SourceWorld {
     pub(crate) head: u64,
     pub(crate) plan: TemporalPlan,
 }
-pub(crate) fn world(bulk: bool, proposal: Option<RuntimeObject>) -> SourceWorld {
+pub(crate) fn world(bulk: bool, proposal: Option<fn(&TemporalPlan) -> RuntimeObject>) -> SourceWorld {
     assert_eq!(sha(CSV.as_bytes()), TABLE_SHA, "integrator recipe must not drift");
     let artifacts = artifacts();
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
     let plan = TemporalPlan::compile(&catalog, "demo.ScrapForecast", &["input".into()], "recovered", 0).expect("ontology units");
     let mut store = CellStore::open_in_memory(model(&artifacts)).expect("cell");
-    if let Some(values) = proposal {
+    if let Some(propose) = proposal {
+        let values=propose(&plan);
         store.commit(&CommitBatch { world:"main".into(), scope:SCOPE.into(), writes:vec![FactWriteRow::Put { object_type:"core.analytics.Publication".into(), key:"forecast".into(), values }], ..CommitBatch::default() }).expect("preregister policy");
     }
     let mut events = Vec::new();

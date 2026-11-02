@@ -13,12 +13,12 @@ fn docs() -> Digest { Digest::of_json_document(REGISTRATION).expect("declared be
 fn export(world: &source::SourceWorld) -> ForecastExport<'_> {
     ForecastExport { tenant:source::SCOPE,world:"main",plan:&world.plan,rows:&world.rows,version:world.head,source_digest:Digest::from_hex(source::TABLE_SHA),source_head:world.head,as_of:source::micros(source::BULK_AT),complete:true,quarantine_count:0,assumptions_digest:docs(),remedy_digest:docs(),frontier_age_ms:0,fresh:true }
 }
-fn proposal() -> RuntimeObject {
+fn proposal(plan: &norn_metrics::temporal::TemporalPlan) -> RuntimeObject {
     let mut values = RuntimeObject::new();
     for field in ["id","status","table_version","table_digest","source_digest","model_digest","parameters_digest","assumptions_digest","remedy_digest","mode","receipt_digest","result_table_version","result_table_digest","result_source_digest","result_model_digest","result_parameters_digest","result_assumptions_digest","result_remedy_digest","error_unit","result_error_unit"] { values.insert(field.into(),Value::from("")); }
     for field in ["split_at_ms","result_split_at_ms","quarantined_count","frontier_age_ms","max_frontier_age_ms","late_feature_count","latest_training_label_ms","training_count","holdout_count","non_forward_outcome_count"] { values.insert(field.into(),Value::from(0)); }
     for field in ["complete","temporal_leakage","diagnostics_passed"] { values.insert(field.into(),Value::from(false)); }
-    values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","source_digest"=>format!("sha256:{}",source::TABLE_SHA),"model_digest"=>norn_metrics::host::implementation_digest().expect("configured method before observing holdout").0,"split_at_ms"=>i64::try_from(source::millis(source::SPLIT)).expect("split"),"assumptions_digest"=>docs().0.clone(),"remedy_digest"=>docs().0}.as_object().expect("policy").clone());
+    values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","parameters_digest"=>norn_metrics::producer::parameter_digest(plan,source::micros(source::SPLIT)).expect("preregister parameters before holdout").0,"source_digest"=>format!("sha256:{}",source::TABLE_SHA),"model_digest"=>norn_metrics::host::implementation_digest().expect("configured method before observing holdout").0,"split_at_ms"=>i64::try_from(source::millis(source::SPLIT)).expect("split"),"assumptions_digest"=>docs().0.clone(),"remedy_digest"=>docs().0}.as_object().expect("policy").clone());
     values
 }
 fn payload(id: &str) -> serde_json::Value {
@@ -60,12 +60,12 @@ fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
     assert!(diagnostics.is_empty(),"admit the actual typed declarations: {diagnostics:?}");
     let action:norn_ir::ActionRoot=serde_json::from_value(payload("core.analytics.publish.action")).expect("declared PUBLISH");
     for bulk in [false,true] {
-        let mut world=source::world(bulk,Some(proposal()));
+        let mut world=source::world(bulk,Some(proposal));
         assert_eq!(world.evidence.len(),128);
         let export=export(&world); let (input,blob)=export.input(source::micros(source::SPLIT)).expect("bound input");
-        let prepared=norn_metrics::producer::prepare_forecast(&export,&input).expect("library assessment");
-        let mut values=proposal();
-        values.extend(norn_ir::runtime_object! {"table_version"=>input.table_version.to_string(),"table_digest"=>input.table_digest.0.clone(),"source_digest"=>input.source_digest.0.clone(),"split_at_ms"=>prepared.split_at_ms,"model_digest"=>prepared.implementation_digest.0.clone(),"parameters_digest"=>prepared.parameters_digest.0.clone()}.as_object().expect("proposal pins").clone());
+        
+        let mut values=proposal(&world.plan);
+        values.extend(norn_ir::runtime_object! {"table_version"=>input.table_version.to_string(),"table_digest"=>input.table_digest.0.clone(),"source_digest"=>input.source_digest.0.clone(),"split_at_ms"=>input.split_boundary.div_euclid(1000)}.as_object().expect("proposal pins").clone());
         let checks=Checks(norn_checker::function::admit_function_manifest(&norn_metrics::host::manifest().expect("manifest")).expect("admit Function"));
         let now=source::millis(source::BULK_AT);
         let mut invocation:FunctionInvocation=serde_json::from_str(include_str!("../../../fixtures/function/invocation.effectful.json")).expect("generic dispatch oracle");
@@ -85,6 +85,8 @@ fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
             norn_ir::runtime::encode(&norn_metrics::performer::perform_forecast(&actual,&export,"synthetic-native-host",now).expect("real perform")).expect("receipt").as_object().expect("object").clone()
         }).expect("cell");cell.advance_to(LogicalTime::from_millis(now));
         let performed=cell.perform().expect("perform").expect("result");let receipt:FunctionReceipt=norn_ir::runtime::decode(&Value::Object(performed.input)).expect("receipt");
+        let norn_ir::function::FunctionOutcome::Success(success)=&receipt.outcome else {panic!("native Function did not complete: {:?}",receipt.outcome)};
+        let prepared:norn_metrics::host::ForecastSummary=norn_ir::runtime::decode(&Value::Object(success.summary.clone())).expect("actual typed Function result");
         let command_id=CommandId(invocation.command_id.clone());
         let reference=cell.retain_function_receipt(&dispatched,&Completion {receipt:&receipt,command:&command_id,generation:Generation(1),authenticated_executor:Some("synthetic-native-host")},&ResultChecks {authorizer:&checks,validator:&checks}).expect("authenticate and retain actual receipt");
         let catalog=TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
