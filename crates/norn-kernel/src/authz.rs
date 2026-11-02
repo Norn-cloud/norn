@@ -9,8 +9,8 @@
 
 pub use crate::authz_action::PdpActionAuthorizer;
 pub use norn_authz::{
-    AccessRequest, ActorKind, AttrValue, CapabilityGrant, CommitBinding, Delegation, DenyReason,
-    EntityRef, Pdp, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
+    AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, CommitBinding, Delegation,
+    DenyReason, EntityRef, Pdp, PdpDecision, PrincipalInput, ResourceInput, ScopeKey, compile,
 };
 
 /// A denied authorization.
