@@ -1384,17 +1384,21 @@ define_payload_root!(
 );
 
 define_payload_root!(
-    /// The payload of a `mapping` artifact: an interface-scoped mapping
-    /// ([`mapping::MappingIr`], T8-MAP-1a).
-    #[schemars(with = "mapping::MappingIr")]
+    /// The payload of a `mapping` artifact: source-record transforms or a
+    /// separately checked law interpretation ([`mapping::MappingDocument`]).
+    #[schemars(with = "mapping::MappingDocument")]
     MappingPayload {
         required {
-            format => "format" as mapping::MappingFormat,
-            source => "source" as mapping::SourceBinding,
-            interfaces => "interfaces" as Vec<String>,
-            maps => "maps" as Vec<mapping::ObjectMap>
+            format => "format" as mapping::MappingDocumentFormat
         }
         optional {
+            source => "source" as mapping::SourceBinding,
+            interfaces => "interfaces" as Vec<String>,
+            maps => "maps" as Vec<mapping::ObjectMap>,
+            role => "role" as mapping::InterpretationRole,
+            source_layer => "sourceLayer" as mapping::InterpretationEndpoint,
+            target_layer => "targetLayer" as mapping::InterpretationEndpoint,
+            members => "members" as Vec<mapping::MemberInterpretation>,
             entitlements => "entitlements" as Vec<mapping::EntitlementMap>,
             identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>
         }
@@ -1402,8 +1406,8 @@ define_payload_root!(
 );
 
 define_payload_root!(
-    /// The payload of a `law` artifact, strictly projected from LawIR.
-    #[schemars(with = "LawIR")]
+    /// The existing safety or structured normative form of a `law` artifact.
+    #[schemars(with = "deontic::LawDocument")]
     LawPayload {
         required {
             law_version => "lawVersion" as IrVersion01,
@@ -1417,7 +1421,11 @@ define_payload_root!(
             modality => "modality" as LawModality,
             response => "response" as LawResponse
         }
-        optional { condition => "condition" as ZenExpression, timing => "timing" as LawTiming }
+        optional {
+            condition => "condition" as ZenExpression,
+            timing => "timing" as LawTiming,
+            requirement => "requirement" as deontic::StructuredRequirement
+        }
     }
 );
 

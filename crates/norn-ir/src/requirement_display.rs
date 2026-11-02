@@ -90,6 +90,7 @@ impl RequirementView {
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", self.word("company", "شركة"), isolate(id)),
             LawRoot::App(id) => format!("{} {}", self.word("application", "تطبيق"), isolate(id)),
+            LawRoot::Pack(id) => format!("{} {}", self.word("pack", "حزمة"), isolate(id)),
             LawRoot::Cell(id) => format!("{} {}", self.word("cell", "خلية"), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", self.word("entity", "كيان"), isolate(id)),
         };
@@ -148,11 +149,15 @@ impl RequirementView {
         let source = isolate(&source);
         let component = format!("{}; {}", self.template(&w.component), isolate(&law.subject));
         let response = format!("{}; {}", self.template(&w.response), isolate(&response));
-        let preferred = format!(
-            "{}; {}",
-            self.word("requires grounding", "يتطلب التأصيل"),
-            isolate(&r.norm.defeated_by.join(", "))
-        );
+        let preferred = if r.norm.defeated_by.is_empty() {
+            self.word("none", "لا يوجد").into()
+        } else {
+            format!(
+                "{}; {}",
+                self.word("requires grounding", "يتطلب التأصيل"),
+                isolate(&r.norm.defeated_by.join(", "))
+            )
+        };
         let mut slots = vec![
             self.slot("/norm/law/scope", "Scope", "النطاق", scope.join("")),
             self.slot("/norm/law/condition", "Condition", "الشرط", activation),

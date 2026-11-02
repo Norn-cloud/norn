@@ -3282,6 +3282,57 @@
         "type": "null"
       }
     },
+    "DeonticModality": {
+      "description": "The normative grade is separate from the temporal wrapper in `law`.",
+      "type": "string",
+      "enum": [
+        "obligation",
+        "permission",
+        "prohibition"
+      ]
+    },
+    "DeonticRule": {
+      "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
+      "type": "object",
+      "properties": {
+        "authorityId": {
+          "type": "string"
+        },
+        "authorityVersion": {
+          "type": "string"
+        },
+        "defeatedBy": {
+          "description": "Explicit rule identities preferred to this rule; not numeric authority ranking.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuleException"
+          }
+        },
+        "law": {
+          "$ref": "#/$defs/LawIR"
+        },
+        "modality": {
+          "$ref": "#/$defs/DeonticModality"
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "law",
+        "modality",
+        "authorityId",
+        "authorityVersion",
+        "source"
+      ]
+    },
     "DerivedPayload": {
       "type": "object",
       "properties": {
@@ -4648,6 +4699,26 @@
         "sha256"
       ]
     },
+    "InterpretationFormat": {
+      "description": "Only the interpretation wire format decodes here.",
+      "oneOf": [
+        {
+          "description": "First interpretation contract.",
+          "type": "string",
+          "const": "norn.interpretation/1"
+        }
+      ]
+    },
+    "InterpretationRole": {
+      "description": "A law interpretation is neither source evidence nor term correspondence.",
+      "oneOf": [
+        {
+          "description": "Subject to contract totality and preservation obligations.",
+          "type": "string",
+          "const": "law_interpretation"
+        }
+      ]
+    },
     "Invariant": {
       "description": "One declared invariant of an object type or interface.",
       "type": "object",
@@ -5462,6 +5533,110 @@
         "properties"
       ]
     },
+    "LawIR": {
+      "description": "One protected law; its predicates use the subject's `self` environment.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "description": "Optional pointwise activation predicate (not an edge trigger).",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "description": "Stable identity, preserved by all authoring faces.",
+          "type": "string"
+        },
+        "lawVersion": {
+          "description": "Wire format version.",
+          "$ref": "#/$defs/IrVersion01"
+        },
+        "modality": {
+          "description": "Admitted temporal wrapper.",
+          "$ref": "#/$defs/LawModality"
+        },
+        "owner": {
+          "description": "Principal or registry owner of changes to this law.",
+          "type": "string"
+        },
+        "provenance": {
+          "description": "Source and interpretation provenance.",
+          "$ref": "#/$defs/LawProvenance"
+        },
+        "rationale": {
+          "description": "Reviewed explanation.",
+          "type": "string"
+        },
+        "response": {
+          "description": "Predicate or exact ontology-bound behavior/invariant identity.",
+          "$ref": "#/$defs/LawResponse"
+        },
+        "scope": {
+          "description": "Applicability, independent of the artifact's authorization scope.",
+          "$ref": "#/$defs/LawScope"
+        },
+        "severity": {
+          "description": "Reporting severity, independent of proof status.",
+          "$ref": "#/$defs/LawSeverity"
+        },
+        "subject": {
+          "description": "Exact ontology object type whose record is bound as `self`.",
+          "type": "string"
+        },
+        "timing": {
+          "description": "Optional progress bound.",
+          "$ref": "#/$defs/LawTiming"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lawVersion",
+        "id",
+        "owner",
+        "severity",
+        "rationale",
+        "provenance",
+        "scope",
+        "subject",
+        "modality",
+        "response"
+      ]
+    },
+    "LawInterpretationIr": {
+      "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed format discriminator.",
+          "$ref": "#/$defs/InterpretationFormat"
+        },
+        "members": {
+          "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberInterpretation"
+          }
+        },
+        "role": {
+          "description": "Explicit semantic role.",
+          "$ref": "#/$defs/InterpretationRole"
+        },
+        "sourceLayer": {
+          "description": "Layer whose contract must be preserved.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "targetLayer": {
+          "description": "Layer interpreting that contract.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "role",
+        "sourceLayer",
+        "targetLayer",
+        "members"
+      ]
+    },
     "LawModality": {
       "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
       "oneOf": [
@@ -5529,70 +5704,16 @@
       ]
     },
     "LawPayload": {
-      "description": "The payload of a `law` artifact, strictly projected from LawIR.",
-      "type": "object",
-      "properties": {
-        "condition": {
-          "description": "Optional pointwise activation predicate (not an edge trigger).",
-          "$ref": "#/$defs/ZenExpression"
+      "description": "The existing safety or structured normative form of a `law` artifact.",
+      "oneOf": [
+        {
+          "description": "Existing protected safety law, with unchanged wire form.",
+          "$ref": "#/$defs/LawIR"
         },
-        "id": {
-          "description": "Stable identity, preserved by all authoring faces.",
-          "type": "string"
-        },
-        "lawVersion": {
-          "description": "Wire format version.",
-          "$ref": "#/$defs/IrVersion01"
-        },
-        "modality": {
-          "description": "Admitted temporal wrapper.",
-          "$ref": "#/$defs/LawModality"
-        },
-        "owner": {
-          "description": "Principal or registry owner of changes to this law.",
-          "type": "string"
-        },
-        "provenance": {
-          "description": "Source and interpretation provenance.",
-          "$ref": "#/$defs/LawProvenance"
-        },
-        "rationale": {
-          "description": "Reviewed explanation.",
-          "type": "string"
-        },
-        "response": {
-          "description": "Predicate or exact ontology-bound behavior/invariant identity.",
-          "$ref": "#/$defs/LawResponse"
-        },
-        "scope": {
-          "description": "Applicability, independent of the artifact's authorization scope.",
-          "$ref": "#/$defs/LawScope"
-        },
-        "severity": {
-          "description": "Reporting severity, independent of proof status.",
-          "$ref": "#/$defs/LawSeverity"
-        },
-        "subject": {
-          "description": "Exact ontology object type whose record is bound as `self`.",
-          "type": "string"
-        },
-        "timing": {
-          "description": "Optional progress bound.",
-          "$ref": "#/$defs/LawTiming"
+        {
+          "description": "Reviewed normative declaration; never erase its grade or source metadata.",
+          "$ref": "#/$defs/StructuredLaw"
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "lawVersion",
-        "id",
-        "owner",
-        "severity",
-        "rationale",
-        "provenance",
-        "scope",
-        "subject",
-        "modality",
-        "response"
       ]
     },
     "LawProvenance": {
@@ -5784,6 +5905,24 @@
             "kind": {
               "type": "string",
               "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Exact retained composition-pack boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pack"
             }
           },
           "additionalProperties": false,
@@ -6246,8 +6385,8 @@
         "reason"
       ]
     },
-    "MappingPayload": {
-      "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+    "MappingIr": {
+      "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
       "type": "object",
       "properties": {
         "entitlements": {
@@ -6300,6 +6439,19 @@
         "source",
         "interfaces",
         "maps"
+      ]
+    },
+    "MappingPayload": {
+      "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`]).",
+      "oneOf": [
+        {
+          "description": "Source records produce ordinary entity facts, never inherited laws.",
+          "$ref": "#/$defs/MappingIr"
+        },
+        {
+          "description": "A separately checked interpretation between exact ontology layers.",
+          "$ref": "#/$defs/LawInterpretationIr"
+        }
       ]
     },
     "MappingRelation": {
@@ -6476,6 +6628,219 @@
             "kind"
           ]
         }
+      ]
+    },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberInterpretation": {
+      "description": "One interpretation between exact catalog members, never a coverage claim.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Source type, property, link, lifecycle state or transition identity.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "target": {
+          "description": "Corresponding target identity, resolved within the pinned target layer.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "transform": {
+          "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
       ]
     },
     "Multiplicity": {
@@ -7945,6 +8310,25 @@
           ]
         },
         {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
+          ]
+        },
+        {
           "description": "`true` or `false`.",
           "type": "object",
           "properties": {
@@ -8357,6 +8741,63 @@
         "to"
       ]
     },
+    "RequirementText": {
+      "description": "Reviewed English and Arabic display, never executable free prose.",
+      "type": "object",
+      "properties": {
+        "ar": {
+          "type": "string"
+        },
+        "en": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "en",
+        "ar"
+      ]
+    },
+    "RequirementTiming": {
+      "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
+      "oneOf": [
+        {
+          "description": "Condition and response are evaluated at every applicable committed state.",
+          "type": "string",
+          "const": "every_committed_state"
+        },
+        {
+          "description": "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit.",
+          "type": "string",
+          "const": "same_commit"
+        }
+      ]
+    },
+    "RequirementWording": {
+      "description": "Reviewed bilingual templates; identifiers and expressions remain in `norm`.",
+      "type": "object",
+      "properties": {
+        "activation": {
+          "$ref": "#/$defs/RequirementText"
+        },
+        "component": {
+          "$ref": "#/$defs/RequirementText"
+        },
+        "response": {
+          "$ref": "#/$defs/RequirementText"
+        },
+        "scope": {
+          "$ref": "#/$defs/RequirementText"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "activation",
+        "component",
+        "response"
+      ]
+    },
     "ResidualReason": {
       "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
       "oneOf": [
@@ -8592,6 +9033,26 @@
       "additionalProperties": false,
       "required": [
         "anyOf"
+      ]
+    },
+    "RuleByteRange": {
+      "type": "object",
+      "properties": {
+        "end": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
       ]
     },
     "RuleConditionV1": {
@@ -8874,6 +9335,27 @@
         }
       ]
     },
+    "RuleException": {
+      "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
+      "type": "object",
+      "properties": {
+        "condition": {
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/RuleSourceSpan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "condition",
+        "source"
+      ]
+    },
     "RuleHitPolicyV1": {
       "description": "RuleIR v1 hit policy.",
       "type": "string",
@@ -9077,6 +9559,33 @@
         "doctype",
         "slice",
         "modifiedProperty"
+      ]
+    },
+    "RuleSourceSpan": {
+      "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pointer": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "pointer"
       ]
     },
     "RuleTrigger": {
@@ -10036,6 +10545,40 @@
         "observedAt",
         "adapter",
         "rawMetadata"
+      ]
+    },
+    "StructuredLaw": {
+      "description": "Structured form of a `law` payload. Authority rank and enactment are absent:\nonly the trusted retained enacting instance/layer may supply those inputs.",
+      "type": "object",
+      "properties": {
+        "requirement": {
+          "$ref": "#/$defs/StructuredRequirement"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requirement"
+      ]
+    },
+    "StructuredRequirement": {
+      "description": "Structured authoring over the existing law and normative source model.",
+      "type": "object",
+      "properties": {
+        "norm": {
+          "$ref": "#/$defs/DeonticRule"
+        },
+        "timing": {
+          "$ref": "#/$defs/RequirementTiming"
+        },
+        "wording": {
+          "$ref": "#/$defs/RequirementWording"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "norm",
+        "timing",
+        "wording"
       ]
     },
     "TemporalScope": {

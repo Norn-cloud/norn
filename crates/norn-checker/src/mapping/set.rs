@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-use norn_ir::mapping::MappingIr;
+use norn_ir::mapping::{LawInterpretationIr, MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
 
@@ -47,6 +47,30 @@ pub fn check_mapping_artifacts(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for artifact in artifacts {
+        if artifact.kind() == ArtifactKind::Mapping
+            && let Ok(MappingDocument::LawInterpretation(document)) =
+                serde_json::to_value(artifact.payload.to_json_value())
+                    .and_then(serde_json::from_value::<MappingDocument>)
+        {
+            out.extend(interpretation_endpoints(artifact, &document, base));
+            if !interpretation_members(&document, base) {
+                out.push(in_payload(error(
+                    "core.composition.mapping_gap",
+                    "interpretation must cover the retained source contract exactly with unique compatible target members".to_owned(),
+                    Span::pointer("/members"),
+                ), artifact));
+            }
+            out.extend(key_findings(artifact));
+            out.push(in_payload(
+                error(
+                    "mapping.interpretation.unsupported",
+                    "law interpretations require member conformance and preservation obligations"
+                        .to_owned(),
+                    Span::pointer("/role"),
+                ),
+                artifact,
+            ));
+        }
         if let Some(document) = source_payload(artifact) {
             out.extend(
                 check_source_schema(&document)
@@ -89,6 +113,328 @@ pub fn check_mapping_artifacts(
                 .into_iter()
                 .map(|finding| in_payload(finding, artifact)),
         );
+    }
+    out
+}
+
+/// MAP-TOTAL-1: totality comes from retained definitions, never a supplied list.
+/// This cut checks identity bindings; transformations remain unsupported.
+fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+    let Some(source) = layer_members(&document.source_layer, base) else {
+        return false;
+    };
+    let Some(target) = layer_members(&document.target_layer, base) else {
+        return false;
+    };
+    let mut seen = BTreeSet::new();
+    let mut images = BTreeSet::new();
+    document.members.iter().all(|binding| {
+        binding.transform.is_none()
+            && source.contains(&binding.source)
+            && target.contains(&binding.target)
+            && std::mem::discriminant(&binding.source.member)
+                == std::mem::discriminant(&binding.target.member)
+            && seen.insert(binding.source.clone())
+            && images.insert(binding.target.clone())
+    }) && seen == source
+        && interpretation_contracts(document, base)
+}
+
+/// MAP-UNITS / EVENT-MULTI: member owners, scalar units and relation roles
+/// come from resolved contracts. This identity profile never invents conversions.
+fn interpretation_contracts(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+    use norn_ir::definition_catalog::Member;
+    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    document.members.iter().all(|binding| {
+        let (Some(source_owner), Some(target_owner)) = (member_owner(&binding.source), member_owner(&binding.target)) else { return false; };
+        if !document.members.iter().any(|b| b.source == source_owner && b.target == target_owner) { return false; }
+        match (&binding.source.member, &binding.target.member) {
+            (Member::Type { .. }, Member::Type { .. }) => true,
+            (Member::Property { .. }, Member::Property { .. }) => {
+                let source = property_signature(&binding.source, &catalog, base);
+                source.is_some() && source == property_signature(&binding.target, &catalog, base)
+            }
+            (Member::Link { .. }, Member::Link { .. }) => {
+                let (Some((source, arity)), Some((target, target_arity))) = (link_signature(&binding.source, &catalog, base), link_signature(&binding.target, &catalog, base)) else { return false; };
+                let interpreted = document.members.iter().any(|b| matches!((&b.source.member, &b.target.member),
+                    (Member::Type { type_name: a }, Member::Type { type_name: b }) if a == &source && b == &target));
+                arity == target_arity && (interpreted || (source == target && catalog.target_types(&source).is_some()))
+            }
+            (Member::State { type_name: source_type, lifecycle: source_lifecycle, state: source_id }, Member::State { type_name: target_type, lifecycle: target_lifecycle, state: target_id })
+            | (Member::Transition { type_name: source_type, lifecycle: source_lifecycle, transition: source_id }, Member::Transition { type_name: target_type, lifecycle: target_lifecycle, transition: target_id }) => {
+                let source = catalog.object_type_named(source_type).and_then(Result::ok).and_then(|o| o.lifecycle(source_lifecycle));
+                let target = catalog.object_type_named(target_type).and_then(Result::ok).and_then(|o| o.lifecycle(target_lifecycle));
+                source_lifecycle == target_lifecycle && source_id == target_id && source.is_some() && source == target
+            }
+            _ => false,
+        }
+    })
+}
+
+fn member_owner(
+    at: &norn_ir::definition_catalog::MemberRef,
+) -> Option<norn_ir::definition_catalog::MemberRef> {
+    use norn_ir::definition_catalog::Member;
+    let name = match &at.member {
+        Member::Type { type_name }
+        | Member::Property { type_name, .. }
+        | Member::Link { type_name, .. }
+        | Member::State { type_name, .. }
+        | Member::Transition { type_name, .. } => type_name,
+        Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => return None,
+    };
+    Some(norn_ir::definition_catalog::MemberRef {
+        member: Member::Type {
+            type_name: name.clone(),
+        },
+        ..at.clone()
+    })
+}
+
+fn property_signature(
+    at: &norn_ir::definition_catalog::MemberRef,
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    base: &[ArtifactEnvelope],
+) -> Option<(norn_ir::PropertyType, bool)> {
+    use norn_ir::definition_catalog::Member;
+    let Member::Property {
+        type_name,
+        property,
+    } = &at.member
+    else {
+        return None;
+    };
+    if let Some(Ok(object)) = catalog.object_type_named(type_name) {
+        let p = object
+            .properties
+            .iter()
+            .find(|p| p.id.as_str() == property)?;
+        let crate::entity_instance::EffectiveKind::Base(kind) = &p.kind else {
+            return None;
+        };
+        return Some((kind.clone(), p.nullable));
+    }
+    let definition = base
+        .iter()
+        .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)?;
+    let crate::entity_artifacts::Decoded::Root(root) =
+        crate::entity_artifacts::decode_v2(definition)
+    else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2Interface(root) = *root else {
+        return None;
+    };
+    let p = root
+        .interface
+        .properties
+        .iter()
+        .find(|p| p.id.as_str() == property)?;
+    let kind = crate::property_types::resolved_property_type(&p.property_type, &[])?;
+    Some((kind.clone(), p.constraints.nullable))
+}
+
+fn link_signature(
+    at: &norn_ir::definition_catalog::MemberRef,
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    base: &[ArtifactEnvelope],
+) -> Option<(String, norn_ir::LinkCardinality)> {
+    use norn_ir::definition_catalog::Member;
+    let Member::Link { type_name, link } = &at.member else {
+        return None;
+    };
+    if let Some(links) = catalog.links_for_object_type(type_name) {
+        let l = links.iter().find(|l| l.id.as_str() == link)?;
+        if l.acyclic || l.inverse.is_some() || !l.properties.is_empty() {
+            return None;
+        }
+        return Some((l.target.as_str().to_owned(), l.cardinality));
+    }
+    let definition = base
+        .iter()
+        .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)?;
+    let crate::entity_artifacts::Decoded::Root(root) =
+        crate::entity_artifacts::decode_v2(definition)
+    else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2Interface(root) = *root else {
+        return None;
+    };
+    let l = root
+        .interface
+        .links
+        .iter()
+        .find(|l| l.id.as_str() == link)?;
+    Some((l.target.as_str().to_owned(), l.cardinality))
+}
+
+fn layer_members(
+    pin: &norn_ir::mapping::InterpretationEndpoint,
+    base: &[ArtifactEnvelope],
+) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+    use norn_ir::{BusinessPackRoot, PackArtifactKind};
+    let layers: Vec<_> = base
+        .iter()
+        .filter(|a| a.artifact_id == pin.artifact_id && a.version == pin.version)
+        .collect();
+    let [layer] = layers.as_slice() else {
+        return None;
+    };
+    let root: BusinessPackRoot = serde_json::to_value(layer.payload.to_json_value())
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())?;
+    let BusinessPackRoot::Composition(pack) = root else {
+        return None;
+    };
+    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let mut members = BTreeSet::new();
+    for reference in pack.artifacts {
+        // Nested pack/extension contracts need retained closure, not guessed scope.
+        if reference.kind == PackArtifactKind::BusinessPack {
+            return None;
+        }
+        if reference.kind != PackArtifactKind::Entity {
+            continue;
+        }
+        let definitions: Vec<_> = base
+            .iter()
+            .filter(|a| {
+                a.artifact_id == reference.artifact_id
+                    && a.version == reference.version
+                    && a.kind() == ArtifactKind::Entity
+            })
+            .collect();
+        let [definition] = definitions.as_slice() else {
+            return None;
+        };
+        let crate::entity_artifacts::Decoded::Root(root) =
+            crate::entity_artifacts::decode_v2(definition)
+        else {
+            return None;
+        };
+        members.extend(definition_members(&reference, &root, &catalog)?);
+    }
+    (!members.is_empty()).then_some(members)
+}
+
+fn definition_members(
+    reference: &norn_ir::PackArtifactRef,
+    root: &norn_ir::EntityRoot,
+    catalog: &crate::entity_instance::EffectiveCatalog,
+) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+    use norn_ir::EntityRoot;
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let mut members = BTreeSet::new();
+    let mut add = |member| {
+        members.insert(MemberRef {
+            artifact_id: reference.artifact_id.clone(),
+            version: reference.version.clone(),
+            member,
+        });
+    };
+    let (name, properties, links) = match root {
+        EntityRoot::V2(_) => {
+            let effective = catalog.object_type(&reference.artifact_id)?.ok()?;
+            let name = effective.name.as_str().to_owned();
+            for machine in &effective.lifecycles {
+                let lifecycle = machine.lifecycle.property.as_str().to_owned();
+                for state in &machine.states {
+                    add(Member::State {
+                        type_name: name.clone(),
+                        lifecycle: lifecycle.clone(),
+                        state: state.clone(),
+                    });
+                }
+                for transition in &machine.lifecycle.transitions {
+                    add(Member::Transition {
+                        type_name: name.clone(),
+                        lifecycle: lifecycle.clone(),
+                        transition: transition.id.as_str().to_owned(),
+                    });
+                }
+            }
+            (
+                name,
+                effective
+                    .properties
+                    .iter()
+                    .map(|p| p.id.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+                catalog
+                    .links_for_object_type(effective.name.as_str())?
+                    .iter()
+                    .map(|l| l.id.as_str().to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        }
+        EntityRoot::V2Interface(root) if root.interface.extends.is_empty() => (
+            root.interface.name.as_str().to_owned(),
+            root.interface
+                .properties
+                .iter()
+                .map(|p| p.id.as_str().to_owned())
+                .collect(),
+            root.interface
+                .links
+                .iter()
+                .map(|l| l.id.as_str().to_owned())
+                .collect(),
+        ),
+        EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) => return Some(members),
+        EntityRoot::V1(_) | EntityRoot::V2Extension(_) | EntityRoot::V2Interface(_) => return None,
+    };
+    add(Member::Type {
+        type_name: name.clone(),
+    });
+    for property in properties {
+        add(Member::Property {
+            type_name: name.clone(),
+            property,
+        });
+    }
+    for link in links {
+        add(Member::Link {
+            type_name: name.clone(),
+            link,
+        });
+    }
+    Some(members)
+}
+
+fn interpretation_endpoints(
+    artifact: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (at, pin) in [
+        ("/sourceLayer", &document.source_layer),
+        ("/targetLayer", &document.target_layer),
+    ] {
+        let retained: Vec<_> = base
+            .iter()
+            .filter(|a| a.artifact_id == pin.artifact_id && a.version == pin.version)
+            .collect();
+        let dependencies: Vec<_> = artifact
+            .dependencies
+            .iter()
+            .filter(|d| d.artifact_id == pin.artifact_id)
+            .collect();
+        let exact_dependency = matches!(dependencies.as_slice(), [dependency]
+            if dependency.kind == ArtifactKind::BusinessPack && dependency.required
+                && dependency.version.as_deref() == Some(pin.version.as_str()));
+        let exact_retained = matches!(retained.as_slice(), [layer]
+            if layer.kind() == ArtifactKind::BusinessPack
+                && ArtifactRef::of(layer).is_ok_and(|r| r.sha256 == pin.sha256));
+        let exact_version = SEMVER.as_ref().is_some_and(|g| g.is_match(&pin.version));
+        if !exact_dependency || !exact_retained || !exact_version {
+            out.push(in_payload(error(
+                "mapping.interpretation.invalid_endpoint",
+                format!("interpretation endpoint {:?} requires one retained business pack, an exact required dependency and matching version/content identity", pin.artifact_id),
+                Span::pointer(at),
+            ), artifact));
+        }
     }
     out
 }

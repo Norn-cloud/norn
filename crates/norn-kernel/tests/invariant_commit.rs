@@ -3040,3 +3040,155 @@ fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
     .expect("inherited parent membership admits link");
     assert!(cell.load_link(&key).unwrap().values.is_some());
 }
+
+fn property_domain_fixture(
+    scale: u64,
+    minimum: &str,
+) -> (ObjectTypeDef, InterfaceDef, Vec<PropertyTypeDef>) {
+    let value_type = json!({"kind":"ref","name":"test.amount"});
+    (
+        serde_json::from_value(json!({"name":"test.Quantity","implements":["test.Bounded"],"properties":[
+            {"id":"amount","type":value_type},
+            {"id":"reading","type":{"kind":"record","members":[{"id":"amount","type":value_type}]}}
+        ]})).unwrap(),
+        serde_json::from_value(json!({"name":"test.Bounded","properties":[
+            {"id":"amount","type":value_type,"constraints":{"max":"10"}}
+        ]})).unwrap(),
+        vec![serde_json::from_value(json!({"name":"test.amount","type":{"kind":"decimal","scale":scale},"constraints":{"min":minimum}})).unwrap()],
+    )
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn property_rule_pin_catalog_permutations_are_equivalent(reverse_types: bool, reverse_extensions: bool) {
+        let (definition, interface, mut property_types) = property_domain_fixture(3,"0");
+        let mut extra = property_types[0].clone();
+        extra.name = norn_ir::PropertyTypeName("test.other".into());
+        property_types.push(extra);
+        let mut extensions: Vec<norn_ir::ObjectTypeExtension> = [("alpha", "first"), ("alpha", "second"), ("beta", "third")].into_iter().map(|(namespace, member)| {
+            serde_json::from_value(json!({"namespace":namespace,"target":"test.Quantity",
+                "properties":[{"id":format!("{namespace}__{member}"),"type":{"kind":"decimal","scale":3}}]})).unwrap()
+        }).collect();
+        let rule = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types)
+            .with_extensions(&extensions).property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap();
+        if reverse_types { property_types.reverse(); }
+        if reverse_extensions { extensions.reverse(); }
+        let permuted = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types)
+            .with_extensions(&extensions).property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap();
+        norn_testkit::proptest::prop_assert_eq!(rule,permuted);
+    }
+
+    #[test]
+    fn property_rule_pin_generated_declaration_changes_invalidate_references(scale in 0_u64..9, changed in 0_u64..9) {
+        norn_testkit::proptest::prop_assume!(scale != changed);
+        let (definition, interface, property_types) = property_domain_fixture(scale,"0");
+        let catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types);
+        let rule = catalog.property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap().unwrap();
+        norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Builtin);
+        let (_,_,changed_types) = property_domain_fixture(changed,"1");
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_types);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let (_,_,changed_bounds) = property_domain_fixture(scale,"1");
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_bounds);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let mut changed_interface = interface.clone();
+        changed_interface.properties[0].constraints.max = Some(norn_ir::DecimalLiteral("9".into()));
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&changed_interface]).with_property_types(&property_types);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let forged = DataQualityRuleRef::Builtin {id:norn_kernel::decision_commit::PROPERTY_DOMAIN_RULE_ID.into(),version:"free-text-is-not-a-pin".into()};
+        norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&forged).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+    }
+}
+
+#[test]
+fn property_rule_pin_empty_catalog_forms_are_equivalent() {
+    let definition: ObjectTypeDef =
+        serde_json::from_value(json!({"name":"test.Simple","properties":[
+            {"id":"amount","type":{"kind":"decimal","scale":3}}
+        ]}))
+        .unwrap();
+    let catalog = TypeCatalog::new([&definition]);
+    let rule = catalog
+        .property_domain_rule_ref(&definition.name, &norn_ir::PropertyId("amount".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        TypeCatalog::new([&definition])
+            .with_property_types(&[])
+            .classify_data_quality_rule(&rule)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Builtin
+    );
+}
+
+#[test]
+fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
+    let (definition, interface, property_types) = property_domain_fixture(3, "0");
+    let catalog = TypeCatalog::new([&definition])
+        .with_interfaces([&interface])
+        .with_property_types(&property_types);
+    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+        .with_types(vec![definition.clone()])
+        .with_interfaces(vec![interface.clone()])
+        .with_property_types(property_types.clone());
+    let key = FactKey::new("test.Quantity", "observed");
+    let values = object(json!({"amount":1.2345,"reading":{"amount":1.2345}}));
+    assert!(matches!(
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: values.clone()
+                }
+            }],
+            ..CellCommit::empty()
+        }),
+        Err(CommitError::InvariantViolation { .. })
+    ));
+    assert!(cell.ledger().is_empty());
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    let provenance = source_provenance();
+    let snapshot = ObservedSnapshot {
+        key: &key,
+        values: &values,
+        lifecycles: &[],
+        provenance: &provenance,
+    };
+    commit_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &slice,
+        &turn("property-domain"),
+        snapshot,
+    )
+    .unwrap();
+    let findings: Vec<_> = cell
+        .ledger()
+        .last()
+        .unwrap()
+        .events
+        .iter()
+        .filter_map(|event| {
+            if let ObservationEvent::DataQualityFinding { fact } = event {
+                Some(fact)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(findings.len(), 2);
+    for finding in findings {
+        assert!(
+            matches!(&finding.rule_ref, DataQualityRuleRef::Builtin {id,version} if id==norn_kernel::decision_commit::PROPERTY_DOMAIN_RULE_ID && version.starts_with("sha256:"))
+        );
+        assert_eq!(
+            catalog
+                .classify_data_quality_rule(&finding.rule_ref)
+                .unwrap(),
+            norn_kernel::DataQualityRuleClassification::Builtin
+        );
+    }
+    assert!(cell.load(&key).unwrap().exists());
+    assert!(cell.outbox().is_empty());
+}

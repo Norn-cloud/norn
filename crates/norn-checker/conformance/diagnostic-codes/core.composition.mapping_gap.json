@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.mapping_gap",
+  "message": "interpretation must cover the retained source contract exactly with unique compatible target members",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -181,7 +181,7 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         Customization => !matches!(to, BusinessPack),
         BusinessPack => true,
         SourceSchema => false,
-        Mapping => matches!(to, Entity | SourceSchema),
+        Mapping => matches!(to, Entity | SourceSchema | BusinessPack),
         Law => matches!(
             to,
             Entity
@@ -627,7 +627,7 @@ fn pack_members(artifact: &ArtifactEnvelope) -> Vec<PackArtifactRef> {
         .unwrap_or_default()
 }
 
-const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
+pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
     match kind {
         PackArtifactKind::Entity => ArtifactKind::Entity,
         PackArtifactKind::Relation => ArtifactKind::Relation,
