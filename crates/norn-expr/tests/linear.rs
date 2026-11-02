@@ -76,10 +76,22 @@ fn linear_profile_keeps_type_diagnostics() {
 #[test]
 fn decimal_binding_requires_a_concrete_implementor_type() {
     for (ty, admitted) in [
-        (Type::DecimalBinding { group: "mass".into() }, false),
-        (Type::Decimal { scale: 3, unit: None }, true),
+        (
+            Type::DecimalBinding {
+                group: "mass".into(),
+            },
+            false,
+        ),
+        (
+            Type::Decimal {
+                scale: 3,
+                unit: None,
+            },
+            true,
+        ),
     ] {
-        let env = ZenTypeEnv::input_only(BTreeMap::from([("x".into(), ty)]), EnvOptions::default()).expect("typed input");
+        let env = ZenTypeEnv::input_only(BTreeMap::from([("x".into(), ty)]), EnvOptions::default())
+            .expect("typed input");
         assert_eq!(linear_guard("input.x == input.x", &env).is_ok(), admitted);
     }
 }
