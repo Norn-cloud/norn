@@ -1641,7 +1641,10 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
             .into_value(),
         Value::Bool(true)
     );
-    assert!(run("input.amount / 3 > 0", &Type::Bool).result.is_err());
+    let refused = run("input.amount / 3 > 0", &Type::Bool);
+    assert!(refused.result.is_err());
+    assert_eq!(refused.units_used, 0, "refuse before VM execution");
+    assert!(Expression::compile("input.amount / 3 > 0").unwrap().check_typed(&env, &Type::Bool).unwrap_err().iter().any(|d| d.code == "core.values.inexact"));
     assert!(
         run("round(input.amount, 2) > 0", &Type::Bool)
             .result
