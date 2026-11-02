@@ -1401,6 +1401,24 @@ fn check_qualified_receipt_fence(first: u128) {
         run_with(&case, &case.receipt, &local, &ALLOW),
         Reconciliation::Refused(_)
     ));
+    let legacy = accepted(run_with(
+        &case,
+        &case.receipt,
+        &context(ReconcilePolicy::DEFAULT),
+        &ALLOW,
+    ));
+    let legacy_reference =
+        ReceiptReference::parse(&RuntimeValue::String(legacy.record.receipt.0.clone()))
+            .expect("legacy reference");
+    let modern = ScopedStore {
+        cell: &a,
+        acceptance: &legacy,
+        receipt: &case.receipt,
+    };
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&modern, &legacy_reference),
+        Err(ReceiptBindingError::Mismatch)
+    ));
     case.dispatched.invocation.provenance_commit =
         CommitProvenance::Qualified(QualifiedCommit::new(a.clone(), "main".into(), 1207));
     case.dispatched = DispatchedCommand::pin(

@@ -43,7 +43,7 @@ pub fn receipt_reference(
 
 pub(crate) fn local_origin(record: &ResultRecord, context: Option<(&CellId, &str)>) -> bool {
     match &record.origin {
-        None => true,
+        None => context.is_none(),
         Some(origin) => context.is_some_and(|(cell, world)| origin.belongs_to(cell, world)),
     }
 }

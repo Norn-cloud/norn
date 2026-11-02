@@ -72,8 +72,8 @@ pub enum ReceiptResolution<'a> {
 pub trait AcceptedReceiptStore {
     /// Host storage failure.
     type Error;
-    /// Authenticated cell/world for new portable references. Legacy adapters
-    /// cannot resolve qualified evidence until they supply this context.
+    /// Authenticated cell/world for qualified evidence. `None` selects local-only
+    /// legacy lookup; `Some` refuses records without qualified provenance.
     fn origin_context(&self) -> Option<(&norn_ir::cell_id::CellId, &str)> {
         None
     }
