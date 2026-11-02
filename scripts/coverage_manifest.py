@@ -195,7 +195,11 @@ def migrate_entries() -> None:
     old = sorted((COVERAGE / SUBSYSTEMS).glob("*.json"))
     if not old:
         raise InvalidCoverageLayout("no legacy subsystem files to migrate")
+    if set(COVERAGE.iterdir()) != {COVERAGE / INDEX, COVERAGE / SUBSYSTEMS} or set(old) != set((COVERAGE / SUBSYSTEMS).iterdir()):
+        raise InvalidCoverageLayout("migration requires only legacy subsystem files")
     document = _object(COVERAGE / INDEX)
+    if "subsystems" in document:
+        raise InvalidCoverageLayout("legacy index must not list subsystems")
     bodies = [(path, _object(path)) for path in old]
     if any("id" in body or not SUBSYSTEM_FILE.fullmatch(path.name) for path, body in bodies):
         raise InvalidCoverageLayout("invalid legacy subsystem identity")
