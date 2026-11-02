@@ -51,7 +51,7 @@ export const quantityConservation = Norn.law({
     response: { kind: "invariant", objectType: "core.Conversion", invariantId: "conversion_conservation" },
   },
   wordings: { "core.law.conversion_conservation": {
-    lawDigest: "0000000000000000000000000000000000000000000000000000000000000000",
+    lawDigest: "46d00e0929579e17dcb29e8a5b65a5db7c8740012171e290f1528352e66d4623",
     slots: {
       scope: { en: "Each core conversion", ar: "كل عملية تحويل" },
       activation: { en: "At every committed state", ar: "في كل حالة معتمدة" },
