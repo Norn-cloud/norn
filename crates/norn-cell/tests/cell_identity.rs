@@ -112,6 +112,20 @@ async fn restore_requires_same_explicit_identity_and_export_refuses_unqualified_
         Err(RestoreError::IdentityMismatch)
     ));
     assert!(!target.exists());
+    bindings.remove("cell_id");
+    assert!(matches!(
+        CellStore::restore_from(
+            &mut exporter,
+            &target,
+            model(),
+            "org_demo/dev",
+            &bindings,
+            StoreOptions::default()
+        )
+        .await,
+        Err(RestoreError::IdentityMismatch)
+    ));
+    assert!(!target.exists());
     bindings.insert("cell_id".into(), String::from(a()));
     CellStore::restore_from(
         &mut exporter,
