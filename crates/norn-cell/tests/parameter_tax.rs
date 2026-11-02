@@ -3,6 +3,7 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     missing_docs,
     reason = "PARAM-TAX integration fixtures"
 )]
@@ -62,7 +63,7 @@ fn definitions() -> Definitions {
     let diagnostics = norn_checker::check_artifact_set(
         &artifacts,
         &norn_checker::EntityArtifactSetContext {
-            registry: &Default::default(),
+            registry: &std::collections::BTreeSet::new(),
             base: &[],
             tenant: None,
         },
