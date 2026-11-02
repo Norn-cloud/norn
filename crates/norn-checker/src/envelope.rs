@@ -337,7 +337,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         // and `crate::mapping` (run per document and over the artifact set).
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::DefinedConcept(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -415,6 +416,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
+        ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
     }
 }
 
@@ -5424,6 +5426,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::DefinedConcept => "defined_concept",
     }
 }
 

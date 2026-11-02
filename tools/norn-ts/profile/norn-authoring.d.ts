@@ -157,6 +157,7 @@ declare module "@norn/authoring" {
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
     interface InterfaceMeta<S extends Schema.Top> {
+      readonly role?: "thing" | "happening"
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
