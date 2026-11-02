@@ -66,6 +66,26 @@ fn target_requirement(law: LawIR) -> StructuredRequirement {
     }
 }
 
+fn render_requirement(stdout: &mut impl std::io::Write, law: &LawIR) -> DemoResult<()> {
+    writeln!(
+        stdout,
+        "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
+        law.id
+    )?;
+    let requirement = target_requirement(law.clone());
+    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+        let view = RequirementView {
+            requirement: requirement.clone(),
+            locale,
+        };
+        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
+        for slot in view.slots()? {
+            writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
+        }
+    }
+    Ok(())
+}
+
 fn with_law(types: &[ArtifactEnvelope], law: &LawIR) -> DemoResult<Vec<ArtifactEnvelope>> {
     let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
@@ -277,22 +297,7 @@ fn main() -> DemoResult<()> {
         "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
-    writeln!(
-        stdout,
-        "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
-        law.id
-    )?;
-    let requirement = target_requirement(law.clone());
-    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
-        let view = RequirementView {
-            requirement: requirement.clone(),
-            locale,
-        };
-        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
-        for slot in view.slots()? {
-            writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
-        }
-    }
+    render_requirement(&mut stdout, &law)?;
     writeln!(
         stdout,
         "Checker-generated obligations {}; no handwritten theorem or proof:",
