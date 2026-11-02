@@ -44,7 +44,7 @@ fn unsupported() -> ExprError {
 /// Compile a guard using the ordinary parser, bounds and type environment.
 /// # Errors
 /// Refuses untyped predicates, calls, dynamic paths, nullable/opaque operands,
-/// quantifiers, and products/divisors with unsupported variable dependence.
+/// quantifiers, strings outside SMT Unicode planes 0–2, and nonlinear terms.
 pub fn linear_guard(source: &str, env: &ZenTypeEnv) -> Result<LinearGuard, ExprError> {
     let expression = Expression::compile(source)?;
     check_expression(&expression, env, &Type::Bool).map_err(|_error| unsupported())?;
@@ -129,6 +129,9 @@ impl Compiler<'_> {
             Node::String(value) => {
                 let mut text = String::from("\"");
                 for ch in value.chars() {
+                    if u32::from(ch) > 0x2_FFFF {
+                        return Err(unsupported());
+                    }
                     let _infallible = write!(text, "\\u{{{:x}}}", u32::from(ch));
                 }
                 text.push('"');

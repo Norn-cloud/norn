@@ -96,6 +96,19 @@ mod tests {
                     .collect()
             };
             assert_eq!(views.first().and_then(ids), views.get(1).and_then(ids));
+            for (view, empty) in views.iter().zip(["none", "لا يوجد"]) {
+                let preferences = view["slots"]
+                    .as_array()
+                    .ok_or("slots")?
+                    .iter()
+                    .find(|slot| {
+                        slot["id"]
+                            .as_str()
+                            .is_some_and(|id| id.ends_with("/norm/defeatedBy"))
+                    })
+                    .ok_or("preferences")?;
+                assert_eq!(preferences["text"], empty);
+            }
             assert_eq!(
                 views.first().and_then(|v| v.get("direction")),
                 Some(&json!("ltr"))

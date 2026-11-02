@@ -149,11 +149,15 @@ impl RequirementView {
         let source = isolate(&source);
         let component = format!("{}; {}", self.template(&w.component), isolate(&law.subject));
         let response = format!("{}; {}", self.template(&w.response), isolate(&response));
-        let preferred = format!(
-            "{}; {}",
-            self.word("requires grounding", "يتطلب التأصيل"),
-            isolate(&r.norm.defeated_by.join(", "))
-        );
+        let preferred = if r.norm.defeated_by.is_empty() {
+            self.word("none", "لا يوجد").into()
+        } else {
+            format!(
+                "{}; {}",
+                self.word("requires grounding", "يتطلب التأصيل"),
+                isolate(&r.norm.defeated_by.join(", "))
+            )
+        };
         let mut slots = vec![
             self.slot("/norm/law/scope", "Scope", "النطاق", scope.join("")),
             self.slot("/norm/law/condition", "Condition", "الشرط", activation),
