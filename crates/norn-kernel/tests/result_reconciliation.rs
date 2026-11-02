@@ -1431,7 +1431,7 @@ fn check_qualified_receipt_fence(first: u128) {
         .origin
         .as_mut()
         .expect("origin")
-        .commit += 1;
+        .commit = 1208;
     store.acceptance = &changed_commit;
     assert!(matches!(
         bind_receipt::<ClassificationSummary, _>(&store, &reference),
