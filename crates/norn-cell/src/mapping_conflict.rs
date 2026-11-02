@@ -200,26 +200,15 @@ pub(crate) fn capture<E: SqlEngine>(
 /// The index is disposable and valid only at an unchanged SQLite connection snapshot.
 #[derive(Debug, Default)]
 pub(crate) struct SourceDisputeIndex {
-    revision: Option<(i64, i64)>,
+    revision: Option<(u64, u64)>,
+    initialized: bool,
     subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
     identities: BTreeSet<[String; 5]>,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    fn source_evidence_revision(&self) -> Result<(i64, i64), CellError> {
-        // Own writes (including rolled-back writes) and commits by other connections
-        // invalidate both positive and negative membership. No persisted cache is trusted.
-        let own = self
-            .conn
-            .query_row("SELECT total_changes()", params![], |row| row.get(0))?;
-        let external = self
-            .conn
-            .query_row("PRAGMA data_version", params![], |row| row.get(0))?;
-        Ok((own, external))
-    }
-
     fn build_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
-        let revision = self.source_evidence_revision()?;
+        let revision = self.conn.read_cache_revision()?;
         let mut index = SourceDisputeIndex::default();
         for conflict in self.verified_source_conflicts()? {
             self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
@@ -231,10 +220,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             )?);
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
         }
-        if self.source_evidence_revision()? != revision {
+        if self.conn.read_cache_revision()? != revision {
             return Err(CellError::MappingBundleMismatch);
         }
-        index.revision = Some(revision);
+        index.revision = revision;
+        index.initialized = true;
         Ok(index)
     }
 
@@ -275,8 +265,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(cache) = self.source_disputes else {
             return Ok(read(&self.build_source_dispute_index()?));
         };
-        let revision = self.source_evidence_revision()?;
-        if cache.borrow().revision != Some(revision) {
+        let revision = self.conn.read_cache_revision()?;
+        if revision.is_none() && !self.source_disputes_transaction {
+            return Ok(read(&self.build_source_dispute_index()?));
+        }
+        if !cache.borrow().initialized || cache.borrow().revision != revision {
             let rebuilt = self.build_source_dispute_index()?;
             *cache.borrow_mut() = rebuilt;
         }

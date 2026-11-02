@@ -144,8 +144,11 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.
 
 OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
-in-memory subject index only while SQLite `total_changes()` and `data_version`
-remain unchanged; any local write, rollback or external commit invalidates it.
+in-memory subject index only while the native engine's private SQLite change
+counters remain unchanged; local writes, rollbacks and external commits invalidate
+it. Hosts without a connection revision reuse the index only inside the immutable
+commit-guard transaction, rebuilding for each ordinary read. This adds no admitted
+SQL statement or function.
 Rebuilding checks every retained conflict/NFC finding and all mapping contexts
 against their retained definitions before publishing positive or negative
 membership. Later mapping contexts therefore extend an existing dispute.

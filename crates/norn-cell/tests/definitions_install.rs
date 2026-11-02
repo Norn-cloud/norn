@@ -2958,6 +2958,10 @@ impl CountedEngine {
 }
 
 impl SqlEngine for CountedEngine {
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.inner.read_cache_revision()
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.record_write();
         self.inner.execute(sql, params)

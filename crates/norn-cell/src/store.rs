@@ -2665,7 +2665,8 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 return Err(CellError::IdempotencyConflict(key.clone()).into());
             }
-            let reader = StoreReader::new(&self.conn, &self.model).with_source_disputes(&self.source_disputes);
+            let transaction_disputes = RefCell::default();
+            let reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&transaction_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
