@@ -656,10 +656,7 @@ fn validate_action_derivation_steps(
             ));
             continue;
         };
-        let Some(environment) = fields
-            .clone()
-            .and_then(|fields| ZenTypeEnv::input_only(fields, EnvOptions::default()).ok())
-        else {
+        let Some(environment) = fields.clone().and_then(action_derivation_environment) else {
             diagnostics.push(invalid_diagnostic(
                 codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
                 "derivation expressions require an object input schema with a derivable expression environment",
@@ -943,7 +940,7 @@ fn action_post_derivation_fields(
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
     for step in derive {
-        let environment = ZenTypeEnv::input_only(fields.clone(), EnvOptions::default()).ok()?;
+        let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
         let checked = check_expression_with_root_bounds(
@@ -1251,6 +1248,23 @@ fn action_input_environment(
     } else {
         Some(environment)
     }
+}
+
+// ACTION-ACTOR-1: only the authenticated principal identity is available here.
+// Other general actor members have no trusted action-call binding and refuse typing.
+fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTypeEnv> {
+    const PRINCIPAL: &str = "norn:ActionPrincipal";
+    ZenTypeEnv::input_only_with_records(
+        BTreeMap::from([(
+            PRINCIPAL.into(),
+            BTreeMap::from([("subjectId".into(), Type::text())]),
+        )]),
+        fields,
+        EnvOptions::default(),
+    )
+    .ok()?
+    .bind_operand("actor", Type::Record(PRINCIPAL.into()))
+    .ok()
 }
 
 fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
@@ -2781,6 +2795,25 @@ mod tests {
             "action.validation.invalid_payload",
             "payload.writes[1]"
         ));
+    }
+
+    #[test]
+    fn action_actor_binding_is_typed_and_unsupported_principal_claims_refuse() {
+        let mut action = fixture(ACTION_FIXTURE);
+        action["payload"]["inputSchema"] = json!({"type":"object","additionalProperties":false,
+            "properties":{"code":{"type":"string"}},"required":["code"]});
+        action["payload"]["derive"] = json!([
+            {"field":"code","expression":"actor.subjectId","inputRequired":false}
+        ]);
+        assert_eq!(findings(action.clone()), []);
+        for unsupported in ["actor.roles", "actor.agentSessionId", "actor.approved"] {
+            action["payload"]["derive"][0]["expression"] = json!(unsupported);
+            assert!(has(
+                &findings(action.clone()),
+                "action.validation.invalid_payload",
+                "payload.derive[0].expression"
+            ));
+        }
     }
 
     #[test]
