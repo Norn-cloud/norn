@@ -302,6 +302,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
+    pub(crate) fn indexed_source_dispute(&self, object_type: &str, key: &str) -> Result<bool, CellError> {
+        let subject = (self.root_type(object_type)?.to_owned(), key.to_owned());
+        self.with_source_dispute_index(|index| index.subjects.contains_key(&subject))
+    }
+
     pub(crate) fn indexed_identity_dispute(&self, keys: &[String; 5]) -> Result<bool, CellError> {
         self.with_source_dispute_index(|index| index.identities.contains(keys))
     }

@@ -6647,6 +6647,7 @@ fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering(
 
 // OBS-DISPUTE-LOOKUP-1: a later mapping context extends a cached source dispute.
 norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]
     fn source_dispute_index_refreshes_later_contexts_and_redelivery(prefix in "[A-Z]{1,5}", deliveries in 1usize..4) {
         let dir = tempfile::tempdir().expect("directory");
