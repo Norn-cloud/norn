@@ -3040,3 +3040,53 @@ fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
     .expect("inherited parent membership admits link");
     assert!(cell.load_link(&key).unwrap().values.is_some());
 }
+
+fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
+    let mut laws: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
+    let law = &mut laws[0];
+    law["artifactId"] = json!("invariant.amount.law");
+    law["dependencies"][0]["artifactId"] = json!("invariant.Item.entity");
+    law["payload"]["id"] = json!("amount_bounded");
+    law["payload"]["subject"] = json!(ITEM);
+    law["payload"]["scope"] = json!({"root":{"kind":"entity", "id":ITEM}, "objectTypes":[ITEM]});
+    law["payload"]["response"] = json!({"kind":"predicate", "expression":"self.amount > 100"});
+    serde_json::from_value(law.clone()).expect("direct law")
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn law_commit_direct_positive_and_refusal_cases_are_atomic(amount in 1i64..200) {
+        use norn_testkit::proptest::prelude::*;
+        for amount in [100, 101, amount] {
+            let laws = [direct_amount_law()];
+            let (types, interfaces) = definitions();
+            let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+            let key = FactKey::new(ITEM, "bounded");
+            let values = object(json!({"item_id":"bounded", "amount":amount, "status":"draft"}));
+            for ty in ["norn.ActionCall", "norn.OwnedRows", "norn.ObservedTombstone", "norn.ObservedSource", "norn.PendingLinks"] {
+                prop_assert!(catalog.governing_laws(&ObjectTypeName(ty.into())).expect("kernel-owned record").is_empty());
+            }
+            prop_assert!(catalog.governing_laws(&ObjectTypeName("unknown.Application".into())).is_err());
+            let mut budget = EvaluationBudget::default().units();
+            let failures = norn_kernel::governing_laws::evaluate(
+                &catalog, &key, &values, &mut budget,
+            ).expect("evaluate");
+            prop_assert_eq!(failures.is_empty(), amount <= 100);
+            prop_assert!(budget < EvaluationBudget::default().units());
+            let mut native = cell().with_governing_laws(laws.into());
+            let result = native.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key, expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values },
+                }],
+                ..CellCommit::empty()
+            });
+            prop_assert_eq!(result.is_ok(), amount <= 100);
+            if let Err(refusal) = result {
+                prop_assert_eq!(refusal.code(), "core.laws.violated");
+                prop_assert!(native.ledger().is_empty());
+            }
+        }
+    }
+}
