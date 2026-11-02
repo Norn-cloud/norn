@@ -274,6 +274,7 @@
     "crates/norn-metrics/tests/demand.source.ts",
     "crates/norn-metrics/tests/temporal.rs",
     "crates/norn-metrics/src/analysis.rs",
-    "crates/norn-metrics/tests/analysis.rs"
+    "crates/norn-metrics/tests/analysis.rs",
+    "crates/norn-metrics/tests/ols.rs"
   ]
 }
