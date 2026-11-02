@@ -63,7 +63,7 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 
 `OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority. Division is refused until checked-Decimal range/precision semantics are lowered; the remaining arithmetic goals require numerical correspondence before solver evidence is accepted.
 
-`overlay_obligations` binds a pending entity-guard conjunction to checked B3 retained layers and B2 law instances. Replacement, stale target pins and unsupported syntax refuse through `core.composition.overlay_conflict`. Pending goals grant no admission or proof; solver dispatch, progress analysis and additional-law overlays remain unqualified in this preparatory cut.
+`overlay_obligations` binds a pending entity-guard conjunction to checked B3 retained layers and B2 law instances. Replacement, stale target pins and unsupported syntax refuse through `core.composition.overlay_conflict`. Pending goals grant no admission or proof. This path binds the pinned target’s `self` and ambient `actor` only; parameter/action-input references refuse as `unsupported_predicate`. Their binding, solver dispatch, progress analysis and additional-law overlays remain unqualified in this preparatory cut.
 
 ## Named acceptance scenarios
 
