@@ -741,7 +741,7 @@ fn lowered_cost(
     cost: u64,
     limits: &ResourceLimitProfile,
     span: (u32, u32),
-) -> Result<u64, Vec<Diagnostic>> {
+) -> Result<CostEstimate, Vec<Diagnostic>> {
     let quantizers = runtime_source
         .matches("round((")
         .count()
