@@ -2158,8 +2158,18 @@ impl<'a> Checker<'a> {
                 self.number(first?)?;
                 self.string(arguments.get(2)?)?;
                 if !matches!(arguments.get(1), Some(Node::Number(n)) if n.to_string().parse::<u8>().is_ok_and(|n| n <= 18))
-                    || !matches!(arguments.get(2), Some(Node::String("refuse" | "toward_zero" | "half_even" | "half_away_from_zero"))) {
-                    return self.report(node, "core.values.inexact", "round requires a literal scale 0..18 and mode".to_owned());
+                    || !matches!(
+                        arguments.get(2),
+                        Some(Node::String(
+                            "refuse" | "toward_zero" | "half_even" | "half_away_from_zero"
+                        ))
+                    )
+                {
+                    return self.report(
+                        node,
+                        "core.values.inexact",
+                        "round requires a literal scale 0..18 and mode".to_owned(),
+                    );
                 }
                 Some(T::Number)
             }
@@ -2381,8 +2391,15 @@ pub(crate) fn exact_admission<'n>(
     let mut pending = vec![(root, destination)];
     let mut out = Vec::new();
     while let Some((node, destination)) = pending.pop() {
-        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), .. });
-        let site = destination || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
+        let round = matches!(
+            node,
+            Node::FunctionCall {
+                kind: FunctionKind::Internal(InternalFunction::Round),
+                ..
+            }
+        );
+        let site = destination
+            || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
         let reason = if matches!(
             node,
             Node::Binary {

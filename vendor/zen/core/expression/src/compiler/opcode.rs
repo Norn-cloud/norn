@@ -16,8 +16,13 @@ pub enum FetchFastTarget {
 #[derive(Debug, PartialEq, Eq, Clone, Display)]
 pub enum Opcode {
     /// VAL-ROUND: an explicit rescale site, entered before its operand.
-    ExactSite { scale: u32, rounding: Option<crate::scaled::Rounding> },
-    Rescale { scale: u32 },
+    ExactSite {
+        scale: u32,
+        rounding: Option<crate::scaled::Rounding>,
+    },
+    Rescale {
+        scale: u32,
+    },
     ExactSiteEnd,
     PushNull,
     PushBool(bool),

@@ -237,7 +237,10 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
             IF::Round => Rc::new(CompositeFunction {
                 implementation: Rc::new(imp::round),
                 signatures: vec![
-                    FunctionSignature { parameters: vec![VT::Number, VT::Number, VT::String], return_type: VT::Number },
+                    FunctionSignature {
+                        parameters: vec![VT::Number, VT::Number, VT::String],
+                        return_type: VT::Number,
+                    },
                     FunctionSignature {
                         parameters: vec![VT::Number],
                         return_type: VT::Number,
