@@ -285,8 +285,6 @@
     "crates/norn-checker/src/definition_catalog.rs",
     "crates/norn-checker/tests/definition_catalog.rs",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.fine_mass_definition.law.json",
-    "registry/packs/demo-erpnext/artifacts/demo.erpnext.ScrapMelt.entity.json",
-    "registry/packs/demo-erpnext/wordings/demo.erpnext.fine_mass_definition.wording.json",
-    "registry/packs/demo-erpnext/wordings/demo.erpnext.purity_in_range.wording.json"
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.ScrapMelt.entity.json"
   ]
 }
