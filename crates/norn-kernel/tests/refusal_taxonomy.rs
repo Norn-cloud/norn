@@ -111,6 +111,7 @@ fn refusal_categories_are_stable() {
             decision(DecisionRefusal::InvariantViolation {
                 key: Box::new(key.clone()),
                 owner: InvariantOwner::Object(ObjectTypeName("commerce.SalesOrder".into())),
+                version: "sha256:synthetic".into(),
                 id: InvariantId("positive_total".into()),
                 message: "total must be positive".into(),
                 outcome: Box::new(DataQualityOutcome::NotSatisfied),
@@ -167,6 +168,7 @@ fn refusal_categories_are_stable() {
             CommitError::<Infallible>::InvariantViolation {
                 key: Box::new(key.clone()),
                 owner: InvariantOwner::Object(ObjectTypeName("commerce.SalesOrder".into())),
+                version: "sha256:synthetic".into(),
                 id: InvariantId("positive_total".into()),
                 message: "total must be positive".into(),
                 outcome: Box::new(DataQualityOutcome::NotSatisfied),

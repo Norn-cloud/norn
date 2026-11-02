@@ -103,19 +103,12 @@ pub struct Refusal {
     /// Definition-derived law and operands, when the refusal identifies them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<RefusalReason>,
+    /// Only engine-defined stale preparation/concurrency paths permit retry.
+    #[serde(default)]
+    pub retryable: bool,
 }
 
-/// Structured operands of a violated law, shared by every transport.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RefusalReason {
-    /// Stable law identifier.
-    pub law: String,
-    /// Object to which the law applies.
-    pub subject: String,
-    /// Named operands; absent states are null and declared state sets are arrays.
-    pub values: BTreeMap<String, RuntimeValue>,
-}
+pub use norn_ir::RefusalReason;
 
 impl Refusal {
     /// A refusal with `message`; visibility and internal refusals always get
@@ -136,6 +129,7 @@ impl Refusal {
             category,
             message,
             reason: None,
+            retryable: false,
         }
     }
 }
@@ -248,7 +242,12 @@ impl<X> CommitError<X> {
 
 impl<X> Refusable for CommitError<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        if let Self::InvariantViolation { key, owner, version, id, outcome, .. } = self {
+            refusal.reason = Some(invariant_reason(key, owner, version, id, outcome));
+        }
+        refusal.retryable = matches!(self, Self::Conflict { .. } | Self::LinkConflict { .. } | Self::LinkReadConflict { .. });
+        refusal
     }
 }
 
@@ -343,6 +342,31 @@ impl<X> DecisionRefusal<X> {
             | Self::UnknownTransition { .. }
             | Self::InvalidOutput { .. } => RefusalCategory::Invalid,
         }
+    }
+}
+
+/// DIAG-REASON-1: final-value refusals retain the exact evaluated declaration.
+fn invariant_reason(
+    key: &crate::FactKey,
+    owner: &norn_ir::InvariantOwner,
+    version: &str,
+    id: &norn_ir::InvariantId,
+    outcome: &norn_ir::DataQualityOutcome,
+) -> RefusalReason {
+    let outcome = match outcome {
+        norn_ir::DataQualityOutcome::NotSatisfied => "not_satisfied",
+        norn_ir::DataQualityOutcome::NonBoolean { .. } => "non_boolean",
+        norn_ir::DataQualityOutcome::EvaluationFailed { .. } => "evaluation_failed",
+        // Non-runtime outcomes carry no unproven observed values into a refusal.
+        _ => "unsupported_outcome",
+    };
+    RefusalReason {
+        law: id.as_str().to_owned(),
+        subject: key.to_string(),
+        values: refusal_values([("outcome", outcome.into())]),
+        pin: Some(norn_ir::DataQualityRuleRef::Invariant {
+            owner: owner.clone(), invariant_id: id.clone(), version: version.to_owned(),
+        }),
     }
 }
 
@@ -487,6 +511,10 @@ impl<X> DecisionRefusal<X> {
             law: law.to_owned(),
             subject: key.to_string(),
             values,
+            pin: Some(norn_ir::DataQualityRuleRef::Builtin {
+                id: law.to_owned(),
+                version: "1".to_owned(),
+            }),
         })
     }
 }
@@ -494,7 +522,10 @@ impl<X> DecisionRefusal<X> {
 impl<X> Refusable for DecisionRefusal<X> {
     fn refusal(&self) -> Refusal {
         let mut refusal = Refusal::new(self.code(), self.category(), self);
-        refusal.reason = self.lifecycle_reason();
+        refusal.reason = if let Self::InvariantViolation { key, owner, version, id, outcome, .. } = self {
+            Some(invariant_reason(key, owner, version, id, outcome))
+        } else { self.lifecycle_reason() };
+        refusal.retryable = matches!(self, Self::Stale { .. });
         refusal
     }
 }
@@ -532,7 +563,9 @@ impl<X> Refusable for ActionRefusal<X> {
         if let Self::Decision(refusal) = self {
             return refusal.refusal();
         }
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        refusal.retryable = matches!(self, Self::StalePreconditionRead { .. });
+        refusal
     }
 }
 

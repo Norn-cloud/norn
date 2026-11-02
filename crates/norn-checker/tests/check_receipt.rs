@@ -969,3 +969,14 @@ fn verify_admission_receipt(
         limits,
     )
 }
+
+/// DIAG-HISTORY-1: transport projections cannot rehash historical receipt diagnostics.
+#[test]
+fn pre_diagnostic_v2_receipt_still_verifies() {
+    let stored = include_str!("golden/check-receipt.retail.json");
+    assert_eq!(admission_receipt_sha256(stored).unwrap(), RETAIL_RECEIPT_SHA256);
+    norn_checker::receipt::verify_admission_receipt(
+        stored, RETAIL_RECEIPT_SHA256, &envelopes(&registry_layer()), &[],
+        &ResourceLimitProfile::norn_limits_v1(),
+    ).expect("pre-change receipt remains valid without rewriting diagnostic bytes");
+}
