@@ -54,3 +54,11 @@ with opaque `host.error`. This consistency check does not replace host admission
 HOST-RECEIPT-SHAPE: projection delegates format/field consistency to the checker parser; mapless receipts carrying a flow map refuse opaquely.
 
 ADMITTED-TEXT-NFC source closure: receipt writers retain raw-source NFC findings before typed projection, including unknown scope keys/values that a typed envelope can omit. Candidate and base admission return the stable diagnostic with a rejected receipt and no type environment. Retained-source substitution and independent installed-context rebinding remain strict refusals. Native and real WASM parity scenarios cover the three source positions in both layers.
+
+## Host target and base contracts
+
+HOST-TARGET: native targets enable the native cell adapter; Wasm uses the portable
+cell implementation. Default library builds and the fixture command need no flags.
+HOST-BASE: admission accepts a complete standalone tenant artifact set with no
+external base catalog. Extensions requiring a separate trusted base refuse; the
+host never infers base authority from submitted definitions.

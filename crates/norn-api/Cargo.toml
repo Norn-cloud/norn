@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Generated core IR and checker API contracts"
 
 [dependencies]
+norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }
 http = "1.5.0"
@@ -14,6 +15,12 @@ norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
 serde_json = { version = "1.0.150", features = ["raw_value"] }
 utoipa = "5.4.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
 
 [lints]
 workspace = true
