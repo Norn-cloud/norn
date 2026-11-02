@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "Inheritance holds only for value moved through types that declare an accounting leg; other writes are boundaries where the claim stops."
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ledger.pack.no_units",
+  "message": "at least one conserved unit is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

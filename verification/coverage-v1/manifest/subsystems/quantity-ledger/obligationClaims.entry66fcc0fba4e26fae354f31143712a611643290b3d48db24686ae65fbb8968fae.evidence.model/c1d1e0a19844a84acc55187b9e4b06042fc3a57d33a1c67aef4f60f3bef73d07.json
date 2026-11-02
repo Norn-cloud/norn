@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/quantity-reservation-authority.qnt --backend apalache --invariants typeOk conserved recordsAligned terminalResolvedOnce noTerminalReservation pendingHasOneCreate noOpPreservesAuthority --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry66fcc0fba4e26fae354f31143712a611643290b3d48db24686ae65fbb8968fae.evidence.model.entryc1d1e0a19844a84acc55187b9e4b06042fc3a57d33a1c67aef4f60f3bef73d07.selectors"
+    }
+  }
+}

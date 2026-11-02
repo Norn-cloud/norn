@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.duplicate_step",
+  "message": "step id {stepId} is empty or appears more than once in the flow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ledger.commit.owner_version_overflow",
+  "message": "expected owner version cannot advance without overflow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

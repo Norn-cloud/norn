@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.unreachable_page",
+  "message": "an app page has no control that reaches it from the entry page: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

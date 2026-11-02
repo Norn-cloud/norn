@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.duplicate_key_component",
+  "message": "key component {property} is listed twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

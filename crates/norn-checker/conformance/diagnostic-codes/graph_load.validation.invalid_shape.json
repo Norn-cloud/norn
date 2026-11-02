@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.invalid_shape",
+  "message": "graph load shape is invalid: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

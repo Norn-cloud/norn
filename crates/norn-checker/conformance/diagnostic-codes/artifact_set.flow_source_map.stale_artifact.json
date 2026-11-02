@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.stale_artifact",
+  "message": "flow artifact {artifactId} hash does not match its admitted version",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

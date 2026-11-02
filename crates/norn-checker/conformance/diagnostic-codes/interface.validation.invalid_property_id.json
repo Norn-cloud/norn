@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.invalid_property_id",
+  "message": "required property id {property} must match [a-z][a-z0-9_]* without the reserved extension separator \"__\"",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

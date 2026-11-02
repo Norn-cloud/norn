@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.kind_incompatible",
+  "message": "a {fromKind} artifact may not reference a {toKind} artifact ({artifactId})",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

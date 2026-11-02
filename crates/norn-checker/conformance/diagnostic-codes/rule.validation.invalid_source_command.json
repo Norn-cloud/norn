@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.invalid_source_command",
+  "message": "a declared source command or activation contract is invalid: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
