@@ -871,7 +871,10 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
         match value {
             serde_json::Value::Object(fields) => fields.values().find_map(find_decimal),
             serde_json::Value::Array(items) => items.iter().find_map(find_decimal),
-            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => None,
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => None,
         }
     }
     let old = find_decimal(&canonical).unwrap();
