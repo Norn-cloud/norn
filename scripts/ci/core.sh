@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# `all` runs every phase, in this order, in one checkout. CI runs each phase as
-# its own job and the `test` phase as the shards below; `test-shards` proves
+# `all` runs every phase, in this order, in one checkout. CI packs its
+# selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
 phases=(cheap test doctest features wasm clippy doc guards integration formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
@@ -207,6 +207,60 @@ PY
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
+bundle_plan() {
+  python3 - "$1" "$2" "${3:-}" "$(list_shards)" "${phases[*]}" <<'PY'
+import json, sys
+mode, raw, selected, shards, phases = sys.argv[1:]
+plan = json.loads(raw)
+known = {"test/" + shard for shard in shards.split()} | {
+    "phase/" + phase for phase in phases.split() + ["test-shards"]
+    if phase not in {"cheap", "test", "formal"}}
+# Task-service seconds, excluding setup, from Public core run 41519803350.
+weights = {
+    "test/heavy-1": 315, "test/heavy-2": 485, "test/heavy-3": 259,
+    "test/heavy-4": 260, "test/heavy-5": 294, "test/heavy-6": 282,
+    "test/rest-1": 311, "test/rest-2": 307, "test/rest-3": 288,
+    "phase/doctest": 55, "phase/features": 281, "phase/wasm": 49,
+    "phase/clippy": 87, "phase/doc": 40, "phase/guards": 54,
+    "phase/integration": 400, "phase/provenance": 15, "phase/test-shards": 141,
+}
+if set(weights) != known:
+    raise SystemExit("bundle task inventory differs from core.sh")
+if not isinstance(plan, dict) or plan.get("mode") not in {"full", "affected"}:
+    raise SystemExit("invalid bundle plan mode")
+tasks = []
+for field, prefix in (("shard", "test/"), ("phase", "phase/")):
+    values = plan.get(field)
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise SystemExit("invalid planned task array")
+    tasks.extend(prefix + value for value in values)
+if len(tasks) != len(set(tasks)) or set(tasks) - known:
+    raise SystemExit("duplicate or unknown planned task")
+count = min(6, len(tasks), (sum(weights[task] for task in tasks) + 659) // 660)
+bins, costs = [[] for _ in range(count)], [0] * count
+for task in sorted(tasks, key=lambda task: (-weights[task], task)):
+    index = min(range(count), key=lambda index: (costs[index], index))
+    bins[index].append(task)
+    costs[index] += weights[task]
+bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]
+if sorted(task for bundle in bundles for task in bundle["tasks"]) != sorted(tasks):
+    raise SystemExit("bundle inventory dropped a planned task")
+if mode == "pack":
+    plan["bundle"] = bundles
+    print(json.dumps(plan))
+elif mode in {"check", "tasks"}:
+    if plan.get("bundle") != bundles:
+        raise SystemExit("bundle inventory differs from the deterministic plan")
+    if mode == "tasks":
+        matching = [bundle for bundle in bundles if bundle["id"] == selected]
+        if len(matching) != 1:
+            raise SystemExit("unknown bundle identity")
+        print("\n".join(matching[0]["tasks"]))
+else:
+    raise SystemExit("unknown bundle operation")
+PY
+}
+
 case "${1:-all}" in
   # PRs and merge groups share the dependency closure. Main/manual runs and
   # unplannable changes run every shard and phase; formal remains a Boat gate.
@@ -219,7 +273,7 @@ case "${1:-all}" in
       *) run_phase usage ;;
     esac
     # Changed paths go on fd 3: a large diff exceeds the per-variable size limit.
-    python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" "${heavy[@]}" 3<<<"$changed" <<'PY'
+    plan=$(python3 - "${2:-full}" "$(list_shards | tr '\n' ' ')" "${others[*]}" "$rest_shards" "${heavy[@]}" 3<<<"$changed" <<'PY'
 import json, re, sys, tomllib
 from pathlib import Path
 mode, shards, phases, rest, *heavy = sys.argv[1:]
@@ -286,6 +340,24 @@ selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
 done({"mode": "affected", "shard": selected_heavy + [f"rest-{i}" for i in range(1, parts + 1)], "phase": ["guards", "provenance", "clippy"],
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
+)
+    bundle_plan pack "$plan"
+    ;;
+  bundle-plan) [[ $# -eq 2 ]] || run_phase usage; bundle_plan pack "$2" ;;
+  bundle-check) [[ $# -eq 2 ]] || run_phase usage; bundle_plan check "$2" ;;
+  bundle)
+    [[ $# -eq 3 ]] || run_phase usage
+    task_lines=$(bundle_plan tasks "$2" "$3")
+    [[ $task_lines == phase/test-shards ]] || prepare_inputs
+    while IFS=/ read -r kind item; do
+      task="$kind/$item"
+      printf '::group::%s\n' "$task"
+      (
+        task_start=$SECONDS
+        trap 'task_status=$?; result=failure; [[ $task_status -ne 0 ]] || result=success; printf "::notice::task=%s result=%s seconds=%s\n::endgroup::\n" "$task" "$result" "$((SECONDS-task_start))"; exit "$task_status"' EXIT
+        if [[ $kind == test ]]; then run_phase test "$item"; else run_phase "$item"; fi
+      )
+    done <<<"$task_lines"
     ;;
   all) [[ $# -le 1 ]] || run_phase usage; for phase in "${phases[@]}"; do run_phase "$phase"; done ;;
   shards) list_shards ;;
