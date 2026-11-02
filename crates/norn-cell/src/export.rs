@@ -670,10 +670,9 @@ impl<S: ExportStorage> StorageExporter<S> {
     ///
     /// Hash/identity/sequence mismatches or storage failure.
     pub async fn append(&mut self, record: &ExportRecord) -> Result<ExportManifest, ExportError> {
-        if record
-            .bindings
-            .get(crate::cell_identity::KEY)
-            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
+        if crate::cell_identity::from_bindings(&record.bindings)
+            .ok()
+            .flatten()
             .is_none()
         {
             return Err(ExportError::IdentityMismatch);

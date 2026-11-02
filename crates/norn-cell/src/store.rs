@@ -2043,6 +2043,10 @@ impl<E: SqlEngine> CellStore<E> {
                         format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
                     let cell_id = source(&conn)?;
                     conn.execute(&insert, params!["binding:cell_id", cell_id.as_str()])?;
+                    conn.execute(
+                        &insert,
+                        params!["binding:cell_identity_format", crate::cell_identity::FORMAT],
+                    )?;
                     conn.execute(&insert, params!["format", STORE_FORMAT])?;
                     conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
                 }
@@ -2249,6 +2253,16 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        if key == crate::cell_identity::FORMAT_KEY {
+            if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
+                return Ok(());
+            }
+            return Err(CellError::BindingMismatch {
+                key: key.to_owned(),
+                expected: crate::cell_identity::FORMAT.to_owned(),
+                found: value.to_owned(),
+            });
+        }
         if key == crate::cell_identity::KEY {
             let id = norn_ir::cell_id::CellId::try_from(value.to_owned())
                 .map_err(|reason| CellError::Encoding(reason.to_owned()))?;

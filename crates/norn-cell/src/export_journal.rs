@@ -264,11 +264,7 @@ impl<E: SqlEngine> CellStore<E> {
         let Some(record) = self.local_export_record(commit_seq)? else {
             return Ok(None);
         };
-        let Some(record_cell_id) = record
-            .bindings
-            .get(crate::cell_identity::KEY)
-            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
-        else {
+        let Some(record_cell_id) = crate::cell_identity::from_bindings(&record.bindings)? else {
             return Err(CellError::BindingMismatch {
                 key: crate::cell_identity::KEY.to_owned(),
                 expected: "a qualified cell export".to_owned(),

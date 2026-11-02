@@ -89,9 +89,8 @@ impl CellStore<NativeEngine> {
         bindings: &BTreeMap<String, String>,
         options: StoreOptions,
     ) -> Result<RestoreReport, RestoreError> {
-        let expected_id = bindings
-            .get(crate::cell_identity::KEY)
-            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
+        let expected_id = crate::cell_identity::from_bindings(bindings)
+            .map_err(|_| RestoreError::IdentityMismatch)?
             .ok_or(RestoreError::IdentityMismatch)?;
         let manifest = exporter.verify().await?;
         refuse_existing(path)?;

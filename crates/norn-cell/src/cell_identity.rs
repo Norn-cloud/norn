@@ -6,28 +6,58 @@ use crate::{CellError, CellStore};
 pub use norn_ir::cell_id::CellId;
 
 pub(crate) const KEY: &str = "cell_id";
+pub(crate) const FORMAT_KEY: &str = "cell_identity_format";
+/// Version of the logical cell binding carried in portable export envelopes.
+pub const FORMAT: &str = "norn.cell.identity/v1";
+
+pub(crate) fn from_bindings(
+    bindings: &std::collections::BTreeMap<String, String>,
+) -> Result<Option<CellId>, CellError> {
+    parse_binding(
+        bindings.get(FORMAT_KEY).map(String::as_str),
+        bindings.get(KEY).map(String::as_str),
+    )
+}
+
+fn parse_binding(format: Option<&str>, value: Option<&str>) -> Result<Option<CellId>, CellError> {
+    let Some(format) = format else {
+        return Ok(None);
+    };
+    if format != FORMAT {
+        return Err(CellError::BindingMismatch {
+            key: FORMAT_KEY.to_owned(),
+            expected: FORMAT.to_owned(),
+            found: format.to_owned(),
+        });
+    }
+    let value = value
+        .ok_or_else(|| CellError::Encoding("versioned cell binding has no identity".to_owned()))?;
+    CellId::try_from(value.to_owned())
+        .map(Some)
+        .map_err(|reason| CellError::Encoding(reason.to_owned()))
+}
 
 pub(crate) fn read(engine: &impl SqlEngine) -> Result<Option<CellId>, CellError> {
-    let value: Option<String> = engine.query_optional(
-        &format!("SELECT value FROM \"{META}\" WHERE key = ?1"),
-        params!["binding:cell_id"],
-        |row| row.get(0),
-    )?;
-    value
-        .map(|value| {
-            CellId::try_from(value).map_err(|reason| CellError::Encoding(reason.to_owned()))
-        })
-        .transpose()
+    let meta = |key: &str| {
+        engine.query_optional(
+            &format!("SELECT value FROM \"{META}\" WHERE key = ?1"),
+            params![key],
+            |row| row.get::<String>(0),
+        )
+    };
+    let format = meta("binding:cell_identity_format")?;
+    let value = meta("binding:cell_id")?;
+    parse_binding(format.as_deref(), value.as_deref())
 }
 
 pub(crate) fn verify_history(engine: &impl SqlEngine) -> Result<(), CellError> {
     let current = read(engine)?;
     if let Some(first) = crate::export_journal::read_record(engine, 1)? {
-        let original = first.bindings.get(KEY);
-        if original.map(String::as_str) != current.as_ref().map(CellId::as_str) {
+        let original = from_bindings(&first.bindings)?;
+        if original != current {
             return Err(CellError::BindingMismatch {
                 key: KEY.to_owned(),
-                expected: original.cloned().unwrap_or_default(),
+                expected: original.map_or_else(String::new, String::from),
                 found: current.map_or_else(String::new, String::from),
             });
         }
