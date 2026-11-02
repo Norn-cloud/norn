@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.empty_metrics",
+  "message": "Questions require at least one metric.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

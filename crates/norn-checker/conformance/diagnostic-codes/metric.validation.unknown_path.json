@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.unknown_path",
+  "message": "Every path role and terminal property must resolve.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

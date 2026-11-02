@@ -1,0 +1,4 @@
+{
+  "order": 32,
+  "value": "crates/norn-checker-wasm/tests/parity/parity.mjs"
+}

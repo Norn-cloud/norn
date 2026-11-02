@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "Mapping confidence/reviewer/direct-supersession structure is runtime tested in Rust, statically reproduced over the 19 checked-in mappings, and represented by compact Lean/Quint reference semantics. Reviewer identity is not authenticated, confidence/evidence truth is not machine-established, timestamp parsing and arbitrary graphs are outside those abstractions, and no implementation correspondence proof covers mapping provenance."
+}

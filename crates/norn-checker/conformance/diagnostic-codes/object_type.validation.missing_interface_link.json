@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.missing_interface_link",
+  "message": "interface {interface} requires link {link}, which the type neither declares nor inherits",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

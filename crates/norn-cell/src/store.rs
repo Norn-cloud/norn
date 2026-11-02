@@ -1931,19 +1931,6 @@ fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// Whether the tenant engine has no application schema or persisted state.
-    ///
-    /// # Errors
-    /// SQL failures; existing metadata, ledger or history returns false.
-    pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
-        engine
-            .query(
-                "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 1",
-                &[],
-            )
-            .map(|schema| schema.is_empty())
-    }
-
     /// Initialize this store over an already-open engine.
     ///
     /// The engine supplies transaction and parameter/result handling; the
@@ -1957,53 +1944,6 @@ impl<E: SqlEngine> CellStore<E> {
     /// errors otherwise.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
         Self::init(conn, model)
-    }
-
-    /// Atomically initialize, bind and install a tenant's first admitted set.
-    /// An identical request reopens the initial revision without writing.
-    ///
-    /// # Errors
-    /// Store failures roll back all schema and data. A changed request, scope,
-    /// or invalid retained history refuses. Identical retries reopen the current model.
-    pub fn provision_definitions(
-        conn: E,
-        model: Model,
-        input: &InstalledDefinitionInput,
-        scope: &str,
-    ) -> Result<Self, CellError> {
-        let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
-        let mut store = Self::unverified(conn, model);
-        if let Some(active) = Self::read_active_definitions(&store.conn)? {
-            let installation = store
-                .export_record(active.commit_seq)?
-                .and_then(|record| record.definition_install)
-                .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
-            store.model = Model::from_snapshot(&installation.model)?;
-        }
-        let batch = CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: scope.to_owned(),
-            logical_time: input.installed_at,
-            ..CommitBatch::default()
-        };
-        let installation = DefinitionInstallContext {
-            candidate_model: &store.model,
-            input,
-            expected_version: Some(0),
-        };
-        store
-            .commit_guarded_inner(
-                &batch,
-                Some(installation),
-                None,
-                Some(&identity),
-                |_reader| Ok::<(), CellError>(()),
-                &mut |_point| Ok(()),
-            )
-            .map_err(|error| match error {
-                GuardedError::Guard(error) | GuardedError::Store(error) => error,
-            })?;
-        Ok(store)
     }
 
     /// Read the installed active set before constructing the model used to
@@ -2070,8 +2010,66 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    fn unverified(conn: E, model: Model) -> Self {
-        Self {
+    fn init(conn: E, model: Model) -> Result<Self, CellError> {
+        validate_store_format(&conn)?;
+        conn.transaction(|| -> Result<(), CellError> {
+            for statement in SYSTEM_DDL {
+                conn.execute_batch(statement)?;
+            }
+            crate::system::intern_marking_subjects(&conn)?;
+            export_journal::init(&conn)?;
+            crate::payload_storage::init(&conn)?;
+            // Before the model's indexes name `p:` columns of an older file.
+            crate::migration::upgrade_raw_property_columns(&conn, &model)?;
+            for statement in model.schema().statements() {
+                conn.execute_batch(statement)?;
+            }
+            let meta = |key: &str| {
+                conn.query_optional(
+                    &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+                    params![key],
+                    |row| row.get::<String>(0),
+                )
+            };
+            match (meta("format")?, meta("ddl_hash")?) {
+                (None, None) => {
+                    let insert =
+                        format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                    conn.execute(&insert, params!["format", STORE_FORMAT])?;
+                    conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
+                }
+                (Some(format), Some(found))
+                    if format == STORE_FORMAT && found == model.ddl_hash() => {}
+                // Older formats lack exact encoding or durable marking coverage.
+                // Refuse atomically rather than serve partially classified facts.
+                (Some(format), _) if format != STORE_FORMAT => {
+                    return Err(CellError::StoreFormat {
+                        found: format,
+                        expected: STORE_FORMAT.to_owned(),
+                    });
+                }
+                (format, found) => {
+                    return Err(CellError::SchemaMismatch {
+                        expected: format!("{STORE_FORMAT} {}", model.ddl_hash()),
+                        found: format!(
+                            "{} {}",
+                            format.unwrap_or_default(),
+                            found.unwrap_or_default()
+                        ),
+                    });
+                }
+            }
+            if let Some(active) = Self::read_active_definitions(&conn)?
+                && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
+            {
+                return Err(CellError::SchemaMismatch {
+                    expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
+                    found: format!("{} {}", active.ddl_hash, active.model_hash),
+                });
+            }
+            Ok(())
+        })?;
+        let store = Self {
             conn,
             model,
             candidate_validator: Cell::new(None),
@@ -2079,69 +2077,7 @@ impl<E: SqlEngine> CellStore<E> {
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
             quantity_boundary: Cell::new(None),
-        }
-    }
-
-    fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
-        validate_store_format(conn)?;
-        for statement in SYSTEM_DDL {
-            conn.execute_batch(statement)?;
-        }
-        crate::system::intern_marking_subjects(conn)?;
-        export_journal::init(conn)?;
-        crate::payload_storage::init(conn)?;
-        // Before the model's indexes name `p:` columns of an older file.
-        crate::migration::upgrade_raw_property_columns(conn, model)?;
-        for statement in model.schema().statements() {
-            conn.execute_batch(statement)?;
-        }
-        let meta = |key: &str| {
-            conn.query_optional(
-                &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-                params![key],
-                |row| row.get::<String>(0),
-            )
         };
-        match (meta("format")?, meta("ddl_hash")?) {
-            (None, None) => {
-                let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
-                conn.execute(&insert, params!["format", STORE_FORMAT])?;
-                conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
-            }
-            (Some(format), Some(found)) if format == STORE_FORMAT && found == model.ddl_hash() => {}
-            // Older formats lack exact encoding or durable marking coverage.
-            // Refuse atomically rather than serve partially classified facts.
-            (Some(format), _) if format != STORE_FORMAT => {
-                return Err(CellError::StoreFormat {
-                    found: format,
-                    expected: STORE_FORMAT.to_owned(),
-                });
-            }
-            (format, found) => {
-                return Err(CellError::SchemaMismatch {
-                    expected: format!("{STORE_FORMAT} {}", model.ddl_hash()),
-                    found: format!(
-                        "{} {}",
-                        format.unwrap_or_default(),
-                        found.unwrap_or_default()
-                    ),
-                });
-            }
-        }
-        if let Some(active) = Self::read_active_definitions(conn)?
-            && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
-        {
-            return Err(CellError::SchemaMismatch {
-                expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
-                found: format!("{} {}", active.ddl_hash, active.model_hash),
-            });
-        }
-        Ok(())
-    }
-
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
-        let store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
@@ -2424,7 +2360,7 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, None, None, guard, probe)
+        self.commit_guarded_inner(batch, None, None, guard, probe)
     }
 
     // Only the driver and verified restore can supply pre-materialization input.
@@ -2436,7 +2372,7 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, None, guard, probe)
+        self.commit_guarded_inner(batch, None, submitted, guard, probe)
     }
 
     /// Install an already-admitted projected model and its canonical full
@@ -2472,7 +2408,6 @@ impl<E: SqlEngine> CellStore<E> {
         let result = self.commit_guarded_inner(
             &batch,
             Some(install),
-            None,
             None,
             |_reader| Ok::<(), CellError>(()),
             &mut |_point| Ok(()),
@@ -2523,46 +2458,16 @@ impl<E: SqlEngine> CellStore<E> {
         reason = "the shared atomic commit transaction keeps receipt, ledger and install writes together"
     )]
     fn commit_guarded_inner<T: Default, X>(
-        &self,
+        &mut self,
         batch: &CommitBatch,
         installation: Option<DefinitionInstallContext<'_>>,
         submitted: Option<&Value>,
-        provisioning: Option<&str>,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
-            if let Some(identity) = provisioning {
-                if Self::engine_is_fresh(&self.conn)? {
-                    Self::init_schema(&self.conn, &self.model)?;
-                    for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
-                        self.conn.execute(
-                            &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
-                            params![key, value],
-                        )?;
-                    }
-                } else {
-                    let binding = |key: &str| self.conn.query_optional(
-                        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-                        params![key], |row| row.get::<String>(0),
-                    );
-                    let active = Self::read_active_definitions(&self.conn)?;
-                    if binding("binding:provision")?.as_deref() != Some(identity)
-                        || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
-                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
-                        return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
-                    }
-                    let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
-                    self.verify_definition_history()?;
-                    self.read().verify_value_history()?;
-                    self.verified.replace(head);
-                    admitted_boundary.set(boundary);
-                    let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
-                    return Ok((T::default(), CommitOutcome::Replayed(receipt)));
-                }
-            }
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(

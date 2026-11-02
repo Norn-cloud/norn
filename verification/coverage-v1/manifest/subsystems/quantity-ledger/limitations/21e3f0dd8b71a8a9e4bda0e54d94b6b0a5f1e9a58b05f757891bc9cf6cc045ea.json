@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "The Quint lifecycle model omits storage, owner versions, idempotency maps, account floors, and partial-post policy; the separate authority model adds bounded owner/retry/record-count behavior but still abstracts storage as atomic assignments and treats authorization of the seal as a Boolean."
+}

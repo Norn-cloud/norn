@@ -1,0 +1,7 @@
+{
+  "code": "ledger.commit.partial_evidence",
+  "message": "commit evidence is partial: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

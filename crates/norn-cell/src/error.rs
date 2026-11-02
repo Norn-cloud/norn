@@ -20,6 +20,15 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Captured relation/delete output requires a processing profile beyond CP2.
+    #[error("unsupported mapping processing profile")]
+    UnsupportedMappingProfile,
+    /// The kernel refused preparation of source observations.
+    #[error("observation preparation: {0}")]
+    ObservationPreparation(Box<norn_kernel::snapshot_observe::ObservationRefusal>),
+    /// The kernel or store refused the atomic observation commit.
+    #[error("observation commit: {0}")]
+    ObservationCommit(Box<norn_kernel::CommitError<CellError>>),
     /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
     #[error("core.boundary.bundle_mismatch")]
     MappingBundleMismatch,
@@ -32,7 +41,6 @@ pub enum CellError {
         /// Retained law whose complete scope cannot yet be resolved.
         law_id: String,
     },
-
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

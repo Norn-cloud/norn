@@ -1,0 +1,7 @@
+{
+  "code": "layout.validation.invalid_inline_field",
+  "message": "legacy layout field is invalid: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

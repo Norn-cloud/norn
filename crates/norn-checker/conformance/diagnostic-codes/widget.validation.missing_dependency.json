@@ -1,0 +1,7 @@
+{
+  "code": "widget.validation.missing_dependency",
+  "message": "widget references '{artifactId}' without declaring it as a dependency",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

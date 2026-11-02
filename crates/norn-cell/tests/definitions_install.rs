@@ -5264,7 +5264,7 @@ norn_testkit::proptest::proptest! {
             cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
             let reader = cell.store().read();
             let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
-            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(&raw).expect("quarantine"));
+            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(MAIN_WORLD, &raw).expect("quarantine"));
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
@@ -5284,6 +5284,51 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(persisted[0].event.get("fact").and_then(|fact| fact.get("status")).and_then(Value::as_str), Some("open"));
         }
     }
+}
+
+norn_testkit::proptest::proptest! {
+#[test]
+fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..1000) {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("upgrade.sqlite");
+    let mut cell = purity_quality_host(&path);
+    capture_purity(&mut cell, "original", "1.20");
+    let original = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings")[0].clone();
+    let previous = cell.store().read().installed_definitions(None).expect("definitions").expect("installed");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&previous.canonical_set).expect("artifacts");
+    let mut snapshot = cell.store().model().definitions_snapshot();
+    let mut law = serde_json::to_value(&artifacts[1]).expect("law");
+    law["version"] = json!("0.2.0");
+    law["payload"]["response"]["expression"] = json!("self.purity >= 0 and self.purity <= 0.5");
+    artifacts[1] = serde_json::from_value(law).expect("tightened law");
+    snapshot.law_artifacts = vec![artifacts[1].clone()];
+    let model = Model::from_snapshot(&snapshot).expect("retained candidate");
+    let mut input = install_input("tightened", previous.installed_at.checked_add(1).expect("next epoch"), &model);
+    input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
+    let old_model = cell.store().model().clone();
+    drop(cell);
+    let mut store = CellStore::open(&path, old_model, StoreOptions::default()).expect("store");
+    store.install_definitions(model, input, Some(previous.version), "org_demo/dev").expect("upgrade");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    let review = |cell: &norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>| cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("version-bound review");
+    assert_eq!(review(&cell)[0].status, norn_ir::DataQualityFindingStatus::Open);
+    capture_purity(&mut cell, "still-invalid", "1.30");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    capture_purity(&mut cell, "passes-old-law", &format!("0.{fraction:03}"));
+    let findings = review(&cell);
+    assert_eq!(findings.iter().find(|f| f.id == original.id).expect("original retained").status, norn_ir::DataQualityFindingStatus::Resolved);
+    assert!(findings.iter().any(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("still quarantined").is_none());
+    capture_purity(&mut cell, "passes-both-laws", "0.40");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("recovered").is_some());
+    let original_event = cell.store().read().ledger_page(0, 100).expect("history").into_iter().find(|e| e.event.get("fact").and_then(|f| f.get("id")).and_then(Value::as_str) == Some(original.id.as_str())).expect("original event");
+    assert_eq!(original_event.event.get("fact").and_then(|f| f.get("status")).and_then(Value::as_str), Some("open"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("cache connection");
+    engine.execute(&format!("UPDATE {} SET {} = {} + 1", quote_identifier("o:quality.Measurement"), quote_identifier(VERSION_COLUMN), quote_identifier(VERSION_COLUMN)), &[]).expect("unproven mutable version");
+    assert!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").is_err(), "unproven correction refuses");
+}
+
 }
 
 #[test]
@@ -5626,6 +5671,8 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(&bundle.raw, &raw.input);
         norn_testkit::proptest::prop_assert_eq!(bundle.records.len(), 1);
         store.read().recheck_mapping_bundle(&bundle).expect("cell recomputation");
+        let mut unknown_pin = bundle.clone(); unknown_pin.definitions_version = u64::MAX;
+        norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&unknown_pin), Err(CellError::MappingBundleMismatch)), "unretained definition pin refuses stably");
         let mut altered = bundle; altered.records.clear();
         norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_bundle(&altered), Err(CellError::MappingBundleMismatch)), "derived output refuses");
         let mut changed = input; changed.partition.push('x');
@@ -5709,6 +5756,116 @@ fn mapping_bundle_processing_refuses_forged_output_without_consumption() {
     assert!(
         cell.process_mapping_bundle(&id)
             .expect("original sealed evidence")
+    );
+}
+
+#[test]
+fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption() {
+    for delete in [false, true] {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&directory.path().join("unsupported.sqlite"));
+        let mut raw = bundle_raw(
+            "MEAS-1",
+            if delete {
+                "1.20"
+            } else {
+                "\"invalid decimal\""
+            },
+        );
+        if delete {
+            raw.input
+                .as_object_mut()
+                .expect("raw object")
+                .insert("kind".into(), Value::from("delete"));
+        }
+        let (id, _) = store
+            .inject_mapping_bundle(&raw, &bundle_input())
+            .expect("retained evidence");
+        let before = store.read().dump().expect("before");
+        let mut cell =
+            norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        assert!(matches!(
+            cell.process_mapping_bundle(&id),
+            Err(CellError::UnsupportedMappingProfile)
+        ));
+        assert_eq!(cell.store().read().dump().expect("after"), before);
+        assert_eq!(
+            cell.store()
+                .read()
+                .pending_observations()
+                .expect("retained inbox")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));
+    let raw = bundle_raw("MEAS-1", "\"invalid decimal\"");
+    store
+        .inject_mapping_bundle(&raw, &bundle_input())
+        .expect("capture malformed source value");
+    let pending = store.read().pending_observations().expect("inbox");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    assert_eq!(bundle.raw, raw.input);
+    assert!(bundle.records.is_empty());
+    assert!(!bundle.diagnostics.is_empty());
+    assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
+        && d.get("span").is_some()
+        && d.get("severity").is_some()));
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("same diagnostics at processing");
+}
+
+#[test]
+fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut source = mapping_bundle_store(&dir.path().join("source.sqlite"));
+    let (id, _) = source
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &bundle_input())
+        .expect("bundle");
+    let pending = source.read().pending_observations().expect("inbox");
+    let mut observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+    observed.id.0 = "other-delivery".into();
+    let mut store = mapping_bundle_store(&dir.path().join("target.sqlite"));
+    store
+        .inject(&id, &norn_ir::runtime::encode(&observed).expect("payload"))
+        .expect("untrusted stored envelope");
+    store
+        .inject(
+            "other-delivery",
+            &norn_ir::runtime::encode(&observed).expect("other payload"),
+        )
+        .expect("other inbox row");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(matches!(
+        cell.process_mapping_bundle(&id),
+        Err(CellError::MappingBundleMismatch)
+    ));
+    assert_eq!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("inbox")
+            .len(),
+        2
+    );
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("fact")
+            .is_none()
     );
 }
 
@@ -5883,263 +6040,3 @@ fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_fac
     );
 }
 
-#[test]
-fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
-    let dir = tempfile::tempdir().expect("directory");
-    let mut store = mapping_bundle_store(&dir.path().join("invalid.sqlite"));
-    let raw = bundle_raw("MEAS-1", "\"invalid decimal\"");
-    store
-        .inject_mapping_bundle(&raw, &bundle_input())
-        .expect("capture malformed source value");
-    let pending = store.read().pending_observations().expect("inbox");
-    let observed: norn_kernel::Observed<Value> =
-        norn_ir::runtime::decode(&pending[0].observed).expect("observed");
-    let bundle: norn_cell::mapping_bundle::MappingBundle =
-        norn_ir::runtime::decode(&observed.input).expect("bundle");
-    assert_eq!(bundle.raw, raw.input);
-    assert!(bundle.records.is_empty());
-    assert!(!bundle.diagnostics.is_empty());
-    assert!(bundle.diagnostics.iter().all(|d| d.get("code").is_some()
-        && d.get("span").is_some()
-        && d.get("severity").is_some()));
-    store
-        .read()
-        .recheck_mapping_bundle(&bundle)
-        .expect("same diagnostics at processing");
-}
-
-// HOST-PROVISION-ATOMIC: every SQL boundary, transaction commit and lost reply.
-fn provision_engine(path: &Path) -> NativeEngine {
-    NativeEngine::open(
-        path,
-        StoreOptions {
-            cache_pages: Some(1),
-            ..StoreOptions::default()
-        },
-    )
-    .expect("file engine with page spills")
-}
-
-struct ProvisionFault {
-    inner: NativeEngine,
-    step: std::rc::Rc<std::cell::Cell<usize>>,
-    fail: usize,
-    crash: bool,
-}
-
-impl ProvisionFault {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the crash probe deliberately exits without running transaction destructors"
-    )]
-    fn boundary(&self) -> Result<(), CellError> {
-        let step = self.step.get().saturating_add(1);
-        self.step.set(step);
-        if step == self.fail {
-            if self.crash {
-                std::process::exit(73);
-            }
-            return Err(CellError::Engine("provision fault".to_owned()));
-        }
-        Ok(())
-    }
-}
-
-impl SqlEngine for ProvisionFault {
-    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
-        self.inner.execute(sql, params)?;
-        self.boundary()
-    }
-    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
-        let rows = self.inner.query(sql, params)?;
-        self.boundary()?;
-        Ok(rows)
-    }
-    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
-        self.inner.execute_batch(sql)?;
-        self.boundary()
-    }
-    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
-        let value = self.inner.transaction(|| {
-            let value = f()?;
-            self.boundary()?;
-            Ok::<T, X>(value)
-        })?;
-        self.boundary()?;
-        Ok(value)
-    }
-}
-
-fn provision_input() -> InstalledDefinitionInput {
-    InstalledDefinitionInput {
-        canonical_set: "[]".to_owned(),
-        registry: Vec::new(),
-        receipt_sha256: "synthetic".to_owned(),
-        admission_receipt: None,
-        readmission: None,
-        diff: json!({}),
-        installed_at: 1,
-        layout: Some(
-            String::from_utf8(
-                norn_ir::runtime::encode(&norn_ir::LayoutSidecar::default())
-                    .expect("layout")
-                    .canonical_json()
-                    .expect("canonical layout"),
-            )
-            .expect("UTF-8 layout"),
-        ),
-    }
-}
-
-#[test]
-fn host_provision_atomic_crash_child() {
-    let Ok(path) = std::env::var("NORN_PROVISION_CRASH_PATH") else {
-        return;
-    };
-    let fail = std::env::var("NORN_PROVISION_CRASH_STEP")
-        .expect("step")
-        .parse()
-        .expect("number");
-    let engine = ProvisionFault {
-        inner: provision_engine(Path::new(&path)),
-        step: std::rc::Rc::new(std::cell::Cell::new(0)),
-        fail,
-        crash: true,
-    };
-    let _store =
-        CellStore::provision_definitions(engine, model(false), &provision_input(), "demo/dev")
-            .expect("provision");
-    panic!("crash boundary was not reached");
-}
-
-#[test]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "crash conformance requires an isolated copy of this test executable"
-)]
-fn host_provision_atomic_at_every_storage_boundary() {
-    let engine = ProvisionFault {
-        inner: NativeEngine::open_in_memory().expect("open"),
-        step: std::rc::Rc::new(std::cell::Cell::new(0)),
-        fail: usize::MAX,
-        crash: false,
-    };
-    let counter = std::rc::Rc::clone(&engine.step);
-    let _store =
-        CellStore::provision_definitions(engine, model(false), &provision_input(), "demo/dev")
-            .expect("provision");
-    // Count only the public provisioning path, including its commit/lost-reply boundary.
-    let steps = counter.get();
-    for crash in [false, true] {
-        for fail in 1..=steps {
-            let dir = tempfile::tempdir().expect("dir");
-            let path = dir.path().join("tenant.sqlite");
-            if crash {
-                let output =
-                    std::process::Command::new(std::env::current_exe().expect("test binary"))
-                        .args(["--exact", "host_provision_atomic_crash_child"])
-                        .env("NORN_PROVISION_CRASH_PATH", &path)
-                        .env("NORN_PROVISION_CRASH_STEP", fail.to_string())
-                        .output()
-                        .expect("crash child");
-                assert_eq!(output.status.code(), Some(73), "step {fail}");
-            } else {
-                let engine = ProvisionFault {
-                    inner: provision_engine(&path),
-                    step: std::rc::Rc::new(std::cell::Cell::new(0)),
-                    fail,
-                    crash: false,
-                };
-                assert!(
-                    CellStore::provision_definitions(
-                        engine,
-                        model(false),
-                        &provision_input(),
-                        "demo/dev"
-                    )
-                    .is_err()
-                );
-            }
-            let engine = provision_engine(&path);
-            assert_eq!(
-                CellStore::engine_is_fresh(&engine).expect("fresh"),
-                fail < steps,
-                "crash={crash} step={fail}"
-            );
-            let store = CellStore::provision_definitions(
-                engine,
-                model(false),
-                &provision_input(),
-                "demo/dev",
-            )
-            .expect("retry");
-            assert_eq!(store.read().receipts().expect("receipts").len(), 1);
-            assert_eq!(
-                store
-                    .read()
-                    .installed_definitions(None)
-                    .expect("set")
-                    .expect("active")
-                    .version,
-                1
-            );
-            drop(store);
-            for change in 0..3 {
-                let engine = provision_engine(&path);
-                let mut input = provision_input();
-                if change == 0 {
-                    input.canonical_set = "[{}]".to_owned();
-                }
-                let scope = if change == 1 { "other/dev" } else { "demo/dev" };
-                assert!(
-                    CellStore::provision_definitions(engine, model(change == 2), &input, scope)
-                        .is_err()
-                );
-            }
-            let store = CellStore::provision_definitions(
-                provision_engine(&path),
-                model(false),
-                &provision_input(),
-                "demo/dev",
-            )
-            .expect("unchanged retry");
-            assert_eq!(
-                store.read().receipts().expect("unchanged receipts").len(),
-                1
-            );
-        }
-    }
-}
-
-#[test]
-fn host_provision_atomic_retry_preserves_later_installs() {
-    let dir = tempfile::tempdir().expect("dir");
-    let path = dir.path().join("tenant.sqlite");
-    let original = provision_input();
-    let mut store = CellStore::provision_definitions(
-        provision_engine(&path),
-        model(false),
-        &original,
-        "demo/dev",
-    )
-    .expect("first provision");
-    let mut next = original.clone();
-    next.installed_at = 2;
-    store
-        .install_definitions(model(true), next, Some(1), "demo/dev")
-        .expect("later install");
-    drop(store);
-    let store = CellStore::provision_definitions(
-        provision_engine(&path),
-        model(false),
-        &original,
-        "demo/dev",
-    )
-    .expect("original retry");
-    assert_eq!(store.model().model_hash(), model(true).model_hash());
-    assert_eq!(store.read().receipts().expect("receipts").len(), 2);
-    assert_eq!(
-        store.read().active_definitions_version().expect("active"),
-        Some(2)
-    );
-}

@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.lifecycle.not_a_lifecycle",
+  "message": "{property} of {objectType} has no declared lifecycle to transition",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.unsupported_abi",
+  "message": "abi {abi} is not supported; expected norn.function-abi/1",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
