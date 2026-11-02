@@ -216,7 +216,7 @@ impl Type {
     }
 
     /// Record names this type refers to.
-    fn records(&self, out: &mut Vec<String>) {
+    pub(crate) fn records(&self, out: &mut Vec<String>) {
         match self {
             Self::Record(name) => out.push(name.clone()),
             Self::List(item) | Self::Optional(item) => item.records(out),
