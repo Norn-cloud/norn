@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-AUTH-CAPABILITY-NOW",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The retained production-bound InMemory ActionIR method loads the exact current verified ActionIR artifact, persisted policy, grant, resource, authorization epoch, replacement receipt, and monotonic trusted logical-time watermark inside one candidate-state commit, runs the deterministic checker, and atomically publishes the action effect plus authorization-bound receipt. Exact replay is mutation-inert but rechecks current artifact/authority and retry time before result disclosure; fresh-commit and post-commit exact-retry revocation races both deny with no duplicate business effect or prior-result disclosure. Tests also cover valid exact and lost-reply replay, revocation/expiry, stale or substituted bindings, owner CAS, and artifact/provenance/receipt tampering. The authenticated HTTP ActionIR route (server-side expectations and trusted logical time) and the Turso injected-persistence-failure and reopen tests were removed in #2764 (not currently covered); trusted logical time is supplied by the test caller. Other mutation families still use narrower authorization boundaries; governed network provisioning, strong-receipt projection in aggregate evidence, effect-program-to-proposed-effect correspondence, and Rust-to-Lean/Quint refinement are not claimed. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrybeeee36dc0e1280426e28362415fdb0b2d925bcb83baa259a0e3d8032ac9c695.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrybeeee36dc0e1280426e28362415fdb0b2d925bcb83baa259a0e3d8032ac9c695.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrybeeee36dc0e1280426e28362415fdb0b2d925bcb83baa259a0e3d8032ac9c695.evidence.proof"
+      }
+    }
+  }
+}

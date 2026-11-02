@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/active-artifact-authority.qnt --backend apalache --invariants typeOk activePointerReferencesEnvelope immutableV1History exactlyOneExecutable competingV1PlansCannotBothPublish --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.model.entry5436a7c30bbdea317a7315d6cb6ca384e444ccb494dcab48a47e95c907c04ca1.selectors"
+    }
+  }
+}
