@@ -1774,7 +1774,7 @@ proptest::proptest! {
             proptest::prop_assert_eq!(units::admit(operation, &first, &second).is_ok(), a == b);
         }
         let inherited = units::admit(Operation::Add, &first, &Operand::Literal).unwrap();
-        proptest::prop_assert_eq!(inherited.result, first.clone());
+        proptest::prop_assert_eq!(&inherited.result, &first);
         proptest::prop_assert_eq!(inherited.inferred_literal_unit.unwrap().code, a);
         proptest::prop_assert!(units::admit(Operation::Add, &first, &Operand::Dimensionless).is_err());
         proptest::prop_assert!(units::admit(Operation::Multiply, &first, &second).is_err());

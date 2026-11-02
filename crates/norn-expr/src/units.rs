@@ -79,3 +79,21 @@ pub fn admit<U: Clone + Eq>(
     };
     Ok(Admission { result, inferred_literal_unit })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn val_unit_literals_inherit_grams_but_declared_scalars_and_milligrams_refuse() {
+        let quantity = |code: &str| Operand::Quantity(norn_ir::UnitRef { system: norn_ir::UnitSystem::Ucum, code: code.to_owned() });
+        let grams = quantity("g");
+        let admitted = admit(Operation::Add, &grams, &Operand::Literal).expect("literal inference");
+        assert_eq!(admitted.inferred_literal_unit.expect("explanation unit").code, "g");
+        assert_eq!(admitted.result, grams);
+        assert!(admit(Operation::Add, &grams, &Operand::Dimensionless).is_err());
+        assert!(admit(Operation::Add, &grams, &quantity("mg")).is_err());
+        assert!(admit(Operation::Multiply, &grams, &grams).is_err());
+        assert_eq!(admit(Operation::Divide, &grams, &grams).expect("ratio").result, Operand::Dimensionless);
+        assert_eq!(admit(Operation::Multiply, &Operand::Dimensionless, &grams).expect("scalar product").result, grams);
+    }
+}

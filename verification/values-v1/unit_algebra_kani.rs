@@ -5,6 +5,7 @@ mod units;
 use units::{Operand, Operation};
 
 #[kani::proof]
+#[kani::unwind(5)]
 fn val_unit_mixing_compounds_and_inverses_refuse() {
     let (a, b): (u8, u8) = kani::any();
     let first = Operand::Quantity(a);
