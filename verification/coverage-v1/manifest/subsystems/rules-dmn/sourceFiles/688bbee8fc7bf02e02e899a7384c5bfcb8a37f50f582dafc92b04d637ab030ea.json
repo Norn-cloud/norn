@@ -1,4 +1,4 @@
 {
-  "order": 200,
+  "order": 202,
   "value": "crates/norn-expr/src/check/units/algebra.rs"
 }
