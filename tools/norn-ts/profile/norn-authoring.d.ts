@@ -157,6 +157,7 @@ declare module "@norn/authoring" {
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
     interface InterfaceMeta<S extends Schema.Top> {
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
       /** Canonical property markings, keyed by a declared property. */
@@ -261,6 +262,7 @@ declare module "@norn/authoring" {
         }
 
     interface ActionMeta<I extends Schema.Top, O extends Schema.Top> {
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
       readonly id: string
       readonly title: string
@@ -415,7 +417,7 @@ declare module "@norn/authoring" {
       readonly version: string
       readonly contract: "decide" | "sub_decision"
       /** Required sub-decision references, either local definitions or explicit artifact/version pins. */
-      readonly dependencies?: ReadonlyArray<DecisionDefinition | { readonly artifactId: string; readonly version: string }>
+      readonly dependencies?: ReadonlyArray<DecisionDefinition | import("../src/builder/envelope.ts").DependencyPin>
       readonly triggers?: ReadonlyArray<RuleTriggerSpec>
       readonly slice?: ReadonlyArray<SliceSpec>
       /** The decision's input and output contracts: Effect Schema structs, lowered to closed schemas. */

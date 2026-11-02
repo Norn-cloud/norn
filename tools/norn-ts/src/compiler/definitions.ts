@@ -351,6 +351,7 @@ class DefinitionCompiler {
       version: this.string(required("version")),
       ...(description ? { description: this.string(description) } : {}),
       ...(markings ? { markings: this.strings(markings) } : {}),
+      ...(members.has("dependencies") ? {dependencies:this.list(members.get("dependencies")!).map(pin=>this.decisionDependency(pin))}:{}),
       projected,
     }
   }
@@ -435,7 +436,7 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
@@ -473,7 +474,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -543,7 +544,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -558,6 +559,7 @@ class DefinitionCompiler {
       title: this.string(need("title")),
       version: this.string(need("version")),
       ...(description ? { description: this.string(description) } : {}),
+      ...(members.has("dependencies") ? {dependencies:this.list(members.get("dependencies")!).map(pin=>this.decisionDependency(pin))}:{}),
       scopeRequired: this.strings(need("scopeRequired")),
       idempotent: this.boolean(need("idempotent")),
       ledgered: this.boolean(need("ledgered")),
@@ -824,19 +826,22 @@ class DefinitionCompiler {
   }
 
   /** Resolve a local Norn.decision reference or read an explicit artifact/version pin. */
-  private decisionDependency(input: ts.Expression): { readonly artifactId: string; readonly version: string } {
+  private decisionDependency(input: ts.Expression): R.DecisionDependencyPin {
     const referenced = this.deref(input)
     if (ts.isCallExpression(referenced)) {
       const { call, members } = this.referenced(input, DECISIONS, "a Norn.decision definition")
       const id = this.string(this.member(members, "id", call))
       const artifactId = members.get("artifactId")
       return {
+        kind: "rule",
         artifactId: artifactId ? this.string(artifactId) : id + ".rule",
         version: this.string(this.member(members, "version", call)),
       }
     }
-    const pin = this.closedRecord(input, ["artifactId", "version"], ["artifactId", "version"])
-    return { artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
+    const pin = this.closedRecord(input, ["artifactId", "version", "kind"], ["artifactId", "version"])
+    const kind = pin.has("kind") ? this.string(pin.get("kind")!) : undefined
+    if (kind !== undefined && kind !== "entity" && kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL","dependency kind must be entity or rule",input)
+    return { ...(kind === undefined ? {} : {kind}), artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
   }
 
   private law(call: ts.CallExpression): L.LawDef {

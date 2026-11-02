@@ -17,7 +17,7 @@
  */
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
-import { type EnvelopeOptions, envelope } from "./envelope.ts"
+import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 
 // ------------------------------------------------------------ value kinds
 
@@ -149,6 +149,7 @@ export interface InvariantDecl {
 }
 
 interface TypeMetaBase {
+  readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly markings?: ReadonlyArray<string>
   /** Qualified name: dotted lower-case domain namespace and a PascalCase type name (`commerce.SalesOrder`). */
   readonly name: string
@@ -341,6 +342,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
     {
       kind: "entity",
       artifactId: `${def.name}.${def._tag === "Interface" ? "interface" : "entity"}`,
+      dependencies: pinnedDependencies(def.dependencies,"entity"),
       namespace,
       name: def.title,
       version: def.version,
