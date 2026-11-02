@@ -313,14 +313,16 @@ fn retained_membership_with_catalog(
     .ok_or_else(refused)
 }
 
-fn scope_packs<'a>(base: &'a [ArtifactEnvelope], scope: &norn_ir::ScopeRef) -> Option<ScopePacks<'a>> {
+fn scope_packs<'a>(
+    base: &'a [ArtifactEnvelope],
+    scope: &norn_ir::ScopeRef,
+) -> Option<ScopePacks<'a>> {
     use norn_ir::definition_catalog::ArtifactKey;
     let mut packs = BTreeMap::new();
     let mut bytes = 0usize;
-    for artifact in base
-        .iter()
-        .filter(|a| a.kind() == ArtifactKind::BusinessPack && crate::scope_conflict(scope, &a.scope).is_none())
-    {
+    for artifact in base.iter().filter(|a| {
+        a.kind() == ArtifactKind::BusinessPack && crate::scope_conflict(scope, &a.scope).is_none()
+    }) {
         let value = serde_json::to_value(artifact.payload.to_json_value()).ok()?;
         let size = norn_canonical::serialize_json_verbatim(&value).ok()?.len();
         bytes = bytes.saturating_add(size);
@@ -824,8 +826,12 @@ impl LawContext<'_> {
             return;
         };
         if matches!(law.scope.root, LawRoot::Pack(_))
-            && let Err(findings) =
-                retained_membership_with_catalog(artifact, self.base, RETAINED_SCOPE_BUDGET, Some(self.catalog))
+            && let Err(findings) = retained_membership_with_catalog(
+                artifact,
+                self.base,
+                RETAINED_SCOPE_BUDGET,
+                Some(self.catalog),
+            )
         {
             out.extend(findings);
             return;
@@ -978,8 +984,12 @@ impl LawContext<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         if matches!(law.scope.root, LawRoot::App(_))
-            && let Err(findings) =
-                retained_membership_with_catalog(artifact, self.base, RETAINED_SCOPE_BUDGET, Some(self.catalog))
+            && let Err(findings) = retained_membership_with_catalog(
+                artifact,
+                self.base,
+                RETAINED_SCOPE_BUDGET,
+                Some(self.catalog),
+            )
         {
             out.extend(findings);
         }

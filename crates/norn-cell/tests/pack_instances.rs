@@ -653,18 +653,35 @@ norn_testkit::proptest::proptest! {
 #[test]
 fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_foreign_packs() {
     let mut base = artifacts();
-    let target = base.iter_mut().find(|a| a.artifact_id == "demo.UsdTransfer.entity").expect("USD");
+    let mut plain = base.clone();
+    let target = base
+        .iter_mut()
+        .find(|a| a.artifact_id == "demo.UsdTransfer.entity")
+        .expect("USD");
     let mut entity: norn_ir::EntityRootV2 = payload(target);
     let mut marker = entity.object_type.properties[0].clone();
     marker.id = PropertyId("registry_label".into());
-    marker.property_type = PropertyType::Ref { name: norn_ir::PropertyTypeName("iso4217.currency_code".into()) };
+    marker.property_type = PropertyType::Ref {
+        name: norn_ir::PropertyTypeName("iso4217.currency_code".into()),
+    };
     marker.constraints.nullable = true;
     entity.object_type.properties.push(marker);
-    target.payload = ArtifactPayload::from_kind_json(&ArtifactKind::Entity, serde_json::from_value(serde_json::to_value(entity).expect("entity")).expect("wire")).expect("payload");
+    target.payload = ArtifactPayload::from_kind_json(
+        &ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(entity).expect("entity")).expect("wire"),
+    )
+    .expect("payload");
     let exact = pin(target);
-    let owner = base.iter_mut().find(|a| a.artifact_id == "demo.ledgers.app").expect("owner");
+    let owner = base
+        .iter_mut()
+        .find(|a| a.artifact_id == "demo.ledgers.app")
+        .expect("owner");
     let mut pack: CompositionPackRoot = payload(owner);
-    pack.instances.as_mut().expect("instances")[0].type_unit_bindings.get_mut("Ledger").expect("binding").target = exact;
+    pack.instances.as_mut().expect("instances")[0]
+        .type_unit_bindings
+        .get_mut("Ledger")
+        .expect("binding")
+        .target = exact;
     set_pack(owner, pack);
     let registry = BTreeSet::from([norn_ir::PropertyTypeName("iso4217.currency_code".into())]);
     let mut law = base
@@ -681,13 +698,20 @@ fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_fo
         serde_json::from_value(serde_json::to_value(root).expect("typed law")).expect("tree"),
     )
     .expect("payload");
-    let findings = norn_checker::check_artifact_set(std::slice::from_ref(&law), &norn_checker::EntityArtifactSetContext { registry: &registry, base: &base, tenant: None });
-    assert!(findings.is_empty(), "registry-aware law admission: {findings:?}");
-    let mut foreign = base.iter().find(|a| a.artifact_id == "demo.ledger.pack").expect("pack").clone();
-    foreign.scope.org_id = Some("another_org".into());
-    base.push(foreign);
+    let findings = norn_checker::check_artifact_set(
+        std::slice::from_ref(&law),
+        &norn_checker::EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings.is_empty(),
+        "registry-aware law admission: {findings:?}"
+    );
     let instances = norn_checker::verification::effective_law_instances(
-        &[law],
+        std::slice::from_ref(&law),
         &norn_checker::EntityArtifactSetContext {
             registry: &registry,
             base: &base,
@@ -712,4 +736,14 @@ fn pack_law_substitution_follows_only_the_selected_instance_with_registry_and_fo
             .iter()
             .all(|p| p.last().expect("binding path").instance_id == "ledger-usd")
     );
+    let mut foreign = plain
+        .iter()
+        .find(|a| a.artifact_id == "demo.ledger.pack")
+        .expect("pack")
+        .clone();
+    foreign.scope.org_id = Some("another_org".into());
+    plain.push(foreign);
+    let membership = norn_checker::verification::retained_law_membership(&law, &plain, norn_checker::verification::Budget { max_nodes: 4096, max_edges: 16384, max_steps: 65536 }).expect("other-org packs do not shadow visible identity");
+    assert!(membership.keys().any(|key| key.artifact_id == "demo.UsdTransfer.entity"));
+
 }
