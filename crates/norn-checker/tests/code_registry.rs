@@ -218,3 +218,17 @@ fn conformance_manifest_is_checked_in_and_current() {
         path.display()
     );
 }
+
+#[test]
+fn registry_is_strictly_ordered_for_binary_search() {
+    assert!(
+        REGISTRY
+            .windows(2)
+            .all(|pair| matches!(pair, [a, b] if a.code < b.code))
+    );
+    assert!(
+        REGISTRY
+            .iter()
+            .all(|entry| codes::lookup(entry.code).is_some())
+    );
+}

@@ -1,106 +1,4 @@
 {
-  "obligations": [
-    "INV-VER-NO-PROOF-HOLES",
-    "INV-VER-DIFFERENTIAL-REFINEMENT"
-  ],
-  "obligationClaims": [
-    {
-      "id": "INV-VER-NO-PROOF-HOLES",
-      "runtime": "missing",
-      "model": "deferred",
-      "proof": "missing",
-      "residual": "The mandatory static gate inventories every promoted handwritten Lean and F* source, requires exact Lean warning-as-error commands, rejects Lean sorry/admit/axiom/local warning disablement and F* source or command admission flags, requires an explicit trusted-assumption manifest, and scans every declared hax-generated Norn_ir.fst evidence artifact after extraction. A post-run gate also binds every cited test selector to an exact observed passing Rust or Bun test name in the owning command log. These are finite source/governance and execution-attestation checks, not proofs of the Lean/F*/SMT/toolchain implementation, translator, operating system, hardware, or host. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
-      "evidence": {
-        "runtime": [],
-        "model": [],
-        "proof": []
-      }
-    },
-    {
-      "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
-      "runtime": "partial",
-      "model": "partial",
-      "proof": "missing",
-      "residual": "Rust rule fixtures, generic quantity properties/fixtures, storage conformance tests, and three hax-extracted predicate lanes provide partial differential/correspondence evidence. There is no uniform generated valid/invalid differential harness for every proof-bearing executable component, no minimized-counterexample registry across every lane, and no general Rust-to-Lean refinement.",
-      "evidence": {
-        "runtime": [
-          {
-            "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
-            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-            "selectors": [
-              "test:generated_balanced_packs_match_independent_oracle"
-            ]
-          }
-        ],
-        "model": [
-          {
-            "artifact": "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
-            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-            "selectors": [
-              "fixture:quantity-ledger"
-            ]
-          }
-        ],
-        "proof": []
-      }
-    }
-  ],
-  "runtime": {
-    "status": "partial",
-    "artifacts": [
-      "scripts/check-proof-holes.py",
-      "scripts/validate-executed-test-selectors.py",
-      "verification/coverage-v1/negative_canaries.py",
-      "verification/coverage-v1/trusted-assumptions.json",
-      "crates/norn-checker/tests/quantity_ledger_properties.rs",
-      "scripts/check-rust-extraction-tools.sh",
-      "crates/norn-checker/tests/quantity_ledger.rs",
-      "scripts/check-verification-tools.sh",
-      "verification/stripmine-2026-08-22/scripts/validate.sh",
-      "verification/coverage-v1/validate.py",
-      "scripts/proof_enrollment.py",
-      "scripts/test_proof_enrollment.py"
-    ],
-    "commands": [
-      "scripts/check-verification-tools.sh",
-      "scripts/check-rust-extraction-tools.sh",
-      "python3 scripts/test_proof_enrollment.py",
-      "python3 verification/coverage-v1/validate.py",
-      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
-      "python3 scripts/validate-executed-test-selectors.py",
-      "python3 scripts/validate-executed-test-selectors.py --profile fast",
-      "python3 scripts/check-proof-holes.py",
-      "python3 verification/coverage-v1/negative_canaries.py"
-    ],
-    "generatedArtifacts": [],
-    "resultArtifacts": []
-  },
-  "model": {
-    "status": "partial",
-    "bound": "finite promoted proof inventory plus the currently declared generic quantity and rules differential corpora; other proof-bearing components remain outside a uniform generated differential harness",
-    "artifacts": [
-      "verification/coverage-v1/trusted-assumptions.json",
-      "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
-      "verification/archive/rules-dmn-v1/fixtures/conformance.json"
-    ],
-    "commands": [
-      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary"
-    ],
-    "generatedArtifacts": [],
-    "resultArtifacts": []
-  },
-  "proof": {
-    "status": "missing",
-    "artifacts": [],
-    "commands": [],
-    "generatedArtifacts": [],
-    "resultArtifacts": []
-  },
-  "limitations": [
-    "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness.",
-    "The trusted-assumption manifest records the current external boundary; independent toolchain reproduction and negative canary proofs are still needed for stronger supply-chain assurance.",
-    "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
-  ],
   "sourceFiles": [
     "crates/norn-authz/tests/compile.rs",
     "crates/norn-canonical/tests/legacy_fixtures.rs",
@@ -462,6 +360,110 @@
     "scripts/demo/drop-common.sh",
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
-    "tools/norn-ts/test/stock-trace.test.ts"
+    "tools/norn-ts/test/stock-trace.test.ts",
+    "scripts/guarantees_matrix.py",
+    "scripts/test_guarantees_matrix.py"
+  ],
+  "obligations": [
+    "INV-VER-NO-PROOF-HOLES",
+    "INV-VER-DIFFERENTIAL-REFINEMENT"
+  ],
+  "runtime": {
+    "status": "partial",
+    "artifacts": [
+      "scripts/check-proof-holes.py",
+      "scripts/validate-executed-test-selectors.py",
+      "verification/coverage-v1/negative_canaries.py",
+      "verification/coverage-v1/trusted-assumptions.json",
+      "crates/norn-checker/tests/quantity_ledger_properties.rs",
+      "scripts/check-rust-extraction-tools.sh",
+      "crates/norn-checker/tests/quantity_ledger.rs",
+      "scripts/check-verification-tools.sh",
+      "verification/stripmine-2026-08-22/scripts/validate.sh",
+      "verification/coverage-v1/validate.py",
+      "scripts/proof_enrollment.py",
+      "scripts/test_proof_enrollment.py"
+    ],
+    "commands": [
+      "scripts/check-verification-tools.sh",
+      "scripts/check-rust-extraction-tools.sh",
+      "python3 scripts/test_proof_enrollment.py",
+      "python3 verification/coverage-v1/validate.py",
+      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+      "python3 scripts/validate-executed-test-selectors.py",
+      "python3 scripts/validate-executed-test-selectors.py --profile fast",
+      "python3 scripts/check-proof-holes.py",
+      "python3 verification/coverage-v1/negative_canaries.py"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "model": {
+    "status": "partial",
+    "bound": "finite promoted proof inventory plus the currently declared generic quantity and rules differential corpora; other proof-bearing components remain outside a uniform generated differential harness",
+    "artifacts": [
+      "verification/coverage-v1/trusted-assumptions.json",
+      "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+      "verification/archive/rules-dmn-v1/fixtures/conformance.json"
+    ],
+    "commands": [
+      "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary"
+    ],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "proof": {
+    "status": "missing",
+    "artifacts": [],
+    "commands": [],
+    "generatedArtifacts": [],
+    "resultArtifacts": []
+  },
+  "limitations": [
+    "Warning-as-error plus lexical scanning excludes admitted source holes in the promoted finite corpus, but it does not establish compiler, kernel, solver, translator, operating-system, hardware, or dependency soundness.",
+    "The trusted-assumption manifest records the current external boundary; independent toolchain reproduction and negative canary proofs are still needed for stronger supply-chain assurance.",
+    "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
+  ],
+  "obligationClaims": [
+    {
+      "id": "INV-VER-NO-PROOF-HOLES",
+      "runtime": "missing",
+      "model": "deferred",
+      "proof": "missing",
+      "residual": "The mandatory static gate inventories every promoted handwritten Lean and F* source, requires exact Lean warning-as-error commands, rejects Lean sorry/admit/axiom/local warning disablement and F* source or command admission flags, requires an explicit trusted-assumption manifest, and scans every declared hax-generated Norn_ir.fst evidence artifact after extraction. A post-run gate also binds every cited test selector to an exact observed passing Rust or Bun test name in the owning command log. These are finite source/governance and execution-attestation checks, not proofs of the Lean/F*/SMT/toolchain implementation, translator, operating system, hardware, or host. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+      "evidence": {
+        "runtime": [],
+        "model": [],
+        "proof": []
+      }
+    },
+    {
+      "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+      "runtime": "partial",
+      "model": "partial",
+      "proof": "missing",
+      "residual": "Rust rule fixtures, generic quantity properties/fixtures, storage conformance tests, and three hax-extracted predicate lanes provide partial differential/correspondence evidence. There is no uniform generated valid/invalid differential harness for every proof-bearing executable component, no minimized-counterexample registry across every lane, and no general Rust-to-Lean refinement.",
+      "evidence": {
+        "runtime": [
+          {
+            "artifact": "crates/norn-checker/tests/quantity_ledger_properties.rs",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "test:generated_balanced_packs_match_independent_oracle"
+            ]
+          }
+        ],
+        "model": [
+          {
+            "artifact": "verification/stripmine-2026-08-22/fixtures/quantity-ledger.json",
+            "command": "cargo test --locked -p norn-checker --test quantity_ledger --test quantity_ledger_properties --test quantity_ledger_expression --test quantity_ledger_boundary",
+            "selectors": [
+              "fixture:quantity-ledger"
+            ]
+          }
+        ],
+        "proof": []
+      }
+    }
   ]
 }

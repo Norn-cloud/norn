@@ -90,7 +90,7 @@ pub fn expression_read_paths(source: &str, root: &str) -> Result<BTreeSet<Vec<St
         })
 }
 
-fn literal_path(node: &Node<'_>) -> Option<Vec<String>> {
+pub(crate) fn literal_path(node: &Node<'_>) -> Option<Vec<String>> {
     match node {
         Node::Identifier(name) => Some(vec![(*name).to_owned()]),
         Node::Parenthesized(inner) => literal_path(inner),

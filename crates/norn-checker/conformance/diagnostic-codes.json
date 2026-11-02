@@ -471,6 +471,20 @@
       "tier": "T3"
     },
     {
+      "code": "core.composition.mapping_gap",
+      "message": "interpretation must cover the retained source contract exactly with unique compatible target members",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.overlay_conflict",
+      "message": "overlay must retain pinned inherited constraints and satisfy the supported profile",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
       "code": "core.composition.unresolved_pin",
       "message": "instance reference must resolve to an exact scoped pack pin",
       "severity": "error",
@@ -489,6 +503,27 @@
       "message": "Query semantics are unsupported by the selected compute profile.",
       "severity": "error",
       "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.laws.unresolved_scope",
+      "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.values.unit_binding_required",
+      "message": "an interface Decimal requires an explicit implementing unit and scale",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "core.values.unit_mismatch",
+      "message": "interface Decimal group requires the same unit and scale",
+      "severity": "error",
+      "since": "0.1.0",
       "tier": "T3"
     },
     {
@@ -1693,6 +1728,20 @@
       "message": "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
       "severity": "error",
       "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.interpretation.invalid_endpoint",
+      "message": "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "mapping.interpretation.unsupported",
+      "message": "law interpretations require member conformance and preservation obligations",
+      "severity": "error",
+      "since": "0.2.0",
       "tier": "T3"
     },
     {

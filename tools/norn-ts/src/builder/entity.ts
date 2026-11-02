@@ -42,6 +42,7 @@ export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
   | { readonly kind: "integer" }
   | { readonly kind: "decimal"; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource }
+  | { readonly kind: "decimal-binding"; readonly group: string }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }
@@ -59,6 +60,7 @@ export const money = (scale: number, currency: string | CurrencySource): Propert
   scale,
   currencySource: typeof currency === "string" ? { links: [], property: currency } : { links: [...currency.links], property: currency.property },
 })
+export const boundDecimal = (group: string): PropertyType => ({ kind: "decimal-binding", group })
 export const boolean: PropertyType = { kind: "boolean" }
 export const timestamp = (timezone: TimezonePolicy): PropertyType => ({ kind: "timestamp", timezone })
 export const date: PropertyType = { kind: "date" }

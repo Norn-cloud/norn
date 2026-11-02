@@ -41,7 +41,9 @@ fn sample(column: &PropertyColumn, salt: &str) -> Value {
         PropertyKind::Duration => rv(json!("PT1H30M")),
         PropertyKind::Record => rv(json!({"value": "record"})),
         PropertyKind::JsonExt => rv(json!({ "channel": "web", "tags": ["a", "b"] })),
-        PropertyKind::Ref => panic!("refs are resolved by the projection"),
+        PropertyKind::Ref | PropertyKind::DecimalBinding => {
+            panic!("property types must be resolved before storage projection")
+        }
     }
 }
 

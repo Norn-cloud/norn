@@ -483,6 +483,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.mapping_gap",
+        Tier::T3,
+        "interpretation must cover the retained source contract exactly with unique compatible target members",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.overlay_conflict",
+        Tier::T3,
+        "overlay must retain pinned inherited constraints and satisfy the supported profile",
+        "0.2.0",
+    ),
+    introduced(
         "core.composition.unresolved_pin",
         Tier::T3,
         "instance reference must resolve to an exact scoped pack pin",
@@ -499,6 +511,22 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T3,
         "Query semantics are unsupported by the selected compute profile.",
         "0.2.0",
+    ),
+    introduced(
+        "core.laws.unresolved_scope",
+        Tier::T3,
+        "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+        "0.2.0",
+    ),
+    entry(
+        "core.values.unit_binding_required",
+        Tier::T2,
+        "an interface Decimal requires an explicit implementing unit and scale",
+    ),
+    entry(
+        "core.values.unit_mismatch",
+        Tier::T3,
+        "interface Decimal group requires the same unit and scale",
     ),
     entry(
         "customization.validation.invalid_payload",
@@ -1360,6 +1388,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "lifecycle.validation.widens_transition",
         Tier::T3,
         "transition {id} is not a transition of the inherited lifecycle; a subtype may only drop transitions",
+    ),
+    introduced(
+        "mapping.interpretation.invalid_endpoint",
+        Tier::T3,
+        "interpretation endpoint {artifactId} requires one retained business pack, an exact required dependency and matching version/content identity",
+        "0.2.0",
+    ),
+    introduced(
+        "mapping.interpretation.unsupported",
+        Tier::T3,
+        "law interpretations require member conformance and preservation obligations",
+        "0.2.0",
     ),
     entry(
         "mapping.model.expression_type",

@@ -1597,6 +1597,34 @@ export interface components {
             /** @description The terminal property. */
             property: string;
         };
+        /**
+         * EffectiveLawInstance
+         * @description LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+         *     identity, concrete subject, attachment and complete origin paths.
+         *     This projection is not a new law or evidence of preservation.
+         */
+        NornIrEffectiveLawInstance: {
+            /** @description Declared governing boundary, including retained pack/app attachments. */
+            attachment: components["schemas"]["NornIrLawRoot"];
+            /** @description Explicit typed member substitutions; no rewritten child LawIR. */
+            bindings: {
+                [key: string]: components["schemas"]["NornIrMemberRef"];
+            };
+            /** @description LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope. */
+            instancePaths: components["schemas"]["NornIrPackInstanceRef"][][];
+            /** @description Original law artifact/version and stable law member ID. */
+            law: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of the unchanged law artifact. */
+            lawDigest: string;
+            /** @description Original governed concept/interface/container identity. */
+            origin: components["schemas"]["NornIrMemberRef"];
+            /** @description Every inheritance, containment or mapping path; a diamond retains all. */
+            paths: components["schemas"]["NornIrMemberRef"][][];
+            /** @description Concrete implementing type, independently pinned. */
+            subject: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of that concrete type artifact. */
+            subjectDigest: string;
+        };
         /** @description A recognized source action and the checked predicate that admits it. */
         NornIrEntitlementActionMap: {
             /** @description Exact Norn action id. */
@@ -2332,6 +2360,16 @@ export interface components {
             /** @description Exact artifact version. */
             version: string;
         };
+        /**
+         * @description Only the interpretation wire format decodes here.
+         * @enum {string}
+         */
+        NornIrInterpretationFormat: "norn.interpretation/1";
+        /**
+         * @description A law interpretation is neither source evidence nor term correspondence.
+         * @enum {string}
+         */
+        NornIrInterpretationRole: "law_interpretation";
         /** @description One declared invariant of an object type or interface. */
         NornIrInvariant: {
             /**
@@ -2626,6 +2664,28 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /** @description Typed interpretation contract. Admission refuses until conformance exists. */
+        NornIrLawInterpretationIr: {
+            /**
+             * @description Closed format discriminator.
+             * @enum {string}
+             */
+            format: "norn.interpretation/1";
+            /**
+             * @description MAP-MEMBER-CONTRACT-1: retain every explicit member binding.
+             *     Required coverage and unit/link contracts come from pinned definitions.
+             */
+            members: components["schemas"]["NornIrMemberInterpretation"][];
+            /**
+             * @description Explicit semantic role.
+             * @enum {string}
+             */
+            role: "law_interpretation";
+            /** @description Layer whose contract must be preserved. */
+            sourceLayer: components["schemas"]["NornIrInterpretationEndpoint"];
+            /** @description Layer interpreting that contract. */
+            targetLayer: components["schemas"]["NornIrInterpretationEndpoint"];
+        };
         /** @description Scoped temporal vocabulary; nested temporal operators have no wire representation. */
         NornIrLawModality: components["schemas"]["NornIrLawModalityOneOf0"] | components["schemas"]["NornIrLawModalityOneOf1"] | components["schemas"]["NornIrLawModalityOneOf2"] | components["schemas"]["NornIrLawModalityOneOf3"];
         /** @description Response holds at every applicable point. */
@@ -2734,7 +2794,27 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"];
+        NornIrLawRoot: {
+            id: string;
+            /** @enum {string} */
+            kind: "company";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "app";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "cell";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "entity";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
+        };
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -2758,6 +2838,12 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        };
+        /** @description Exact retained composition-pack boundary. */
+        NornIrLawRootOneOf4: {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrLawScope: {
@@ -3126,17 +3212,19 @@ export interface components {
             reason: "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere";
         };
         /**
-         * @description The payload of a `mapping` artifact: an interface-scoped mapping
-         *     ([`mapping::MappingIr`], T8-MAP-1a).
+         * @description An interface-scoped mapping from one source schema: the payload of a
+         *     `mapping` artifact. The envelope's `artifactId` and `version` identify
+         *     the mapping; its provenance key is `<artifactId>@<version>` (both
+         *     checked so the key is unambiguous). See the module docs.
          */
-        NornIrMappingPayload: {
+        NornIrMappingIr: {
             /**
              * @description Declarative permission-row maps. These emit ordinary upsert actions
              *     for `core.Entitlement`; joins are applied only from a caller-declared
              *     complete snapshot of every `requiredSnapshot` dataset.
              */
             entitlements?: components["schemas"]["NornIrEntitlementMap"][];
-            extensions?: components["schemas"]["NornIrMappingPayloadPropertyExtensions"];
+            extensions?: components["schemas"]["NornIrMappingIrPropertyExtensions"];
             /**
              * @description The format tag.
              * @enum {string}
@@ -3162,9 +3250,14 @@ export interface components {
             source: components["schemas"]["NornIrSourceBinding"];
         };
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
-        NornIrMappingPayloadPropertyExtensions: {
+        NornIrMappingIrPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description The payload of a `mapping` artifact: source-record transforms or a
+         *     separately checked law interpretation ([`mapping::MappingDocument`]).
+         */
+        NornIrMappingPayload: components["schemas"]["NornIrMappingIr"] | components["schemas"]["NornIrLawInterpretationIr"];
         /**
          * @description SKOS-style mapping relations.
          * @enum {string}
@@ -3240,6 +3333,120 @@ export interface components {
         NornIrMaskPolicyOneOf2: {
             /** @enum {string} */
             kind: "null";
+        };
+        /**
+         * @description A member of a definition. Names are the IR's own: an object type or
+         *     interface name, a property, link, lifecycle-property, or transition id,
+         *     an object-map id, a law id.
+         */
+        NornIrMember: {
+            /** @enum {string} */
+            kind: "artifact";
+        } | {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        } | {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
+        /** @description One interpretation between exact catalog members, never a coverage claim. */
+        NornIrMemberInterpretation: {
+            /** @description Source type, property, link, lifecycle state or transition identity. */
+            source: components["schemas"]["NornIrMemberRef"];
+            /** @description Corresponding target identity, resolved within the pinned target layer. */
+            target: components["schemas"]["NornIrMemberRef"];
+            /**
+             * @description Absent means identity. Expressions require checked conformance;
+             *     declaring one does not establish preservation.
+             */
+            transform?: string;
+        };
+        /** @description The artifact as a whole (an action, a decision, a mapping). */
+        NornIrMemberOneOf0: {
+            /** @enum {string} */
+            kind: "artifact";
+        };
+        /** @description An object type or interface. */
+        NornIrMemberOneOf1: {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        };
+        /** @description A property of a type. */
+        NornIrMemberOneOf2: {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        };
+        /** @description A link of a type. */
+        NornIrMemberOneOf3: {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        };
+        /** @description A state of a type's lifecycle (a value of its lifecycle property). */
+        NornIrMemberOneOf4: {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        };
+        /** @description A declared transition of a type's lifecycle. */
+        NornIrMemberOneOf5: {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        };
+        /** @description An object map of a mapping. */
+        NornIrMemberOneOf6: {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        };
+        /** @description A law. */
+        NornIrMemberOneOf7: {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
+        /** @description A member of one exact artifact. */
+        NornIrMemberRef: {
+            artifactId: string;
+            member: components["schemas"]["NornIrMember"];
+            version: string;
         };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
@@ -3902,7 +4109,7 @@ export interface components {
             propertyId: string;
         };
         /** @description The value kind of a property, tagged by `kind`. */
-        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"];
+        NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"] | components["schemas"]["NornIrPropertyTypeOneOf11"];
         /**
          * @description EntityIR v2 payload of an `entity` artifact that carries a catalog of
          *     shared property types (non-empty; checker rule).
@@ -3958,8 +4165,20 @@ export interface components {
             /** @enum {string} */
             kind: "integer";
         };
-        /** @description The shared property type (local or registry) with this name. */
+        /**
+         * @description Opaque JSON (an extension payload), optionally described by a JSON
+         *     Schema document the checker does not interpret.
+         */
         NornIrPropertyTypeOneOf10: {
+            /** @enum {string} */
+            kind: "json-ext";
+            schema?: components["schemas"]["NornIrPropertyTypeOneOf10PropertySchema"];
+        };
+        NornIrPropertyTypeOneOf10PropertySchema: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description The shared property type (local or registry) with this name. */
+        NornIrPropertyTypeOneOf11: {
             /** @enum {string} */
             kind: "ref";
             /** @description The referenced [`PropertyTypeDef`] name. */
@@ -3987,13 +4206,20 @@ export interface components {
             scale: number;
             unit?: components["schemas"]["NornIrUnitRef"];
         };
-        /** @description `true` or `false`. */
+        /** @description VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale. */
         NornIrPropertyTypeOneOf3: {
+            /** @description Same-name members in one interface bind identically. */
+            group: string;
+            /** @enum {string} */
+            kind: "decimal-binding";
+        };
+        /** @description `true` or `false`. */
+        NornIrPropertyTypeOneOf4: {
             /** @enum {string} */
             kind: "boolean";
         };
         /** @description An instant in time with an explicit timezone policy. */
-        NornIrPropertyTypeOneOf4: {
+        NornIrPropertyTypeOneOf5: {
             /** @enum {string} */
             kind: "timestamp";
             /**
@@ -4003,7 +4229,7 @@ export interface components {
             timezone: "utc" | "offset";
         };
         /** @description An ISO 8601 calendar date (`YYYY-MM-DD`) with no time and no zone. */
-        NornIrPropertyTypeOneOf5: {
+        NornIrPropertyTypeOneOf6: {
             /** @enum {string} */
             kind: "date";
         };
@@ -4011,12 +4237,12 @@ export interface components {
          * @description An exact elapsed duration (fixed-length units only; calendar periods
          *     such as months are not durations).
          */
-        NornIrPropertyTypeOneOf6: {
+        NornIrPropertyTypeOneOf7: {
             /** @enum {string} */
             kind: "duration";
         };
         /** @description One of a closed set of string values. */
-        NornIrPropertyTypeOneOf7: {
+        NornIrPropertyTypeOneOf8: {
             /** @enum {string} */
             kind: "enum";
             /** @description Declared values, in presentation order; unique and non-empty. */
@@ -4026,22 +4252,10 @@ export interface components {
          * @description A closed structured value. Every member is present; nullability of
          *     the containing property applies to the whole record.
          */
-        NornIrPropertyTypeOneOf8: {
+        NornIrPropertyTypeOneOf9: {
             /** @enum {string} */
             kind: "record";
             members: components["schemas"]["NornIrRecordMember"][];
-        };
-        /**
-         * @description Opaque JSON (an extension payload), optionally described by a JSON
-         *     Schema document the checker does not interpret.
-         */
-        NornIrPropertyTypeOneOf9: {
-            /** @enum {string} */
-            kind: "json-ext";
-            schema?: components["schemas"]["NornIrPropertyTypeOneOf9PropertySchema"];
-        };
-        NornIrPropertyTypeOneOf9PropertySchema: {
-            [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
          * @description Who proposed a definition.

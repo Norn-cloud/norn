@@ -19,6 +19,8 @@ B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR wit
 
 ## Semantics and obligations
 
+An app is its retained root composition-pack instance: `LawRoot::App(id)` resolves that stable instance ID through its exact retained pin and explicit imports/instances closure, refusing an unresolved ID without a separate app→pack binding.
+
 Admission validates structured slots and grounded normative precedence, then resolves law subjects through `EffectiveCatalog::target_types` and explicit retained pack/app membership. Add a pack root while retaining `LawRoot::App`; unknown roots never mean global. Check interfaces even with zero implementors. Deduplicate a diamond's identical binding by law identity + concrete subject + substitutions, preserving all paths. Different substitutions remain distinct instances.
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
@@ -49,6 +51,8 @@ Evidence levels remain separate. Lean proof bodies must check the generated theo
 - **AUTH-REVOKE:** Given delegated approval at generation 1, when revoked before commit/dispatch, then no new governed action/external attempt; already dispatched results are recorded and reconciled.
 - **PROOF-STALE:** Given a passing old statement, when a writer/unit/mapping changes, then old evidence is unknown for the new goal, never proved.
 
+**LAW-CONVERSION-1 (first B4 cut):** `core.Conversion` carries the single `core.law.conversion_conservation` invariant over nonnegative accepted input/output/loss measurements; its Decimal binding group requires one identical concrete unit and scale from each implementor (Melt: UCUM `g`, scale 3), with no scalar or sibling-unit fallback. Its LawIR references that invariant, and effective instances retain its core origin on a Melt implementor without copying the predicate. A balanced measurement is accepted; omitted loss, negative loss and wrong scale refuse. The shared commit invariant check rejects every write and outbox effect in the proposal on failure. Measurement conservation does not establish stock/value effect closure or derive totals from allocations; those aggregate obligations remain unknown until the declared fold/effect bindings are implemented.
+
 ## Main and gaps
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
@@ -61,3 +65,11 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 4. B5 generate initialization/writer/non-vacuity statements; B6 generated Quint jobs; B7 exact result binding; B8 scenario/explanation projection, each separately gated.
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
+
+**PROOF-BIND-1 Guarantees projection:** `python3 scripts/guarantees_matrix.py [--result RESULT.json] [--challenge CHALLENGE.json]` reads the existing obligation registries and coverage from one immutable Git commit tree. Positive levels require the existing full result validator to accept current source, tools, proof/test logs, selectors and digests. No result, failed validation or changed inputs yields unknown. The matrix binds source and result digests, retains assumptions/residuals, and separates a checked reference proof from production correspondence: only an implementation proof can label the overall obligation proved. Named passing scenarios/proptests label tested, never proved. A generated challenge inventory (including transition-frame assessments) remains unknown pending exact checked solver-result binding. This view grants no admission, proof or deployment authority.
+
+Scenarios: **GUARANTEES-CHECKED** retains checked reference/implementation scope; **GUARANTEES-MISSING** never promotes declared coverage alone; **PROOF-STALE** discards stale evidence; **GUARANTEES-FRAME** leaves echoed/generated conditional goals unknown; removing evidence cannot increase assurance. The view labels validated evidence `checked_snapshot`, bound to the captured commit and result; workspace changes during projection discard evidence, and every exported matrix describes that immutable snapshot rather than claiming continuing freshness.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
+
+**LAW-CONVERSION-OVERLAY:** Given retained core law and concrete Melt bindings, adding a loss bound retains the same effective law digest and generates pending guard goals; replacing its inherited invariant with `true` refuses through the shared Core 06 validator as `core.composition.overlay_conflict` / `weakens_inherited`, with no new approval authority.
