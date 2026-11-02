@@ -40,6 +40,12 @@ LAW-COMMIT-1 uses the metered expression evaluator for CP2 pointwise laws:
 Unsupported timing, response, lifecycle or commitment scope fails closed with
 `core.laws.unsupported_semantics`; native violations use `core.laws.violated`.
 
+OBS-EVIDENCE-1 evaluates observations against those same retained direct laws,
+retaining the actual law ID/declaration digest in each finding. The emitting
+receipt pins the definition version for historical re-evaluation; current laws
+cannot substitute for that snapshot. A law pin is classified as enforced only
+when it resolves to the supported direct-law contract.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.

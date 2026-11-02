@@ -1,9 +1,10 @@
 //! Direct governing-law resolution and evaluation on the shared metered expression engine.
+use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
 use norn_ir::{
-    ArtifactEnvelope, DataQualityOutcome, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
-    ObjectTypeName,
+    ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
+    LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
 
@@ -42,8 +43,14 @@ impl LawEvaluationError {
 /// One evaluated law violation; findings retain the actual law pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LawFailure {
-    /// Whether this declared law refuses native writes.
+    /// Whether the retained declaration refuses native writes.
     pub refuses_native: bool,
+    /// Exact evaluation outcome retained with observation evidence.
+    pub outcome: DataQualityOutcome,
+    /// Exact governing declaration identity.
+    pub rule_ref: DataQualityRuleRef,
+    /// Declared severity, independent of proof classification.
+    pub severity: DataQualitySeverity,
     /// Declared explanation.
     pub message: String,
 }
@@ -104,7 +111,42 @@ fn supported(law: &LawIR) -> bool {
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         && matches!(law.response, LawResponse::Predicate { .. })
 }
-/// LAW-COMMIT-1 / LAW-SUPPORTED-1: evaluate retained direct laws, never caller payloads.
+fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, LawEvaluationError> {
+    let bytes = norn_ir::canonical::canonical_json_of(law)
+        .map_err(|e| LawEvaluationError::Invalid(e.to_string()))?;
+    Ok(DataQualityRuleRef::Law {
+        artifact_id: artifact.artifact_id.clone(),
+        law_id: law.id.clone(),
+        version: format!(
+            "sha256:{}",
+            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+        ),
+    })
+}
+pub(crate) fn classify(
+    catalog: &TypeCatalog<'_>,
+    rule_ref: &DataQualityRuleRef,
+) -> DataQualityRuleClassification {
+    for artifact in &catalog.law_artifacts {
+        let Ok(law) = decode(artifact) else {
+            continue;
+        };
+        if !supported(&law) || pin(artifact, &law).as_ref() != Ok(rule_ref) {
+            continue;
+        }
+        if catalog
+            .governing_laws(&ObjectTypeName(law.subject.clone()))
+            .is_ok()
+        {
+            return match law.severity {
+                LawSeverity::Error => DataQualityRuleClassification::Integrity,
+                LawSeverity::Warning => DataQualityRuleClassification::Quality,
+            };
+        }
+    }
+    DataQualityRuleClassification::Unverified
+}
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: evaluate retained direct laws, never caller payloads.
 ///
 /// # Errors
 /// Incomplete scope, unsupported semantics, invalid context or exhausted fuel.
@@ -150,9 +192,15 @@ pub fn evaluate(
                 })
             }
         };
-        if result.is_err() {
+        if let Err(outcome) = result {
             failures.push(LawFailure {
                 refuses_native: law.severity == LawSeverity::Error,
+                outcome,
+                rule_ref: pin(artifact, &law)?,
+                severity: match law.severity {
+                    LawSeverity::Error => DataQualitySeverity::Error,
+                    LawSeverity::Warning => DataQualitySeverity::Warning,
+                },
                 message: format!("{}: {}", law.id, law.rationale),
             });
         }

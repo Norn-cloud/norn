@@ -127,6 +127,9 @@ pub fn tombstone_key(key: &FactKey) -> FactKey {
 /// A snapshot was invalid; nothing is committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ObservationRefusal {
+    /// Retained governing-law resolution or bounded evaluation failed closed.
+    #[error("{0}")]
+    Law(#[from] crate::governing_laws::LawEvaluationError),
     /// Existing decision admission rejects the ordinary property payload.
     #[error("invalid observed properties: {0}")]
     Properties(#[source] Box<DecisionRefusal<Infallible>>),
@@ -358,9 +361,6 @@ impl ObservationAuthorization {
         observation_id: &str,
         failures: &[InvariantFailure],
     ) -> Result<(), ObservationRefusal> {
-        if failures.is_empty() {
-            return Ok(());
-        }
         let findings = findings_for(
             catalog,
             &expectation.key,
@@ -1009,9 +1009,6 @@ fn findings_for(
     observation_id: &str,
     failures: &[InvariantFailure],
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
-    if failures.is_empty() {
-        return Ok(Vec::new());
-    }
     let evidence_digest = norn_ir::canonical::canonical_json_of(values)
         .map(|bytes| {
             format!(
@@ -1020,7 +1017,28 @@ fn findings_for(
             )
         })
         .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?;
-    failures
+    let build = |rule_ref, severity, message, outcome| {
+        DataQualityFinding::v2(
+            rule_ref,
+            vec![DataQualitySubject::new(
+                key.object_type.clone(),
+                key.key.clone(),
+            )],
+            severity,
+            message,
+            outcome,
+            vec![DataQualityLineage::new(
+                provenance.clone(),
+                vec![observation_id.to_owned()],
+            )],
+            provenance.recorded_at.clone(),
+            provenance.recorded_at.clone(),
+            DataQualityFindingStatus::Open,
+        )
+        .and_then(|finding| finding.with_evidence_digest(evidence_digest.clone()))
+        .map_err(|error| ObservationRefusal::Encoding(error.to_string()))
+    };
+    let mut findings = failures
         .iter()
         .map(|failure| {
             let (rule_ref, outcome) = match &failure.finding_outcome {
@@ -1060,27 +1078,19 @@ fn findings_for(
                 ConstraintClass::Integrity => DataQualitySeverity::Error,
                 ConstraintClass::Quality => DataQualitySeverity::Warning,
             };
-            DataQualityFinding::v2(
-                rule_ref,
-                vec![DataQualitySubject::new(
-                    key.object_type.clone(),
-                    key.key.clone(),
-                )],
-                severity,
-                failure.message.clone(),
-                outcome,
-                vec![DataQualityLineage::new(
-                    provenance.clone(),
-                    vec![observation_id.to_owned()],
-                )],
-                provenance.recorded_at.clone(),
-                provenance.recorded_at.clone(),
-                DataQualityFindingStatus::Open,
-            )
-            .and_then(|finding| finding.with_evidence_digest(evidence_digest.clone()))
-            .map_err(|error| ObservationRefusal::Encoding(error.to_string()))
+            build(rule_ref, severity, failure.message.clone(), outcome)
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut remaining = EvaluationBudget::default().units();
+    for failure in crate::governing_laws::evaluate(catalog, key, values, &mut remaining)? {
+        findings.push(build(
+            failure.rule_ref,
+            failure.severity,
+            failure.message,
+            failure.outcome,
+        )?);
+    }
+    Ok(findings)
 }
 
 /// Check a finding's value-bearing fields against a fresh bounded evaluation.
