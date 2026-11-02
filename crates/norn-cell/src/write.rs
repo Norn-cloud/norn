@@ -610,7 +610,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     .iter()
                     .zip(plans)
                     .map(|(request, plan)| {
-                        crate::quantity::apply(self.conn, self.batch, request, plan)
+                        crate::quantity::apply(
+                            self.conn,
+                            self.batch,
+                            request,
+                            self.commit_seq,
+                            plan,
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()
                     .map(crate::store::QuantityBatch)
