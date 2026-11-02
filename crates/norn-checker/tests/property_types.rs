@@ -342,7 +342,8 @@ fn val_round_declarations_fail_closed_until_exact_site_binding() {
         if matches!(mode, None | Some("refuse")) {
             assert!(result.is_empty());
         } else {
-            assert_eq!(result, vec![("core.values.inexact".into(), "/0/type/rounding".into())]);
+            let expected = ("core.values.inexact".into(), "/0/type/rounding".into());
+            assert_eq!(result, vec![expected]);
         }
     }
 }
