@@ -537,7 +537,7 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
 proptest! {
     #[test]
     fn graph_link_codes_preserve_transport_and_exact_operands(
-        id in "[a-z0-9]{1,12}", role in "[a-z]{1,12}", complete in norn_testkit::proptest::bool::ANY,
+        id in "[a-z0-9]{1,12}", role in "[a-z]{1,12}", complete in any::<bool>(),
     ) {
         let source = FactKey::new("test.Happening", id);
         let target = FactKey::new("test.Resource", "resource");
