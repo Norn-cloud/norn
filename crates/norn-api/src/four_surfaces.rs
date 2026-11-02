@@ -238,16 +238,33 @@ async fn equivalent_governed_surfaces() {
         assert_eq!(law["code"], "decision.invariant_violation");
         assert_eq!(law["category"], "precondition");
         let after = dump(&host);
+        assert_eq!(
+            before.keys().collect::<Vec<_>>(),
+            after.keys().collect::<Vec<_>>()
+        );
         for (table, rows) in &before {
-            if !matches!(
-                table.as_str(),
-                "_norn_ledger" | "_norn_receipt" | "_norn_clock" | "_norn_export_journal"
-            ) {
-                assert_eq!(
-                    after.get(table),
-                    Some(rows),
-                    "law refusal changes no business state: {table}"
-                );
+            let next = after.get(table).expect("same tables");
+            match table.as_str() {
+                "_norn_ledger"
+                | "_norn_receipt"
+                | "_norn_export_journal"
+                | "_norn_export_payload" => {
+                    assert_eq!(
+                        next.len(),
+                        rows.len() + 1,
+                        "one refusal audit append: {table}"
+                    );
+                    assert!(
+                        rows.iter().all(|row| next.contains(row)),
+                        "audit history retained: {table}"
+                    );
+                }
+                "_norn_clock" => assert_eq!(
+                    next.len(),
+                    rows.len(),
+                    "audit advances the existing clock pointer"
+                ),
+                _ => assert_eq!(next, rows, "law refusal changes no business state: {table}"),
             }
         }
         let ledger_after = host
