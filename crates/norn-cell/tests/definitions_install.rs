@@ -6315,3 +6315,15 @@ fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
     assert!(matches!(store.read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1"), Err(CellError::MappingBundleMismatch)));
     assert!(id.starts_with("mapping-identity:"));
 }
+
+#[test]
+fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("retained-root.sqlite"));
+    let previous = store.read().installed_definitions(None).expect("definitions").expect("installed");
+    let model = model_from_json(vec![item_type(vec![json!({"id":"name", "type":{"kind":"text"}})])]);
+    let installation = install_input("without-quality", previous.installed_at.checked_add(1).expect("epoch"), &model);
+    store.install_definitions(model, installation, Some(previous.version), "org_demo/dev").expect("remove empty type");
+    assert!(store.read().root_type("quality.Measurement").is_err());
+    assert_eq!(store.read().retained_mapping_root(previous.version, "quality.Measurement").expect("retained subject"), "quality.Measurement");
+}
