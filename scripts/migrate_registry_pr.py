@@ -44,7 +44,6 @@ def merge(base, current, proposed):
     raise ValueError("concurrent registry edit or delete/edit conflict")
 
 
-
 def object_bytes(raw):
     def unique(pairs):
         result = {}
