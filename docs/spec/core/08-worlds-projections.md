@@ -60,3 +60,5 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 4. **Demo priority:** #69 point-in-time analytical inputs, recorded regression/forecast receipt and publication guards in separate cuts; ANALYSIS-LEAK plus exact beat-6 regression fixture.
 5. Add world/base pin and scenario clock/outcome fixtures; WORLD-FORK against the real evaluator.
 6. Complete subscription cursor/authority reset, then IVM/full-recompute equivalence with 03, then EN/AR explanations over the same result IDs.
+
+ASOF-KNOWLEDGE-1 incarnation selection reads authenticated immutable version evidence under an aggregate row/byte budget. It selects the highest eligible version at an inclusive knowledge cutoff, preserves tombstones and source receipts, and returns explicit exhaustion without a partial answer. Effective-time interpretation, query projection, authorization and restatement publication remain the declared question/host boundaries; this lookup alone is not DATA-ASOF acceptance.

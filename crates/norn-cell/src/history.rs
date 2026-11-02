@@ -49,6 +49,17 @@ pub struct FactVersionEvidence {
     receipt: Receipt,
 }
 
+/// A bounded historical lookup distinguishes absence from exhausted evidence.
+#[derive(Debug)]
+pub enum HistoricalEvidence {
+    /// Authenticated incarnation; a tombstone retains its source receipt.
+    Found(Box<FactVersionEvidence>),
+    /// No incarnation was known at the requested cutoff.
+    Missing,
+    /// No partial answer is returned after the read budget is exhausted.
+    Exhausted,
+}
+
 impl FactVersionEvidence {
     /// Immutable value commitment, including world, scope and definition pins.
     #[must_use]
@@ -230,6 +241,41 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         self.fact_version_evidence(world, object_type, key, version)
             .map(Some)
+    }
+
+    /// ASOF-KNOWLEDGE-1: choose the newest authenticated incarnation known by
+    /// the inclusive cutoff. Effective-time interpretation and authorization
+    /// remain with the declared question and exporting host.
+    ///
+    /// # Errors
+    /// Corrupt/missing version proof, invalid identity or storage failure.
+    pub fn fact_evidence_known_at_with_budget(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: norn_kernel::LogicalTime,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<HistoricalEvidence, CellError> {
+        let root = self.root_type(object_type).unwrap_or(object_type);
+        let capacity = budget.remaining_rows() / 2;
+        let limit = capacity.saturating_add(1);
+        let rows = self.conn.query(
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 ORDER BY \"version\" LIMIT ?4"),
+            params![world, root, key, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
+        )?;
+        let versions = rows.into_iter().map(|row| to_u64(SqlRow(row).get(0)?, "fact version")).collect::<Result<Vec<_>, CellError>>()?;
+        if versions.len() > capacity { return Ok(HistoricalEvidence::Exhausted); }
+        let mut selected = None;
+        let mut evidence = None;
+        for version in versions {
+            let Some(candidate) = self.fact_version_evidence_with_budget(world,object_type,key,version,budget)? else {
+                return Ok(HistoricalEvidence::Exhausted);
+            };
+            let next = crate::history_selection::select_known_version(known_as_of.as_millis(),selected,version,candidate.receipt().body.logical_time);
+            if next != selected { evidence=Some(candidate); selected=next; }
+        }
+        Ok(evidence.map_or(HistoricalEvidence::Missing, |proof| HistoricalEvidence::Found(Box::new(proof))))
     }
 
     pub(crate) fn retained_fact_scope(

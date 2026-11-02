@@ -1,0 +1,37 @@
+//! ASOF-KNOWLEDGE-1: select the newest incarnation eligible at a knowledge cutoff.
+/// Selection is independent of arrival order; future knowledge cannot replace it.
+pub(crate) const fn select_known_version(
+    cutoff: u64,
+    selected: Option<u64>,
+    version: u64,
+    recorded_at: u64,
+) -> Option<u64> {
+    if recorded_at <= cutoff {
+        match selected {
+            Some(prior) if prior >= version => Some(prior),
+            _ => Some(version),
+        }
+    } else {
+        selected
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_known_version;
+    use norn_testkit::proptest::prelude::*;
+    proptest! {
+        #[test]
+        fn selection_equals_rebuild_and_later_knowledge_preserves_old_answer(
+            recorded in prop::collection::vec(any::<u64>(), 0..64), cutoff in 0u64..u64::MAX,
+        ) {
+            let versions: Vec<_> = (1u64..).zip(recorded).collect();
+            let selected = versions.iter().fold(None, |s, &(v,k)| select_known_version(cutoff,s,v,k));
+            let rebuilt = versions.iter().filter(|(_,k)| *k<=cutoff).map(|(v,_)| *v).max();
+            prop_assert_eq!(selected,rebuilt);
+            let reversed = versions.iter().rev().fold(None, |s, &(v,k)| select_known_version(cutoff,s,v,k));
+            prop_assert_eq!(selected,reversed);
+            prop_assert_eq!(select_known_version(cutoff,selected,u64::MAX,cutoff.saturating_add(1)),selected);
+        }
+    }
+}

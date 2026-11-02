@@ -240,6 +240,48 @@ proptest! {
 }
 
 #[test]
+fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
+    use norn_cell::HistoricalEvidence;
+    use norn_kernel::LogicalTime;
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    for (time,write) in [(10,put("proof.Item","item","old")),(20,put("proof.Item","item","corrected")),(30,FactWriteRow::Delete{object_type:"proof.Item".into(),key:"item".into()})] {
+        store.commit(&CommitBatch{logical_time:time,..batch(vec![write])}).expect("append");
+    }
+    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let read=|at,budget:&mut DecodeBudget| store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",LogicalTime::from_millis(at),budget);
+    assert!(matches!(read(9,&mut DecodeBudget::new(&limits)).expect("before creation"),HistoricalEvidence::Missing));
+    for (at,version) in [(10,1),(19,1),(20,2),(30,3)] {
+        let HistoricalEvidence::Found(proof)=read(at,&mut DecodeBudget::new(&limits)).expect("historical selection") else {panic!("missing incarnation")};
+        assert_eq!(proof.snapshot().version,version);
+        assert_eq!(proof.snapshot().values.is_none(),version==3);
+        assert!(proof.receipt().body.logical_time<=at);
+    }
+    let mut tiny=limits; tiny.max_candidate_bytes_per_commit=0;
+    assert!(matches!(read(20,&mut DecodeBudget::new(&tiny)).expect("bounded"),HistoricalEvidence::Exhausted));
+}
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn selected_old_answer_reproduces_after_each_appended_correction(
+        original in any::<u64>(), corrections in prop::collection::vec(any::<u64>(),1..8),
+    ) {
+        use norn_cell::HistoricalEvidence;
+        use norn_kernel::LogicalTime;
+        let mut store=CellStore::open_in_memory(model()).expect("store");
+        store.commit(&CommitBatch{logical_time:10,..batch(vec![put("proof.Item","item",&original.to_string())])}).expect("original");
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        for (time,correction) in (11u64..).zip(corrections) {
+            store.commit(&CommitBatch{logical_time:time,..batch(vec![put("proof.Item","item",&correction.to_string())])}).expect("correction");
+            let HistoricalEvidence::Found(old)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",LogicalTime::from_millis(10),&mut DecodeBudget::new(&limits)).expect("old answer") else {return Err(TestCaseError::fail("old answer lost"))};
+            prop_assert_eq!(old.snapshot().version,1);
+            prop_assert_eq!(&old.snapshot().values.as_ref().expect("live")["value"],&Value::from(original.to_string()));
+            let HistoricalEvidence::Found(new)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",LogicalTime::from_millis(time),&mut DecodeBudget::new(&limits)).expect("new answer") else {return Err(TestCaseError::fail("new answer lost"))};
+            prop_assert_eq!(&new.snapshot().values.as_ref().expect("live")["value"],&Value::from(correction.to_string()));
+        }
+    }
+}
+
+#[test]
 fn commitments_capture_each_materialized_version_and_survive_restart() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
