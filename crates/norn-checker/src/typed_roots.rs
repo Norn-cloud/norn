@@ -179,13 +179,14 @@ fn validate_action_transaction_members(
         ACTION_CODE,
         diagnostics,
         artifact_id
-    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty()) {
-            diagnostics.push(invalid_diagnostic(
-                ACTION_CODE,
-                "synchronousRule needs a nonempty artifactId and exact version",
-                "payload.synchronousRule",
-                artifact_id,
-            ));
+    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty())
+    {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "synchronousRule needs a nonempty artifactId and exact version",
+            "payload.synchronousRule",
+            artifact_id,
+        ));
     }
     if payload.contains_key("createLinks") {
         let _ = decode_member!(
