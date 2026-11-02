@@ -191,7 +191,7 @@ fn stage(
             context.clone(),
             version,
             "late analytical evidence",
-            BTreeSet::from(["week".into(), "loss".into()]),
+            &BTreeSet::from(["week".into(), "loss".into()]),
         )
         .expect("private rebuild");
     let prepared = store
@@ -335,7 +335,7 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
             context.clone(),
             version,
             "late correction",
-            BTreeSet::from(["week".into(), "loss".into()]),
+            &BTreeSet::from(["week".into(), "loss".into()]),
         )
         .expect("begin");
     let stale = view(&store, &context);
@@ -441,7 +441,7 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
                 context.clone(),
                 version,
                 "",
-                BTreeSet::from(["week".into(), "loss".into()])
+                &BTreeSet::from(["week".into(), "loss".into()])
             )
             .is_err()
     );
@@ -452,7 +452,7 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
                 context.clone(),
                 version,
                 "changed output membership",
-                BTreeSet::from(["week".into()])
+                &BTreeSet::from(["week".into()])
             )
             .is_err()
     );
@@ -462,7 +462,7 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
             context.clone(),
             version,
             "review replacement",
-            BTreeSet::from(["week".into(), "loss".into()]),
+            &BTreeSet::from(["week".into(), "loss".into()]),
         )
         .expect("build");
     let mut missing = requests(&plan, &context, point);
@@ -566,7 +566,7 @@ fn generated_restatement_sequence(
                 context.clone(),
                 version,
                 "generated late evidence",
-                BTreeSet::from(["week".into(), "loss".into()]),
+                &BTreeSet::from(["week".into(), "loss".into()]),
             )
             .expect("begin");
         if restart {
@@ -618,4 +618,35 @@ proptest::proptest! {
     fn activated_deltas_equal_full_recompute_through_redelivery_and_restart(changes in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY,proptest::bool::ANY,proptest::bool::ANY),1..5)) {
         generated_restatement_sequence(changes)?;
     }
+}
+
+#[test]
+fn declared_restatement_law_and_reviewer_actions_are_admitted_together() {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = [
+        include_str!("../../../registry/core/artifacts/core.analytics.Restatement.entity.json"),
+        include_str!(
+            "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.analytics.restatement.approve.action.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.analytics.restatement.activate.action.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.analytics.restatement.access.policy.json"
+        ),
+        include_str!("../../../registry/core/artifacts/core.analytics.restatement_policy.law.json"),
+    ]
+    .into_iter()
+    .map(|bytes| serde_json::from_str(bytes).expect("typed compiler output"))
+    .collect();
+    let registry = BTreeSet::new();
+    let context = norn_checker::EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    let findings = norn_checker::check_artifact_set(&artifacts, &context);
+    assert!(findings.is_empty(), "{findings:#?}");
 }

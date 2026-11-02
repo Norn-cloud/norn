@@ -103,7 +103,8 @@ fn decode(encoded: &str, digest: &str) -> Result<Option<Generation>, CellError> 
     if encoded.is_empty() && digest.is_empty() {
         return Ok(None);
     }
-    let generation: Generation = serde_json::from_str(encoded).map_err(|_| refused(INVALID))?;
+    let generation: Generation =
+        serde_json::from_str(encoded).map_err(|_invalid| refused(INVALID))?;
     if crate::codec::hash_json(&generation)? != digest
         || generation.outputs.is_empty()
         || generation.outputs.values().any(|a| !a.result.complete)
@@ -184,7 +185,7 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         expected_version: u64,
         reason: &str,
-        slice_ids: BTreeSet<String>,
+        slice_ids: &BTreeSet<String>,
     ) -> Result<RestatementBuild, CellError> {
         self.check_question_scope(&context.scope)?;
         if id.is_empty()
@@ -201,7 +202,7 @@ impl<E: SqlEngine> CellStore<E> {
             ("reason".into(), RuntimeValue::from(reason)),
             (
                 "slice_ids".into(),
-                RuntimeValue::from(serde_json::to_string(&slice_ids)?),
+                RuntimeValue::from(serde_json::to_string(slice_ids)?),
             ),
             ("active".into(), RuntimeValue::from("")),
             ("active_digest".into(), RuntimeValue::from("")),
@@ -215,7 +216,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let (encoded, digest) = selected(&old)?;
             let prior = decode(encoded, digest)?.ok_or_else(|| refused(INVALID))?;
-            if prior.outputs.keys().cloned().collect::<BTreeSet<_>>() != slice_ids {
+            if prior.outputs.keys().ne(slice_ids.iter()) {
                 return Err(refused(INVALID));
             }
             if prior
@@ -274,7 +275,7 @@ impl<E: SqlEngine> CellStore<E> {
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<PreparedRestatement, CellError> {
         let expected: BTreeSet<String> = serde_json::from_str(text(&build.values, "slice_ids")?)
-            .map_err(|_| refused(INVALID))?;
+            .map_err(|_invalid| refused(INVALID))?;
         if slices.len() != expected.len()
             || slices
                 .iter()
@@ -330,7 +331,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let digest = crate::codec::hash_json(&generation)?;
         let encoded = serde_json::to_string(&generation)?;
-        if u64::try_from(encoded.len()).map_err(|_| refused(INVALID))?
+        if u64::try_from(encoded.len()).map_err(|_invalid| refused(INVALID))?
             > ResourceLimitProfile::norn_limits_v1()
                 .slice
                 .max_canonical_bytes
@@ -437,7 +438,8 @@ impl<E: SqlEngine> CellStore<E> {
             .slice
             .max_canonical_bytes
             .saturating_sub(8192);
-        if u64::try_from(serde_json::to_vec(&values)?.len()).map_err(|_| refused(INVALID))? > bound
+        if u64::try_from(serde_json::to_vec(&values)?.len()).map_err(|_invalid| refused(INVALID))?
+            > bound
         {
             return Err(refused("core.compute.bound_exceeded"));
         }

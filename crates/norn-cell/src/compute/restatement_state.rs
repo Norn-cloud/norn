@@ -16,7 +16,7 @@ pub(super) const fn select(phase: Phase, previous: bool, candidate: bool) -> Opt
     match phase {
         Phase::Active if candidate => Some(Selection::Candidate),
         Phase::Building | Phase::Ready | Phase::Approved if previous => Some(Selection::Previous),
-        _ => None,
+        Phase::Building | Phase::Ready | Phase::Approved | Phase::Active => None,
     }
 }
 #[cfg(test)]
