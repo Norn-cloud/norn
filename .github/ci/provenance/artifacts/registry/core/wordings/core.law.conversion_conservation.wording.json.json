@@ -6,7 +6,7 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/demo-erpnext/measurements.ts"
+    "registry/core/src/physics.ts"
   ],
   "rights_evidence": [
     {
