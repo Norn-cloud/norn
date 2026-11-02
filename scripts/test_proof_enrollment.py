@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 import coverage_manifest
+from test_migrate_registry_pr import MigrationTests
 from proof_enrollment import ROOT, discover_sources, validate
 
 

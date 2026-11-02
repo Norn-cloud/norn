@@ -459,6 +459,8 @@
     "crates/norn-checker/examples/jewelry_demo.rs",
     "scripts/demo/drop-01-authored-laws.sh",
     "scripts/demo/drop-02-exact-values-units.sh",
+    "scripts/migrate_registry_pr.py",
+    "scripts/test_migrate_registry_pr.py",
     "scripts/demo/drop-common.sh",
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
