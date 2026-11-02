@@ -4623,10 +4623,17 @@
       "pattern": "^[a-z][a-z0-9_]*$"
     },
     "IrVersion01": {
-      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
       "type": "string",
       "enum": [
         "0.1"
+      ]
+    },
+    "IrVersion02": {
+      "description": "Exact-decimal setting wire profile; older profiles require explicit migration.",
+      "type": "string",
+      "enum": [
+        "0.2"
       ]
     },
     "JdmCustomNodeContent": {
@@ -9189,7 +9196,7 @@
           "type": "string"
         },
         "settingVersion": {
-          "$ref": "#/$defs/IrVersion01"
+          "$ref": "#/$defs/IrVersion02"
         },
         "supersedes": {
           "description": "The setting version this one replaces.",
