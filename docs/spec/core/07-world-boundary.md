@@ -58,9 +58,10 @@ CDC replays deduplicate by `(connector instance, partition, source event identit
 
 Canonical promotion/write-back is a separate governed action under 04/05. Its laws may **refuse** the proposed commit. Observational truth and authoritative posted truth are separate projections; source violations cannot authorize native mutations. Write-back carries causal source/operation IDs to suppress echoes without discarding independent evidence.
 
-CP2 declares error-severity direct safety laws as quarantine constraints and
-uses revalidation for recovery: an appended corrected observation is eligible
-only when every such law passes. `authoritative_object` excludes quarantined
+CP2 quarantine constraints include integrity-classified invariants, error-severity
+direct safety laws, and error-severity findings from supported built-in rules.
+Warning-severity built-in findings do not quarantine. Recovery uses revalidation:
+an appended corrected observation is eligible only when every such constraint passes. `authoritative_object` excludes quarantined
 records; raw reads retain source truth. Finding status is per law: a correction that passes law A resolves finding A
 without rewriting the original, even if law B still has an open finding.
 Object quarantine remains while any finding under the declared quarantine
