@@ -2392,11 +2392,17 @@ fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
     let mut pending = vec![ty];
     let mut visited = BTreeSet::new();
     while let Some(ty) = pending.pop() {
-        if exact_type(ty) { return true; }
+        if exact_type(ty) {
+            return true;
+        }
         let mut names = Vec::new();
         ty.records(&mut names);
         for name in names {
-            if visited.insert(name.clone()) && let Some(record) = env.record(&name) { pending.extend(record.fields.values().map(|field| &field.ty)); }
+            if visited.insert(name.clone())
+                && let Some(record) = env.record(&name)
+            {
+                pending.extend(record.fields.values().map(|field| &field.ty));
+            }
         }
     }
     false
