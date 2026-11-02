@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "The models abstract artifact content as two collision-free integer hashes and active versions as v1/v2/v3; they do not model persistence crashes, arbitrary concurrent plan mutation, or multi-artifact dependency graphs."
+}

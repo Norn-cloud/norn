@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.unknown_template",
+  "message": "unknown compiled template `{templateId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

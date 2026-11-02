@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.dialog_no_restore_target",
+  "message": "a dialog has no focus restore target (action control inside it, named enclosing region or page): {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

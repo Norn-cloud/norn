@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.shadows_base",
+  "message": "{artifactId} is an installed base artifact, which is read-only",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

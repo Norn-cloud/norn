@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.fan_out_rollup",
+  "message": "Overlapping fan-out buckets cannot be rolled up as scalars.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

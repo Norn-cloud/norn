@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.lifecycle.unresolved_lifecycles",
+  "message": "{writer} writes {objectType}, whose lifecycles cannot be resolved ({reason}); its status writes fail closed",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

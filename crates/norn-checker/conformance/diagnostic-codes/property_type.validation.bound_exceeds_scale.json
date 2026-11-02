@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.bound_exceeds_scale",
+  "message": "{member} {bound} has more fraction digits than the declared scale {scale}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -701,6 +701,10 @@
           "description": "Fire one declared transition of the object the action input names\n(`objectIdField`), pinned by Entity artifact identity. `lifecycle` is\nthe lifecycle property and `transition` the transition id it declares;\nthe lifecycle owns the source states, the target state, and the\nguards, so the effect writes that one property and nothing else\n(T3-LIFE-3, #2867).",
           "type": "object",
           "properties": {
+            "acceptReceipt": {
+              "description": "Bind a host-authenticated Function result before firing the transition.",
+              "$ref": "#/$defs/ReceiptAcceptance"
+            },
             "entityArtifactId": {
               "type": "string"
             },
@@ -1481,6 +1485,13 @@
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "instances": {
+          "description": "Declarations in the retained scoped graph; omitted when there are none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackInstance"
           }
         },
         "packId": {
@@ -3325,6 +3336,11 @@
         "maintenance"
       ]
     },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "DimensionPath": {
       "description": "A property reached by zero or more declared directional link roles.",
       "type": "object",
@@ -4597,6 +4613,30 @@
       "required": [
         "id",
         "type"
+      ]
+    },
+    "InterpretationEndpoint": {
+      "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Retained artifact, resolved without namespace inference.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Receipt-profile semantic content digest.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "sha256"
       ]
     },
     "Invariant": {
@@ -7555,6 +7595,91 @@
         "version"
       ]
     },
+    "PackInstance": {
+      "description": "A scoped declaration; imports and contained instances reference this same model.\nIdentity survives release upgrades. Structural admission grants no execution authority.",
+      "type": "object",
+      "properties": {
+        "imports": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PackInstanceRef"
+          }
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PackInstanceRef"
+          }
+        },
+        "pack": {
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "businessUnitId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "environmentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "orgId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tenantId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspaceId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "scope",
+        "pack",
+        "imports",
+        "instances"
+      ]
+    },
+    "PackInstanceRef": {
+      "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "type": "string"
+        },
+        "pack": {
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instanceId",
+        "pack"
+      ]
+    },
     "PolicyObligation": {
       "description": "One obligation of an [`ObligationPolicyRoot`].",
       "type": "object",
@@ -8070,6 +8195,41 @@
         "migration",
         "import",
         "system"
+      ]
+    },
+    "ReceiptAcceptance": {
+      "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+      "type": "object",
+      "properties": {
+        "digestProperty": {
+          "description": "Writable text property receiving the checked receipt digest.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "manifestDigest": {
+          "description": "Exact admitted Function manifest the host must authenticate.",
+          "$ref": "#/$defs/Digest"
+        },
+        "referenceField": {
+          "description": "Required string input member naming the immutable receipt digest.",
+          "type": "string"
+        },
+        "resultBindings": {
+          "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/PropertyId"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "referenceField",
+        "manifestDigest",
+        "digestProperty",
+        "resultBindings"
       ]
     },
     "RecordMember": {

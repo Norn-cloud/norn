@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.missing_determinism_evidence",
+  "message": "the {profile} claim needs evidence field {member}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

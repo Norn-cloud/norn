@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_cycle",
+  "message": "nodes {nodeIds} form a cycle; a decision graph is acyclic",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

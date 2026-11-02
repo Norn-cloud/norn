@@ -1,0 +1,7 @@
+{
+  "code": "law.model.unknown_binding",
+  "message": "law slot requires an admitted ontology binding and exact visible dependency: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
