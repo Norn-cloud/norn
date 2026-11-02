@@ -1,0 +1,35 @@
+{
+  "sha256": "5d3dd89961457de99ac4834012b000531803d72d20683b860dc07e439d192065",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.timely",
+      "revision": "eba4ae5298442cc2475e5ef82277bb135e4a7ea4",
+      "evidence": {
+        "path": "welldb/patches/PATCHES.md",
+        "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "welldb/patches/PATCHES.md",
+      "sha256": "df56df63a6208e1cbdd449d3c7933ce303bea85018554cfad92bd8831148c222"
+    },
+    {
+      "path": "welldb/patches/timely/LICENSE",
+      "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+    }
+  ],
+  "notices": [
+    {
+      "path": "welldb/patches/timely/LICENSE",
+      "sha256": "0153503e39583a132e5886bb295f316bb8cfa29d4ff81fd7b86b79a5c7007eab"
+    }
+  ],
+  "connector": null
+}

@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-WELLDB-ORACLE-PARITY",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "missing",
+    "residual": "Vendor-only enrollment. The assurance ceiling is simulation and tests only; executable adapter qualification follows in the crates port. No formal or certified claim.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrye231b43d470867a90ce7ecec216d9f970c1519689b5930fc4425ad2da943156b.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrye231b43d470867a90ce7ecec216d9f970c1519689b5930fc4425ad2da943156b.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrye231b43d470867a90ce7ecec216d9f970c1519689b5930fc4425ad2da943156b.evidence.proof"
+      }
+    }
+  }
+}

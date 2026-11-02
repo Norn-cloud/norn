@@ -1,0 +1,307 @@
+//! Traits and types describing timely dataflow events.
+//!
+//! The `Event` type describes the information an operator can observe about a timely dataflow
+//! stream. There are two types of events, (i) the receipt of data and (ii) reports of progress
+//! of timestamps.
+
+use columnar::Columnar;
+use serde::{Deserialize, Serialize};
+
+/// Data and progress events of the captured stream.
+#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize, Columnar)]
+pub enum Event<T, C> {
+    /// Progress received via `push_external_progress`.
+    Progress(Vec<(T, i64)>),
+    /// Messages received via the data stream.
+    Messages(T, C),
+}
+
+/// Iterates over contained `Event<T, C>`.
+///
+/// The `EventIterator` trait describes types that can iterate over `Cow`s of events,
+/// and which can be used to replay a stream into a new timely dataflow computation.
+///
+/// This method is not simply an iterator because of the lifetime in the result.
+pub trait EventIterator<T: Clone, C: Clone> {
+    /// Iterates over `Cow<Event<T, C>>` elements.
+    fn next(&mut self) -> Option<std::borrow::Cow<'_, Event<T, C>>>;
+}
+
+/// Receives `Event<T, C>` events.
+pub trait EventPusher<T, C> {
+    /// Provides a new `Event<T, D>` to the pusher.
+    fn push(&mut self, event: Event<T, C>);
+}
+
+// implementation for the linked list behind a `Handle`.
+impl<T, C> EventPusher<T, C> for ::std::sync::mpsc::Sender<Event<T, C>> {
+    fn push(&mut self, event: Event<T, C>) {
+        // NOTE: An Err(x) result just means "data not accepted" most likely
+        //       because the receiver is gone. No need to panic.
+        let _ = self.send(event);
+    }
+}
+
+/// A linked-list event pusher and iterator.
+pub mod link {
+
+    use std::borrow::Cow;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+
+    use super::{Event, EventPusher, EventIterator};
+
+    /// A linked list of Event<T, C>.
+    pub struct EventLink<T, C> {
+        /// An event, if one exists.
+        ///
+        /// An event might not exist, if either we want to insert a `None` and have the output iterator pause,
+        /// or in the case of the very first linked list element, which has no event when constructed.
+        pub event: Option<Event<T, C>>,
+        /// The next event, if it exists.
+        pub next: RefCell<Option<Rc<EventLink<T, C>>>>,
+    }
+
+    impl<T, C> EventLink<T, C> {
+        /// Allocates a new `EventLink`.
+        pub fn new() -> EventLink<T, C> {
+            EventLink { event: None, next: RefCell::new(None) }
+        }
+    }
+
+    // implementation for the linked list behind a `Handle`.
+    impl<T, C> EventPusher<T, C> for Rc<EventLink<T, C>> {
+        fn push(&mut self, event: Event<T, C>) {
+            *self.next.borrow_mut() = Some(Rc::new(EventLink { event: Some(event), next: RefCell::new(None) }));
+            let next = Rc::clone(self.next.borrow().as_ref().unwrap());
+            *self = next;
+        }
+    }
+
+    impl<T: Clone, C: Clone> EventIterator<T, C> for Rc<EventLink<T, C>> {
+        fn next(&mut self) -> Option<Cow<'_, Event<T, C>>> {
+            let is_some = self.next.borrow().is_some();
+            if is_some {
+                let next = Rc::clone(self.next.borrow().as_ref().unwrap());
+                *self = next;
+                if let Some(this) = Rc::get_mut(self) {
+                    this.event.take().map(Cow::Owned)
+                }
+                else {
+                    self.event.as_ref().map(Cow::Borrowed)
+                }
+            }
+            else {
+                None
+            }
+        }
+    }
+
+    // Drop implementation to prevent stack overflow through naive drop impl.
+    impl<T, C> Drop for EventLink<T, C> {
+        fn drop(&mut self) {
+            while let Some(link) = self.next.replace(None) {
+                if let Ok(head) = Rc::try_unwrap(link) {
+                    *self = head;
+                }
+            }
+        }
+    }
+
+    impl<T, C> Default for EventLink<T, C> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[test]
+    fn avoid_stack_overflow_in_drop() {
+        #[cfg(miri)]
+        let limit = 1_000;
+        #[cfg(not(miri))]
+        let limit = 1_000_000;
+        let mut event1 = Rc::new(EventLink::<(),()>::new());
+        let _event2 = Rc::clone(&event1);
+        for _ in 0 .. limit {
+            event1.push(Event::Progress(vec![]));
+        }
+    }
+}
+
+/// A thread-safe linked-list event pusher and iterator.
+pub mod link_sync {
+
+    use std::borrow::Cow;
+    use std::sync::{Arc, Mutex};
+
+    use super::{Event, EventPusher, EventIterator};
+
+    /// A linked list of Event<T, C> usable across threads.
+    pub struct EventLink<T, C> {
+        /// An event, if one exists.
+        ///
+        /// An event might not exist, if either we want to insert a `None` and have the output iterator pause,
+        /// or in the case of the very first linked list element, which has no event when constructed.
+        pub event: Option<Event<T, C>>,
+        /// The next event, if it exists.
+        pub next: Mutex<Option<Arc<EventLink<T, C>>>>,
+    }
+
+    impl<T, C> EventLink<T, C> {
+        /// Allocates a new `EventLink`.
+        pub fn new() -> EventLink<T, C> {
+            EventLink { event: None, next: Mutex::new(None) }
+        }
+    }
+
+    impl<T, C> EventPusher<T, C> for Arc<EventLink<T, C>> {
+        fn push(&mut self, event: Event<T, C>) {
+            let mut guard = self.next.lock().unwrap();
+            *guard = Some(Arc::new(EventLink { event: Some(event), next: Mutex::new(None) }));
+            let next = Arc::clone(guard.as_ref().unwrap());
+            drop(guard);
+            *self = next;
+        }
+    }
+
+    impl<T: Clone, C: Clone> EventIterator<T, C> for Arc<EventLink<T, C>> {
+        fn next(&mut self) -> Option<Cow<'_, Event<T, C>>> {
+            let is_some = self.next.lock().unwrap().is_some();
+            if is_some {
+                let next = Arc::clone(self.next.lock().unwrap().as_ref().unwrap());
+                *self = next;
+                if let Some(this) = Arc::get_mut(self) {
+                    this.event.take().map(Cow::Owned)
+                }
+                else {
+                    self.event.as_ref().map(Cow::Borrowed)
+                }
+            }
+            else {
+                None
+            }
+        }
+    }
+
+    // Drop implementation to prevent stack overflow through naive drop impl.
+    impl<T, C> Drop for EventLink<T, C> {
+        fn drop(&mut self) {
+            while let Some(link) = self.next.get_mut().unwrap().take() {
+                if let Ok(head) = Arc::try_unwrap(link) {
+                    *self = head;
+                }
+            }
+        }
+    }
+
+    impl<T, C> Default for EventLink<T, C> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[test]
+    fn avoid_stack_overflow_in_drop() {
+        #[cfg(miri)]
+        let limit = 1_000;
+        #[cfg(not(miri))]
+        let limit = 1_000_000;
+        let mut event1 = Arc::new(EventLink::<(),()>::new());
+        let _event2 = Arc::clone(&event1);
+        for _ in 0 .. limit {
+            event1.push(Event::Progress(vec![]));
+        }
+    }
+}
+
+/// A binary event pusher and iterator.
+pub mod binary {
+
+    use std::borrow::Cow;
+    use std::io::ErrorKind;
+    use std::ops::DerefMut;
+    use std::sync::Arc;
+
+    use serde::{de::DeserializeOwned, Serialize};
+    use timely_communication::allocator::zero_copy::bytes_slab::{BytesRefill, BytesSlab};
+
+    use super::{Event, EventPusher, EventIterator};
+
+    /// A wrapper for `W: Write` implementing `EventPusher<T, C>`.
+    pub struct EventWriter<T, C, W: ::std::io::Write> {
+        stream: W,
+        phant: ::std::marker::PhantomData<(T, C)>,
+    }
+
+    impl<T, C, W: ::std::io::Write> EventWriter<T, C, W> {
+        /// Allocates a new `EventWriter` wrapping a supplied writer.
+        pub fn new(w: W) -> Self {
+            Self {
+                stream: w,
+                phant: ::std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<T: Serialize, C: Serialize, W: ::std::io::Write> EventPusher<T, C> for EventWriter<T, C, W> {
+        fn push(&mut self, event: Event<T, C>) {
+            // TODO: `push` has no mechanism to report errors, so we `unwrap`.
+            let len = u64::try_from(::postcard::experimental::serialized_size(&event).expect("Event postcard failed")).expect("event length fits u64");
+            self.stream.write_all(&len.to_le_bytes()).expect("Event write failed");
+            ::postcard::to_io(&event, &mut self.stream).expect("Event postcard failed");
+        }
+    }
+
+    /// A Wrapper for `R: Read` implementing `EventIterator<T, D>`.
+    pub struct EventReader<T, C, R: ::std::io::Read> {
+        reader: R,
+        buf: BytesSlab,
+        phant: ::std::marker::PhantomData<(T, C)>,
+    }
+
+    impl<T, C, R: ::std::io::Read> EventReader<T, C, R> {
+        /// Allocates a new `EventReader` wrapping a supplied reader.
+        pub fn new(r: R) -> Self {
+            let refill = BytesRefill {
+                logic: Arc::new(|size| {
+                    Box::new(vec![0_u8; size]) as Box<dyn DerefMut<Target = [u8]> + Send>
+                }),
+                limit: None,
+            };
+            Self {
+                reader: r,
+                buf: BytesSlab::new(20, refill),
+                phant: ::std::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<T: DeserializeOwned + Clone, C: DeserializeOwned + Clone, R: ::std::io::Read> EventIterator<T, C> for EventReader<T, C, R> {
+        fn next(&mut self) -> Option<Cow<'_, Event<T, C>>> {
+            self.buf.ensure_capacity(1);
+            // Attempt to read some more bytes into self.buffer.
+            match self.reader.read(self.buf.empty()) {
+                Ok(n) => self.buf.make_valid(n),
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => panic!("read failed: {e}"),
+            };
+
+            let valid = self.buf.valid();
+            if valid.len() >= 8 {
+                let event_len = u64::from_le_bytes([
+                    valid[0], valid[1], valid[2], valid[3], valid[4], valid[5], valid[6], valid[7],
+                ]);
+                let required_bytes = (event_len + 8) as usize;
+                if valid.len() >= required_bytes {
+                    let bytes = self.buf.extract(required_bytes);
+                    let event = ::postcard::from_bytes(&bytes[8..]).expect("Event decode failed");
+                    Some(Cow::Owned(event))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+}

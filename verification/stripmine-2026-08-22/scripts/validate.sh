@@ -96,6 +96,7 @@ required_obligation_ids = frozenset(
         "INV-RULE-HIT-POLICY-ADMISSION-PREDICATE",
         "INV-VER-DIFFERENTIAL-REFINEMENT",
         "INV-VER-NO-PROOF-HOLES",
+        "INV-WELLDB-ORACLE-PARITY",
     }
 )
 with open(sys.argv[4], encoding="utf-8") as obligation_file:
@@ -109,7 +110,7 @@ if (
     missing = sorted(required_obligation_ids - obligation_ids)
     unexpected = sorted(obligation_ids - required_obligation_ids)
     raise SystemExit(
-        "central obligation registry must contain exactly the retained 27-ID closure; "
+        "central obligation registry must contain exactly the retained 28-ID closure; "
         f"missing={missing}, unexpected={unexpected}"
     )
 PY
@@ -142,8 +143,9 @@ jq -e '
     (.statement | length > 0) and
     (.owner | length > 0) and
     (.assumptions | type == "array") and
-    (.sources | length > 0) and
-    (.checkers | length > 0) and
+    (if .id == "INV-WELLDB-ORACLE-PARITY" then
+      .status == "planned" and (.sources | length == 0) and (.checkers | length == 0)
+     else (.sources | length > 0) and (.checkers | length > 0) end) and
     all(.checkers[]; (.artifact | length > 0) and (.acceptance | length > 0)) and
     (.counterexamples | length > 0) and
     (.implementation_bindings | length > 0))
