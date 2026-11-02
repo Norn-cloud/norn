@@ -271,11 +271,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
                 params![to_i64(known_as_of.frontier,"knowledge frontier")?], |row| row.get(0),
             )?;
-            let bytes=to_u64(bytes.ok_or_else(unproven_snapshot)?,"frontier receipt bytes")?;
+            let bytes = to_u64(
+                bytes.ok_or_else(unproven_snapshot)?,
+                "frontier receipt bytes",
+            )?;
             if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
                 return Ok(HistoricalEvidence::Exhausted);
             }
-            self.receipt_at(known_as_of.frontier)?.ok_or_else(unproven_snapshot)?;
+            self.receipt_at(known_as_of.frontier)?
+                .ok_or_else(unproven_snapshot)?;
         }
         let root = self.root_type(object_type).unwrap_or(object_type);
         let capacity = budget.remaining_rows() / 2;
@@ -284,18 +288,35 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
             params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
         )?;
-        let versions = rows.into_iter().map(|row| to_u64(SqlRow(row).get(0)?, "fact version")).collect::<Result<Vec<_>, CellError>>()?;
-        if versions.len() > capacity { return Ok(HistoricalEvidence::Exhausted); }
+        let versions = rows
+            .into_iter()
+            .map(|row| to_u64(SqlRow(row).get(0)?, "fact version"))
+            .collect::<Result<Vec<_>, CellError>>()?;
+        if versions.len() > capacity {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
         let mut selected = None;
         let mut evidence = None;
         for version in versions {
-            let Some(candidate) = self.fact_version_evidence_with_budget(world,object_type,key,version,budget)? else {
+            let Some(candidate) =
+                self.fact_version_evidence_with_budget(world, object_type, key, version, budget)?
+            else {
                 return Ok(HistoricalEvidence::Exhausted);
             };
-            let next = crate::history_selection::select_known_version(known_as_of.recorded_at.as_millis(),selected,version,candidate.receipt().body.logical_time);
-            if next != selected { evidence=Some(candidate); selected=next; }
+            let next = crate::history_selection::select_known_version(
+                known_as_of.recorded_at.as_millis(),
+                selected,
+                version,
+                candidate.receipt().body.logical_time,
+            );
+            if next != selected {
+                evidence = Some(candidate);
+                selected = next;
+            }
         }
-        Ok(evidence.map_or(HistoricalEvidence::Missing, |proof| HistoricalEvidence::Found(Box::new(proof))))
+        Ok(evidence.map_or(HistoricalEvidence::Missing, |proof| {
+            HistoricalEvidence::Found(Box::new(proof))
+        }))
     }
 
     pub(crate) fn retained_fact_scope(

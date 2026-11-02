@@ -244,32 +244,89 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;
     let mut store = CellStore::open_in_memory(model()).expect("store");
-    for (time,write) in [(10,put("proof.Item","item","old")),(20,put("proof.Item","item","corrected")),(30,FactWriteRow::Delete{object_type:"proof.Item".into(),key:"item".into()})] {
-        store.commit(&CommitBatch{logical_time:time,..batch(vec![write])}).expect("append");
+    for (time, write) in [
+        (10, put("proof.Item", "item", "old")),
+        (20, put("proof.Item", "item", "corrected")),
+        (
+            30,
+            FactWriteRow::Delete {
+                object_type: "proof.Item".into(),
+                key: "item".into(),
+            },
+        ),
+    ] {
+        store
+            .commit(&CommitBatch {
+                logical_time: time,
+                ..batch(vec![write])
+            })
+            .expect("append");
     }
-    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-    let read=|at,budget:&mut DecodeBudget| store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(at),frontier:3},budget);
-    assert!(matches!(read(9,&mut DecodeBudget::new(&limits)).expect("before creation"),HistoricalEvidence::Missing));
-    for (at,version) in [(10,1),(19,1),(20,2),(30,3)] {
-        let HistoricalEvidence::Found(proof)=read(at,&mut DecodeBudget::new(&limits)).expect("historical selection") else {panic!("missing incarnation")};
-        assert_eq!(proof.snapshot().version,version);
-        assert_eq!(proof.snapshot().values.is_none(),version==3);
-        assert!(proof.receipt().body.logical_time<=at);
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let read = |at, budget: &mut DecodeBudget| {
+        store.read().fact_evidence_known_at_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            KnowledgeCutoff {
+                recorded_at: LogicalTime::from_millis(at),
+                frontier: 3,
+            },
+            budget,
+        )
+    };
+    assert!(matches!(
+        read(9, &mut DecodeBudget::new(&limits)).expect("before creation"),
+        HistoricalEvidence::Missing
+    ));
+    for (at, version) in [(10, 1), (19, 1), (20, 2), (30, 3)] {
+        let HistoricalEvidence::Found(proof) =
+            read(at, &mut DecodeBudget::new(&limits)).expect("historical selection")
+        else {
+            panic!("missing incarnation")
+        };
+        assert_eq!(proof.snapshot().version, version);
+        assert_eq!(proof.snapshot().values.is_none(), version == 3);
+        assert!(proof.receipt().body.logical_time <= at);
     }
-    let mut tiny=limits; tiny.max_candidate_bytes_per_commit=0;
-    assert!(matches!(read(20,&mut DecodeBudget::new(&tiny)).expect("bounded"),HistoricalEvidence::Exhausted));
+    let mut tiny = limits;
+    tiny.max_candidate_bytes_per_commit = 0;
+    assert!(matches!(
+        read(20, &mut DecodeBudget::new(&tiny)).expect("bounded"),
+        HistoricalEvidence::Exhausted
+    ));
 }
 #[test]
 fn source_frontier_keeps_equal_clock_corrections_out_of_an_old_answer() {
-    use norn_cell::{HistoricalEvidence,KnowledgeCutoff};
+    use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;
-    let mut store=CellStore::open_in_memory(model()).expect("store");
-    for value in ["old","same-clock correction"] {
-        store.commit(&CommitBatch{logical_time:10,..batch(vec![put("proof.Item","item",value)])}).expect("append");
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    for value in ["old", "same-clock correction"] {
+        store
+            .commit(&CommitBatch {
+                logical_time: 10,
+                ..batch(vec![put("proof.Item", "item", value)])
+            })
+            .expect("append");
     }
-    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-    let HistoricalEvidence::Found(proof)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("pinned frontier") else {panic!("old answer")};
-    assert_eq!(proof.snapshot().version,1);
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let HistoricalEvidence::Found(proof) = store
+        .read()
+        .fact_evidence_known_at_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            KnowledgeCutoff {
+                recorded_at: LogicalTime::from_millis(10),
+                frontier: 1,
+            },
+            &mut DecodeBudget::new(&limits),
+        )
+        .expect("pinned frontier")
+    else {
+        panic!("old answer")
+    };
+    assert_eq!(proof.snapshot().version, 1);
 }
 
 proptest! {
