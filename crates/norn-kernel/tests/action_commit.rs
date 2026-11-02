@@ -4010,6 +4010,19 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
         refusal.to_string().contains("required link `legal_entity`"),
         "{refusal}"
     );
+    let wire = norn_kernel::Refusable::refusal(&refusal);
+    assert_eq!(wire.code, "decision.invalid_output");
+    let reason = wire.reason.as_ref().unwrap();
+    assert_eq!(reason.subject, "party.Brand/BRAND-1");
+    assert_eq!(
+        reason.values["link"],
+        norn_ir::RuntimeValue::String("legal_entity".into())
+    );
+    assert_eq!(reason.law, "GRAPH-LINK-1");
+    assert_eq!(
+        reason.values["canonical_code"],
+        norn_ir::RuntimeValue::String("core.graph.invalid_link".into())
+    );
     assert!(cell.ledger().is_empty());
     assert!(
         !cell

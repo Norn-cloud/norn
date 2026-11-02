@@ -135,7 +135,12 @@ fn graph_draft_missing_or_invalid_links_refuse_every_fact_event_and_enqueue() {
                     .push(edge("graph.Happening", "h", "destination", "a", true));
             }
         }
-        assert!(cell.commit(commit).is_err());
+        let result = cell.commit(commit);
+        match failure {
+            0 | 1 => assert!(matches!(result, Err(CommitError::RequiredLinkProof { .. }))),
+            2 => assert!(matches!(result, Err(CommitError::LinkTarget { .. }))),
+            _ => assert!(matches!(result, Err(CommitError::LinkCardinality { .. }))),
+        }
         for key in [
             FactKey::new("graph.Happening", "h"),
             FactKey::new("graph.Resource", "a"),
@@ -158,13 +163,13 @@ fn graph_link_required_replacement_uses_the_final_post_state() {
     let mut removal = edge("graph.Happening", "h", "destination", "b", false);
     removal.expected = FactVersion(1);
     let replace = edge("graph.Happening", "h", "destination", "a", true);
-    assert!(
+    assert!(matches!(
         cell.commit(CellCommit {
             links: vec![removal.clone()],
             ..CellCommit::empty()
-        })
-        .is_err()
-    );
+        }),
+        Err(CommitError::RequiredLinkProof { .. })
+    ));
     cell.commit(CellCommit {
         links: vec![replace, removal],
         ..CellCommit::empty()

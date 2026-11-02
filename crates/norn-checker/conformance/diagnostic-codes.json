@@ -481,14 +481,14 @@
       "code": "core.graph.invalid_link",
       "message": "the final graph must satisfy required links, target types and cardinality",
       "severity": "error",
-      "since": "0.1.0",
+      "since": "0.2.0",
       "tier": "T3"
     },
     {
       "code": "core.graph.invalid_transition",
       "message": "lifecycle state changes require an admitted declared transition",
       "severity": "error",
-      "since": "0.1.0",
+      "since": "0.2.0",
       "tier": "T3"
     },
     {
