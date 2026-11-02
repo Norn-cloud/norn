@@ -123,8 +123,11 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
     let mut overlay: CustomizationRoot =
         serde_json::from_value(serde_json::to_value(envelope.payload.to_json_value())?)?;
     overlay.customization_id = "demo.Melt.loss_bound".into();
-    overlay.target_artifact.artifact_id = target.artifact_id.clone();
-    overlay.target_artifact.version = target.version.clone();
+    overlay
+        .target_artifact
+        .artifact_id
+        .clone_from(&target.artifact_id);
+    overlay.target_artifact.version.clone_from(&target.version);
     overlay.target_artifact.additional = std::collections::BTreeMap::from([(
         "sha256".into(),
         norn_ir::JsonValue::String(pin.sha256),
@@ -179,13 +182,10 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
             ),
         ]),
     }];
-    let refusal = match norn_checker::overlay::overlay_obligations(
-        &input(&overlay)?,
-        &retained,
-        &target.scope,
-    ) {
-        Ok(_) => return Err("overlay replaced the retained conversion invariant".into()),
-        Err(refusal) => refusal,
+    let Err(refusal) =
+        norn_checker::overlay::overlay_obligations(&input(&overlay)?, &retained, &target.scope)
+    else {
+        return Err("overlay replaced the retained conversion invariant".into());
     };
     if refusal.code() != "core.composition.overlay_conflict"
         || refusal.reason() != "weakens_inherited"
