@@ -75,6 +75,16 @@ pub fn admit_wording(
     {
         return Err(WordingError::Document);
     }
+    let norm = &wording.requirement.norm;
+    let grade = if matches!(norm.law.modality, norn_ir::LawModality::Never {}) {
+        norn_ir::deontic::DeonticModality::Prohibition
+    } else { norn_ir::deontic::DeonticModality::Obligation };
+    if norm.modality != grade || norm.authority_id != norm.law.owner
+        || !norm.exceptions.is_empty() || !norm.defeated_by.is_empty()
+        || norm.source.artifact_id != wording.artifact_id || norm.source.pointer != "/requirement/norm"
+        || norm.source.bytes.is_some() || wording.requirement.timing != norn_ir::deontic::RequirementTiming::EveryCommittedState {
+        return Err(WordingError::Document);
+    }
     let view = RequirementView {
         requirement: wording.requirement.clone(),
         locale,
@@ -92,7 +102,8 @@ pub fn admit_wording(
     } else {
         None
     };
-    let bound = wording.law_artifact_id == pin.artifact_id
+    let bound = norm.authority_version == law.version
+        && wording.law_artifact_id == pin.artifact_id
         && wording.law_sha256 == pin.sha256
         && current.as_ref() == Some(&wording.requirement.norm.law);
     match check_requirement(&wording.requirement, env) {
