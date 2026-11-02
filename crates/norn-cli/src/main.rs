@@ -116,11 +116,11 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 let line = line.map_err(|error| error.to_string())?;
                 let response = match decision.run(&line, units) {
                     Ok(output) => {
-                        accepted += 1;
+                        accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
                         format!("{{\"ok\":true,\"output\":{output}}}")
                     }
                     Err(error) => {
-                        refused += 1;
+                        refused = refused.checked_add(1).ok_or("eval counter overflow")?;
                         serde_json::json!({"ok":false,"error":error}).to_string()
                     }
                 };
