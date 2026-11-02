@@ -136,6 +136,7 @@ def attempt_document(rows, merges):
             raise ValueError("conflicting merge identity")
         merged[pr["number"]] = pr
     jobs = [j for r in rows for j in r["jobs"]]
+    executed = [j for j in jobs if j["conclusion"] != "skipped" and j["started_at"]]
     # Reclaim inside a cancelled job is included in both costs, never added twice.
     totals = {key: sum(j[key] for j in jobs)
               for key in ("service_s", "queue_s", "cancelled_s", "reclaim_s")}
@@ -149,13 +150,13 @@ def attempt_document(rows, merges):
                       if r["conclusion"] == "success" and any(j["name"] == "full" and j["conclusion"] == "success" for j in r["jobs"])}
     return {"schema": "norn.ci-frontier/v3", "repo": REPO, "workflow": "Public core",
             "rows": rows, "merges": sorted(merged.values(), key=lambda pr: pr["number"]),
-            "summary": {**totals, "attempts": len(rows), "jobs": len(jobs),
+            "summary": {**totals, "attempts": len(rows), "jobs": len(jobs), "executing_jobs": len(executed),
                         "window_start": start, "window_end": end, "window_s": window,
                         "cancelled_attempts": sum(r["conclusion"] == "cancelled" for r in rows),
                         "attempt_elapsed_s": dist([duration(r["created_at"], r["completed_at"]) for r in rows]) if rows else None,
                         "admission_latency_s": dist(admission) if admission else None,
-                        "job_service_s": dist([j["service_s"] for j in jobs]) if jobs else None,
-                        "job_queue_s": dist([j["queue_s"] for j in jobs]) if jobs else None,
+                        "job_service_s": dist([j["service_s"] for j in executed]) if executed else None,
+                        "job_queue_s": dist([j["queue_s"] for j in executed]) if executed else None,
                         "successful_qualifications": len(qualifications),
                         "merged_prs": len(merged), "merges_per_hour": len(merged) * 3600 / window if window else 0}}
 
@@ -220,7 +221,8 @@ def self_test():
     with patch.dict(globals(), gh=fixture_api):
         collected = row("3:2")
         assert len(collected["jobs"]) == 101 and collected["created_at"] == finish
-        assert attempt_document([collected], [])["summary"]["service_s"] == 0
+        summary = attempt_document([collected], [])["summary"]
+        assert summary["service_s"] == 0 and summary["job_queue_s"] is None and summary["executing_jobs"] == 0
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
         assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
     print("frontier: pagination, attempt deduplication and cost reconciliation passed")
