@@ -20,13 +20,15 @@ fn keys(raw: &RuntimeValue, input: &MappingInput) -> Result<[String; 5], CellErr
 
 fn finding(bundle: &MappingBundle, identity: &[Vec<u8>; 5]) -> Result<DataQualityFinding, CellError> {
     let evidence = norn_ir::canonical::domain_hash_hex(b"norn.source.identity_guard.v1\0", &(identity, bundle.definitions_version, &bundle.definitions_digest, &bundle.artifact_pins, bundle.raw.get("kind"), bundle.raw.get("source_version"), bundle.raw.get("payload_digest"), bundle.raw.get("redaction").filter(|v| !v.is_null())))?;
-    Ok(DataQualityFinding::v2(
+    let mut result = DataQualityFinding::v2(
         DataQualityRuleRef::Builtin { id: "core.boundary.import_finding".into(), version: "1".into() },
         bundle.records.iter().map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key)).collect(),
         DataQualitySeverity::Error, "identity normalized; possible collision", DataQualityOutcome::NotSatisfied,
-        bundle.records.iter().map(|r| DataQualityLineage::new(r.provenance.clone(), vec![format!("mapping-bundle:{}", bundle.digest)])).collect(),
+        bundle.records.iter().map(|r| DataQualityLineage::new(r.provenance.clone(), Vec::new())).collect(),
         bundle.input.recorded_at.clone(), bundle.input.recorded_at.clone(), DataQualityFindingStatus::Open,
-    )?.with_evidence_digest(evidence)?)
+    )?.with_evidence_digest(evidence)?;
+    for lineage in &mut result.provenance { lineage.observation_ids = vec![format!("mapping-identity:{}", result.id)]; }
+    Ok(result)
 }
 
 /// Capture non-NFC spelling before the inbox serializes text; refuse promotion, never merge.
@@ -40,8 +42,8 @@ pub(crate) fn capture<E: SqlEngine>(store: &CellStore<E>, raw: &Observed<Runtime
         object.insert(name.into(), RuntimeValue::from(value.clone()));
     }
     let mut mapped_input = input.clone();
-    mapped_input.connector_instance = canonical[0].clone();
-    mapped_input.partition = canonical[1].clone();
+    mapped_input.connector_instance.clone_from(&canonical[0]);
+    mapped_input.partition.clone_from(&canonical[1]);
     let bundle = store.read().mapping_bundle(&mapped_raw, &mapped_input, version)?;
     let identity = original.map(String::into_bytes);
     let finding = finding(&bundle, &identity)?;
@@ -63,7 +65,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
             self.recheck_mapping_bundle(&guard.bundle)?;
-            let text: Vec<_> = guard.identity.iter().map(|b| std::str::from_utf8(b).map(str::to_owned).map_err(|_| CellError::MappingBundleMismatch)).collect::<Result<_, _>>()?;
+            let text: Vec<_> = guard.identity.iter().map(|b| std::str::from_utf8(b).map(str::to_owned).map_err(|_invalid_utf8| CellError::MappingBundleMismatch)).collect::<Result<_, _>>()?;
             let normalized: Vec<_> = text.iter().map(|s| norn_ir::canonical::nfc(s)).collect();
             if text == normalized || normalized.as_slice() != keys(&guard.bundle.raw, &guard.bundle.input)?
                 || guard.finding != finding(&guard.bundle, &guard.identity)?
