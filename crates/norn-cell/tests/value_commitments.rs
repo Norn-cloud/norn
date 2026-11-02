@@ -304,6 +304,20 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
     ));
 }
 #[test]
+fn historical_selection_respects_the_incarnations_concrete_type_lineage() {
+    use norn_cell::{HistoricalEvidence,KnowledgeCutoff};
+    use norn_kernel::LogicalTime;
+    let definitions=[json!({"name":"history.Root","properties":[]}),json!({"name":"history.Child","extends":"history.Root"}),json!({"name":"history.Sibling","extends":"history.Root"})].into_iter().map(|d|serde_json::from_value(d).expect("type")).collect::<Vec<_>>();
+    let mut store=CellStore::open_in_memory(Model::from_definitions(&definitions,&[]).expect("hierarchy")).expect("store");
+    store.commit(&CommitBatch{logical_time:10,..batch(vec![empty("history.Child","item")])}).expect("child");
+    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    for (kind,exists) in [("history.Root",true),("history.Child",true),("history.Sibling",false)] {
+        let selected=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,kind,"item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("typed selection");
+        assert_eq!(matches!(selected,HistoricalEvidence::Found(_)),exists);
+    }
+}
+
+#[test]
 fn source_frontier_keeps_equal_clock_corrections_out_of_an_old_answer() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;

@@ -299,7 +299,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut evidence = None;
         for version in versions {
             let Some(candidate) =
-                self.fact_version_evidence_with_budget(world, object_type, key, version, budget)?
+                self.fact_version_evidence_with_budget(world, root, key, version, budget)?
             else {
                 return Ok(HistoricalEvidence::Exhausted);
             };
@@ -314,7 +314,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 selected = next;
             }
         }
-        Ok(evidence.map_or(HistoricalEvidence::Missing, |proof| {
+        Ok(evidence.filter(|proof| proof.snapshot().lineage.iter().any(|name| name == object_type)).map_or(HistoricalEvidence::Missing, |proof| {
             HistoricalEvidence::Found(Box::new(proof))
         }))
     }
