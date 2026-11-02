@@ -216,7 +216,7 @@ def apply_entries(root: Path, updates: dict, legacy=()) -> None:
     """Validate staged coverage, then apply registry updates with rollback on failure."""
     import tempfile
     relative = COVERAGE.relative_to(ROOT)
-    if any(Path(p).is_absolute() or ".." in Path(p).parts for p in (*updates, *legacy)):
+    if any(Path(p).is_absolute() or ".." in Path(p).parts or not (root / p).resolve().is_relative_to(root.resolve()) for p in (*updates, *legacy)):
         raise ValueError("registry updates must stay within the repository")
     with tempfile.TemporaryDirectory() as temporary:
         staged = Path(temporary) / "coverage"
