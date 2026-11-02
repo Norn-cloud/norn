@@ -4,9 +4,7 @@
     python3 scripts/ci/frontier.py collect RUN_ID[:ATTEMPT]... > .github/ci/frontier.json
     python3 scripts/ci/frontier.py check .github/ci/frontier.json
 
-`collect` reads run, job and step timings (and, for failed jobs, the job log)
-through `gh api`, classifies each verdict and writes rows plus series
-statistics. v3 records every paginated per-attempt job, including cancelled service and
+`collect` reads run, job, step and PR timeline timings through `gh api`. v3 records every paginated per-attempt job, including cancelled service and
 reclamation overlap, job queue time and READY-to-plan latency. Merge throughput
 counts distinct merged PRs in the measured window; it is separate from successful
 qualification identities. Missing READY timestamps remain unknown.
@@ -141,6 +139,8 @@ def attempt_document(rows, merges):
     # Reclaim inside a cancelled job is included in both costs, never added twice.
     totals = {key: sum(j[key] for j in jobs)
               for key in ("service_s", "queue_s", "cancelled_s", "reclaim_s")}
+    totals["cancelled_attempt_service_s"] = sum(j["service_s"] for r in rows
+                                                if r["conclusion"] == "cancelled" for j in r["jobs"])
     totals["retained_service_s"] = totals["service_s"] - totals["cancelled_s"]
     totals["cancelled_share"] = totals["cancelled_s"] / totals["service_s"] if totals["service_s"] else 0
     admission = [duration(r["ready_at"], r["admitted_at"]) for r in rows if r["ready_at"] and r["admitted_at"]]
@@ -151,6 +151,8 @@ def attempt_document(rows, merges):
             "rows": rows, "merges": sorted(merged.values(), key=lambda pr: pr["number"]),
             "summary": {**totals, "attempts": len(rows), "jobs": len(jobs),
                         "window_start": start, "window_end": end, "window_s": window,
+                        "cancelled_attempts": sum(r["conclusion"] == "cancelled" for r in rows),
+                        "attempt_elapsed_s": dist([duration(r["created_at"], r["completed_at"]) for r in rows]) if rows else None,
                         "admission_latency_s": dist(admission) if admission else None,
                         "job_service_s": dist([j["service_s"] for j in jobs]) if jobs else None,
                         "job_queue_s": dist([j["queue_s"] for j in jobs]) if jobs else None,
@@ -189,6 +191,7 @@ def self_test():
     merge = {"number": 7, "merged_at": finish}
     result = attempt_document([first, second], [merge, merge])["summary"]
     assert result["service_s"] == 120 and result["cancelled_s"] == 60
+    assert result["cancelled_attempt_service_s"] == 60 and result["cancelled_attempts"] == 1
     assert result["retained_service_s"] == 60 and result["reclaim_s"] == 40
     assert result["queue_s"] == 20 and result["merged_prs"] == 1 and result["merges_per_hour"] == 60
     assert result["admission_latency_s"]["p50"] == 60 and result["successful_qualifications"] == 1
@@ -205,6 +208,19 @@ def self_test():
             raise AssertionError("metrics corruption accepted")
     with patch.dict(globals(), gh=lambda path: {"jobs": list(range(100)) if path.endswith("&page=1") else [100]}):
         assert pages("actions/runs/1/attempts/2/jobs", "jobs") == list(range(101))
+    def fixture_api(path):
+        if path == "actions/runs/3/attempts/2":
+            return {"id": 3, "path": WORKFLOW, "status": "completed", "created_at": stamp,
+                    "run_started_at": finish, "updated_at": finish, "event": "pull_request",
+                    "head_sha": "head", "conclusion": "success", "pull_requests": []}
+        if path.startswith("actions/runs/3/attempts/2/jobs?"):
+            ids = range(100) if path.endswith("&page=1") else [100]
+            return {"jobs": [{"id": i, "name": str(i), "conclusion": "skipped"} for i in ids]}
+        raise AssertionError(f"unexpected endpoint: {path}")
+    with patch.dict(globals(), gh=fixture_api):
+        collected = row("3:2")
+        assert len(collected["jobs"]) == 101 and collected["created_at"] == finish
+        assert attempt_document([collected], [])["summary"]["service_s"] == 0
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
         assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
     print("frontier: pagination, attempt deduplication and cost reconciliation passed")

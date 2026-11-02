@@ -650,6 +650,12 @@ def workflow_context_canaries(source: str) -> None:
                             name == "plan" and event == "pull_request" and draft)
                         if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+        for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
+            expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
+                "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
+            expression = re.sub(r"!(?!=)", " not ", expression)
+            if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request"):
+                raise AssertionError(f"cancelled verdict scheduling drift: {event}")
         for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST", "PHASE"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
@@ -759,7 +765,7 @@ def workflow_canaries() -> None:
         ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
         ("disabled planned tests", "if: fromJSON(needs.plan.outputs.plan).shard[0] != null", "if: false"),
         ("disabled planned phases", "if: fromJSON(needs.plan.outputs.plan).phase[0] != null", "if: false"),
-        ("wrong affected base", "github.event.pull_request.base.sha || ''", "github.sha || ''"),
+        ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
