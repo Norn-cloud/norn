@@ -399,6 +399,6 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
 test("parameter slices and typed context expressions retain their shared contract", () => {
   const compiled = compileDefinitions(join(TOOL_ROOT, "fixtures/parameters/binding.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/parameters/binding.source.ts" })
   if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
-  expect(compiled.artifacts).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ preconditions: ["input.value == slice.selected.value"], slice: expect.arrayContaining([expect.objectContaining({ key: { parameter: { from: "settings", settingKey: "example.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } })]) }) }))
+  expect(compiled.artifacts).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ preconditions: ["input.value == slice.selected.value"], slice: expect.arrayContaining([expect.objectContaining({ key: { parameter: { from: "settings", settingKey: "example.rate", defaultFrom: "fallback", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } })]) }) }))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 }, 30_000)
