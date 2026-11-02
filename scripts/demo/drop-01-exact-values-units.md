@@ -1,9 +1,8 @@
-# Exact values, bounded units and decimal proofs
+# Drop 1: Exact values, bounded units and decimal proofs
 
-Candidate for a rolling drop; not delivered until its script passes on main.
-Numbers follow actual landing order, not the planned queue.
+Values landed before the law renderer. Publication requires a passing main Boat rehearsal.
 
-Run `bash scripts/demo/drop-02-exact-values-units.sh` from a clean checkout
+Run `bash scripts/demo/drop-01-exact-values-units.sh` from a clean checkout
 contained in freshly fetched `origin/main`, with Rust, GNU `timeout` and Kani
 0.68.0 installed. It requires #357, #365 and #383.
 
