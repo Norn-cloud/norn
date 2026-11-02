@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_custom_node_rejected",
+  "message": "customNode is not admitted by the Norn profile: inline custom nodes are rejected (D33); use a pool Function",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

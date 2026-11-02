@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.unknown_metric",
+  "message": "The referenced metric does not exist.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

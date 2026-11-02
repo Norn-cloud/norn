@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/kernel-v2/models/quantity-ledger.qnt",
+    "command": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1",
+    "selectors": {
+      "$entries": "obligationClaims.entry9204abace3f1bc1868ac378605ef592e70eb7c8c6fa5efa8ed8d82b452e97475.evidence.model.entry92276fa4020b70ae1ffef7fab5e556e328f44f0f4ca30d43888f1c07a877cdeb.selectors"
+    }
+  }
+}

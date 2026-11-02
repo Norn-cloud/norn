@@ -1,0 +1,7 @@
+{
+  "code": "sealing.overlay.sealed_mutation",
+  "message": "sealed base nodes cannot be mutated without an exposed extension point",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

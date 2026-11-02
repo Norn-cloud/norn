@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.semi_additive_time",
+  "message": "Semi-additive metrics require their declared time reduction.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

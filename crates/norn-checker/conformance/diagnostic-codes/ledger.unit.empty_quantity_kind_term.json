@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.empty_quantity_kind_term",
+  "message": "quantityKindTermId must be non-empty and canonical",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

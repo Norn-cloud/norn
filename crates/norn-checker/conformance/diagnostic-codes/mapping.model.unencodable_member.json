@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unencodable_member",
+  "message": "property {property} of {objectType} has no action-input encoding",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

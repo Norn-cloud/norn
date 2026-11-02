@@ -45,6 +45,8 @@ mod reactive_read;
 pub mod read;
 mod receipt_fence;
 mod receipt_store;
+
+mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod store;

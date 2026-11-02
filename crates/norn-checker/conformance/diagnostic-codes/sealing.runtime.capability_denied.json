@@ -1,0 +1,7 @@
+{
+  "code": "sealing.runtime.capability_denied",
+  "message": "custom code receives no handle to sealed nodes unless an extension point grants capabilities",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}
