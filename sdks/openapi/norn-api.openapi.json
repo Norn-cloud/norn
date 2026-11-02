@@ -6117,7 +6117,7 @@
         ],
         "properties": {
           "rounding": {
-            "$ref": "#/components/schemas/NornIrFoldRounding"
+            "$ref": "#/components/schemas/NornIrRounding"
           },
           "scale": {
             "type": "integer",
@@ -6150,15 +6150,6 @@
         "enum": [
           "string",
           "integer"
-        ]
-      },
-      "NornIrFoldRounding": {
-        "type": "string",
-        "enum": [
-          "refuse",
-          "toward_zero",
-          "half_even",
-          "half_away_from_zero"
         ]
       },
       "NornIrGapReason": {
@@ -11459,6 +11450,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRounding": {
+        "type": "string",
+        "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
       },
       "NornIrRuleConditionV1": {
         "oneOf": [

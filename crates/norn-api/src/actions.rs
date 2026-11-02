@@ -97,7 +97,8 @@ pub fn call_action_in_epoch<E: SqlEngine>(
     let model = cell.store().model().clone();
     let catalog = TypeCatalog::new(model.object_types())
         .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces());
+        .with_interfaces(model.interfaces())
+        .with_governing_laws(model.law_artifacts());
     let mut actions = Vec::new();
     for artifact in &artifacts {
         if let norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {

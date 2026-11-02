@@ -4089,3 +4089,40 @@ norn_testkit::proptest::proptest! {
 
     }
 }
+
+#[test]
+fn retained_direct_law_keeps_naming_counter_seed_and_allocation_available() {
+    let types = naming_series_types("gapless_within_commit", "year");
+    let mut artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).unwrap();
+    let law = &mut artifacts[0];
+    law["artifactId"] = json!("commerce.company.law");
+    law["dependencies"][0]["artifactId"] = json!("commerce.NamedOrder.entity");
+    law["payload"]["subject"] = json!("commerce.NamedOrder");
+    law["payload"]["scope"] = json!({"root":{"kind":"entity","id":"commerce.NamedOrder"},"objectTypes":["commerce.NamedOrder"]});
+    law["payload"]["response"] = json!({"kind":"predicate","expression":"self.company == ''"});
+    let laws = vec![serde_json::from_value(law.clone()).unwrap()];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone())
+        .with_governing_laws(laws.clone());
+    let seed = NamingCounterSeed {
+        object_type: ObjectTypeName("commerce.NamedOrder".to_owned()),
+        key_name: norn_ir::KeyName("primary".to_owned()),
+        scope: BTreeMap::from([(PropertyId("company".to_owned()), "ACME".to_owned())]),
+        period: "2025".to_owned(),
+        current: 37,
+    };
+    assert!(
+        norn_kernel::naming_series::install_naming_counter_seeds(&mut cell, &catalog, &[seed])
+            .unwrap()
+            .is_some()
+    );
+    let action = naming_series_action("commerce.named_order.create");
+    let call = naming_call(&action, "ACME", "retained-law-counter", 1_767_225_600_000);
+    assert_eq!(
+        outcome_key(commit_action(&mut cell, &catalog, &call, &Allow).unwrap()),
+        "SO-ACME-2025-00038"
+    );
+    assert_eq!(cell.ledger().len(), 2);
+}

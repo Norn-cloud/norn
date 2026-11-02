@@ -138,3 +138,23 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
 
 /** The closed record with no members. */
 export const emptyRecord: ObjectSchema = record({})
+
+/** FOLD-OPERANDS: every value admitted by actual also satisfies expected. */
+export function acceptsSchema(expected: ValueSchema, actual: ValueSchema): boolean {
+  const nonnull = (s: ValueSchema): ValueSchema => Array.isArray(s.type) ? { ...s, type: s.type[0] } as ValueSchema : s
+  if (actual.type === "null") return expected.type === "null" || Array.isArray(expected.type)
+  if (Array.isArray(actual.type)) return Array.isArray(expected.type) && acceptsSchema(nonnull(expected), nonnull(actual))
+  if (Array.isArray(expected.type)) return acceptsSchema(nonnull(expected), actual)
+  if (expected.type === "number" && actual.type === "integer") return true
+  if (expected.type !== actual.type) return false
+  if (expected.type === "string" && actual.type === "string") {
+    const values = expected.enum
+    return values === undefined || (actual.enum !== undefined && actual.enum.every(v => values.includes(v)))
+  }
+  if (expected.type === "array" && actual.type === "array") return acceptsSchema(expected.items, actual.items)
+  if (expected.type === "object" && actual.type === "object") {
+    return (expected.required ?? []).every(k => actual.required?.includes(k))
+      && Object.entries(actual.properties).every(([k, v]) => expected.properties[k] !== undefined && acceptsSchema(expected.properties[k], v))
+  }
+  return true
+}

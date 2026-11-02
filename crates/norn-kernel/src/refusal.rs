@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::action::{ActionCommandRejection, ActionRejection, AuthorizedRejection};
 use crate::action_commit::ActionRefusal;
-use crate::cell_host::CommitError;
+use crate::cell_host::{CommitError, FactKey};
 use crate::decider::StepError;
 use crate::decision_commit::DecisionRefusal;
 use crate::limits::IngressLimitExceeded;
@@ -154,11 +154,23 @@ pub trait Refusable {
     fn refusal(&self) -> Refusal;
 }
 
+const fn law_category(reason: &crate::governing_laws::LawEvaluationError) -> RefusalCategory {
+    use crate::governing_laws::LawEvaluationError as Law;
+    match reason {
+        Law::Violated(_) => RefusalCategory::Precondition,
+        Law::BudgetExceeded => RefusalCategory::Limit,
+        Law::UnsupportedUntilB2(_) | Law::Unsupported(_) | Law::Invalid(_) => {
+            RefusalCategory::Invalid
+        }
+    }
+}
+
 impl<X> CommitError<X> {
     /// The refusal's category.
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::Law { reason, .. } => law_category(reason),
             Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
@@ -276,6 +288,7 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::Law { reason, .. } => law_category(reason),
             Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
@@ -451,8 +464,8 @@ fn lifecycle_guard(
 }
 
 impl<X> DecisionRefusal<X> {
-    fn lifecycle_reason(&self) -> Option<RefusalReason> {
-        let reason = match self {
+    fn lifecycle_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
+        match self {
             Self::NotFromState {
                 lifecycle,
                 key,
@@ -541,13 +554,18 @@ impl<X> DecisionRefusal<X> {
             | Self::Stale { .. }
             | Self::NotPending { .. }
             | Self::AccountingPosting { .. }
+            | Self::Law { .. }
             | Self::InvariantViolation { .. }
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
             | Self::Host(_) => None,
-        };
-        reason.map(|(law, key, values)| builtin_reason(law, key, values))
+        }
+    }
+
+    fn lifecycle_reason(&self) -> Option<RefusalReason> {
+        self.lifecycle_reason_parts()
+            .map(|(law, key, values)| builtin_reason(law, key, values))
     }
 }
 

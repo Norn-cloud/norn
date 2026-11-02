@@ -42,6 +42,7 @@ impl Admitted {
             return Err(refused("definitions must be an artifact array"));
         };
         let mut exact = Vec::new();
+        let mut artifacts = Vec::new();
         let mut layout = norn_ir::LayoutSidecar::default();
         let mut objects = Vec::new();
         let mut properties = Vec::new();
@@ -70,6 +71,7 @@ impl Admitted {
                     }
                 }
             }
+            artifacts.push(prepared.artifact);
             layout.artifacts.extend(prepared.layout.artifacts);
             exact.push(prepared.source);
         }
@@ -109,6 +111,8 @@ impl Admitted {
             )
             .map_err(refused)?,
             model: Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+                .map_err(refused)?
+                .with_governing_laws(&artifacts)
                 .map_err(refused)?,
             canonical_set: String::from_utf8(
                 RuntimeValue::Array(exact)

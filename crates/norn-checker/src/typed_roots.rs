@@ -3641,7 +3641,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+    fn ordered_fold_declarations_admit_only_the_supported_closed_profile() {
         let mut rule = rule_with_sub_decision();
         let fold = json!({
             "semanticsVersion": "1.0",
@@ -3657,15 +3657,25 @@ mod tests {
             "arithmetic": {"scale": 0, "rounding": "refuse"}
         });
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(
-            has(
-                &actual,
-                "rule.validation.ordered_fold_unsupported",
+        assert!(actual.is_empty(), "{actual:?}");
+        // FOLD-ORDER-1: collection selection is mandatory and explicit.
+        for selector in [None, Some(json!("")), Some(json!("  "))] {
+            let mut bad = rule.clone();
+            let content = bad["payload"]["graph"]["nodes"][4]["content"]
+                .as_object_mut()
+                .unwrap();
+            content.remove("inputField");
+            if let Some(selector) = selector {
+                content.insert("inputField".into(), selector);
+            }
+            assert!(has(
+                &findings(bad),
+                "rule.validation.ordered_fold_invalid",
                 "payload.graph.nodes[4].content.orderedFold"
-            ),
-            "{actual:?}"
-        );
+            ));
+        }
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),
