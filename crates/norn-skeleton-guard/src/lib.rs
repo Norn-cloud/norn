@@ -188,7 +188,15 @@ pub const CRATES: &[CrateRule] = &[
         name: "norn-host-conformance",
         ring: Ring::Tooling,
         allowed_norn: &[],
-        dev_only_norn: &["norn-metrics", "norn-cell", "norn-kernel", "norn-authz", "norn-projections", "norn-ir", "norn-checker"],
+        dev_only_norn: &[
+            "norn-metrics",
+            "norn-cell",
+            "norn-kernel",
+            "norn-authz",
+            "norn-projections",
+            "norn-ir",
+            "norn-checker",
+        ],
         third_party: &[],
     },
     CrateRule {
@@ -922,9 +930,18 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
         };
         // HOST-CONFORMANCE-1: this boundary cannot acquire a shipped target.
         if name == "norn-host-conformance"
-            && (pkg.publish.as_ref().is_none_or(|registries| !registries.is_empty())
-                || pkg.targets.iter().any(|target| target.kind != [cargo_metadata::TargetKind::Test])
-                || pkg.dependencies.iter().any(|dep| dep.kind != DependencyKind::Development))
+            && (pkg
+                .publish
+                .as_ref()
+                .is_none_or(|registries| !registries.is_empty())
+                || pkg
+                    .targets
+                    .iter()
+                    .any(|target| target.kind != [cargo_metadata::TargetKind::Test])
+                || pkg
+                    .dependencies
+                    .iter()
+                    .any(|dep| dep.kind != DependencyKind::Development))
         {
             out.push(violation("host-conformance-test-only", "host conformance requires publish=false, test targets, and development dependencies only".into()));
         }

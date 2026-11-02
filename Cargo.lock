@@ -1658,6 +1658,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-host-conformance"
+version = "0.1.0"
+
+[[package]]
 name = "norn-ir"
 version = "0.1.0"
 dependencies = [

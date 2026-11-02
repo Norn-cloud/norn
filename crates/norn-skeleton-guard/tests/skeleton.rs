@@ -1586,10 +1586,15 @@ fn host_conformance_admits_only_the_declared_development_edges() {
     let rule = norn_skeleton_guard::crate_rule("norn-host-conformance").expect("declared");
     for dependency in rule.dev_only_norn.iter().copied().chain(["norn-cli"]) {
         for kind in [None, Some("dev"), Some("build")] {
-            let metadata=with_dep_as("norn-host-conformance", dependency, kind, None);
-            let violations=check_dependencies(&metadata);
-            let admitted=kind == Some("dev") && dependency != "norn-cli";
-            assert_eq!(violations.is_empty(), admitted, "{dependency} {kind:?}: {}",render(&violations));
+            let metadata = with_dep_as("norn-host-conformance", dependency, kind, None);
+            let violations = check_dependencies(&metadata);
+            let admitted = kind == Some("dev") && dependency != "norn-cli";
+            assert_eq!(
+                violations.is_empty(),
+                admitted,
+                "{dependency} {kind:?}: {}",
+                render(&violations)
+            );
         }
     }
 }
@@ -1597,10 +1602,23 @@ fn host_conformance_admits_only_the_declared_development_edges() {
 #[test]
 fn host_conformance_refuses_publishing_or_runtime_targets() {
     for field in ["publish", "targets"] {
-        let mut value=serde_json::to_value(metadata()).expect("metadata");
-        let package=value["packages"].as_array_mut().expect("packages").iter_mut().find(|p|p["name"]=="norn-host-conformance").expect("host");
-        if field == "publish" {package[field]=Value::Null;} else {package[field][0]["kind"]=json!(["lib"]);}
-        let value:Metadata=serde_json::from_value(value).expect("metadata");
-        assert!(check_dependencies(&value).iter().any(|v|v.rule=="host-conformance-test-only"));
+        let mut value = serde_json::to_value(metadata()).expect("metadata");
+        let package = value["packages"]
+            .as_array_mut()
+            .expect("packages")
+            .iter_mut()
+            .find(|p| p["name"] == "norn-host-conformance")
+            .expect("host");
+        if field == "publish" {
+            package[field] = Value::Null;
+        } else {
+            package[field][0]["kind"] = json!(["lib"]);
+        }
+        let value: Metadata = serde_json::from_value(value).expect("metadata");
+        assert!(
+            check_dependencies(&value)
+                .iter()
+                .any(|v| v.rule == "host-conformance-test-only")
+        );
     }
 }
