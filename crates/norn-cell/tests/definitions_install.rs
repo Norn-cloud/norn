@@ -6442,7 +6442,7 @@ fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
         assert_eq!(reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw preserved"), Some(before.clone()));
         assert_eq!(reader.object("fork/test", "quality.Measurement", "MEAS-1").expect("raw world preserved"), Some(fork));
         assert!(reader.authoritative_object("fork/test", "quality.Measurement", "OTHER").expect("unaffected absence").is_none());
-        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("native cell");
+        let mut cell: norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject> = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("native cell");
         let mut written = norn_kernel::CellCommit::empty();
         written.writes.push(norn_kernel::FactWrite {key:norn_kernel::FactKey::new("quality.Measurement", "MEAS-1"), expected:norn_kernel::FactVersion(before.version), mutation:norn_kernel::FactMutation::Put {values:before.values}});
         assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
