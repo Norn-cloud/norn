@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { compileModule } from "../src/compile-stdin.ts"
+import { canonicalJson } from "../src/canonical.ts"
 import * as E from "../src/builder/entity.ts"
 
 const source = (scale: string, currency = '"currency"') => `
@@ -13,7 +14,7 @@ export const Quote = Norn.type({ name: "demo.Quote", title: "Quote", version: "1
 test("VAL-RATE typed authoring retains currency, denominator and one rounding site", () => {
  const result = compileModule(source("6"), {orgId: "org_demo", environmentId: "dev"})
  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
- expect(JSON.stringify(result.artifacts)).toContain(JSON.stringify(E.rate(6, "currency", {system: "ucum", code: "g"}, "half_even")))
+ expect(canonicalJson(result.artifacts)).toContain(canonicalJson(E.rate(6, "currency", {system: "ucum", code: "g"}, "half_even")))
 })
 test("VAL-RATE refuses an unbounded scale or a nonliteral currency binding", () => {
  expect(compileModule(source("19"), {orgId: "org_demo", environmentId: "dev"}).ok).toBe(false)

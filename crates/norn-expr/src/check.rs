@@ -1085,6 +1085,7 @@ struct Checker<'a> {
     types: HashMap<usize, T>,
     exact: bool,
     exact_math: bool,
+    rate: bool,
 }
 
 /// The node inside any number of parentheses.
@@ -1143,10 +1144,14 @@ impl<'a> Checker<'a> {
             types: HashMap::new(),
             exact: false,
             exact_math: false,
+            rate: false,
         }
     }
 
     fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
+        if self.rate || rate_type(expected) {
+            self.report::<()>(node, "core.values.inexact", "Rate requires the bounded rate consumer profile before activation".to_owned());
+        }
         if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
             self.report::<()>(
                 node,
@@ -1651,6 +1656,7 @@ impl<'a> Checker<'a> {
             _ => self.env.variables().get(name),
         };
         self.exact |= declared.is_some_and(exact_type);
+        self.rate |= declared.is_some_and(rate_type);
         match declared.map(|ty| lower(ty, depth)) {
             Some(Some(ty)) => Some(ty),
             Some(None) => self.report(node, codes::OPAQUE_READ, format!("`{name}` is opaque")),
@@ -1719,6 +1725,7 @@ impl<'a> Checker<'a> {
                     FieldSource::Property { .. } | FieldSource::Builtin => depth,
                 };
                 self.exact |= exact_type(&field.ty);
+                self.rate |= rate_type(&field.ty);
                 match lower(&field.ty, depth) {
                     Some(ty) => Some(ty),
                     None => self.report(
@@ -2397,6 +2404,11 @@ fn exact_type(mut ty: &Type) -> bool {
         ty = inner;
     }
     matches!(ty, Type::Decimal { .. })
+}
+
+fn rate_type(mut ty: &Type) -> bool {
+    while let Type::Optional(inner) | Type::List(inner) = ty { ty = inner; }
+    matches!(ty, Type::Decimal { per_unit: Some(_), .. })
 }
 
 fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
