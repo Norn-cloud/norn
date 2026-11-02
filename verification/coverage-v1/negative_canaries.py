@@ -749,14 +749,15 @@ def workflow_context_canaries(source: str) -> None:
                       runner.replace("|| 'ubuntu-24.04'", "|| 'self-hosted'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
-            if name != "test":
+            if name == "trusted-policy":
                 unsafe.append(runner)
             for value in unsafe:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["runs-on"] = runner
+        for name in ("core", "plan", "test", "full"):
+            document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
         for name in ("core", "plan", "test"):
@@ -776,6 +777,9 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["needs"] = ["plan"]
+        rejected("bundles admitted before the cheap gate", document)
         for key in ("PLAN", "BUNDLE_ID"):
             document = copy.deepcopy(workflow)
             document["jobs"]["test"]["env"][key] = "forged"

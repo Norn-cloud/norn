@@ -428,7 +428,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     merge_runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
     for name, job in jobs.items():
         admitted = {"ubuntu-24.04"}
-        if name == "test":
+        if name in {"core", "plan", "test", "full"}:
             admitted.add(merge_runner)
         require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
                 f"{name}: runner must preserve merge-only opt-in, run binding and hosted fallback")
@@ -537,7 +537,7 @@ df -h /
                     "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"},
                     "plan: affected selection must bind the event base and head")
     job = jobs["test"]
-    require(job.get("needs") == "plan" and job.get("strategy") == {
+    require(job.get("needs") == ["core", "plan"] and job.get("strategy") == {
         "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
     }, "test: matrix must execute the complete bundle plan without queued surplus jobs")
     require(job.get("name") == "bundle (${{ matrix.bundle.id }})" and job.get("timeout-minutes") == 110,

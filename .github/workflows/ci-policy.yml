@@ -32,7 +32,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
@@ -86,7 +86,7 @@ jobs:
   # Pull requests and merge groups use affected plans; main runs the full set.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -106,7 +106,7 @@ jobs:
           echo "$plan"
   test:
     name: bundle (${{ matrix.bundle.id }})
-    needs: plan
+    needs: [core, plan]
     if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -178,7 +178,7 @@ jobs:
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:
       - env:
