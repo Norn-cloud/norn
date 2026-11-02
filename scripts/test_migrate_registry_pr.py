@@ -38,7 +38,7 @@ class MigrationTests(unittest.TestCase):
                 subprocess.run(["git", "-C", str(root), "apply", "-"], input=case["patch"].encode(), check=True)
                 head = commit()
                 git("checkout", "-q", base)
-                document = coverage.load(root / migration.COVERAGE)
+                document = {"subsystems": [{"id": p.stem, **coverage.read_entry(p)} for p in sorted((root / migration.COVERAGE / "subsystems").glob("*.json"))]}
                 document["subsystems"][0]["sourceFiles"].append("synthetic/main.rs")
                 coverage.write_entries(document, root / migration.COVERAGE)
                 old = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())
