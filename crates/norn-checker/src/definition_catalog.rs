@@ -8,19 +8,20 @@ use crate::receipt::ArtifactRef;
 pub use crate::receipt::ReceiptError as CatalogError;
 use norn_ir::definition_catalog::{
     ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependencyVia, DependsOnRow,
-    LawRow, LifecycleStates, LinkRow, MappingRow, Member, MemberRef, PropertyRow, TransitionRow,
-    TypeKind, TypeRow, WriteVia, WritesRow,
+    LawBinding, LawRow, LifecycleStates, LinkRow, MapRule, MappingRow, Member, MemberRef,
+    PropertyRow, TransitionRow, TypeKind, TypeRow, WriteVia, WritesRow,
 };
+use norn_ir::mapping::MappingIr;
 use norn_ir::{
-    ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactPayload, BusinessPackRoot,
-    EntityRoot, FactChangeOp, Lifecycle, ObjectTypeDef, Property, PropertyType, PropertyTypeDef,
-    PropertyTypeName,
+    ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
+    BusinessPackRoot, EntityRoot, FactChangeOp, LawIR, LawResponse, Lifecycle, ObjectTypeDef,
+    Property, PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 use std::collections::BTreeSet;
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
-/// entities and dependency edges, action writes, decide-graph writes. See verification/definition-catalog-v1/SPEC.md.
+/// entities and dependency edges, action writes, decide-graph writes, mappings and laws. See verification/definition-catalog-v1/SPEC.md.
 ///
 /// # Errors
 /// Returns `CatalogError` if an artifact semantic hash cannot be computed.
@@ -60,6 +61,12 @@ pub fn project(
     for artifact in &all {
         if matches!(artifact.payload, ArtifactPayload::Action(_)) {
             rows.action(artifact, &admission);
+        }
+        if matches!(artifact.payload, ArtifactPayload::Mapping(_)) {
+            rows.mapping(artifact, &admission);
+        }
+        if matches!(artifact.payload, ArtifactPayload::Law(_)) {
+            rows.law(artifact, &all, &admission);
         }
     }
     for (artifact, output) in fact_decisions(all.iter().copied()) {
@@ -551,5 +558,161 @@ impl Rows {
                 }
             }
         }
+    }
+
+    fn mapping(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
+        let Ok(mapping) = serde_json::from_value::<MappingIr>(payload_json(artifact)) else {
+            return;
+        };
+        for map in &mapping.maps {
+            let version = artifact
+                .dependencies
+                .iter()
+                .find(|dependency| {
+                    dependency.required && dependency.artifact_id == map.target.entity
+                })
+                .and_then(|dependency| dependency.version.as_deref());
+            let Some(admitted) = admission.declared_by(&map.target.entity, version) else {
+                continue;
+            };
+            let lineage = PinnedType::lineage(admitted, admission);
+            let owner = PinnedType::of(admitted);
+            let type_name = owner.name.as_str();
+            let link = |id: &str| Member::Link {
+                type_name: type_name.to_owned(),
+                link: id.to_owned(),
+            };
+            let mut observed: Vec<(Member, MapRule)> = vec![(
+                Member::Type {
+                    type_name: type_name.to_owned(),
+                },
+                MapRule::Object {},
+            )];
+            for property in &map.properties {
+                observed.push((
+                    property_member(type_name, property.property.as_str()),
+                    MapRule::Property {},
+                ));
+            }
+            for link_map in &map.links {
+                observed.push((link(link_map.link.as_str()), MapRule::Link {}));
+            }
+            for lifecycle in &map.lifecycles {
+                observed.push((
+                    property_member(type_name, lifecycle.property.as_str()),
+                    MapRule::Lifecycle {},
+                ));
+            }
+            for gap in &map.gaps {
+                let member = if self.resolve(&link(&gap.member), &lineage).is_some() {
+                    link(&gap.member)
+                } else {
+                    property_member(type_name, &gap.member)
+                };
+                observed.push((member, MapRule::Gap { reason: gap.reason }));
+            }
+            for (member, rule) in observed {
+                let target = if matches!(member, Member::Type { .. }) {
+                    Some(owner.type_ref())
+                } else {
+                    self.resolve(&member, &lineage)
+                };
+                let Some(target) = target else {
+                    continue;
+                };
+                self.mappings.insert(MappingRow {
+                    map: at(
+                        artifact,
+                        Member::ObjectMap {
+                            map: map.id.clone(),
+                        },
+                    ),
+                    dataset: map.source.dataset.clone(),
+                    target,
+                    rule,
+                });
+            }
+        }
+    }
+
+    fn law(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        all: &[&ArtifactEnvelope],
+        admission: &Admission<'_>,
+    ) {
+        let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
+            return;
+        };
+        let pin = |name: &str| {
+            admission
+                .named(name)
+                .map(|admitted| PinnedType::of(admitted).type_ref())
+        };
+        let Some(subject) = pin(&law.subject) else {
+            return;
+        };
+        let binds = match law.response {
+            LawResponse::Predicate { .. } => None,
+            LawResponse::Transition {
+                object_type,
+                property,
+                transition_id,
+            } => {
+                let Some(admitted) = admission.named(&object_type) else {
+                    return;
+                };
+                let Some(target) = self.resolve(
+                    &Member::Transition {
+                        type_name: object_type,
+                        lifecycle: property,
+                        transition: transition_id,
+                    },
+                    &PinnedType::lineage(admitted, admission),
+                ) else {
+                    return;
+                };
+                Some(LawBinding::Transition { target })
+            }
+            LawResponse::Invariant {
+                object_type,
+                invariant_id,
+            } => {
+                let Some(owner) = pin(&object_type) else {
+                    return;
+                };
+                Some(LawBinding::Invariant {
+                    owner,
+                    invariant: invariant_id,
+                })
+            }
+            LawResponse::Action { artifact_id } => {
+                let Some(action) = artifact
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| {
+                        dependency.required
+                            && dependency.kind == ArtifactKind::Action
+                            && dependency.artifact_id == artifact_id
+                    })
+                    .find_map(|dependency| {
+                        let version = dependency.version.as_deref()?;
+                        all.iter().find(|other| {
+                            other.artifact_id == artifact_id && other.version == version
+                        })
+                    })
+                else {
+                    return;
+                };
+                Some(LawBinding::Action {
+                    target: at(action, Member::Artifact {}),
+                })
+            }
+        };
+        self.laws.insert(LawRow {
+            at: at(artifact, Member::Law { law: law.id }),
+            subject,
+            binds,
+        });
     }
 }

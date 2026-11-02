@@ -2318,6 +2318,23 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
             ResourceLimitProfile::norn_limits_v1().slice,
         )
         .unwrap();
+        let reads = slice.partition_reads();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].source, keys[0]);
+        assert_eq!(reads[0].link, "members");
+        let members: Vec<_> = reads[0].targets.iter().map(|t| &t.key.target).collect();
+        let expected = if initial_member {
+            vec![&keys[1]]
+        } else {
+            vec![]
+        };
+        assert_eq!(members, expected);
+        assert!(members.iter().all(|key| slice.facts().contains_key(*key)));
+        // Same-type point and source facts are captured but are not members.
+        assert!(slice.facts().contains_key(&keys[3]));
+        assert!(slice.facts().contains_key(&keys[0]));
+        assert!(!members.contains(&&keys[3]));
+        assert!(!members.contains(&&keys[0]));
         let proposal = slice
             .prepare::<Infallible>(
                 &catalog,
@@ -2329,6 +2346,7 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
                 &EnvelopeLimits::V1,
             )
             .unwrap();
+        assert_eq!(proposal.link_reads, slice.partition_reads());
         assert_eq!(proposal.link_reads.len(), 1);
         assert_eq!(
             proposal.link_reads[0].targets.len(),
