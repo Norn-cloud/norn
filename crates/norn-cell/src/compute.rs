@@ -6,6 +6,7 @@ mod historical;
 pub mod ivm;
 /// Governed native restatement generations.
 pub mod restatement;
+mod restatement_state;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{

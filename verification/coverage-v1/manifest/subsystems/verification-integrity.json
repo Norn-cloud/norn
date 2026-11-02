@@ -470,6 +470,8 @@
     "crates/norn-checker/src/metric/compute/arithmetic.rs",
     "crates/norn-checker/src/metric/compute/contribution.rs",
     "verification/query-compute-v1/arithmetic_kani.rs",
-    "verification/canonical-values-v1/diagnostic_kani.rs"
+    "verification/canonical-values-v1/diagnostic_kani.rs",
+    "crates/norn-cell/tests/restatement_activation.rs",
+    "verification/kernel-l1/restatement_selection_kani.rs"
   ]
 }

@@ -513,6 +513,7 @@
     "crates/norn-cell/tests/historical_question.rs",
     "verification/kernel-l1/history_selection_kani.rs",
     "crates/norn-cell/src/compute/restatement.rs",
-    "registry/core/src/restatement.ts"
+    "registry/core/src/restatement.ts",
+    "crates/norn-cell/src/compute/restatement_state.rs"
   ]
 }

@@ -102,13 +102,28 @@ fn decode(encoded: &str, digest: &str) -> Result<Option<Generation>, CellError> 
     Ok(Some(generation))
 }
 fn selected(values: &BTreeMap<String, RuntimeValue>) -> Result<(&str, &str), CellError> {
-    if text(values, "status")? == "active" {
-        Ok((
-            text(values, "candidate")?,
-            text(values, "candidate_digest")?,
-        ))
-    } else {
-        Ok((text(values, "active")?, text(values, "active_digest")?))
+    use super::restatement_state::{Phase, Selection, select};
+    let phase = match text(values, "status")? {
+        "building" => Phase::Building,
+        "ready" => Phase::Ready,
+        "approved" => Phase::Approved,
+        "active" => Phase::Active,
+        _ => return Err(refused(INVALID)),
+    };
+    let old = (text(values, "active")?, text(values, "active_digest")?);
+    let new = (
+        text(values, "candidate")?,
+        text(values, "candidate_digest")?,
+    );
+    match select(
+        phase,
+        !old.0.is_empty() && !old.1.is_empty(),
+        !new.0.is_empty() && !new.1.is_empty(),
+    ) {
+        Some(Selection::Previous) => Ok(old),
+        Some(Selection::Candidate) => Ok(new),
+        None if phase == Phase::Building && old.0.is_empty() && old.1.is_empty() => Ok(old),
+        None => Err(refused(INVALID)),
     }
 }
 fn authorized(context: &QueryContext, result: &QueryResult) -> bool {
