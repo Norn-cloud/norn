@@ -62,14 +62,14 @@ pub(super) fn history_ids<E:SqlEngine>(
     let head=i64::try_from(frontier).map_err(|_n|refused("core.compute.bound_exceeded"))?;
     let suffix="FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 ORDER BY commit_seq,id,version LIMIT ?4";
     let bindings=params![world,root,head,limit];
-    let lengths=reader.conn.query(&format!("SELECT octet_length(id)+64 {suffix}"),&bindings)?;
+    let lengths=reader.conn.query(&format!("SELECT octet_length(id)+64 {suffix}"),bindings)?;
     if lengths.len()>cap {return Ok((vec![],false))}
     for row in lengths {
         let bytes:i64=SqlRow(row).get(0)?;
         if !budget.charge_rows(1) || !budget.charge(u64::try_from(bytes).map_err(|_n|refused("core.compute.bound_exceeded"))?) {return Ok((vec![],false))}
     }
     let mut ids=std::collections::BTreeSet::new();
-    for row in reader.conn.query(&format!("SELECT id {suffix}"),&bindings)? {
+    for row in reader.conn.query(&format!("SELECT id {suffix}"),bindings)? {
         ids.insert(SqlRow(row).get::<String>(0)?);
     }
     if ids.len()>max {return Ok((vec![],false))}
