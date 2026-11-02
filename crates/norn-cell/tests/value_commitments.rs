@@ -171,7 +171,7 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
     store.commit(&CommitBatch{logical_time:301,..batch(vec![])}).expect("frontier");
     let connection = rusqlite::Connection::open(path).expect("corruption fixture");
     connection
-        .execute("UPDATE _norn_receipt SET receipt = '{}'", [])
+        .execute("UPDATE _norn_receipt SET receipt = '{}' WHERE commit_seq=1", [])
         .expect("corrupt receipt");
     let fact = FactKey::new("proof.Item", "item");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
