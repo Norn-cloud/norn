@@ -553,14 +553,7 @@ fn check_expression_with_sources_and_root_bounds(
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || expected_exact_type(expected, env);
         if exact_enabled && exact {
-            if expected_exact_type(expected, env) && decimal_destination(expected).is_none() {
-                checker.report::<()>(ast, "core.values.inexact", "structured Decimal destinations require member-wise store binding".to_owned());
-            }
-            checker.diagnostics.extend(exact_admission(
-                ast,
-                metadata,
-                decimal_destination(expected).is_some(),
-            ));
+            checker.admit_exact(ast, expected);
         }
         (
             inferred,
@@ -1151,6 +1144,21 @@ impl<'a> Checker<'a> {
             exact: false,
             exact_math: false,
         }
+    }
+
+    fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
+        if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
+            self.report::<()>(
+                node,
+                "core.values.inexact",
+                "structured Decimal destinations require member-wise store binding".to_owned(),
+            );
+        }
+        self.diagnostics.extend(exact_admission(
+            node,
+            self.metadata,
+            decimal_destination(expected).is_some(),
+        ));
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {
