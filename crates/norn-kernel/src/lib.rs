@@ -63,6 +63,7 @@ pub mod decision_commit;
 mod effect;
 mod envelope;
 mod guard_diagnostic;
+pub mod governing_laws;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;

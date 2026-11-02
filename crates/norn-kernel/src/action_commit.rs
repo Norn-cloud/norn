@@ -4131,6 +4131,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4163,6 +4164,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4282,6 +4284,7 @@ where
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }

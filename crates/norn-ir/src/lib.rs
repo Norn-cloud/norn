@@ -70,6 +70,8 @@ pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
 pub mod requirement_display;
+mod rounding;
+pub use rounding::Rounding;
 pub mod rule;
 pub mod runtime;
 pub mod sealing;

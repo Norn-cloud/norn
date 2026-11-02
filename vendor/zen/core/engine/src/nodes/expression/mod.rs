@@ -34,11 +34,15 @@ impl NodeHandler for ExpressionNodeHandler {
                 continue;
             }
 
-            let value = isolate
-                .run_standard(&expression.value)
-                .with_node_context(&ctx, |_| {
-                    format!(r#"Failed to evaluate expression: "{}""#, expression.value)
-                })?;
+            let value =
+                isolate
+                    .run_standard(&expression.value)
+                    .with_node_context(&ctx, |error| {
+                        format!(
+                            r#"Failed to evaluate expression: "{}": {error}"#,
+                            expression.value
+                        )
+                    })?;
             ctx.trace(|trace| {
                 trace.insert(
                     Rc::from(&*expression.key),
