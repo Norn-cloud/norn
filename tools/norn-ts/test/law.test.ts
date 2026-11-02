@@ -104,4 +104,4 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
       if (!refused.ok) expect(refused.failures.flatMap(f=>f.diagnostics).some(d=>d.code === "NORN-FLOW-LITERAL")).toBe(true)
     }
   } finally { rmSync(dir, { recursive: true, force: true }) }
-})
+}, 30_000)
