@@ -20,7 +20,8 @@ use norn_ir::{
 use norn_kernel::cell_host::{FactKey, JsonObject};
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial,
-    ActionOutcome, DecisionTurn, FactEvent, LogicalTime, TypeCatalog, World, commit_action,
+    ActionOutcome, CellHost, DecisionTurn, FactEvent, LogicalTime, TypeCatalog, World,
+    commit_action,
 };
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
@@ -41,7 +42,7 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     .expect("generated typed pricing fixture")
 }
 
-fn findings(artifacts: &[ArtifactEnvelope]) -> Vec<norn_ir::Diagnostic> {
+fn findings(artifacts: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
     let units = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.units.json"
     ))
@@ -107,7 +108,7 @@ fn audit_type(mut definition: ObjectTypeDef) -> ObjectTypeDef {
     .map(|id| Property {
         id: PropertyId(id.into()),
         description: None,
-        property_type: PropertyType::JsonExt {},
+        property_type: PropertyType::JsonExt { schema: None },
         constraints: PropertyConstraints {
             nullable: true,
             ..PropertyConstraints::default()
@@ -243,6 +244,15 @@ fn jewel_price_sell_and_scrap_commit_exactly_once_and_reopen() {
         committed
     );
 
+    assert_refusals(&mut cell, &catalog, &action, &committed);
+}
+
+fn assert_refusals(
+    cell: &mut Cell,
+    catalog: &TypeCatalog<'_>,
+    action: &norn_ir::ActionRoot,
+    committed: &[norn_cell::CommitRecord<FactEvent>],
+) {
     for (id, currency, rate, grams, code) in [
         ("wrong-currency", "EUR", "15", "20", "action.invalid_input"),
         (
@@ -255,9 +265,9 @@ fn jewel_price_sell_and_scrap_commit_exactly_once_and_reopen() {
         ("zero-mass", "USD", "15", "0", "action.precondition_failed"),
     ] {
         let refused = commit_action(
-            &mut cell,
-            &catalog,
-            &call(&action, input(id, "sell", rate, grams, currency), id),
+            cell,
+            catalog,
+            &call(action, input(id, "sell", rate, grams, currency), id),
             &Allow,
         )
         .expect_err("pricing refuses");
@@ -288,7 +298,9 @@ fn jewel_price_milligram_denominator_refuses_before_execution() {
         .expect("action");
     action["payload"]["inputSchema"]["properties"]["price_per_g"]["nornType"]["perUnit"]["code"] =
         "mg".into();
-    let diagnostics = findings(&serde_json::from_value(source).expect("changed declaration"));
+    let changed: Vec<ArtifactEnvelope> =
+        serde_json::from_value(source).expect("changed declaration");
+    let diagnostics = findings(&changed);
     assert!(
         diagnostics
             .iter()
