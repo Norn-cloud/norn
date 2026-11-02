@@ -1,0 +1,21 @@
+{
+  "order": 6,
+  "value": {
+    "id": "INV-QL-REFERENCE-BALANCE-ALGEBRA",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The theorem is intentionally limited to mathematical integer-list semantics; it does not claim keyed unit/layer semantics, checked i128 arithmetic, persistence, or production Rust correspondence.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry88c5b71846e9469d389185bb5fcdaadfd5e9643af7cd2aea53de1507d1d66ce2.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry88c5b71846e9469d389185bb5fcdaadfd5e9643af7cd2aea53de1507d1d66ce2.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry88c5b71846e9469d389185bb5fcdaadfd5e9643af7cd2aea53de1507d1d66ce2.evidence.proof"
+      }
+    }
+  }
+}

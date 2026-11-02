@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-VER-DIFFERENTIAL-REFINEMENT",
+    "runtime": "partial",
+    "model": "partial",
+    "proof": "missing",
+    "residual": "Rust rule fixtures, generic quantity properties/fixtures, storage conformance tests, and three hax-extracted predicate lanes provide partial differential/correspondence evidence. There is no uniform generated valid/invalid differential harness for every proof-bearing executable component, no minimized-counterexample registry across every lane, and no general Rust-to-Lean refinement.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry1efc00874ed422dab072973ddf9f8acb2d918f095508b97cc2d97f45fa4a86da.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry1efc00874ed422dab072973ddf9f8acb2d918f095508b97cc2d97f45fa4a86da.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry1efc00874ed422dab072973ddf9f8acb2d918f095508b97cc2d97f45fa4a86da.evidence.proof"
+      }
+    }
+  }
+}

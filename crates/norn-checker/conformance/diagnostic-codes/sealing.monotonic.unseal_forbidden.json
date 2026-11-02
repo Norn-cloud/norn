@@ -1,0 +1,7 @@
+{
+  "code": "sealing.monotonic.unseal_forbidden",
+  "message": "downstream overlays cannot unseal an upstream seal",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

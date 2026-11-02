@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.dead_end_state",
+  "message": "state {state} has no outgoing transition; declare one or list it as terminal",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,61 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "partial",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "partial",
+    "bound": "Apalache depth 8 over quantity lifecycle amounts 1..3, one authority posting/reversal with identities and amounts 1..3, abstract atomic batches of one through three postings, and exact/substituted bindings over two units and two dimensions",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    }
+  },
+  "proof": {
+    "status": "partial",
+    "scope": "reference",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

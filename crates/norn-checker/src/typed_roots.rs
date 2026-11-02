@@ -2484,6 +2484,7 @@ fn check_business_pack_root(
             arrays {
                 "provides" => String,
                 "artifacts" => norn_ir::PackArtifactRef,
+                "instances" => norn_ir::PackInstance,
             }
         );
     }

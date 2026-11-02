@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-QL-CERTIFICATE-POSTING-BINDING",
+    "runtime": "tested",
+    "model": "executable_reference",
+    "proof": "missing",
+    "residual": "The checker retains exact certificate/evaluation binding. Quantity v2 compiles the immutable admitted pack and evaluates original parameters inside the cell transaction; no caller-provided leg vector or naked certificate can supply posting authority. Formal references are not v2 refinement proofs.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry3419154418805d515c6e9e0fa8297dbc83ed7dbe1795990d1135b3fdbbd70454.evidence.proof"
+      }
+    }
+  }
+}

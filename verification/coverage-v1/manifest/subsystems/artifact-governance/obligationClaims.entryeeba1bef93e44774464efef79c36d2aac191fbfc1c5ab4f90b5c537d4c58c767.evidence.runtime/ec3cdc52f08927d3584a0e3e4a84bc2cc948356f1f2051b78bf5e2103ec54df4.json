@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-ir/tests/artifact_governance.rs",
+    "command": "cargo test --locked -p norn-ir --test artifact_governance",
+    "selectors": {
+      "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.runtime.entryec3cdc52f08927d3584a0e3e4a84bc2cc948356f1f2051b78bf5e2103ec54df4.selectors"
+    }
+  }
+}

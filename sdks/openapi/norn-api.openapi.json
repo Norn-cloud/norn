@@ -1384,6 +1384,10 @@
           "transition"
         ],
         "properties": {
+          "acceptReceipt": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptance",
+            "description": "Bind a host-authenticated Function result before firing the transition."
+          },
           "entityArtifactId": {
             "type": "string"
           },
@@ -2229,6 +2233,13 @@
           },
           "extensions": {
             "$ref": "#/components/schemas/NornIrCompositionPackRootPropertyExtensions"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstance"
+            },
+            "description": "Declarations in the retained scoped graph; omitted when there are none."
           },
           "packId": {
             "type": "string"
@@ -4247,6 +4258,11 @@
           "info"
         ]
       },
+      "NornIrDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
       "NornIrDimensionPath": {
         "type": "object",
         "description": "A property reached by zero or more declared directional link roles.",
@@ -5961,6 +5977,30 @@
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",
             "description": "The widest type an implementing property may have."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrInterpretationEndpoint": {
+        "type": "object",
+        "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+        "required": [
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Retained artifact, resolved without namespace inference."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Receipt-profile semantic content digest."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version."
           }
         },
         "additionalProperties": false
@@ -9362,6 +9402,97 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrPackInstance": {
+        "type": "object",
+        "description": "A scoped declaration; imports and contained instances reference this same model.\nIdentity survives release upgrades. Structural admission grants no execution authority.",
+        "required": [
+          "instanceId",
+          "scope",
+          "pack",
+          "imports",
+          "instances"
+        ],
+        "properties": {
+          "imports": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyImports"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstanceRef"
+            }
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstancePropertyImports": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPackInstanceRef"
+        }
+      },
+      "NornIrPackInstancePropertyScope": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstanceRef": {
+        "type": "object",
+        "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
+        "required": [
+          "instanceId",
+          "pack"
+        ],
+        "properties": {
+          "instanceId": {
+            "type": "string"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrPolicyObligation": {
         "type": "object",
         "description": "One obligation of an [`ObligationPolicyRoot`].",
@@ -9976,6 +10107,47 @@
           "import",
           "system"
         ]
+      },
+      "NornIrReceiptAcceptance": {
+        "type": "object",
+        "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+        "required": [
+          "referenceField",
+          "manifestDigest",
+          "digestProperty",
+          "resultBindings"
+        ],
+        "properties": {
+          "digestProperty": {
+            "type": "string",
+            "description": "Writable text property receiving the checked receipt digest.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "description": "Exact admitted Function manifest the host must authenticate.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "referenceField": {
+            "type": "string",
+            "description": "Required string input member naming the immutable receipt digest."
+          },
+          "resultBindings": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptancePropertyResultBindings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrReceiptAcceptancePropertyResultBindings": {
+        "type": "object",
+        "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPropertyId"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrRecordMember": {
         "type": "object",

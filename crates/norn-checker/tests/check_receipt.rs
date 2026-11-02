@@ -15,7 +15,7 @@ use std::path::Path;
 
 use norn_checker::receipt::{
     CHECKER_NAME, CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, admission_receipt_sha256, codes,
-    recover_legacy_admission_receipt, verify_admission_receipt,
+    recover_legacy_admission_receipt,
 };
 use norn_checker::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
@@ -94,8 +94,12 @@ fn check_with(
         base: &base,
         tenant,
     };
-    check_artifact_set_with_receipt(&envelopes(artifacts), &context, limits)
-        .expect("receipt should be issued")
+    check_artifact_set_with_receipt(
+        &fixture_sources(&envelopes(artifacts), context.base),
+        &context,
+        limits,
+    )
+    .expect("receipt should be issued")
 }
 
 fn check(artifacts: &[Value]) -> CheckedArtifactSet {
@@ -316,9 +320,13 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&map))
-            .expect("receipt should be issued");
+    let checked = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&map),
+    )
+    .expect("receipt should be issued");
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let stored = compact(&checked.receipt);
     let receipt_json: Value = serde_json::from_str(&stored).expect("receipt JSON");
@@ -332,7 +340,10 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
         .expect("sidecar-bearing receipt verifies");
     assert_eq!(verified.flow_source_map(), Some(&map));
     let retained = norn_checker::check_artifact_set_with_verified_receipt(
-        &artifacts, &context, &limits, &verified,
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        &verified,
     )
     .expect("retained definitions re-admit");
     assert_eq!(
@@ -342,9 +353,13 @@ fn flow_source_map_is_checked_bound_and_retained_with_receipt_v3() {
 
     let mut stale = map;
     stale.flows[0].artifact_refs[0].sha256 = "0".repeat(64);
-    let refused =
-        check_artifact_set_with_flow_source_map(&artifacts, &context, &limits, Some(&stale))
-            .expect("stale map is a checker finding");
+    let refused = check_artifact_set_with_flow_source_map(
+        &fixture_sources(&artifacts, context.base),
+        &context,
+        &limits,
+        Some(&stale),
+    )
+    .expect("stale map is a checker finding");
     assert!(!refused.receipt.admitted);
     assert!(refused.diagnostics.iter().any(|finding| {
         finding.code.as_str() == norn_checker::flow_source_map::codes::STALE_ARTIFACT
@@ -958,4 +973,37 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
             body
         );
     }
+}
+
+fn fixture_sources(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> norn_checker::receipt::ReceiptSources {
+    let candidates = norn_ir::runtime::encode(artifacts).expect("receipt fixture");
+    let base = norn_ir::runtime::encode(base).expect("receipt fixture");
+    norn_checker::ReceiptSources::new(
+        candidates.as_array().expect("receipt fixture"),
+        base.as_array().expect("receipt fixture"),
+    )
+    .expect("receipt fixture")
+}
+
+fn verify_admission_receipt(
+    stored: &str,
+    hash: &str,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<norn_checker::ReceiptVersion, norn_checker::ReceiptError> {
+    let candidates = norn_ir::runtime::encode(artifacts)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
+    let installed = norn_ir::runtime::encode(base)
+        .map_err(|detail| norn_checker::ReceiptError::InvalidStoredReceipt { detail })?;
+    norn_checker::receipt::verify_admission_receipt_sources(
+        stored,
+        hash,
+        candidates.as_array().expect("receipt fixture"),
+        installed.as_array().expect("receipt fixture"),
+        limits,
+    )
 }

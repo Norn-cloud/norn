@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.inconsistent_dimension_binding",
+  "message": "a unit term cannot also be its quantity-kind/dimension term",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

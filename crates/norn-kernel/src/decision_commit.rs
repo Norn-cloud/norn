@@ -598,6 +598,9 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
+            // LawIR is not retained by this catalog. A law pin must not borrow
+            // the verified status of a similarly named EntityIR invariant.
+            DataQualityRuleRef::Law { .. } => Ok(DataQualityRuleClassification::Unverified),
             DataQualityRuleRef::Builtin { id, version } => {
                 Ok(if is_supported_builtin_rule(id, version) {
                     DataQualityRuleClassification::Builtin

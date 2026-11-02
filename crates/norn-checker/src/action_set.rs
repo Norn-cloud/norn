@@ -843,6 +843,71 @@ impl Defined<'_> {
                 collections,
             ));
         }
+        if let ActionEffectProgram::FireTransition {
+            accept_receipt: Some(binding),
+            ..
+        } = program
+        {
+            let reference = root
+                .input_schema
+                .get("properties")
+                .and_then(JsonValue::as_object)
+                .and_then(|properties| properties.get(&binding.reference_field));
+            let required = root
+                .input_schema
+                .get("required")
+                .and_then(JsonValue::as_array)
+                .is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .any(|field| field.as_string() == Some(binding.reference_field.as_str()))
+                });
+            let view = self
+                .effective_object_type
+                .as_ref()
+                .and_then(|view| view.as_ref().ok());
+            let writable = |id: &norn_ir::PropertyId| {
+                !id.as_str().starts_with("_norn")
+                    && id.as_str() != program.target().object_id_field
+                    && view.is_some_and(|view| {
+                        view.property(id.as_str())
+                            .is_some_and(|property| !property.computed)
+                            && view.lifecycle(id.as_str()).is_none()
+                            && !view.keys.iter().any(|key| key.components.contains(id))
+                    })
+            };
+            let digest_text = view
+                .and_then(|view| view.property(binding.digest_property.as_str()))
+                .is_some_and(|property| {
+                    matches!(
+                        property.kind,
+                        crate::EffectiveKind::Base(norn_ir::PropertyType::Text { .. })
+                    )
+                });
+            if !required
+                || reference
+                    .and_then(JsonValue::as_object)
+                    .and_then(|field| field.get("type"))
+                    .and_then(JsonValue::as_string)
+                    != Some("string")
+                || !binding.manifest_digest.is_well_formed()
+                || !writable(&binding.digest_property)
+                || !digest_text
+                || binding.result_bindings.is_empty()
+                || binding
+                    .result_bindings
+                    .keys()
+                    .any(|id| !writable(id) || id == &binding.digest_property)
+                || binding.result_bindings.values().any(|id| {
+                    !crate::property_types::matches_grammar(
+                        &crate::object_types::MEMBER_ID_GRAMMAR,
+                        id.as_str(),
+                    )
+                })
+            {
+                findings.push(finding(codes::TARGET_NOT_WRITABLE, "acceptReceipt requires a required string reference, a manifest digest, and writable typed result/digest properties".to_owned(), action, "/payload/effectProgram/acceptReceipt"));
+            }
+        }
         findings.extend(self.naming_series_findings(action, root, program));
         if let (
             ActionEffectProgram::FireTransition {
@@ -1821,6 +1886,103 @@ impl<'a> Model<'a> {
             }
         }
         findings
+    }
+}
+
+/// The object types admission binds, through the same [`Model`] the action
+/// and lifecycle-write checks resolve with: the single source for consumers
+/// that must agree with admission, such as the definition catalog.
+pub(crate) struct Admission<'a> {
+    model: Model<'a>,
+    artifacts: &'a [ArtifactEnvelope],
+    base: &'a [ArtifactEnvelope],
+}
+
+/// One admitted object type definition.
+#[derive(Clone, Copy)]
+pub(crate) struct AdmittedType<'m, 'a> {
+    defined: &'m Defined<'a>,
+}
+
+impl<'a> Admission<'a> {
+    pub(crate) fn new(
+        artifacts: &'a [ArtifactEnvelope],
+        base: &'a [ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+    ) -> Self {
+        Self {
+            model: Model::new(artifacts, base, registry, true),
+            artifacts,
+            base,
+        }
+    }
+
+    /// The definition an object type name binds to (decide-graph
+    /// `objectType` values, supertypes, owned-collection child types).
+    pub(crate) fn named(&self, name: &str) -> Option<AdmittedType<'_, 'a>> {
+        self.model
+            .object_type(name)
+            .map(|defined| AdmittedType { defined })
+    }
+
+    /// The definition an action effect pins, when its pinned entity artifact
+    /// defines the effect's object kind ([`effect_target_findings`]).
+    pub(crate) fn effect_target(
+        &self,
+        program: &ActionEffectProgram,
+    ) -> Option<AdmittedType<'_, 'a>> {
+        let target = program.target();
+        let pinned = self.artifacts.iter().chain(self.base).find(|candidate| {
+            candidate.artifact_id == target.entity_artifact_id
+                && candidate.version == target.entity_artifact_version
+        })?;
+        self.model
+            .defined_by(pinned)
+            .filter(|defined| defined.name == target.object_kind)
+            .map(|defined| AdmittedType { defined })
+    }
+}
+
+impl<'m, 'a> AdmittedType<'m, 'a> {
+    /// The entity artifact that defines the type.
+    pub(crate) const fn artifact(self) -> &'a ArtifactEnvelope {
+        self.defined.artifact
+    }
+
+    pub(crate) fn name(self) -> &'m str {
+        &self.defined.name
+    }
+
+    fn effective(self) -> Option<&'m EffectiveObjectType> {
+        self.defined.effective_object_type.as_ref()?.as_ref().ok()
+    }
+
+    /// The effective supertype names, nearest first.
+    pub(crate) fn supertypes(self) -> Vec<&'m str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .lineage
+                    .iter()
+                    .skip(1)
+                    .map(ObjectTypeName::as_str)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The child type names of every effective owned collection, inherited
+    /// ones included.
+    pub(crate) fn owned_child_types(self) -> Vec<&'m str> {
+        self.effective()
+            .map(|effective| {
+                effective
+                    .owned_collections
+                    .iter()
+                    .map(|collection| collection.child_type.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 

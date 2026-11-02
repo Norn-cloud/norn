@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "test:deleting_a_posted_leg_through_its_unmarked_ancestor_is_refused_atomically"
+}

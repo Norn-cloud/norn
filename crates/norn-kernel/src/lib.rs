@@ -68,6 +68,7 @@ mod partition_slice;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
 mod observations;
 pub mod quantity;
+pub mod receipt_binding;
 pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;

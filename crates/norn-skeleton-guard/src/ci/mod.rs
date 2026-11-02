@@ -23,6 +23,16 @@ const GATE_FILES: [&str; 10] = [
     "crates/norn-checker/tests/non_code_literals.baseline.json",
 ];
 
+/// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
+const MERGE_RUNNER: &str = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('[\"self-hosted\",\"norn-merge\",\"norn-run-{0}\"]', github.run_id)) || 'ubuntu-24.04' }}";
+
+fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
+    matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
+        || (path == ".github/workflows/ci-policy.yml"
+            && matches!(job, "core" | "plan" | "test" | "phase" | "full")
+            && runner == Some(MERGE_RUNNER))
+}
+
 /// The longest merge-queue group the trusted lane walks; longer groups fail closed.
 const MAX_MERGE_GROUP: usize = 64;
 
@@ -106,12 +116,13 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             Ok(doc) => {
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
-                        if !matches!(
+                        if !runner_is_admitted(
+                            path,
+                            name,
                             job.get("runs-on").and_then(yaml::Value::as_str),
-                            Some("ubuntu-latest" | "ubuntu-24.04")
                         ) {
                             errors.push(format!(
-                                "{path}::{name}: only GitHub-hosted runners are admitted"
+                                "{path}::{name}: runner must be hosted or the exact merge-only opt-in"
                             ));
                         }
                     }
@@ -314,7 +325,7 @@ pub fn maintainer_approval(
     approver.ok_or_else(|| format!("no admin commented `{command}` unedited"))
 }
 
-/// The split coverage: `index.json` plus one `subsystems/<id>.json` per subsystem.
+/// The split coverage: subsystem metadata and independently addressed obligation entries.
 const COVERAGE_MANIFEST: &str = "verification/coverage-v1/manifest";
 const COVERAGE_SUBSYSTEMS: &str = "verification/coverage-v1/manifest/subsystems";
 
@@ -332,10 +343,6 @@ fn retained_obligations(root: &Path, base: &Path) -> Result<(), String> {
 }
 
 fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
-    let load = |path: &Path| -> Result<serde_json::Value, String> {
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        serde_json::from_slice(&bytes).map_err(|error| error.to_string())
-    };
     let manifest = root.join(COVERAGE_MANIFEST);
     if !manifest.join("index.json").is_file() {
         return Err(format!("{COVERAGE_MANIFEST}/index.json is missing"));
@@ -346,42 +353,75 @@ fn enrolled_obligations(root: &Path) -> Result<Obligations, String> {
     for entry in entries {
         let entry = entry.map_err(|error| error.to_string())?;
         let name = entry.file_name();
-        let id = name
-            .to_str()
-            .and_then(|name| name.strip_suffix(".json"))
-            .filter(|id| !id.is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "{COVERAGE_SUBSYSTEMS}: unknown entry {}",
-                    name.to_string_lossy()
-                )
-            })?;
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
+        let raw = name.to_str().ok_or("invalid subsystem name")?;
+        let id = raw;
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         {
-            return Err(format!(
-                "{COVERAGE_SUBSYSTEMS}/{id}.json is not a regular file"
-            ));
+            return Err(format!("{COVERAGE_SUBSYSTEMS}: unknown entry {raw}"));
         }
-        enrolled.insert(id.to_owned(), obligations(&load(&entry.path())?)?);
+        if !entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            return Err(format!("{COVERAGE_SUBSYSTEMS}: unknown entry {raw}"));
+        }
+        let required = entry_obligations(&entry.path())?;
+        if enrolled.insert(id.to_owned(), required).is_some() {
+            return Err(format!("duplicate subsystem {id}"));
+        }
     }
     Ok(enrolled)
 }
 
-fn obligations(subsystem: &serde_json::Value) -> Result<BTreeSet<String>, String> {
-    subsystem
-        .get("obligations")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "missing subsystem obligations".to_owned())?
-        .iter()
-        .map(|id| {
-            id.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| "invalid obligation id".to_owned())
-        })
-        .collect()
+fn entry_obligations(directory: &Path) -> Result<BTreeSet<String>, String> {
+    use sha2::{Digest, Sha256};
+    let read = |path: &Path| -> Result<serde_json::Value, String> {
+        if !path
+            .symlink_metadata()
+            .map_err(|e| e.to_string())?
+            .is_file()
+        {
+            return Err(format!("{} is not a regular entry", path.display()));
+        }
+        serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())
+    };
+    let metadata = read(&directory.join("index.json"))?;
+    if metadata.get("obligations") != Some(&serde_json::json!({"$entries": "obligations"})) {
+        return Err("missing subsystem obligations entry field".to_owned());
+    }
+    let folder = directory.join("obligations");
+    match folder.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err("obligations is not a regular directory".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => return Err(error.to_string()),
+    }
+    let mut result = BTreeSet::new();
+    for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let value = read(&entry.path())?;
+        let id = value
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("invalid obligation entry value")?;
+        if value.as_object().is_none_or(|object| object.len() != 2)
+            || value
+                .get("order")
+                .and_then(serde_json::Value::as_u64)
+                .is_none()
+        {
+            return Err("invalid obligation entry envelope".to_owned());
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"entry:string\0");
+        hash.update(id.as_bytes());
+        let expected = format!("{:x}.json", hash.finalize());
+        if entry.file_name().to_str() != Some(expected.as_str()) || !result.insert(id.to_owned()) {
+            return Err("duplicate or mismatched obligation entry identity".to_owned());
+        }
+    }
+    Ok(result)
 }
 
 fn artifact_promotion_variants(root: &Path) -> Result<(), String> {
@@ -478,6 +518,61 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runner_routing_is_merge_only_opt_in_in_the_public_core_jobs() {
+        let path = ".github/workflows/ci-policy.yml";
+        for job in ["core", "plan", "test", "phase", "full"] {
+            assert!(super::runner_is_admitted(
+                path,
+                job,
+                Some(super::MERGE_RUNNER)
+            ));
+            for removed in [
+                "github.event_name == 'merge_group' && ",
+                "vars.NORN_MERGE_RUNNER == 'self-hosted' && ",
+            ] {
+                let changed = super::MERGE_RUNNER.replace(removed, "");
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            for event in [
+                "pull_request",
+                "pull_request_target",
+                "issue_comment",
+                "push",
+                "workflow_dispatch",
+            ] {
+                let changed = super::MERGE_RUNNER.replace("merge_group", event);
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            for (before, after) in [
+                ("norn-run-{0}", "norn-run-123"),
+                ("github.run_id", "github.event.pull_request.number"),
+                ("norn-run-{0}", "norn-merge"),
+            ] {
+                let changed = super::MERGE_RUNNER.replace(before, after);
+                assert!(!super::runner_is_admitted(path, job, Some(&changed)));
+            }
+            assert!(!super::runner_is_admitted(path, job, Some("self-hosted")));
+        }
+        for job in ["trusted-policy", "unknown"] {
+            assert!(!super::runner_is_admitted(
+                path,
+                job,
+                Some(super::MERGE_RUNNER)
+            ));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/other.yml",
+            "core",
+            Some(super::MERGE_RUNNER)
+        ));
+        assert!(super::runner_is_admitted(
+            path,
+            "trusted-policy",
+            Some("ubuntu-24.04")
+        ));
+    }
+
     use super::{compare_artifact_variants, contract_errors, maintainer_approval};
     use serde_json::{Value, json};
 
