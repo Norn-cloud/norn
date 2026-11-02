@@ -1,4 +1,4 @@
-#![cfg(not(target_family = "wasm"))]
+#![cfg(unix)]
 #![allow(
     clippy::expect_used,
     clippy::panic,

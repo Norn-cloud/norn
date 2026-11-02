@@ -36,7 +36,7 @@ pub struct SmtEvidence {
     /// Closed solver result.
     pub result: SmtResult,
 }
-#[cfg(any(test, not(target_family = "wasm")))]
+#[cfg(any(test, unix))]
 fn answer(output: &str, marker: &str) -> Result<SmtResult, &'static str> {
     let body = output
         .strip_prefix(&format!("{marker}\n"))
@@ -74,7 +74,7 @@ pub fn dispatch_smt(
         obligation_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
         result: SmtResult::Unknown("unsupported_platform".into()),
     };
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(unix)]
     {
         let mut evidence = evidence;
         match host::dispatch(text, bound, binary, expected_sha256, &mut evidence) {
@@ -83,13 +83,13 @@ pub fn dispatch_smt(
         }
         evidence
     }
-    #[cfg(target_family = "wasm")]
+    #[cfg(not(unix))]
     {
         let _host_only = (bound, binary, expected_sha256);
         evidence
     }
 }
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 mod host {
     use super::{
         Digest, Duration, Path, Sha256, SmtBound, SmtEvidence, SmtResult, Z3_VERSION, answer,
@@ -100,7 +100,15 @@ mod host {
         process::{Command, Stdio},
         time::Instant,
     };
-    use wait_timeout::ChildExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    fn temporary_file() -> Result<File, &'static str> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!("norn-smt-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let file = std::fs::OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).open(&path).map_err(|_error| "io")?;
+        std::fs::remove_file(path).map_err(|_error| "io")?;
+        Ok(file)
+    }
     fn capture(file: &mut File, limit: usize) -> Result<String, &'static str> {
         file.rewind().map_err(|_error| "io")?;
         let mut bytes = Vec::new();
@@ -133,11 +141,11 @@ mod host {
         if input.len() > limit {
             return Err("invalid_bound");
         }
-        let mut stdin = tempfile::tempfile().map_err(|_error| "io")?;
+        let mut stdin = temporary_file()?;
         stdin.write_all(input.as_bytes()).map_err(|_error| "io")?;
         stdin.seek(SeekFrom::Start(0)).map_err(|_error| "io")?;
-        let mut stdout = tempfile::tempfile().map_err(|_error| "io")?;
-        let mut stderr = tempfile::tempfile().map_err(|_error| "io")?;
+        let mut stdout = temporary_file()?;
+        let mut stderr = temporary_file()?;
         let mut child = Command::new(binary)
             .args(args)
             .stdin(Stdio::from(stdin))
@@ -145,17 +153,17 @@ mod host {
             .stderr(Stdio::from(stderr.try_clone().map_err(|_error| "io")?))
             .spawn()
             .map_err(|_error| "missing_or_unexecutable_binary")?;
-        let status = child.wait_timeout(deadline.saturating_duration_since(Instant::now()));
-        let status = match status {
-            Ok(Some(status)) => status,
-            other => {
-                let _killed = child.kill();
-                let _reaped = child.wait();
-                return Err(if other.is_err() {
-                    "process_error"
-                } else {
-                    "timeout"
-                });
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                state => {
+                    if state.is_err() || Instant::now() >= deadline {
+                        let _killed = child.kill();
+                        let _reaped = child.wait();
+                        return Err(if state.is_err() { "process_error" } else { "timeout" });
+                    }
+                    std::thread::sleep(Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())));
+                }
             }
         };
         if !status.success() {
