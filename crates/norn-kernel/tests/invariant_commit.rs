@@ -3336,3 +3336,22 @@ fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
         matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics")
     );
 }
+
+#[test]
+fn native_pack_scrap_melt_uses_the_core_conversion_binding() {
+    let entity: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/packs/demo-erpnext/artifacts/demo.erpnext.ScrapMelt.entity.json"
+    )).expect("generated pack type");
+    let interface: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Conversion.interface.json"
+    )).expect("generated core invariant");
+    let root: norn_ir::EntityRootV2 = norn_ir::runtime::decode(&entity.payload.to_json_value()).expect("object");
+    let contract: norn_ir::EntityInterfaceRootV2 = norn_ir::runtime::decode(&interface.payload.to_json_value()).expect("interface");
+    for (output, loss, accepted) in [("99.2","0.8",true),("99.2","0",false),("100.1","-0.1",false),("99.1999","0.8001",false)] {
+        let mut cell: CommandCell = MemoryCell::new(|_| JsonObject::new()).with_types(vec![root.object_type.clone()]).with_interfaces(vec![contract.interface.clone()]);
+        let values = serde_json::from_str(&format!(r#"{{"id":"MELT-1","input_quantity":100,"output_quantity":{output},"loss_quantity":{loss}}}"#)).expect("exact g@3 values");
+        let result = cell.commit(CellCommit {writes:vec![FactWrite {key:FactKey::new("demo.erpnext.ScrapMelt", "MELT-1"),expected:FactVersion::ABSENT,mutation:FactMutation::Put{values}}],..CellCommit::empty()});
+        assert_eq!(result.is_ok(), accepted);
+        if !accepted { assert!(cell.ledger().is_empty()); }
+    }
+}
