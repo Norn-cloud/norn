@@ -2,7 +2,8 @@
   "name": "norn-api",
   "ring": "Zero",
   "allowed_norn": [
-    "norn-ir"
+    "norn-ir",
+    "norn-kernel"
   ],
   "dev_only_norn": [],
   "third_party": [
