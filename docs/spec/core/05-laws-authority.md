@@ -73,3 +73,5 @@ Scenarios: **GUARANTEES-CHECKED** retains checked reference/implementation scope
 **PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
 
 **LAW-CONVERSION-OVERLAY:** Given retained core law and concrete Melt bindings, adding a loss bound retains the same effective law digest and generates pending guard goals; replacing its inherited invariant with `true` refuses through the shared Core 06 validator as `core.composition.overlay_conflict` / `weakens_inherited`, with no new approval authority.
+
+**GUARANTEES-PACK-1:** The main-gated demo projects checker-admitted pack LawIR inventories and the existing evidence matrix; absent data-beat declarations remain "declaration missing → unknown", and scenario names never supply law IDs or checked evidence.

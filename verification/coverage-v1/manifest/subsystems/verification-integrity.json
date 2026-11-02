@@ -362,7 +362,12 @@
     "tools/norn-ts/src/parity/stock-trace.ts",
     "tools/norn-ts/test/stock-trace.test.ts",
     "scripts/guarantees_matrix.py",
-    "scripts/test_guarantees_matrix.py"
+    "scripts/test_guarantees_matrix.py",
+    "crates/norn-checker/examples/pack_guarantees.rs",
+    "scripts/demo/guarantees_drop.py",
+    "scripts/demo/drop-12-guarantees.sh",
+    "scripts/demo/drop-12-guarantees.md",
+    "scripts/test_guarantees_drop.py"
   ],
   "obligations": [
     "INV-VER-NO-PROOF-HOLES",
