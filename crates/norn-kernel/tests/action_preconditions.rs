@@ -379,6 +379,7 @@ fn hidden_absent_and_oversized_slice_objects_have_the_same_opaque_refusal() {
 }
 
 enum CommitRace {
+    Fact(FactKey, JsonObject),
     RelatedFact,
     Tombstone,
     LinkSetTooLarge,
@@ -458,6 +459,7 @@ impl CellHost for RacingCell {
         mut commit: CellCommit<FactEvent, JsonObject, JsonObject>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         match self.race.take() {
+            Some(CommitRace::Fact(key, values)) => put(self.cell.get_mut(), key, values),
             Some(CommitRace::RelatedFact) => put(
                 self.cell.get_mut(),
                 FactKey::new("fashion.Season", "SS26"),
@@ -995,12 +997,6 @@ fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
             .code(),
         "action.precondition_failed"
     );
-    assert!(
-        !cell
-            .load(&FactKey::new("demo.ParameterProbe", "wrong"))
-            .expect("no partial write")
-            .exists()
-    );
     invocation.idempotency_key = "missing-rate".into();
     invocation.input.insert(
         "effective_at".into(),
@@ -1011,5 +1007,34 @@ fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
             .expect_err("absent optional default")
             .code(),
         "core.composition.parameter_missing"
+    );
+    invocation.idempotency_key = "racing-rate".into();
+    invocation.input.insert(
+        "effective_at".into(),
+        norn_ir::RuntimeValue::from("2026-06-30T00:00:00Z"),
+    );
+    invocation.input.insert(
+        "value".into(),
+        norn_ir::RuntimeValue::from_json_text("0.12").expect("current rate"),
+    );
+    let key = FactKey::new("demo.NumericSetting", "rate");
+    let mut changed = cell.load(&key).expect("setting").values.expect("values");
+    changed.insert("value".into(), norn_ir::RuntimeValue::from(1));
+    let mut host = RacingCell {
+        cell: RefCell::new(cell),
+        race: Some(CommitRace::Fact(key, changed)),
+        bounded_race: RefCell::new(None),
+    };
+    assert_eq!(
+        commit_action(&mut host, &catalog, &invocation, &Allow)
+            .expect_err("setting raced at commit")
+            .code(),
+        "action.precondition_stale_read"
+    );
+    assert!(
+        !host
+            .load(&FactKey::new("demo.ParameterProbe", "wrong"))
+            .expect("no raced write")
+            .exists()
     );
 }
