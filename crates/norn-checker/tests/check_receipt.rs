@@ -779,7 +779,7 @@ fn alpha_golden_controls_remain_unknown_until_kernel_replay() {
     ))
     .expect("golden");
     let checked = norn_checker::check_artifact_set_with_receipt(
-        &artifacts,
+        &fixture_sources(&artifacts, &[]),
         &norn_checker::EntityArtifactSetContext {
             registry: &std::collections::BTreeSet::new(),
             base: &[],
