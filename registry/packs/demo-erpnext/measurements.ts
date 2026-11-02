@@ -75,7 +75,7 @@ export const Mapping = Norn.mapping({
 export const PurityWithinBounds = Norn.law({
   id: "demo.erpnext.purity.law", title: "Measurement purity is within zero and one", version: "0.1.0",
   wordings: { "demo.erpnext.purity_in_range": {
-    lawDigest: "0000000000000000000000000000000000000000000000000000000000000000",
+    lawDigest: "5f430bdd5473e7eac2d6f5ebb08d1f2b399598000772d774b64221e9065c4a5f",
     slots: {
       scope: { en: "Each synthetic ERPNext measurement", ar: "كل قياس اصطناعي من ERPNext" },
       activation: { en: "At every committed state", ar: "في كل حالة معتمدة" },
@@ -98,7 +98,7 @@ export const FineMassDefinition = Norn.law({
   id: "demo.erpnext.fine_mass_definition.law", title: "Fine mass equals gross mass times purity", version: "0.1.0",
   dependencies: [{ artifactId: "demo.erpnext.StockEntryMeasurement.entity", kind: "entity", version: "0.1.0", required: true }],
   wordings: { "demo.erpnext.fine_mass_definition": {
-    lawDigest: "0000000000000000000000000000000000000000000000000000000000000000",
+    lawDigest: "195ace9eb8fd04495af8fa8609378cfcbd330279a83e5f758829d7ab1113e91c",
     slots: {
       scope: { en: "Each synthetic ERPNext measurement", ar: "كل قياس اصطناعي من ERPNext" },
       activation: { en: "At every committed state", ar: "في كل حالة معتمدة" },
