@@ -738,15 +738,23 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
+        runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
+        expression = runner.removeprefix("${{ ").removesuffix(" }}")
+        for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+            for variable in ("", "boat", "self-hosted", "other"):
+                concrete = expression.replace("github.event_name", repr(event)).replace(
+                    "vars.NORN_MERGE_RUNNER", repr(variable)).replace("&&", " and ").replace("||", " or ")
+                expected = "boat" if event == "merge_group" and variable == "boat" else "ubuntu-24.04"
+                if eval(concrete, {"__builtins__": {}}, {}) != expected:
+                    raise AssertionError(f"Boat runner evaluation drift: {event}/{variable}")
         for name in ("core", "plan", "test", "full", "trusted-policy"):
-            unsafe = ["self-hosted", ["self-hosted", "norn-merge"],
+            unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
-                      runner.replace("vars.NORN_MERGE_RUNNER == 'self-hosted' && ", ""),
-                      runner.replace("norn-run-{0}", "norn-run-123"),
-                      runner.replace("github.run_id", "github.event.pull_request.number"),
-                      runner.replace("|| 'ubuntu-24.04'", "|| 'self-hosted'")]
+                      runner.replace("vars.NORN_MERGE_RUNNER == 'boat' && ", ""),
+                      runner.replace("== 'boat'", "== 'self-hosted'"),
+                      runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             if name == "trusted-policy":
