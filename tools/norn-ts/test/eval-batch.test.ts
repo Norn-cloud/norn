@@ -16,10 +16,11 @@ test("native eval reports every record and fails a partially refused batch", () 
     const source = join(dir, "rule.ts")
     writeFileSync(source, `import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
+export const Task = Norn.type({name: "demo.Task", title: "Task", version: "1.0.0", properties: Schema.Struct({id: Schema.String}), identity: [{name: "primary", properties: ["id"]}]})
 export const Rule = Norn.decision({
   id: "demo.batch", title: "Batch", version: "1.0.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
   input: Schema.Struct({slice: Schema.Struct({}), event: Schema.Struct({kind: Schema.String})}),
-  output: Schema.Struct({facts: Schema.Array(Schema.Struct({op: Schema.Literal("delete"), objectType: Schema.String, key: Schema.String})), commands: Schema.Array(Schema.Struct({actionId: Schema.String})), timers: Schema.Array(Schema.Struct({id: Schema.String}))}),
+  output: Schema.Struct({facts: Schema.Array(Schema.Struct({op: Schema.Literal("delete"), objectType: Schema.Literal("demo.Task"), key: Schema.String})), commands: Schema.Array(Schema.Struct({actionId: Schema.String})), timers: Schema.Array(Schema.Struct({id: Schema.String}))}),
 }, (input) => ({facts: [], commands: [], timers: []}))`)
     const compiled = compileDefinitions(source, {scope: {orgId: "org_demo", environmentId: "dev"}, sourcePath: "rule.ts"})
     if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
