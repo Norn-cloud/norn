@@ -422,6 +422,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
     require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
+    require(all(jobs[name].get("name", name) == name for name in ("core", "plan", "full", "trusted-policy")),
+            "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
     for name, job in jobs.items():

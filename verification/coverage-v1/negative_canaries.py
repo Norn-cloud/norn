@@ -701,6 +701,10 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        for name in ("core", "plan", "full", "trusted-policy"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["name"] = "renamed"
+            rejected(f"renamed control check {name}", document)
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]

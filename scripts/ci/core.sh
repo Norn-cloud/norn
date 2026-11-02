@@ -204,7 +204,7 @@ PY
       git archive HEAD | tar -x -C "$upstream/distribution"
       cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD"
       ;;
-    *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
+    *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
 }
 bundle_plan() {
@@ -215,7 +215,7 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# Task-service seconds, excluding setup, from Public core run 41519803350.
+# core.sh step seconds from Public core run 41519803350.
 weights = {
     "test/heavy-1": 315, "test/heavy-2": 485, "test/heavy-3": 259,
     "test/heavy-4": 260, "test/heavy-5": 294, "test/heavy-6": 282,
@@ -236,7 +236,8 @@ for field, prefix in (("shard", "test/"), ("phase", "phase/")):
     tasks.extend(prefix + value for value in values)
 if len(tasks) != len(set(tasks)) or set(tasks) - known:
     raise SystemExit("duplicate or unknown planned task")
-count = min(6, len(tasks), (sum(weights[task] for task in tasks) + 659) // 660)
+target_seconds = 11 * 60
+count = min(6, len(tasks), (sum(weights[task] for task in tasks) + target_seconds - 1) // target_seconds)
 bins, costs = [[] for _ in range(count)], [0] * count
 for task in sorted(tasks, key=lambda task: (-weights[task], task)):
     index = min(range(count), key=lambda index: (costs[index], index))
