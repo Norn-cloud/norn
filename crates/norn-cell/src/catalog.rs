@@ -159,6 +159,9 @@ impl CatalogSnapshot {
 }
 
 fn identity(row: &Value) -> Value {
+    if row.get("subject").is_some() {
+        return row.clone();
+    }
     if let Some(at) = row.get("at") {
         return at.clone();
     }
@@ -207,7 +210,8 @@ mod tests {
         #[test]
         fn exact_member_identity_is_preserved(id in "test.[a-z]{1,12}", version in "[1-9]\\.[0-9]\\.[0-9]", name in "[A-Z][a-z]{0,8}") {
             let at = MemberRef { artifact_id:id, version, member:Member::Type {type_name:format!("test.{name}")} };
-            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "role":"thing"})), serde_json::json!(at));
+            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "role":"thing"})), serde_json::json!(at.clone()));
+            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "subject":at.clone()})), serde_json::json!({"at":at.clone(), "subject":at}));
         }
     }
 }
