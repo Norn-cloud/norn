@@ -1,0 +1,7 @@
+{
+  "code": "consistency.theory.malformed",
+  "message": "the lowered theory is malformed: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

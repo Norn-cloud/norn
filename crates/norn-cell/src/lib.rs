@@ -54,6 +54,7 @@ pub mod system;
 mod write;
 
 pub use error::CellError;
+pub use history::{FactSnapshot, FactVersionEvidence};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{

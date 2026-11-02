@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.invalid_dependency",
+  "message": "dependency is malformed or self-referential: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

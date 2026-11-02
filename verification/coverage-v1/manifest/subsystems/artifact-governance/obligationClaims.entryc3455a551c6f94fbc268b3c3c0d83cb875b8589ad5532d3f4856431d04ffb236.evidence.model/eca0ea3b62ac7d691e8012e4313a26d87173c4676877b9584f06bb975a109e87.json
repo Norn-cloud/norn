@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.model.entryeca0ea3b62ac7d691e8012e4313a26d87173c4676877b9584f06bb975a109e87.selectors"
+    }
+  }
+}

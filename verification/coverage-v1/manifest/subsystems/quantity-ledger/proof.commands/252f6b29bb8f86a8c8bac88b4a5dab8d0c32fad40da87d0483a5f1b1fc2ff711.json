@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "lean -DwarningAsError=true verification/quantity-batch-atomicity-v1/proofs/QuantityBatchAtomicity.lean"
+}

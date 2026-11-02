@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.invalid_timestamp",
+  "message": "{value} is not an RFC 3339 timestamp with an explicit offset",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

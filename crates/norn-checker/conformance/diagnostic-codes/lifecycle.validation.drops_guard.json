@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.drops_guard",
+  "message": "transition {id} drops the inherited guard {guard}; a subtype restates every inherited guard and may only append its own",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

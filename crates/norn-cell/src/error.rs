@@ -41,6 +41,10 @@ pub enum CellError {
         /// Retained law whose complete scope cannot yet be resolved.
         law_id: String,
     },
+    /// A historical input was recorded after the requested knowledge cutoff.
+    #[error("core.world.temporal_leakage")]
+    TemporalLeakage,
+
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
     HistoricalValueUnproven(String),
