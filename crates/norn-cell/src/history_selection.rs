@@ -26,7 +26,7 @@ pub(crate) const fn receipt_last_sequence(first: u64, count: u64) -> Option<u64>
 
 #[cfg(test)]
 mod tests {
-    use super::{select_known_version,receipt_last_sequence};
+    use super::{receipt_last_sequence, select_known_version};
     use norn_testkit::proptest::prelude::*;
     proptest! {
         #[test]
