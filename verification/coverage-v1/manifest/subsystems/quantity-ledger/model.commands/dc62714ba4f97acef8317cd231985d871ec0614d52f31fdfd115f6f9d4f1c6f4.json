@@ -1,0 +1,4 @@
+{
+  "order": 9,
+  "value": "quint verify verification/quantity-unit-dimension-v1/models/quantity-unit-dimension.qnt --backend apalache --invariants typeOk certificateRemainsPinned acceptedPostingHasExactBinding differentDimensionCannotSubstitute differentDimensionsCannotBalance --max-steps 8"
+}

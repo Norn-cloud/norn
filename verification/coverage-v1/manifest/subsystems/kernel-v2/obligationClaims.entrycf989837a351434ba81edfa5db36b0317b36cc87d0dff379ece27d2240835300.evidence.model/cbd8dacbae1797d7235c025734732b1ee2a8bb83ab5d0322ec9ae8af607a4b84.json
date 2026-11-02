@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/kernel-v2/models/projection-trust.qnt",
+    "command": "quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entrycf989837a351434ba81edfa5db36b0317b36cc87d0dff379ece27d2240835300.evidence.model.entrycbd8dacbae1797d7235c025734732b1ee2a8bb83ab5d0322ec9ae8af607a4b84.selectors"
+    }
+  }
+}

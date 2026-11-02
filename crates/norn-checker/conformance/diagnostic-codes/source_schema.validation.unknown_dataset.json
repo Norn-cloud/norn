@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.unknown_dataset",
+  "message": "dataset {dataset} is not declared",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

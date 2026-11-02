@@ -1,0 +1,4 @@
+{
+  "order": 4,
+  "value": "The current single authority-file writer serializes cardinality candidate-set checks; a future per-owner parallel topology must introduce an equivalent relation-kind/index consistency owner."
+}

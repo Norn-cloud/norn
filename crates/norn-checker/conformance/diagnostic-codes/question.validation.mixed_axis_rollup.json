@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.mixed_axis_rollup",
+  "message": "Simultaneous time and non-time reductions require an ordered reduction contract.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.unknown_property",
+  "message": "lifecycle property {property} is not a property of the type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

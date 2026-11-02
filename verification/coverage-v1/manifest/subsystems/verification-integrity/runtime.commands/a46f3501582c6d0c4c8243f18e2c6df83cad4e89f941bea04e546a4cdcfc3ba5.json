@@ -1,0 +1,4 @@
+{
+  "order": 7,
+  "value": "python3 scripts/check-proof-holes.py"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.cycle",
+  "message": "Ratio dependencies must be acyclic.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

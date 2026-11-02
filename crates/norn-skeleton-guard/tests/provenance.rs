@@ -491,7 +491,7 @@ fn symlink_to_outside_candidate_is_never_read() {
 }
 
 const COVERAGE_INDEX: &str = "verification/coverage-v1/manifest/index.json";
-const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quantity-ledger.json";
+const COVERAGE_LEDGER: &str = "verification/coverage-v1/manifest/subsystems/quantity-ledger/obligations/2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26.json";
 
 fn policy_fixture() -> Fixture {
     let mut fixture = Fixture::new();
@@ -514,8 +514,13 @@ fn policy_fixture() -> Fixture {
     }
     fixture.add(COVERAGE_INDEX, b"{}", "code");
     fixture.add(
+        "verification/coverage-v1/manifest/subsystems/quantity-ledger/index.json",
+        br#"{"obligations":{"$entries":"obligations"}}"#,
+        "code",
+    );
+    fixture.add(
         COVERAGE_LEDGER,
-        br#"{"obligations":["synthetic-preserved-obligation"]}"#,
+        br#"{"order":0,"value":"synthetic-preserved-obligation"}"#,
         "code",
     );
     fixture.add("crates/norn-skeleton-guard/baseline.json", b"{}", "code");
@@ -601,14 +606,7 @@ fn trusted_policy_preserves_retained_core_obligations() {
     let base = policy_fixture();
     let mut candidate = policy_fixture();
     let path = COVERAGE_LEDGER;
-    let record = candidate
-        .records
-        .iter()
-        .position(|record| record["path"] == path)
-        .expect("coverage record");
-    candidate.write(path, br#"{"obligations":[]}"#);
-    candidate.records[record]["sha256"] = candidate.reference(path)["sha256"].clone();
-    candidate.save();
+    drop_file(&mut candidate, path);
     let errors = norn_skeleton_guard::ci::run(candidate.root(), base.root());
     assert!(
         errors
@@ -616,6 +614,47 @@ fn trusted_policy_preserves_retained_core_obligations() {
             .any(|error| error.contains("retained core obligations were removed")),
         "{errors:?}"
     );
+}
+
+#[test]
+fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entries() {
+    let base = policy_fixture();
+    for change in ["none", "missing", "empty", "identity", "order", "extra"] {
+        let mut candidate = policy_fixture();
+        drop_file(&mut candidate, COVERAGE_LEDGER);
+        let directory = "verification/coverage-v1/manifest/subsystems/quantity-ledger";
+        let id = "synthetic-preserved-obligation";
+        let hash = "2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26";
+        let name = if change == "identity" { "wrong" } else { hash };
+        let mut value = json!({"order": 0, "value": id});
+        if change == "order" {
+            value["order"] = json!(true);
+        }
+        if change == "extra" {
+            value["extra"] = json!(true);
+        }
+        let path = format!("{directory}/obligations/{name}.json");
+        candidate.add(&path, &serde_json::to_vec(&value).unwrap(), "code");
+        if matches!(change, "missing" | "empty") {
+            drop_file(&mut candidate, &path);
+            if change == "empty" {
+                fs::remove_dir(candidate.root().join(format!("{directory}/obligations"))).unwrap();
+            }
+        }
+        candidate.save();
+        index_fixture(&candidate);
+        let baseline = if change == "empty" {
+            candidate.root()
+        } else {
+            base.root()
+        };
+        let errors = norn_skeleton_guard::ci::run(candidate.root(), baseline);
+        if matches!(change, "none" | "empty") {
+            assert!(errors.is_empty(), "{errors:?}");
+        } else {
+            assert!(!errors.is_empty(), "accepted {change}");
+        }
+    }
 }
 
 /// Remove `path` and its record from a fixture, as a pull request would.
@@ -638,6 +677,16 @@ fn trusted_policy_refuses_a_dropped_subsystem_a_missing_index_and_stray_entries(
     };
     let mut dropped = policy_fixture();
     drop_file(&mut dropped, COVERAGE_LEDGER);
+    drop_file(
+        &mut dropped,
+        "verification/coverage-v1/manifest/subsystems/quantity-ledger/index.json",
+    );
+    fs::remove_dir_all(
+        dropped
+            .root()
+            .join("verification/coverage-v1/manifest/subsystems/quantity-ledger"),
+    )
+    .unwrap();
     refused(
         &dropped,
         "quantity-ledger: retained core obligations were removed",
