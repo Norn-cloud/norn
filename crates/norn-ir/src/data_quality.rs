@@ -40,6 +40,17 @@ pub enum InvariantOwner {
     deny_unknown_fields
 )]
 pub enum DataQualityRuleRef {
+    /// OBS-EVIDENCE-1: preserve the governing law identity and exact definition
+    /// pin when imported truth produces a finding rather than a refusal.
+    /// A reference alone does not establish evaluation or enforcement.
+    Law {
+        /// Artifact containing the governing LawIR.
+        artifact_id: String,
+        /// Stable LawIR identity, independent of its artifact name.
+        law_id: String,
+        /// Canonical declaration digest, including its scope and predicate.
+        version: String,
+    },
     /// An EntityIR invariant pinned by artifact version or declaration digest.
     Invariant {
         /// The object type or interface that declares this invariant.
