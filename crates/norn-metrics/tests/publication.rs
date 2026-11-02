@@ -1,5 +1,5 @@
 //! ANALYSIS-PUBLISH-1: real recorded Function evidence enters the governed action.
-#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, missing_docs, reason = "synthetic publication acceptance")]
+#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, clippy::print_stdout, missing_docs, reason = "synthetic publication acceptance")]
 #[path = "support/scrap_world.rs"] mod source;
 use std::collections::BTreeMap;
 use norn_authz::{AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput, ResourceInput, ScopeKey};
@@ -7,7 +7,7 @@ use norn_cell::{CommitBatch, EffectRow, FactWriteRow, OutboxCommand, SqliteCell}
 use norn_ir::{RuntimeObject, RuntimeValue as Value, function::{Digest,FunctionInvocation,FunctionReceipt}};
 use norn_kernel::{ActionAuthorizer,ActionCall,ActionOutcome,CellHost,Command,CommandId,DecisionTurn,FactKey,FreshnessPolicy,Generation,IdempotencyKey,LogicalTime,TypeCatalog,World,commit_action};
 use norn_kernel::result_reconciliation::{Completion,DispatchedCommand,InvalidReceipt,ReceiptValidator,ResultAuthorizer,ResultAuthzRequest,ResultChecks,ResultDenial};
-use norn_metrics::{host::ForecastSummary,producer::ForecastExport};
+use norn_metrics::{producer::ForecastExport};
 const REGISTRATION: &[u8] = br#"{"scope":"synthetic descriptive forecast","thresholdGrams":1}"#;
 fn docs() -> Digest { Digest::of_json_document(REGISTRATION).expect("declared before fitting") }
 fn export(world: &source::SourceWorld) -> ForecastExport<'_> {

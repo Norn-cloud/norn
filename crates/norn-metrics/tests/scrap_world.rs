@@ -1,5 +1,5 @@
 //! DATA-FORECAST: historical evidence feeds the real statistical Function.
-#![allow(clippy::expect_used, clippy::panic, missing_docs, reason = "synthetic acceptance scenario")]
+#![allow(clippy::expect_used, clippy::panic, clippy::print_stdout, missing_docs, reason = "synthetic acceptance scenario")]
 #[path = "support/scrap_world.rs"] mod source;
 use norn_ir::function::Digest;
 use norn_metrics::producer::{ForecastExport,prepare_forecast};
