@@ -908,8 +908,13 @@ where
     // TXN-RULE-1: never silently execute only part of a declared closure.
     if action.synchronous_rule.is_some() {
         crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
-        if !matches!(action.effect_program, Some(ActionEffectProgram::FireTransition { .. })) {
-            return Err(crate::synchronous_rule::refused("only transition actions admit a synchronous writer"));
+        if !matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::FireTransition { .. })
+        ) {
+            return Err(crate::synchronous_rule::refused(
+                "only transition actions admit a synchronous writer",
+            ));
         }
     }
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
@@ -1094,28 +1099,59 @@ where
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let mut changes = if let Some(rule) = rule {
-        let output = rule.evaluate(call, &preparation.effective_input, &slice.values, &mut preparation.remaining_fuel)?;
-        check_action_envelope::<H::Error>(limits, output.facts.len().saturating_add(1), action.commands.len())?;
+        let output = rule.evaluate(
+            call,
+            &preparation.effective_input,
+            &slice.values,
+            &mut preparation.remaining_fuel,
+        )?;
+        check_action_envelope::<H::Error>(
+            limits,
+            output.facts.len().saturating_add(1),
+            action.commands.len(),
+        )?;
         for change in &output.facts {
             let (key, operation) = crate::synchronous_rule::writer_target(change)?;
             if key.object_type.as_str().starts_with("norn.")
-                || !action.writes.iter().any(|write| write.entity_kind == key.object_type.as_str() && write.change == operation)
+                || !action.writes.iter().any(|write| {
+                    write.entity_kind == key.object_type.as_str() && write.change == operation
+                })
                 || (key == target && matches!(change, FactChange::Transition { .. }))
             {
-                return Err(crate::synchronous_rule::refused("the rule wrote outside the declared writer contract"));
+                return Err(crate::synchronous_rule::refused(
+                    "the rule wrote outside the declared writer contract",
+                ));
             }
             if operation == norn_ir::WriteChange::Created {
                 if !slice.facts.contains_key(&key) {
-                    let state = authorize_upsert_target(host, call, &preparation.effective_input, authorizer, &key)?;
+                    let state = authorize_upsert_target(
+                        host,
+                        call,
+                        &preparation.effective_input,
+                        authorizer,
+                        &key,
+                    )?;
                     slice.facts.insert(key, state);
                 }
             } else {
-                let state = slice.facts.get(&key).ok_or_else(|| crate::synchronous_rule::refused("a modified object is outside the captured slice"))?;
-                authorize_current_target(call, &preparation.effective_input, authorizer, &key, state)?;
+                let state = slice.facts.get(&key).ok_or_else(|| {
+                    crate::synchronous_rule::refused(
+                        "a modified object is outside the captured slice",
+                    )
+                })?;
+                authorize_current_target(
+                    call,
+                    &preparation.effective_input,
+                    authorizer,
+                    &key,
+                    state,
+                )?;
             }
         }
         output.facts
-    } else { Vec::new() };
+    } else {
+        Vec::new()
+    };
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -3622,10 +3658,23 @@ where
     }
 
     let authorized_targets: Vec<_> = if record.rule_binding.is_some() {
-        prepared.writes.iter().map(|write| write.key.clone()).collect()
-    } else { vec![target.clone()] };
+        prepared
+            .writes
+            .iter()
+            .map(|write| write.key.clone())
+            .collect()
+    } else {
+        vec![target.clone()]
+    };
     for target in authorized_targets {
-        authorize_proposed_target(catalog, call, &effective_input, authorizer, &target, &mut prepared.writes)?;
+        authorize_proposed_target(
+            catalog,
+            call,
+            &effective_input,
+            authorizer,
+            &target,
+            &mut prepared.writes,
+        )?;
     }
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
@@ -3958,11 +4007,13 @@ fn action_record_with_transition(
     events
         .iter()
         .find_map(|event| match event {
-            FactEvent::Transitioned { key, from, to, .. } if *key == record.object => Some(ActionCallRecord {
-                from: from.clone(),
-                to: to.clone(),
-                ..record.clone()
-            }),
+            FactEvent::Transitioned { key, from, to, .. } if *key == record.object => {
+                Some(ActionCallRecord {
+                    from: from.clone(),
+                    to: to.clone(),
+                    ..record.clone()
+                })
+            }
             FactEvent::Transitioned { .. }
             | FactEvent::CommandEnqueued { .. }
             | FactEvent::NamingSeriesAllocated { .. }

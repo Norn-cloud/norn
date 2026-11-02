@@ -61,7 +61,11 @@ pub struct ActionRoot {
     pub commands: Vec<ActionCommand>,
     /// TXN-RULE-1: one pinned synchronous, facts-only RuleIR writer in the
     /// action's atomic closure. Hosts without this execution profile refuse.
-    #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(with = "ActionRuleRef")]
     pub synchronous_rule: Option<ActionRuleRef>,
     /// The whitelisted effect program; the closed [`ActionEffectProgram`]

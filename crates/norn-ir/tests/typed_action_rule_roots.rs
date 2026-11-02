@@ -26,10 +26,15 @@ const ACTION_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder.a
 #[test]
 fn synchronous_rule_pin_is_closed_and_canonical() {
     let mut payload = payload_json(ACTION_FIXTURE);
-    payload["synchronousRule"] = serde_json::json!({"artifactId":"demo.effects.rule","version":"1.0.0"});
+    payload["synchronousRule"] =
+        serde_json::json!({"artifactId":"demo.effects.rule","version":"1.0.0"});
     let root: ActionRoot = assert_typed_roundtrip("synchronous rule", &payload);
     assert_eq!(root.synchronous_rule.unwrap().version, "1.0.0");
-    for invalid in [serde_json::json!(null), serde_json::json!({"artifactId":"r"}), serde_json::json!({"artifactId":"r","version":"1","extra":true})] {
+    for invalid in [
+        serde_json::json!(null),
+        serde_json::json!({"artifactId":"r"}),
+        serde_json::json!({"artifactId":"r","version":"1","extra":true}),
+    ] {
         payload["synchronousRule"] = invalid;
         assert!(serde_json::from_value::<ActionRoot>(payload.clone()).is_err());
     }
