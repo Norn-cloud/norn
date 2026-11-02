@@ -23,6 +23,8 @@ fn model() -> Model {
         json!({"name":"proof.Item","properties":[{"id":"value","type":{"kind":"text"}}]}),
         json!({"name":"proof.Input","properties":[{"id":"value","type":{"kind":"text"},"markings":["pii.contact"]}]}),
         json!({"name":"proof.Empty","properties":[]}),
+        json!({"name":"proof.Child","extends":"proof.Item"}),
+        json!({"name":"proof.Sibling","extends":"proof.Item"}),
         json!({"name":"proof.Observed","properties":[{"id":"observationJson","type":{"kind":"text"}}]}),
         json!({"name":"proof.Defaulted","properties":[{"id":"value","type":{"kind":"text"}},{"id":"optional","type":{"kind":"text"},"constraints":{"nullable":true}},{"id":"defaulted","type":{"kind":"text"},"default":"declared"}]}),
         json!({"name":"proof.State","properties":[{"id":"status","type":{"kind":"enum","values":[{"value":"draft"},{"value":"approved"}]}}],"lifecycles":[{"property":"status","initial":["draft"],"terminal":["approved"],"transitions":[{"id":"approve","from":["draft"],"to":"approved"}]}]}),
@@ -160,12 +162,13 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("cell.sqlite");
     let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
-    store
+    let original=store
         .commit(&CommitBatch {
             logical_time: 300,
             ..batch(vec![put("proof.Item", "item", "late")])
         })
         .expect("seed");
+    store.commit(&CommitBatch{logical_time:301,..batch(vec![])}).expect("frontier");
     let connection = rusqlite::Connection::open(path).expect("corruption fixture");
     connection
         .execute("UPDATE _norn_receipt SET receipt = '{}'", [])
@@ -213,6 +216,10 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
             );
         }
     }
+    connection.execute("UPDATE _norn_receipt SET receipt=?1 WHERE commit_seq=1",[serde_json::to_string(&original.receipt.body).expect("original body")]).expect("restore fact receipt");
+    connection.execute("UPDATE _norn_receipt SET receipt_hash='incorrect' WHERE commit_seq=2",[]).expect("corrupt parseable frontier");
+    assert!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:LogicalTime::from_millis(301),frontier:2},&mut DecodeBudget::new(&limits)).is_err());
+
 }
 
 proptest! {
@@ -321,28 +328,18 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
 fn historical_selection_respects_the_incarnations_concrete_type_lineage() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;
-    let definitions = [
-        json!({"name":"history.Root","properties":[]}),
-        json!({"name":"history.Child","extends":"history.Root"}),
-        json!({"name":"history.Sibling","extends":"history.Root"}),
-    ]
-    .into_iter()
-    .map(|d| serde_json::from_value(d).expect("type"))
-    .collect::<Vec<_>>();
-    let mut store =
-        CellStore::open_in_memory(Model::from_definitions(&definitions, &[]).expect("hierarchy"))
-            .expect("store");
+    let mut store=CellStore::open_in_memory(model()).expect("store");
     store
         .commit(&CommitBatch {
             logical_time: 10,
-            ..batch(vec![empty("history.Child", "item")])
+            ..batch(vec![put("proof.Child", "item","value")])
         })
         .expect("child");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
     for (kind, exists) in [
-        ("history.Root", true),
-        ("history.Child", true),
-        ("history.Sibling", false),
+        ("proof.Item", true),
+        ("proof.Child", true),
+        ("proof.Sibling", false),
     ] {
         let selected = store
             .read()
