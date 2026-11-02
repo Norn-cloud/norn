@@ -116,6 +116,7 @@ impl AdmittedDecision {
         let loader = MemoryLoader::default();
         let mut loaded_keys = BTreeSet::new();
         let mut contracts = crate::step::StepContracts::default();
+        contracts.bind_expressions(root)?;
         // Deepest depth each key has been expanded at: a key is re-expanded
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
@@ -160,6 +161,7 @@ impl AdmittedDecision {
                             size: loaded_keys.len(),
                         });
                     }
+                    contracts.bind_expressions(sub)?;
                     loader.add(key, graph_content(&sub.rule_id, sub_graph)?);
                 }
                 stack.push((sub.rule_id.as_str(), sub_graph, child_depth));

@@ -931,14 +931,18 @@ impl EffectiveProperty {
             && let (
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: previous_unit,
+                    currency_source: previous_currency,
+                    per_unit: previous_per,
                     ..
                 }),
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: candidate_unit,
+                    currency_source: candidate_currency,
+                    per_unit: candidate_per,
                     ..
                 }),
             ) = (&previous.kind, &self.kind)
-            && previous_unit != candidate_unit
+            && (previous_unit != candidate_unit || previous_currency != candidate_currency || previous_per != candidate_per)
         {
             return Err(InstanceError::Unsupported(format!(
                 "decimal unit changed from {previous_unit:?} to {candidate_unit:?}; stored value needs an explicit conversion"

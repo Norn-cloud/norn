@@ -101,6 +101,7 @@ use crate::{Expression, Number, UnaryTest};
 pub(crate) mod bounds;
 mod cost;
 mod units;
+mod sites;
 use units::{Operand, Operation};
 
 pub use bounds::StructuralLimits;
@@ -290,6 +291,7 @@ pub struct CheckedExpression {
     cost: CostEstimate,
     exact: bool,
     notes: Vec<Diagnostic>,
+    runtime_source: String,
 }
 
 /// Owned source provenance for a bounded, checked expression's construction.
@@ -305,6 +307,10 @@ pub enum ConstructionSource {
 }
 
 impl CheckedExpression {
+    /// VAL-ROUND: source with declared result sites lowered to shared rescale.
+    #[must_use]
+    pub fn runtime_source(&self) -> &str { &self.runtime_source }
+
     /// VAL-UNIT: informational literal-unit inference evidence.
     #[must_use]
     pub fn notes(&self) -> &[Diagnostic] { &self.notes }
@@ -552,7 +558,7 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         );
         if !found.is_empty() {
-            return (None, found, whole, None, None, false, Vec::new());
+            return (None, found, whole, None, None, false, Vec::new(), Ok(source.to_owned()));
         }
         let mut checker = Checker::new(env, metadata, None);
         checker.exact_math = exact_enabled;
@@ -569,9 +575,13 @@ fn check_expression_with_sources_and_root_bounds(
         });
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || expected_exact_type(expected, env);
-        if exact_enabled && exact {
-            checker.admit_exact(ast, expected);
-        }
+        let runtime_source = if exact_enabled && exact {
+            if checker.types.values().any(|ty| matches!(ty,T::Number(Operand::Legacy))) {
+                checker.report::<()>(ast,"core.values.inexact","bare number cannot enter a declared exact site".into());
+            }
+            sites::lower(ast,expected,env,metadata,source)
+        } else { Ok(source.to_owned()) };
+
         (
             inferred,
             checker.diagnostics,
@@ -580,9 +590,10 @@ fn check_expression_with_sources_and_root_bounds(
             construction,
             exact,
             checker.notes,
+            runtime_source,
         )
     });
-    let Some((inferred, mut diagnostics, span, cost, construction, exact, notes)) = outcome else {
+    let Some((inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source)) = outcome else {
         return Err(vec![Diagnostic {
             code: codes::SYNTAX,
             message: "expression does not parse".to_owned(),
@@ -611,6 +622,11 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     };
+    let runtime_source = runtime_source.map_err(|message| vec![Diagnostic { code:"core.values.inexact",message,span }])?;
+    if exact_enabled && exact {
+        let mut exact_parser = IntelliSense::new();
+        diagnostics.extend(exact_parser.with_ast(&runtime_source,false,|ast,metadata| exact_admission(ast,metadata,false)).unwrap_or_else(|| vec![Diagnostic {code:codes::SYNTAX,message:"lowered exact sites do not parse".into(),span}]));
+    }
     // Cross-check: zen's strict analysis must not report an error either.
     let root = ZenEnv::new(env).root(None);
     let analysis = intellisense.analyze(source, &root);
@@ -632,6 +648,7 @@ fn check_expression_with_sources_and_root_bounds(
             cost,
             exact,
             notes,
+            runtime_source,
         },
         construction,
     ))
@@ -951,7 +968,7 @@ impl<'a> ZenEnv<'a> {
                         self.lower(&field.ty, next)
                     }
                     FieldSource::Property { .. } | FieldSource::Builtin => {
-                        self.lower(&field.ty, depth, self.env, Some(&name))
+                        self.lower(&field.ty, depth)
                     }
                 };
                 members
@@ -1075,7 +1092,8 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>) -> Option
         Type::Text { .. } | Type::Duration => T::Str(None),
         Type::Timestamp { .. } => T::Timestamp,
         Type::Date => T::Date,
-        Type::Integer | Type::Number => T::Number(Operand::Dimensionless),
+        Type::Integer => T::Number(Operand::Dimensionless),
+        Type::Number => T::Number(Operand::Legacy),
         Type::Decimal { unit, currency_source, per_unit, .. } => T::Number(units::declared(env, owner, unit.as_ref(), currency_source.as_ref(), per_unit.as_ref())),
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
@@ -1167,21 +1185,6 @@ impl<'a> Checker<'a> {
             exact: false,
             exact_math: false,
         }
-    }
-
-    fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
-        if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
-            self.report::<()>(
-                node,
-                "core.values.inexact",
-                "structured Decimal destinations require member-wise store binding".to_owned(),
-            );
-        }
-        self.diagnostics.extend(exact_admission(
-            node,
-            self.metadata,
-            decimal_destination(expected).is_some(),
-        ));
     }
 
     fn span(&self, node: &Node<'_>) -> (u32, u32) {

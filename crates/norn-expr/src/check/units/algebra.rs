@@ -3,6 +3,7 @@
 pub(crate) enum Operand<U, C> {
     Literal,
     Dimensionless,
+    Legacy,
     Quantity(U),
     Money(C),
     Rate(C, U),
@@ -13,10 +14,11 @@ pub(crate) enum Operation { Add, Subtract, Multiply, Divide, Compare }
 
 /// VAL-RATE: only matching currency and denominator identities cancel.
 pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(op: Operation, a: &Operand<U, C>, b: &Operand<U, C>) -> Option<(Operand<U, C>, Option<U>)> {
-    use Operand::{Dimensionless, Literal, Money, Quantity, Rate, Unresolved};
+    use Operand::{Dimensionless, Literal, Money, Quantity, Rate, Unresolved, Legacy};
     if matches!(a, Unresolved) || matches!(b, Unresolved) { return None; }
     let mut inferred = None;
     let result = match op {
+        _ if matches!((a,b),(Legacy,Legacy | Literal | Dimensionless) | (Literal | Dimensionless,Legacy)) => Legacy,
         Operation::Add | Operation::Subtract | Operation::Compare => {
             let value = match (a,b) {
                 (Quantity(u), Literal) | (Literal, Quantity(u)) => {

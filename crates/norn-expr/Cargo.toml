@@ -10,6 +10,7 @@ description = "ZEN Expression type environment + static checker (ring 0; see AGE
 path = "src/lib.rs"
 
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 # Pure calendar/RFC 3339 parsing and the pinned IANA timezone database used by
 # EntityIR naming-series date rendering. No clock or locale is consulted.
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
@@ -26,5 +27,4 @@ zen-expression = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

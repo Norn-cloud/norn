@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Value;
+use serde::{Deserialize, de::IntoDeserializer};
 use norn_ir::JsonValue;
 
 /// Deepest schema nesting the checker admits.
@@ -44,6 +45,8 @@ pub enum Schema {
     Integer,
     /// An exact decimal number.
     Number,
+    /// VAL-EXACT-1: the existing Decimal value contract.
+    Decimal(crate::Type),
     /// A boolean.
     Boolean,
     /// The null value.
@@ -137,7 +140,9 @@ impl Schema {
                 "ActionIR input string schemas do not admit enum",
             ));
         }
+        let decimal = decimal_expression_type(value)?;
         let allowed: &[&str] = match schema_type {
+            "number" => &["type", "nornType"],
             "object" => &["type", "properties", "required", "additionalProperties"],
             "array" => &["type", "items"],
             "string" => &["type", "enum"],
@@ -168,7 +173,7 @@ impl Schema {
                 Some(values) => Ok(Self::String(Some(parse_enum(values, path)?))),
             },
             "integer" => Ok(Self::Integer),
-            "number" => Ok(Self::Number),
+            "number" => Ok(decimal.map_or(Self::Number, Self::Decimal)),
             "boolean" => Ok(Self::Boolean),
             "null" => Ok(Self::Null),
             other => Err(Violation::new(
@@ -265,6 +270,7 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
@@ -281,6 +287,7 @@ impl Schema {
             | Self::String(_)
             | Self::Integer
             | Self::Number
+            | Self::Decimal(_)
             | Self::Boolean
             | Self::Null
             | Self::Json
@@ -326,6 +333,11 @@ impl Schema {
             | (Self::Boolean, Value::Bool(_))
             | (Self::Null | Self::Nullable(_), Value::Null)
             | (Self::Json, _) => Ok(()),
+            (Self::Decimal(site), Value::Number(number)) => {
+                let mut exact = crate::check::decimal_destination(site).ok_or_else(|| Violation::new(path,"invalid Decimal schema"))?;
+                if let norn_ir::PropertyType::Decimal { rounding, .. } = &mut exact { *rounding = None; }
+                crate::rescale_decimal(&exact,number).map(|_| ()).map_err(|e| Violation::new(path,e.to_string()))
+            }
             (Self::Nullable(inner), actual) => inner.check(actual, path),
             (Self::String(Some(allowed)), Value::String(text)) => {
                 if allowed.contains(text) {
@@ -353,10 +365,74 @@ impl Schema {
             Self::String(_) => "a string",
             Self::Integer => "an integer",
             Self::Number => "a number",
+            Self::Decimal(_) => "a declared exact decimal",
             Self::Boolean => "a boolean",
             Self::Null => "null",
             Self::Json => "a JSON value",
             Self::Nullable(_) => "a nullable value",
+        }
+    }
+}
+
+/// VAL-EXACT-1: decode only the existing strict Decimal representation.
+///
+/// # Errors
+/// Refuses annotations on other schema kinds, unknown fields or invalid Decimal sites.
+pub fn decimal_refinement(value: &JsonValue, path: &str) -> Result<Option<norn_ir::PropertyType>, Violation> {
+    let Some(schema) = value.as_object() else { return Ok(None); };
+    let Some(annotation) = schema.get("nornType") else { return Ok(None); };
+    if schema.get("type").and_then(JsonValue::as_string) != Some("number") { return Err(Violation::new(path,"nornType requires type:number")); }
+    let site = norn_ir::PropertyType::deserialize(annotation.clone().into_deserializer()).map_err(|e: serde::de::value::Error| Violation::new(path,e.to_string()))?;
+    let norn_ir::PropertyType::Decimal { scale, unit, currency_source, per_unit, .. } = &site else { return Err(Violation::new(path,"nornType must be Decimal")); };
+    if scale.0 > 18 || unit.is_some() && currency_source.is_some() || per_unit.is_some() && (unit.is_some() || currency_source.is_none()) || unit.iter().chain(per_unit.iter()).any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace)) {
+        return Err(Violation::new(path,"invalid bounded Decimal refinement"));
+    }
+    Ok(Some(site))
+}
+
+/// The expression type of an already validated Decimal schema refinement.
+///
+/// # Errors
+/// Returns the same strict decoder findings as [`decimal_refinement`].
+pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>, Violation> {
+    Ok(decimal_refinement(value,"nornType")?.map(|site| {
+        let norn_ir::PropertyType::Decimal { scale,unit,currency_source,per_unit,rounding } = site else { unreachable!("decoder only admits Decimal") };
+        crate::Type::Decimal { scale:scale.0,unit,currency_source,per_unit,rounding:rounding.unwrap_or(norn_ir::Rounding::Refuse) }
+    }))
+}
+
+impl Schema {
+    /// VAL-EXACT-1: retain refinements in the same env/2 record graph.
+    #[must_use]
+    pub fn expression_type(&self, name: &str, records: &mut BTreeMap<String,BTreeMap<String,crate::Type>>) -> crate::Type {
+        use crate::Type;
+        match self {
+            Self::Object { properties,required } => {
+                let fields = properties.iter().map(|(key,schema)| {
+                    let ty = schema.expression_type(&format!("{name}.{key}"),records);
+                    (key.clone(),if required.contains(key) { ty } else { ty.optional() })
+                }).collect();
+                records.insert(name.to_owned(),fields); Type::Record(name.to_owned())
+            }
+            Self::Array(item) => self::Schema::expression_type(item,&format!("{name}.item"),records).list(),
+            Self::Nullable(item) => item.expression_type(name,records).optional(),
+            Self::String(Some(values)) => Type::enumeration(values.clone()),
+            Self::String(None) => Type::text(),
+            Self::Integer => Type::Integer,
+            Self::Number => Type::Number,
+            Self::Decimal(ty) => ty.clone(),
+            Self::Null | Self::Json => Type::Json,
+            Self::Boolean => Type::Bool,
+        }
+    }
+    /// Whether this contract contains a declared exact site.
+    #[must_use]
+    pub fn has_exact(&self) -> bool {
+        match self {
+            Self::Decimal(_) => true,
+            Self::Object {properties,..} => properties.values().any(Self::has_exact),
+            Self::Array(item) | Self::Nullable(item) => item.has_exact(),
+            _ => false,
         }
     }
 }

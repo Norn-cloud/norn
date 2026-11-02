@@ -839,7 +839,18 @@ pub fn derive_type_env(
         object_types: &layer.object_types,
         extensions: &layer.extensions,
     };
-    ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))
+    let mut env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    for artifact in base.iter().chain(artifacts) {
+        if let norn_ir::ArtifactPayload::Rule(payload) | norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
+            for member in ["inputSchema","outputSchema"] {
+                if let Some(schema) = payload.get(member) {
+                    let name = format!("exact.{}.{}.{}",artifact.artifact_id,artifact.version,member);
+                    env = env.bind_exact_schema(&name,schema).map_err(|reason| vec![norn_expr::EnvError::Unresolved {site:name,name:reason}])?;
+                }
+            }
+        }
+    }
+    Ok(env)
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {

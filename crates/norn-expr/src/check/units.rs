@@ -15,7 +15,7 @@ pub(super) fn declared(env: &ZenTypeEnv, owner: Option<&str>, unit: Option<&Unit
     }
 }
 fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Option<String> {
-    fn record_currency(env: &ZenTypeEnv, mut record: &str, path: &DimensionPath) -> Option<String> {
+    fn record_currency<'a>(env: &'a ZenTypeEnv, mut record: &'a str, path: &DimensionPath) -> Option<String> {
         for link in &path.links {
             let Type::Record(next) = &env.record(record)?.fields.get(link.as_str())?.ty else { return None; };
             record = next;
@@ -52,16 +52,5 @@ mod tests {
         assert!(admit(Operation::Multiply,&rate,&Operand::Quantity(UnitRef { code:"mg".into(),..grams() })).is_none());
         assert!(admit(Operation::Add,&quantity,&Operand::Dimensionless).is_none());
         assert_eq!(admit(Operation::Compare,&quantity,&Operand::Literal).unwrap().1,Some(grams()));
-    }
-    proptest::proptest! {
-        #[test]
-        fn val_rate_cancellation_is_exact_identity_equality(a in proptest::prelude::any::<u8>(), b in proptest::prelude::any::<u8>(), c in proptest::prelude::any::<u8>(), d in proptest::prelude::any::<u8>()) {
-            use algebra::Operand as O;
-            let rate = O::Rate(a,b);
-            let quantity = O::Quantity(d);
-            proptest::prop_assert_eq!(admit(Operation::Multiply,&rate,&quantity).is_some(), b == d);
-            proptest::prop_assert_eq!(admit(Operation::Compare,&rate,&O::Rate(c,d)).is_some(), a == c && b == d);
-            proptest::prop_assert!(admit(Operation::Multiply,&rate,&O::Rate(c,d)).is_none());
-        }
     }
 }

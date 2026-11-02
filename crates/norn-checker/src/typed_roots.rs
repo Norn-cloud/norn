@@ -1391,6 +1391,7 @@ fn is_action_member_name(value: &str) -> bool {
 /// profile's types. An object is opaque because `ZenTypeEnv::input_only` has
 /// no nested-record declarations; an unknown type fails closed.
 pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
+    if let Ok(Some(ty)) = norn_expr::schema::decimal_expression_type(schema) { return Some(ty); }
     let schema = schema.as_object()?;
     let type_value = schema.get("type")?;
     if let Some(members) = type_value.as_array() {
@@ -1605,6 +1606,9 @@ pub fn validate_rule_ir_v2_payload(
             "payload.defaults",
             artifact_id,
         ));
+    }
+    if let Ok(text) = serde_json::to_string(payload) && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text) && let Err(reason) = norn_expr::graph::bind(&root) {
+        diagnostics.push(invalid_diagnostic("core.values.inexact",reason,"payload.graph",artifact_id));
     }
     reject_rule_side_effect_fields(payload, diagnostics, artifact_id);
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);

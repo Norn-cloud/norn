@@ -57,6 +57,7 @@ mod convert;
 pub mod env;
 mod error;
 mod expression;
+pub mod graph;
 mod reads;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
