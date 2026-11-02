@@ -33,7 +33,7 @@ export const PublicationEvidence = Norn.interfaceType({
       self.max_frontier_age_ms >= 0 && self.frontier_age_ms <= self.max_frontier_age_ms &&
       !self.temporal_leakage && self.late_feature_count === 0 && self.latest_training_label_ms < self.split_at_ms &&
       self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0 &&
-      self.holdout_error_nanos !== null && self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 && self.holdout_error_nanos <= self.holdout_error_limit_nanos &&
+      self.holdout_error_nanos !== null && (self.holdout_error_nanos ?? -1) >= 0 && self.holdout_error_limit_nanos >= 0 && (self.holdout_error_nanos ?? -1) <= self.holdout_error_limit_nanos &&
       self.error_unit !== "" && self.error_unit === self.result_error_unit &&
       self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
       self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
@@ -64,8 +64,8 @@ export const Publication = Norn.type({
         Norn.expression(Evidence, self => self.late_feature_count === 0),
         Norn.expression(Evidence, self => self.latest_training_label_ms < self.split_at_ms),
         Norn.expression(Evidence, self => self.training_count > 0 && self.holdout_count > 0 && self.non_forward_outcome_count === 0),
-        Norn.expression(Evidence, self => self.holdout_error_nanos !== null && self.holdout_error_nanos >= 0 && self.holdout_error_limit_nanos >= 0 &&
-          self.holdout_error_nanos <= self.holdout_error_limit_nanos && self.error_unit !== "" && self.error_unit === self.result_error_unit),
+        Norn.expression(Evidence, self => self.holdout_error_nanos !== null && (self.holdout_error_nanos ?? -1) >= 0 && self.holdout_error_limit_nanos >= 0 &&
+          (self.holdout_error_nanos ?? -1) <= self.holdout_error_limit_nanos && self.error_unit !== "" && self.error_unit === self.result_error_unit),
         Norn.expression(Evidence, self => self.assumptions_digest !== "" && self.assumptions_digest === self.result_assumptions_digest &&
           self.remedy_digest !== "" && self.remedy_digest === self.result_remedy_digest &&
           (self.diagnostics_passed || self.mode === "descriptive")),
