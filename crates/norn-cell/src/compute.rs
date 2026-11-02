@@ -205,11 +205,12 @@ impl<E: SqlEngine> CellStore<E> {
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
+            let mut history=reader.history_read();
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
             for id in ids {
                 let selected=if let Some(cutoff)=cutoff {
-                    historical::historical_record(&reader,&context.world,plan.grain().as_str(),&id,cutoff,self.model().model_hash(),&mut budget)?
+                    historical::historical_record(&mut history,&context.world,plan.grain().as_str(),&id,cutoff,self.model().model_hash(),&mut budget)?
                 } else { reader.object_with_budget(&context.world,plan.grain().as_str(),&id,&mut budget)? };
                 let record=match selected {
                     BudgetedRead::Found(record)=>record,

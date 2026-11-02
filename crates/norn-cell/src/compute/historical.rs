@@ -37,10 +37,10 @@ pub(super) fn slice_pin(base:&str,cutoff:KnowledgeCutoff)->Result<String,CellErr
     crate::codec::hash_json(&(base,cutoff.recorded_at.as_millis(),cutoff.frontier,"norn.query.asof/1"))
 }
 pub(super) fn historical_record<E:SqlEngine>(
-    reader:&StoreReader<'_,E>,world:&str,kind:&str,id:&str,cutoff:KnowledgeCutoff,
+    history:&mut crate::history::HistoryRead<'_, '_, E>,world:&str,kind:&str,id:&str,cutoff:KnowledgeCutoff,
     model:&str,budget:&mut DecodeBudget,
 )->Result<BudgetedRead,CellError> {
-    match reader.fact_evidence_in_revision_with_budget(world,kind,id,cutoff,budget)? {
+    match history.known_at(world,kind,id,cutoff,budget)? {
         HistoricalEvidence::Missing=>Ok(BudgetedRead::Missing),
         HistoricalEvidence::Exhausted=>Ok(BudgetedRead::Exhausted),
         HistoricalEvidence::Found(proof)=> {
