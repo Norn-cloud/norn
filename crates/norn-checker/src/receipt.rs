@@ -381,7 +381,16 @@ pub fn check_artifact_sources_with_receipt(
         base: &sources.base,
         tenant,
     };
-    check_artifact_set_with_flow_source_map(&sources, &context, limits, flow_source_map)
+    // This context is derived from the same raw sources. Admission owns its
+    // findings; independent installed-context rebinding still uses context().
+    check_artifact_set_with_profile(
+        &sources.artifacts,
+        &context,
+        limits,
+        sources.identity.clone(),
+        IDENTIFIER_ADMISSION_PROFILE,
+        flow_source_map,
+    )
 }
 
 /// Verify a retained receipt against exact candidate and base source bytes.
@@ -396,6 +405,21 @@ pub fn verify_admission_receipt_sources(
     base: &[RuntimeValue],
     limits: &ResourceLimitProfile,
 ) -> Result<ReceiptVersion, ReceiptError> {
+    for source in artifacts.iter().chain(base) {
+        let mut semantic = source.clone();
+        drop(crate::layout::extract_inline_layout(&mut semantic));
+        let document: serde_json::Value =
+            norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
+        crate::layout::require_nfc_text(&document).map_err(|findings| {
+            invalid_receipt(
+                findings
+                    .iter()
+                    .map(|finding| format!("{}: {}", finding.code, finding.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
+    }
     let (_, candidates) = source_refs(artifacts)?;
     let (_, installed) = source_refs(base)?;
     let original = |sources: &[RuntimeValue]| {
@@ -421,19 +445,6 @@ fn source_refs(
     let mut artifacts = Vec::with_capacity(sources.len());
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
-        let mut semantic = source.clone();
-        drop(crate::layout::extract_inline_layout(&mut semantic));
-        let document: serde_json::Value =
-            norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
-        crate::layout::require_nfc_text(&document).map_err(|findings| {
-            invalid_receipt(
-                findings
-                    .iter()
-                    .map(|finding| format!("{}: {}", finding.code, finding.message))
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            )
-        })?;
         let (artifact, semantic_source) =
             if let Ok(prepared) = crate::layout::prepare_artifact_source(source.clone()) {
                 (prepared.artifact, prepared.source)
