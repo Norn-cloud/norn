@@ -885,6 +885,12 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    // TXN-RULE-1: never silently execute only part of a declared closure.
+    if action.synchronous_rule.is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
         && matches!(
             action.effect_program,

@@ -543,7 +543,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -588,6 +588,7 @@ class DefinitionCompiler {
             return { entityKind: this.typeName(m.get("type")!, OBJECT_TYPES), change }
           })
         : [],
+      ...(members.has("synchronousRule") ? { synchronousRule: this.decisionDependency(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),

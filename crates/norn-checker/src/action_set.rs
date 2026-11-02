@@ -103,7 +103,7 @@ use norn_expr::{
     EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv, check_expression,
 };
 use norn_ir::{
-    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactPayload,
+    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
     DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority, JsonObject, JsonValue,
     ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName, SliceKey, TransitionId,
     UpsertWriteMode, WriteChange, ZenExpression,
@@ -269,6 +269,36 @@ pub fn check_action_firing(
     )
 }
 
+/// TXN-RULE-1: bind the exact admitted writer without an ambient latest lookup.
+fn synchronous_rule_findings(artifact: &ArtifactEnvelope, root: &ActionRoot, artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    if let Some(pin) = &root.synchronous_rule {
+        let matched: Vec<_> = artifacts.iter().chain(base).filter(|candidate| {
+            candidate.artifact_id == pin.artifact_id && candidate.version == pin.version
+                && candidate.kind() == ArtifactKind::Rule
+        }).collect();
+        let valid = !pin.artifact_id.trim().is_empty() && !pin.version.trim().is_empty()
+            && matches!(root.effect_program.as_ref(), Some(ActionEffectProgram::FireTransition { .. }))
+            && matched.len() == 1
+            && artifact.dependencies.iter().any(|dependency| dependency.artifact_id == pin.artifact_id
+                && dependency.kind == ArtifactKind::Rule && dependency.version.as_deref() == Some(pin.version.as_str()) && dependency.required)
+            && matched.first().and_then(|candidate| serde_json::to_value(candidate.payload.to_json_value()).ok())
+                .and_then(|payload| serde_json::from_value::<norn_ir::RuleRoot>(payload).ok())
+                .is_some_and(|rule| rule.contract == Some(norn_ir::RuleContractV2::Decide)
+                    && rule.scope_required.iter().all(|scope| root.scope_required.contains(scope)));
+        if valid {
+            if let Some(candidate) = matched.first() {
+                findings.extend(scope_finding(artifact, candidate, "/payload/synchronousRule"));
+            }
+        } else {
+            findings.push(finding("action.validation.invalid_payload",
+                "synchronousRule requires a transition action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
+                artifact, "/payload/synchronousRule"));
+        }
+    }
+    findings
+}
+
 /// The findings of one action.
 fn check_action(
     artifact: &ArtifactEnvelope,
@@ -278,6 +308,7 @@ fn check_action(
     base: &[ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
     let mut findings = action_slice_findings(artifact, root, model);
+    findings.extend(synchronous_rule_findings(artifact, root, artifacts, base));
     findings.extend(quantity_effect_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
@@ -2010,4 +2041,45 @@ fn create_link_findings(
         }
     }
     findings
+}
+
+#[cfg(test)]
+mod synchronous_rule_tests {
+    #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "pin conformance fixtures")]
+    use super::*;
+
+    fn fixture(version: &str) -> (ArtifactEnvelope, ActionRoot, ArtifactEnvelope) {
+        let mut action: ArtifactEnvelope = serde_json::from_str(include_str!("../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json")).expect("action fixture");
+        let mut rule: ArtifactEnvelope = serde_json::from_str(include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json")).expect("rule fixture");
+        rule.version = version.to_owned();
+        let mut payload = rule.payload.to_json_value();
+        if let JsonValue::Object(ref mut object) = payload {
+            object.insert("contract".to_owned(), JsonValue::String("decide".to_owned()));
+            object.insert("scopeRequired".to_owned(), JsonValue::Array(vec![JsonValue::String("orgId".to_owned()), JsonValue::String("environmentId".to_owned())]));
+        }
+        rule.payload = ArtifactPayload::from_kind_json(ArtifactKind::Rule, payload).expect("rule payload");
+        action.dependencies.push(norn_ir::ArtifactDependency { artifact_id: rule.artifact_id.clone(), kind: ArtifactKind::Rule, version: Some(version.to_owned()), required: true });
+        let mut root = decode_action(&action).expect("typed action");
+        root.synchronous_rule = Some(norn_ir::ActionRuleRef { artifact_id: rule.artifact_id.clone(), version: version.to_owned() });
+        (action, root, rule)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn exact_rule_versions_resolve_and_mismatches_refuse(version in 0u16..1000) {
+            let (action, root, mut rule) = fixture(&format!("1.0.{version}"));
+            proptest::prop_assert!(synchronous_rule_findings(&action, &root, std::slice::from_ref(&rule), &[]).is_empty());
+            rule.version.push_str("-changed");
+            proptest::prop_assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_ambiguous_or_uncovered_rule_pins_refuse() {
+        let (action, mut root, rule) = fixture("1.0.0");
+        assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
+        assert!(!synchronous_rule_findings(&action, &root, &[rule.clone()], &[rule.clone()]).is_empty());
+        root.scope_required.clear();
+        assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+    }
 }

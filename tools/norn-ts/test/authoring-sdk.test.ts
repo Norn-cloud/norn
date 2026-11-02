@@ -200,3 +200,12 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
     expect(checked.admitted).toBe(true)
   }
 }, 60_000)
+
+
+test("TXN-RULE-1 authoring emits a required exact synchronous writer pin", () => {
+  const fixture = readFileSync(join(TOOL_ROOT, "fixtures/definitions/create-linked.source.ts"), "utf8")
+  const source = fixture.replace('  writes: [{ type: Order', '  synchronousRule: { artifactId: "demo.effects.rule", version: "1.0.0" },\n  writes: [{ type: Order')
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", dependencies: [{artifactId: "demo.effects.rule", version: "1.0.0", kind: "rule", required: true}], payload: expect.objectContaining({synchronousRule: {artifactId: "demo.effects.rule", version: "1.0.0"}})}))
+})

@@ -282,3 +282,28 @@ or timer effects. The integrator still owns two independent assays, pinned scope
 settings/approval versions, complete partition fences, actual reservations,
 balanced economic effects and atomic posting. No full CP3 runtime or application
 proof claim follows from allocation conformance alone.
+
+
+## Synchronous governed rule contract
+
+TXN-RULE-1 / TXN-CLOSED-1: an action may name one exact `synchronousRule`
+artifactId/version and must declare the same required Rule dependency. Initial
+admission accepts this contract only on transition actions and requires one
+matching `decide` artifact whose required scope is covered by the action.
+Missing, ambiguous, wrong-version, wrong-contract or uncovered-scope bindings
+refuse. Unknown pin members and null pins refuse strict decoding.
+
+This contract cut does not enable execution. The existing action boundary must
+refuse a present synchronous writer before reading or writing the host, rather
+than executing only the primary transition. Named round-trip/refusal scenarios,
+generated version-pin cases and authoring dependency correspondence bind this
+contract to the code. Pin resolution traverses heap-backed artifact catalogs;
+the existing Kani profiles cannot call that catalog/serde admission path. No
+new bounded arithmetic primitive or handwritten application proof is introduced.
+
+The following execution cut must evaluate the pinned pure graph over the same
+authorized slice/input, reject uncovered writers, authorize every current and
+proposed object, retain absence/membership fences, and atomically finalize its
+facts plus the primary transition and ActionCall receipt. Rule output is
+facts-only in this profile; existing action command declarations enqueue payment
+intent in that same commit. Dispatch and payment success remain external.

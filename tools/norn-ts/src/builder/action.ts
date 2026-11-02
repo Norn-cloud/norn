@@ -79,6 +79,7 @@ export interface ActionDef {
   /** Boolean ZEN Expressions over `input` and the declared `slice`. */
   readonly preconditions: ReadonlyArray<string>
   readonly commands: ReadonlyArray<ActionCommand>
+  readonly synchronousRule?: { readonly artifactId: string; readonly version: string }
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
   readonly effect?: ActionEffect
@@ -150,10 +151,11 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,
+    synchronousRule: def.synchronousRule,
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
   }
   const artifact = envelope(
-    { kind: "action", artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
+    { kind: "action", artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version, ...(def.synchronousRule ? { dependencies: [{ ...def.synchronousRule, kind: "rule", required: true }] } : {}) },
     payload,
     options,
   )

@@ -289,6 +289,8 @@ declare module "@norn/authoring" {
         readonly name?: Expression<string>
         readonly fields?: { readonly [field: string]: Expression<unknown> }
       }>
+      /** Pinned facts-only synchronous RuleIR writer; execution requires the matching host profile. */
+      readonly synchronousRule?: DecisionDefinition | { readonly artifactId: string; readonly version: string }
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>

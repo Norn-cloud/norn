@@ -22,6 +22,18 @@ use norn_ir::{
 };
 
 const ACTION_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder.action.json");
+
+#[test]
+fn synchronous_rule_pin_is_closed_and_canonical() {
+    let mut payload = payload_json(ACTION_FIXTURE);
+    payload["synchronousRule"] = serde_json::json!({"artifactId":"demo.effects.rule","version":"1.0.0"});
+    let root: ActionRoot = assert_typed_roundtrip("synchronous rule", &payload);
+    assert_eq!(root.synchronous_rule.unwrap().version, "1.0.0");
+    for invalid in [serde_json::json!(null), serde_json::json!({"artifactId":"r"}), serde_json::json!({"artifactId":"r","version":"1","extra":true})] {
+        payload["synchronousRule"] = invalid;
+        assert!(serde_json::from_value::<ActionRoot>(payload.clone()).is_err());
+    }
+}
 const RULE_V2_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
 const RULE_V1_CONFORMANCE: &str =
     include_str!("../../../verification/archive/rules-dmn-v1/fixtures/conformance.json");

@@ -255,6 +255,11 @@ pub(crate) fn validate_action_typed_members(
     }
 
     validate_action_transaction_members(payload, diagnostics, artifact_id);
+    if let Some(pin) = decode_member!(norn_ir::ActionRuleRef, payload, "synchronousRule", ACTION_CODE, diagnostics, artifact_id) {
+        if pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty() {
+            diagnostics.push(invalid_diagnostic(ACTION_CODE, "synchronousRule needs a nonempty artifactId and exact version", "payload.synchronousRule", artifact_id));
+        }
+    }
     validate_action_commands(payload, diagnostics, artifact_id);
 
     validate_action_write_declarations(payload, diagnostics, artifact_id);

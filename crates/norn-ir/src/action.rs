@@ -59,6 +59,11 @@ pub struct ActionRoot {
     /// Outbound commands enqueued atomically with this action call.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<ActionCommand>,
+    /// TXN-RULE-1: one pinned synchronous, facts-only RuleIR writer in the
+    /// action's atomic closure. Hosts without this execution profile refuse.
+    #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "ActionRuleRef")]
+    pub synchronous_rule: Option<ActionRuleRef>,
     /// The whitelisted effect program; the closed [`ActionEffectProgram`]
     /// enum is the effect whitelist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +126,16 @@ pub struct ActionInputDerivation {
     /// Defaults to `true` and is omitted from the canonical representation.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub input_required: bool,
+}
+
+/// Closed reference to the admitted synchronous writer of an action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionRuleRef {
+    /// Exact RuleIR artifact identity.
+    pub artifact_id: String,
+    /// Exact artifact version; no latest-version resolution.
+    pub version: String,
 }
 
 fn default_true() -> bool {
