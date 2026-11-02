@@ -87,3 +87,5 @@ Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, 
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.
 
 PARAM-TAX-EXACT-1: exact checked decimal multiplication and addition produce tax and gross without a binary float conversion. The bounded component proof covers net 100 and every integer percentage from 0 through 100; PARAM-TAX commit/reopen supplies evaluator correspondence for 10% and 12%.
+
+`PARAM-WIRE-2`: `settingVersion: "0.2"` carries exact decimal-string numeric values and refuses `0.1` payloads. Retained `0.1` bytes, artifact versions and receipt pins keep their original meaning. Migration requires explicit re-authoring from the intended decimal value into a new artifact version, with `supersedes` naming its predecessor; never reinterpret or silently convert an old JSON number. In-flight work retains its old generation until an explicit supported migration.

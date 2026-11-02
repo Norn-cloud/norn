@@ -185,10 +185,18 @@ pub enum ProposalActor {
 }
 
 /// The only IR `0.1` version literal of the connector, widget, customization,
-/// policy, derived, and setting roots and of ontology business packs.
+/// policy and derived roots and of ontology business packs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub enum IrVersion01 {
     #[default]
     #[serde(rename = "0.1")]
     V0_1,
+}
+
+/// Exact-decimal setting wire profile; older profiles require explicit migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub enum IrVersion02 {
+    #[default]
+    #[serde(rename = "0.2")]
+    V0_2,
 }
