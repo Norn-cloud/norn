@@ -50,6 +50,61 @@ fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
         .expect("complete dump")
 }
 
+#[tokio::test]
+async fn action_document_is_authorized_before_rendering() {
+    let host = Arc::new(
+        DevHost::new(
+            NativeEngine::open_in_memory().expect("engine"),
+            "[]",
+            CellScope {
+                org_id: "org_surfaces".into(),
+                environment_id: "dev".into(),
+            },
+            LogicalTime::EPOCH,
+        )
+        .expect("admission")
+        .with_authorizer(Demo),
+    );
+    let before = dump(&host);
+    let app = router(Arc::clone(&host));
+    for (actor, accept, status, content_type) in [
+        ("demo", "text/html", 200, "text/html"),
+        ("demo", "application/json", 200, "application/json"),
+        ("forbidden", "text/html", 403, "application/json"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                http::Request::builder()
+                    .uri("/v1/defs?orgId=org_surfaces&environmentId=dev")
+                    .header("x-norn-actor", actor)
+                    .header("accept", accept)
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status().as_u16(), status);
+        assert!(
+            response.headers()["content-type"]
+                .to_str()
+                .expect("type")
+                .starts_with(content_type)
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["vary"], "Accept");
+        let bytes = axum::body::to_bytes(response.into_body(), 100_000)
+            .await
+            .expect("body");
+        let body = String::from_utf8(bytes.to_vec()).expect("text");
+        if status == 403 {
+            assert!(body.contains("authz.denied"));
+            assert!(!body.contains("<form"));
+        }
+    }
+    assert_eq!(dump(&host), before, "rendering never executes an action");
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "acceptance invokes real CLI and browser processes"

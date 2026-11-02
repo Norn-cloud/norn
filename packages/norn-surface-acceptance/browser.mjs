@@ -13,7 +13,13 @@ try {
   const document = await page.goto(`${request.url}/v1/defs?orgId=org_surfaces&environmentId=dev`)
   assert.equal(document.status(), 200)
   const form = page.locator("form").filter({ hasText: request.actionId })
-  await form.getByLabel("Action input").fill(JSON.stringify(request.input))
+  const controls = await form.locator("[data-field-name]").all()
+  assert.equal(controls.length, Object.keys(request.input).length)
+  for (const control of controls) {
+    const name = await control.getAttribute("data-field-name")
+    assert(Object.hasOwn(request.input, name))
+    await control.fill(String(request.input[name]))
+  }
   // Pin the UI's retry identity so independent fresh tenants have identical intent.
   await form.evaluate((element, key) => { element.dataset.key = key }, request.idempotencyKey)
   // A document loaded before revocation grants no authority to submit afterward.

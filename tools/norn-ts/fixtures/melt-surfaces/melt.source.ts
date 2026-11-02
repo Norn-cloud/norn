@@ -12,9 +12,9 @@ export const ConservedFineMass = Norn.interfaceType({
   properties: Masses,
   invariants: [{
     id: "fine_mass_conservation", classification: "integrity",
-    expression: Norn.expression(Masses, input =>
+    expression: Norn.expression(Schema.Struct({ input_fine_g: Schema.Finite, output_fine_g: Schema.Finite, loss_fine_g: Schema.Finite }), input =>
       input.input_fine_g >= 0 && input.output_fine_g >= 0 && input.loss_fine_g >= 0 &&
-      input.input_fine_g == input.output_fine_g + input.loss_fine_g),
+      input.input_fine_g === input.output_fine_g + input.loss_fine_g),
     message: "Input fine mass must equal output plus recorded loss; all masses must be non-negative.",
   }],
 })
