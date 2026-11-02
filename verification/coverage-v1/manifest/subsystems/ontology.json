@@ -219,6 +219,7 @@
     "crates/norn-dataplane/Cargo.toml",
     "crates/norn-dataplane/src/lib.rs",
     "crates/norn-dataplane/src/raw_observation.rs",
+    "crates/norn-host-conformance/Cargo.toml",
     "crates/norn-host-conformance/tests/perform.rs",
     "crates/norn-ir/src/definition_catalog.rs",
     "crates/norn-ir/src/mapping.rs",
