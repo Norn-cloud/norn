@@ -4024,6 +4024,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4055,6 +4056,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4143,14 +4145,15 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, id, message, outcome) = match error {
+    let (key, owner, version, id, message, outcome) = match error {
         CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
-        } => (key, owner, id, message, outcome),
+        } => (key, owner, version, id, message, outcome),
         error @ (CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4172,6 +4175,7 @@ where
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4181,6 +4185,7 @@ where
     let refusal = DecisionRefusal::InvariantViolation {
         key: key.clone(),
         owner: owner.clone(),
+        version,
         id: id.clone(),
         message: message.clone(),
         outcome: outcome.clone(),

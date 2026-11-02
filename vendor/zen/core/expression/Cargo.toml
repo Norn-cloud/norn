@@ -46,3 +46,6 @@ recursive = "0.1"
 # Norn: runs the metering and temporal determinism tests on wasm32-unknown-unknown.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

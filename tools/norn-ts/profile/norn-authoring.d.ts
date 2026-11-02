@@ -154,6 +154,7 @@ declare module "@norn/authoring" {
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
     interface InterfaceMeta<S extends Schema.Top> {
+      readonly role?: "thing" | "happening"
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
       /** Canonical property markings, keyed by a declared property. */
@@ -438,6 +439,19 @@ declare module "@norn/authoring" {
 
     /** Call a pinned sub-decision in a top-level const inside a decision callback. */
     function evaluate<I, O>(decision: DecisionDefinition<I, O>, input: I): O
+
+    /** A bounded, ordered application of a pinned step; compiled, never executed in JS. */
+    function orderedFold<I extends object, S extends object>(
+      step: DecisionDefinition<{ readonly accumulator: S; readonly item: I; readonly index: number }, S>,
+      input: { readonly items: ReadonlyArray<I>; readonly initial: S },
+      options: {
+        readonly identity: keyof I & string
+        readonly order: ReadonlyArray<{ readonly property: keyof I & string; readonly kind: "string" | "integer" }>
+        readonly maxItems: number
+        readonly maxAccumulatorBytes: number
+        readonly arithmetic: { readonly scale: number; readonly rounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }
+      },
+    ): S
 
     /** Pure calendar-date comparison; lowers to explicit ZEN date constructors. */
     function dateBefore(left: string, right: string): boolean

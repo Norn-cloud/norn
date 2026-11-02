@@ -17,9 +17,13 @@ use thiserror::Error;
 
 use crate::variable::Variable;
 
+#[cfg(kani)]
+#[path = "../../../../../verification/ordered-fold-v1/meter_kani.rs"]
+mod proof;
+
 /// Returned when a charge would take a [`Meter`] past its limit.
 ///
-/// `used` is the total that the failing charge would have reached (so `used > limit`).
+/// `used` is the failing total, saturated at `u64::MAX` when it overflows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[error("operation budget exhausted: {used} units needed, limit {limit}")]
 pub struct BudgetExhausted {
@@ -99,20 +103,24 @@ impl Meter {
         }
     }
 
-    /// Adds `units`, or fails without adding them if that would exceed the limit.
+    /// FOLD-METER-EXACT: overflow or excess fuel refuses without charging; refusal is sticky.
     pub fn charge(&self, units: u64) -> Result<(), BudgetExhausted> {
         if let Some(exhausted) = self.exhausted() {
             return Err(exhausted);
         }
 
-        let used = self.used().saturating_add(units);
-        if used > self.0.limit {
+        let previous = self.used();
+        let Some(used) = previous
+            .checked_add(units)
+            .filter(|used| *used <= self.0.limit)
+        else {
+            let used = previous.saturating_add(units);
             self.0.exhausted_at.store(used, Ordering::Relaxed);
             return Err(BudgetExhausted {
                 limit: self.0.limit,
                 used,
             });
-        }
+        };
 
         self.0.used.store(used, Ordering::Relaxed);
         Ok(())

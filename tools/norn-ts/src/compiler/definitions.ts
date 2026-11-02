@@ -13,7 +13,7 @@
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
 import type { Diagnostic, ProfileChecker } from "../check.ts"
-import type { Json } from "../canonical.ts"
+import { type Json, toJson } from "../canonical.ts"
 import { BudgetExceeded, type ExpansionBudget } from "../builder/budget.ts"
 import * as C from "../builder/connector.ts"
 import * as A from "../builder/action.ts"
@@ -341,6 +341,7 @@ class DefinitionCompiler {
       if (!value) throw new CompileError("NORN-FLOW-LITERAL", `a definition needs ${key}`, call)
       return value
     }
+    const role = this.conceptRole(members.get("role"))
     const description = members.get("description")
     const markings = members.get("markings")
     const schema = this.schemas.read(required("properties"))
@@ -349,10 +350,18 @@ class DefinitionCompiler {
       name: this.string(required("name")),
       title: this.string(required("title")),
       version: this.string(required("version")),
+      ...(role === undefined ? {} : { role }),
       ...(description ? { description: this.string(description) } : {}),
       ...(markings ? { markings: this.strings(markings) } : {}),
       projected,
     }
+  }
+
+  private conceptRole(node: ts.Expression | undefined): E.InterfaceDef["role"] {
+    if (!node) return undefined
+    const role = this.string(node)
+    if (role === "thing" || role === "happening") return role
+    throw new CompileError("NORN-FLOW-LITERAL", "role must be thing or happening", node)
   }
 
   private propertyMarkings(members: Members, properties: ReadonlyArray<string>): Map<string, ReadonlyArray<string>> {
@@ -435,7 +444,7 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
@@ -473,7 +482,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -738,8 +747,36 @@ class DefinitionCompiler {
         if (!calledDependencies.some((p) => p.artifactId === pin.artifactId && p.version === pin.version)) calledDependencies.push(pin)
         const name = `_norn_sub_${calls.length}`
         if (Object.hasOwn(inputSchema.properties, name)) throw new CompileError("NORN-FLOW-LITERAL", `${name} is reserved for compiler results`, site)
-        calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField: X.render(input, scope), outputPath: name, passThrough: true } })
-        scope.set(name, { zen: name, schema: this.schemas.closed(this.schemas.read(this.member(child.members, "output", child.call)), true) })
+        const output = this.schemas.closed(this.schemas.read(this.member(child.members, "output", child.call)), true)
+        let inputField = X.render(input, scope)
+        let orderedFold: Json | undefined
+        if (this.id(site) === "@norn/authoring#Norn.orderedFold") {
+          // FOLD-AUTHORING: only literal policy and closed, schema-derived state/items.
+          if (site.arguments.length !== 3 || input._tag !== "Record") throw new CompileError("NORN-FLOW-EXPRESSION", "orderedFold needs a step, {items, initial} and literal policy", site)
+          const items = input.fields.find(([key]) => key === "items")?.[1]
+          const initial = input.fields.find(([key]) => key === "initial")?.[1]
+          if (!items || !initial || input.fields.length !== 2) throw new CompileError("NORN-FLOW-EXPRESSION", "orderedFold input is exactly {items, initial}", site)
+          const policy = this.closedRecord(site.arguments[2]!, ["identity", "order", "maxItems", "maxAccumulatorBytes", "arithmetic"], ["identity", "order", "maxItems", "maxAccumulatorBytes", "arithmetic"])
+          this.closedRecord(policy.get("arithmetic")!, ["scale", "rounding"], ["scale", "rounding"])
+          for (const key of this.list(policy.get("order")!)) this.closedRecord(key, ["property", "kind"], ["property", "kind"])
+          const stepInput = this.schemas.closed(this.schemas.read(this.member(child.members, "input", child.call)), true)
+          if (stepInput.type !== "object" || output.type !== "object" || !stepInput.properties.item) throw new CompileError("NORN-FLOW-TYPE", "orderedFold requires a closed step input and object state", site)
+          try {
+            if (!X.conforms(items, { type: "array", items: stepInput.properties.item }, scope) || !X.conforms(initial, output, scope)) throw new CompileError("NORN-FLOW-TYPE", "orderedFold items and initial must satisfy the helper's closed schemas", site)
+          } catch (error) {
+            if (error instanceof X.ExprError) throw new CompileError("NORN-FLOW-TYPE", error.message, site)
+            throw error
+          }
+          inputField = X.render(items, scope)
+          orderedFold = {
+            semanticsVersion: "1.0", identity: this.json(policy.get("identity")!),
+            order: this.json(policy.get("order")!), arithmetic: this.json(policy.get("arithmetic")!),
+            maxItems: this.json(policy.get("maxItems")!), maxAccumulatorBytes: this.json(policy.get("maxAccumulatorBytes")!),
+            itemSchema: toJson(stepInput.properties.item), accumulatorSchema: toJson(output), initial: X.render(initial, scope),
+          }
+        }
+        calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField, outputPath: name, passThrough: true, ...(orderedFold ? { orderedFold } : {}) } })
+        scope.set(name, { zen: name, schema: output })
         return X.ref(name)
       })
       const rows = syntax.decisionRows(body)
