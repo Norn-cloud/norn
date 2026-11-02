@@ -1,0 +1,4 @@
+{
+  "order": 5,
+  "value": "kani --edition 2024 --fail-fast --output-format terse verification/kernel-l1/timer_schedule_kani.rs"
+}
