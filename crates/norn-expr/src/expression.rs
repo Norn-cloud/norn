@@ -541,21 +541,6 @@ fn map_isolate_error(err: IsolateError) -> ExprError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::check_unary_syntax;
-
-    #[test]
-    fn unary_tests_are_syntax_checked() {
-        for admitted in ["> 10000", "'gold', 'silver'", "[1..10]", "$ > 5 and $ < 10"] {
-            assert!(check_unary_syntax(admitted).is_ok(), "{admitted}");
-        }
-        for rejected in ["> > 1", "[1..", "'open"] {
-            assert!(check_unary_syntax(rejected).is_err(), "{rejected}");
-        }
-    }
-}
-
 fn materialize(
     ty: &crate::Type,
     env: &crate::ZenTypeEnv,
@@ -590,5 +575,20 @@ fn materialize(
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_unary_syntax;
+
+    #[test]
+    fn unary_tests_are_syntax_checked() {
+        for admitted in ["> 10000", "'gold', 'silver'", "[1..10]", "$ > 5 and $ < 10"] {
+            assert!(check_unary_syntax(admitted).is_ok(), "{admitted}");
+        }
+        for rejected in ["> > 1", "[1..", "'open"] {
+            assert!(check_unary_syntax(rejected).is_err(), "{rejected}");
+        }
     }
 }

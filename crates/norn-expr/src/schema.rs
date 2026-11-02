@@ -663,6 +663,94 @@ pub fn fold_step_graph_supported(graph: &norn_ir::jdm::JdmGraph) -> bool {
     })
 }
 
+/// VAL-EXACT-1: one action environment for admission and runtime binding.
+/// `completed` identifies the ordered derivation prefix already materialized.
+///
+/// # Errors
+/// Refuses invalid closed schemas or unresolved catalog/slice records.
+pub fn action_environment(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    use crate::{EnvOptions, FieldSource, RecordKind, Type, ZenTypeEnv};
+    let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
+        .map_err(|e| e.reason)?;
+    let mut records: BTreeMap<String, BTreeMap<String, Type>> =
+        catalog.map_or_else(BTreeMap::new, |catalog| {
+            catalog
+                .records()
+                .iter()
+                .map(|(name, record)| {
+                    (
+                        name.clone(),
+                        record
+                            .fields
+                            .iter()
+                            .filter(|(_, field)| {
+                                record.kind == RecordKind::Builtin
+                                    || matches!(field.source, FieldSource::Property { .. })
+                            })
+                            .map(|(name, field)| (name.clone(), field.ty.clone()))
+                            .collect(),
+                    )
+                })
+                .collect()
+        });
+    let root = schema.expression_type("exact.action.input", &mut records);
+    let Type::Record(name) = root else {
+        return Err("action input must be a record".into());
+    };
+    let mut fields = records.remove(&name).ok_or("missing action input record")?;
+    let properties = schema.properties().ok_or("missing input fields")?;
+    for derivation in action.derive.iter().take(completed) {
+        let target = properties
+            .get(&derivation.field)
+            .ok_or("unknown derivation target")?;
+        fields.insert(
+            derivation.field.clone(),
+            target.expression_type(
+                &format!("exact.action.target.{}", derivation.field),
+                &mut records,
+            ),
+        );
+    }
+    let mut slice = BTreeMap::new();
+    for entry in action.slice.iter().filter(|_| catalog.is_some()) {
+        if !records.contains_key(entry.object_type.as_str()) {
+            return Err("unresolved action slice type".into());
+        }
+        let mut ty = Type::Record(entry.object_type.as_str().to_owned());
+        if entry.is_list() {
+            ty = ty.list();
+        }
+        if entry.optional {
+            ty = ty.optional();
+        }
+        slice.insert(entry.name.clone(), ty);
+    }
+    let slice_record = "exact.action.slice".to_owned();
+    records.insert(slice_record.clone(), slice);
+    let mut env =
+        ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
+            .map_err(|e| e.to_string())?;
+    env = env
+        .bind_operand("slice", Type::Record(slice_record))
+        .map_err(|e| e.to_string())?;
+    if let Some(ty) = catalog.and_then(|env| env.variables().get("self")) {
+        env = env
+            .bind_operand("self", ty.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    for (name, ty) in fields {
+        if name != "input" && name != "slice" {
+            env = env.bind_operand(&name, ty).map_err(|e| e.to_string())?;
+        }
+    }
+    crate::check::validate_exact_environment(&env, "exact.action")?;
+    Ok(env)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Schema;
@@ -981,92 +1069,4 @@ mod tests {
             .is_err()
         );
     }
-}
-
-/// VAL-EXACT-1: one action environment for admission and runtime binding.
-/// `completed` identifies the ordered derivation prefix already materialized.
-///
-/// # Errors
-/// Refuses invalid closed schemas or unresolved catalog/slice records.
-pub fn action_environment(
-    action: &norn_ir::ActionRoot,
-    catalog: Option<&crate::ZenTypeEnv>,
-    completed: usize,
-) -> Result<crate::ZenTypeEnv, String> {
-    use crate::{EnvOptions, FieldSource, RecordKind, Type, ZenTypeEnv};
-    let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
-        .map_err(|e| e.reason)?;
-    let mut records: BTreeMap<String, BTreeMap<String, Type>> =
-        catalog.map_or_else(BTreeMap::new, |catalog| {
-            catalog
-                .records()
-                .iter()
-                .map(|(name, record)| {
-                    (
-                        name.clone(),
-                        record
-                            .fields
-                            .iter()
-                            .filter(|(_, field)| {
-                                record.kind == RecordKind::Builtin
-                                    || matches!(field.source, FieldSource::Property { .. })
-                            })
-                            .map(|(name, field)| (name.clone(), field.ty.clone()))
-                            .collect(),
-                    )
-                })
-                .collect()
-        });
-    let root = schema.expression_type("exact.action.input", &mut records);
-    let Type::Record(name) = root else {
-        return Err("action input must be a record".into());
-    };
-    let mut fields = records.remove(&name).ok_or("missing action input record")?;
-    let properties = schema.properties().ok_or("missing input fields")?;
-    for derivation in action.derive.iter().take(completed) {
-        let target = properties
-            .get(&derivation.field)
-            .ok_or("unknown derivation target")?;
-        fields.insert(
-            derivation.field.clone(),
-            target.expression_type(
-                &format!("exact.action.target.{}", derivation.field),
-                &mut records,
-            ),
-        );
-    }
-    let mut slice = BTreeMap::new();
-    for entry in action.slice.iter().filter(|_| catalog.is_some()) {
-        if !records.contains_key(entry.object_type.as_str()) {
-            return Err("unresolved action slice type".into());
-        }
-        let mut ty = Type::Record(entry.object_type.as_str().to_owned());
-        if entry.is_list() {
-            ty = ty.list();
-        }
-        if entry.optional {
-            ty = ty.optional();
-        }
-        slice.insert(entry.name.clone(), ty);
-    }
-    let slice_record = "exact.action.slice".to_owned();
-    records.insert(slice_record.clone(), slice);
-    let mut env =
-        ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
-            .map_err(|e| e.to_string())?;
-    env = env
-        .bind_operand("slice", Type::Record(slice_record))
-        .map_err(|e| e.to_string())?;
-    if let Some(ty) = catalog.and_then(|env| env.variables().get("self")) {
-        env = env
-            .bind_operand("self", ty.clone())
-            .map_err(|e| e.to_string())?;
-    }
-    for (name, ty) in fields {
-        if name != "input" && name != "slice" {
-            env = env.bind_operand(&name, ty).map_err(|e| e.to_string())?;
-        }
-    }
-    crate::check::validate_exact_environment(&env, "exact.action")?;
-    Ok(env)
 }
