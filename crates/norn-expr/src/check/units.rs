@@ -41,8 +41,10 @@ fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Opti
         else {
             return None;
         };
-        let [code] = values.as_slice() else {return None;};
-        (code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())).then(||code.clone())
+        let [code] = values.as_slice() else {
+            return None;
+        };
+        (code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())).then(|| code.clone())
     }
     if let Some(owner) = owner {
         return record_currency(env, owner, path);
@@ -51,7 +53,9 @@ fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Opti
     if path.links.is_empty()
         && let Some(Type::Enum { values }) = env.variables().get(path.property.as_str())
     {
-        let [code] = values.as_slice() else {return None;};
+        let [code] = values.as_slice() else {
+            return None;
+        };
         candidates.push(code.clone());
     }
     for name in ["input", "self"] {

@@ -54,10 +54,14 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
             }
         }
         Operation::Multiply => match (left, right) {
-            (Rate(currency, unit), Quantity(other_unit)) | (Quantity(other_unit), Rate(currency, unit)) if unit == other_unit => Money(currency.clone()),
-            (Quantity(unit), Literal | Dimensionless) | (Literal | Dimensionless, Quantity(unit)) => {
-                Quantity(unit.clone())
+            (Rate(currency, unit), Quantity(other_unit))
+            | (Quantity(other_unit), Rate(currency, unit))
+                if unit == other_unit =>
+            {
+                Money(currency.clone())
             }
+            (Quantity(unit), Literal | Dimensionless)
+            | (Literal | Dimensionless, Quantity(unit)) => Quantity(unit.clone()),
             (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
             _ => return None,
         },

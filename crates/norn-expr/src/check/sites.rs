@@ -1,6 +1,6 @@
 //! VAL-ROUND: lower declared result sites into the one shared rescale opcode.
-use std::fmt::Write as _;
 use super::{AstMetadata, Node, Type, ZenTypeEnv, address};
+use std::fmt::Write as _;
 
 pub(super) fn lower(
     root: &Node<'_>,
@@ -28,7 +28,7 @@ pub(super) fn lower(
         }
         output.push_str("round((");
         output.push_str(source.get(start..end).ok_or("invalid site span")?);
-        write!(output,"), {scale}, '{mode}')").map_err(|error|error.to_string())?;
+        write!(output, "), {scale}, '{mode}')").map_err(|error| error.to_string())?;
         if nullable {
             output.push(')');
         }
@@ -54,7 +54,25 @@ fn visit(
                 visit(on_true, expected, env, metadata, edits)?;
                 return visit(on_false, expected, env, metadata, edits);
             }
-            Node::Bool(_) | Node::Number(_) | Node::String(_) | Node::TemplateString(_) | Node::Pointer | Node::Array(_) | Node::Object(_) | Node::Assignments {..} | Node::Identifier(_) | Node::Closure {..} | Node::Root | Node::Member {..} | Node::Slice {..} | Node::Interval {..} | Node::Unary {..} | Node::Binary {..} | Node::FunctionCall {..} | Node::MethodCall {..} | Node::Error {..} => {}
+            Node::Bool(_)
+            | Node::Number(_)
+            | Node::String(_)
+            | Node::TemplateString(_)
+            | Node::Pointer
+            | Node::Array(_)
+            | Node::Object(_)
+            | Node::Assignments { .. }
+            | Node::Identifier(_)
+            | Node::Closure { .. }
+            | Node::Root
+            | Node::Member { .. }
+            | Node::Slice { .. }
+            | Node::Interval { .. }
+            | Node::Unary { .. }
+            | Node::Binary { .. }
+            | Node::FunctionCall { .. }
+            | Node::MethodCall { .. }
+            | Node::Error { .. } => {}
         }
         if let Type::Decimal {
             scale, rounding, ..
@@ -132,6 +150,23 @@ fn visit(
             }
             Ok(())
         }
-        Node::Null | Node::Bool(_) | Node::Number(_) | Node::String(_) | Node::TemplateString(_) | Node::Pointer | Node::Assignments {..} | Node::Identifier(_) | Node::Closure {..} | Node::Root | Node::Member {..} | Node::Slice {..} | Node::Interval {..} | Node::Unary {..} | Node::Binary {..} | Node::FunctionCall {..} | Node::MethodCall {..} | Node::Error {..} => Ok(()),
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::TemplateString(_)
+        | Node::Pointer
+        | Node::Assignments { .. }
+        | Node::Identifier(_)
+        | Node::Closure { .. }
+        | Node::Root
+        | Node::Member { .. }
+        | Node::Slice { .. }
+        | Node::Interval { .. }
+        | Node::Unary { .. }
+        | Node::Binary { .. }
+        | Node::FunctionCall { .. }
+        | Node::MethodCall { .. }
+        | Node::Error { .. } => Ok(()),
     }
 }

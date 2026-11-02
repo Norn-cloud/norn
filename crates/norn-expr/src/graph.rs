@@ -58,7 +58,14 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
             {
                 assignment = Some((id, content));
             }
-            JdmNode::ExpressionNode {..} | JdmNode::DecisionTableNode {..} | JdmNode::SwitchNode {..} | JdmNode::DecisionNode {..} | JdmNode::FunctionNode {..} | JdmNode::CustomNode {..} => return Err("unsupported node or transform in exact schema graph".into()),
+            JdmNode::ExpressionNode { .. }
+            | JdmNode::DecisionTableNode { .. }
+            | JdmNode::SwitchNode { .. }
+            | JdmNode::DecisionNode { .. }
+            | JdmNode::FunctionNode { .. }
+            | JdmNode::CustomNode { .. } => {
+                return Err("unsupported node or transform in exact schema graph".into());
+            }
         }
     }
     let (id, content) = assignment.ok_or("missing exact expression node")?;

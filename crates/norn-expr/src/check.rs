@@ -538,62 +538,100 @@ pub(crate) fn check_typed_expression(
 }
 
 struct AnalysisContext<'a> {
-    source: &'a str, env: &'a ZenTypeEnv, expected: &'a Type, limits: &'a ResourceLimitProfile,
-    root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>, exact_enabled: bool,
+    source: &'a str,
+    env: &'a ZenTypeEnv,
+    expected: &'a Type,
+    limits: &'a ResourceLimitProfile,
+    root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
 }
 struct Analysis {
-    inferred: Option<InferredType>, diagnostics: Vec<Diagnostic>, span:(u32,u32), cost:Option<u64>,
-    construction:Option<ConstructionSource>, exact:bool, notes:Vec<Diagnostic>,runtime_source:Result<String,String>,
+    inferred: Option<InferredType>,
+    diagnostics: Vec<Diagnostic>,
+    span: (u32, u32),
+    cost: Option<u64>,
+    construction: Option<ConstructionSource>,
+    exact: bool,
+    notes: Vec<Diagnostic>,
+    runtime_source: Result<String, String>,
 }
-fn analyze_expression(ast:&Node<'_>,metadata:&AstMetadata,context:&AnalysisContext<'_>) -> Analysis {
-    let AnalysisContext {source,env,expected,limits,root_bounds,exact_enabled} = *context;
+fn analyze_expression(
+    ast: &Node<'_>,
+    metadata: &AstMetadata,
+    context: &AnalysisContext<'_>,
+) -> Analysis {
+    let AnalysisContext {
+        source,
+        env,
+        expected,
+        limits,
+        root_bounds,
+        exact_enabled,
+    } = *context;
     let structural = StructuralLimits::NORN_EXPR_4;
-        let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
-        let whole = span(ast);
-        let found = bounds::structure(
-            ast,
-            source,
-            &structural,
-            limits.slice.max_relation_depth,
-            span,
-        );
-        if !found.is_empty() {
-            return Analysis {inferred:None,diagnostics:found,span:whole,cost:None,construction:None,exact:false,notes:Vec::new(),runtime_source:Ok(source.to_owned())};
-        }
-        let mut checker = Checker::new(env, metadata, None);
-        checker.exact_math = exact_enabled;
-        let expectation = checker.expectation(expected);
-        let found = checker.infer(ast, expectation.as_ref());
-        if exact_enabled && let (Some(found), Some(expected)) = (&found, &expectation) {
-            checker.check_destination(ast, found, expected);
-        }
-        let inferred = found.and_then(|ty| checker.representable(&ty, whole));
-        let cost = (inferred.is_some() && checker.diagnostics.is_empty()).then(|| {
-            cost::Estimator::new(env, &checker.types, limits)
-                .with_root_bounds(root_bounds)
-                .estimate(ast)
-        });
-        let construction = construction_source(ast, metadata, source);
-        let exact = checker.exact || expected_exact_type(expected, env);
-        let runtime_source = if exact_enabled && exact {
-            if checker
-                .types
-                .values()
-                .any(|ty| matches!(ty, T::Number(Operand::Legacy)))
-            {
-                checker.report::<()>(
-                    ast,
-                    "core.values.inexact",
-                    "bare number cannot enter a declared exact site".into(),
-                );
-            }
-            sites::lower(ast, expected, env, metadata, source)
-        } else {
-            Ok(source.to_owned())
+    let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
+    let whole = span(ast);
+    let found = bounds::structure(
+        ast,
+        source,
+        &structural,
+        limits.slice.max_relation_depth,
+        span,
+    );
+    if !found.is_empty() {
+        return Analysis {
+            inferred: None,
+            diagnostics: found,
+            span: whole,
+            cost: None,
+            construction: None,
+            exact: false,
+            notes: Vec::new(),
+            runtime_source: Ok(source.to_owned()),
         };
+    }
+    let mut checker = Checker::new(env, metadata, None);
+    checker.exact_math = exact_enabled;
+    let expectation = checker.expectation(expected);
+    let found = checker.infer(ast, expectation.as_ref());
+    if exact_enabled && let (Some(found), Some(expected)) = (&found, &expectation) {
+        checker.check_destination(ast, found, expected);
+    }
+    let inferred = found.and_then(|ty| checker.representable(&ty, whole));
+    let cost = (inferred.is_some() && checker.diagnostics.is_empty()).then(|| {
+        cost::Estimator::new(env, &checker.types, limits)
+            .with_root_bounds(root_bounds)
+            .estimate(ast)
+    });
+    let construction = construction_source(ast, metadata, source);
+    let exact = checker.exact || expected_exact_type(expected, env);
+    let runtime_source = if exact_enabled && exact {
+        if checker
+            .types
+            .values()
+            .any(|ty| matches!(ty, T::Number(Operand::Legacy)))
+        {
+            checker.report::<()>(
+                ast,
+                "core.values.inexact",
+                "bare number cannot enter a declared exact site".into(),
+            );
+        }
+        sites::lower(ast, expected, env, metadata, source)
+    } else {
+        Ok(source.to_owned())
+    };
 
-        Analysis {inferred,diagnostics:checker.diagnostics,span:whole,cost,construction,exact,notes:checker.notes,runtime_source}
-
+    Analysis {
+        inferred,
+        diagnostics: checker.diagnostics,
+        span: whole,
+        cost,
+        construction,
+        exact,
+        notes: checker.notes,
+        runtime_source,
+    }
 }
 
 fn check_expression_with_sources_and_root_bounds(
@@ -610,10 +648,27 @@ fn check_expression_with_sources_and_root_bounds(
         return Err(vec![found]);
     }
     let mut intellisense = IntelliSense::new().with_strict(true);
-    let context = AnalysisContext {source,env,expected,limits,root_bounds,exact_enabled};
-    let outcome = intellisense.with_ast(source,false,|ast,metadata| analyze_expression(ast,metadata,&context));
-    let Some(Analysis {inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source}) =
-        outcome
+    let context = AnalysisContext {
+        source,
+        env,
+        expected,
+        limits,
+        root_bounds,
+        exact_enabled,
+    };
+    let outcome = intellisense.with_ast(source, false, |ast, metadata| {
+        analyze_expression(ast, metadata, &context)
+    });
+    let Some(Analysis {
+        inferred,
+        mut diagnostics,
+        span,
+        cost,
+        construction,
+        exact,
+        notes,
+        runtime_source,
+    }) = outcome
     else {
         return Err(vec![Diagnostic {
             code: codes::SYNTAX,
@@ -690,7 +745,11 @@ fn check_expression_with_sources_and_root_bounds(
         } else {
             1
         })
-        .saturating_add(u64::try_from(quantizers).unwrap_or(u64::MAX).saturating_mul(8)),
+        .saturating_add(
+            u64::try_from(quantizers)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(8),
+        ),
         limits,
         span,
     )?;
@@ -1304,7 +1363,16 @@ impl<'a> Checker<'a> {
     fn numeric(&mut self, node: &Node<'_>) -> Option<Operand> {
         match self.value(node, None)? {
             T::Number(operand) => Some(operand),
-            ty @ (T::Null | T::Bool | T::Str(_) | T::Date | T::Timestamp | T::ParsedDate | T::ParsedTimestamp | T::List(_) | T::Record(_) | T::Optional(_)) => self.report(
+            ty @ (T::Null
+            | T::Bool
+            | T::Str(_)
+            | T::Date
+            | T::Timestamp
+            | T::ParsedDate
+            | T::ParsedTimestamp
+            | T::List(_)
+            | T::Record(_)
+            | T::Optional(_)) => self.report(
                 node,
                 codes::TYPE_ERROR,
                 format!("expected a number, found `{ty}`"),
@@ -1406,7 +1474,12 @@ impl<'a> Checker<'a> {
                             .get(field_name)
                             .and_then(|field| lower(&field.ty, *links, self.env, Some(name)))
                         {
-                            self.check_destination_at(node, found, &expected, depth.saturating_add(1));
+                            self.check_destination_at(
+                                node,
+                                found,
+                                &expected,
+                                depth.saturating_add(1),
+                            );
                         }
                     }
                 }

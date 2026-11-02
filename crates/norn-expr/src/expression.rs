@@ -128,7 +128,9 @@ impl Expression {
                 }
             };
             let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
-            if let Ok(evaluation) = &mut attempt.result && let Err(error) = materialize(expected, env, &mut evaluation.value) {
+            if let Ok(evaluation) = &mut attempt.result
+                && let Err(error) = materialize(expected, env, &mut evaluation.value)
+            {
                 attempt.result = Err(error);
             }
             attempt
