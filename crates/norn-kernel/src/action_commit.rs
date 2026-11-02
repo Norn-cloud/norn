@@ -4014,6 +4014,7 @@ fn precondition_read_refusal<X>(
         | CommitError::LinkCardinality { .. }
         | CommitError::LinkRequired { .. }
         | CommitError::TypeMismatch { .. }
+        | CommitError::RequiredLinkProof { .. }
         | CommitError::EffectiveValues { .. }
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }
@@ -4045,6 +4046,7 @@ fn precondition_read_refusal<X>(
         | CommitError::LinkCardinality { .. }
         | CommitError::LinkRequired { .. }
         | CommitError::TypeMismatch { .. }
+        | CommitError::RequiredLinkProof { .. }
         | CommitError::EffectiveValues { .. }
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }
@@ -4163,6 +4165,7 @@ where
         | CommitError::LinkCardinality { .. }
         | CommitError::LinkRequired { .. }
         | CommitError::TypeMismatch { .. }
+        | CommitError::RequiredLinkProof { .. }
         | CommitError::EffectiveValues { .. }
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }

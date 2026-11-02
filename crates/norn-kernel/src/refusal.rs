@@ -161,6 +161,7 @@ impl<X> CommitError<X> {
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
+            | Self::RequiredLinkProof { .. }
             | Self::EffectiveValues { .. }
             | Self::OwnedRowsProtected { .. }
             | Self::ObservationAuthorization
@@ -248,7 +249,31 @@ impl<X> CommitError<X> {
 
 impl<X> Refusable for CommitError<X> {
     fn refusal(&self) -> Refusal {
-        Refusal::new(self.code(), self.category(), self)
+        let mut refusal = Refusal::new(self.code(), self.category(), self);
+        let relation = match self {
+            Self::DanglingLink { key, .. }
+            | Self::LinkTarget { key }
+            | Self::LinkCardinality { key, .. } => Some((&key.source, key.link.as_str())),
+            Self::LinkRequired { parent, link } => Some((parent, link.as_str())),
+            Self::RequiredLinkProof { key, link, .. } => Some((key, link.as_str())),
+            _ => None,
+        };
+        refusal.reason = relation.map(|(key, link)| graph_link_reason(key, link));
+        refusal
+    }
+}
+
+fn graph_link_reason(key: &crate::FactKey, link: &str) -> RefusalReason {
+    RefusalReason {
+        law: "GRAPH-LINK-1".into(),
+        subject: key.to_string(),
+        values: refusal_values([
+            ("link", RuntimeValue::String(link.into())),
+            (
+                "canonical_code",
+                RuntimeValue::String(norn_checker::entity_model::GRAPH_INVALID_LINK.into()),
+            ),
+        ]),
     }
 }
 
@@ -341,6 +366,7 @@ impl<X> DecisionRefusal<X> {
             | Self::UnknownLifecycle { .. }
             | Self::UnresolvedLifecycle { .. }
             | Self::UnknownTransition { .. }
+            | Self::InvalidGraphLink { .. }
             | Self::InvalidOutput { .. } => RefusalCategory::Invalid,
         }
     }
@@ -389,6 +415,7 @@ fn lifecycle_guard(
 impl<X> DecisionRefusal<X> {
     fn lifecycle_reason(&self) -> Option<RefusalReason> {
         let reason = match self {
+            Self::InvalidGraphLink { key, link, .. } => return Some(graph_link_reason(key, link)),
             Self::NotFromState {
                 lifecycle,
                 key,
@@ -483,10 +510,20 @@ impl<X> DecisionRefusal<X> {
             | Self::Overflow
             | Self::Host(_) => None,
         };
-        reason.map(|(law, key, values)| RefusalReason {
-            law: law.to_owned(),
-            subject: key.to_string(),
-            values,
+        reason.map(|(law, key, mut values)| {
+            values.insert(
+                "canonical_code".into(),
+                RuntimeValue::String(norn_checker::entity_model::GRAPH_INVALID_TRANSITION.into()),
+            );
+            values.insert(
+                "invariant_id".into(),
+                RuntimeValue::String("GRAPH-STATE-1".into()),
+            );
+            RefusalReason {
+                law: law.to_owned(),
+                subject: key.to_string(),
+                values,
+            }
         })
     }
 }

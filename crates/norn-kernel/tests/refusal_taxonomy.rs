@@ -43,6 +43,7 @@ use norn_kernel::{
     TypeCatalog, World, commit_action, step,
 };
 use norn_testkit::cell_host::MemoryCell;
+use norn_testkit::proptest::prelude::*;
 use serde_json::{Value, json};
 
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
@@ -520,7 +521,8 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
                 "subject": "commerce.SalesOrder/SO-1",
                 "values": {
                     "lifecycle": "status", "transition": "invoice",
-                    "current": current, "allowed": ["approved", "partially_invoiced"]
+                    "current": current, "allowed": ["approved", "partially_invoiced"],
+                    "canonical_code": "core.graph.invalid_transition", "invariant_id": "GRAPH-STATE-1"
                 }
             })
         );
@@ -529,5 +531,33 @@ fn lifecycle_reason_preserves_definition_operands_through_action_wrapper() {
             serde_json::from_value::<Refusal>(serde_json::to_value(&refusal).unwrap()).unwrap(),
             refusal
         );
+    }
+}
+
+proptest! {
+    #[test]
+    fn graph_link_codes_preserve_transport_and_exact_operands(
+        id in "[a-z0-9]{1,12}", role in "[a-z]{1,12}", complete in norn_testkit::proptest::bool::ANY,
+    ) {
+        let source = FactKey::new("test.Happening", id);
+        let target = FactKey::new("test.Resource", "resource");
+        let link = Box::new(norn_kernel::LinkKey::new(source.clone(), role.clone(), target.clone()));
+        let errors: [CommitError<Infallible>; 5] = [
+            CommitError::DanglingLink { key: link.clone(), missing: target.clone() },
+            CommitError::LinkTarget { key: link.clone() },
+            CommitError::LinkCardinality { key: link, endpoint: target },
+            CommitError::LinkRequired { parent: source.clone(), link: role.clone() },
+            CommitError::RequiredLinkProof { key: source.clone(), link: role.clone(), complete },
+        ];
+        for error in errors {
+            let wire = error.refusal();
+            prop_assert_eq!(wire.code.as_str(), error.code());
+            let reason = wire.reason.as_ref().unwrap();
+            prop_assert_eq!(reason.law.as_str(), "GRAPH-LINK-1");
+            prop_assert_eq!(&reason.subject, &source.to_string());
+            prop_assert_eq!(&reason.values["link"], &RuntimeValue::String(role.clone()));
+            prop_assert_eq!(&reason.values["canonical_code"], &RuntimeValue::String("core.graph.invalid_link".into()));
+            prop_assert_eq!(serde_json::from_value::<Refusal>(serde_json::to_value(&wire).unwrap()).unwrap(), wire);
+        }
     }
 }

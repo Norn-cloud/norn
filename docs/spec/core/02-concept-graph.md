@@ -85,6 +85,13 @@ Keys preserve exact MemberRef identities and edge endpoints. No analytical Quest
 | GRAPH-CLASS-1: classification is pure and uses one complete snapshot | Admission + evaluation | `core.graph.incomplete_classification` |
 | GRAPH-META-1: catalog exactly projects admitted IR and grants no write authority | Construction + host | `core.graph.catalog_write` |
 
+The refusal adapter retains existing transport `code` values and adds the canonical
+`core.graph.invalid_link` / `core.graph.invalid_transition` in
+`reason.values.canonical_code`. Link operands identify GRAPH-LINK-1 and its exact
+source/role; lifecycle operands retain their law with GRAPH-STATE-1 as invariant ID.
+Required-link absence and incomplete presence proofs use typed operands, preserving
+`commit.effective_values` compatibility. Decision/action wrappers retain the operands.
+
 Evidence: structural graph/conformance checking, runtime link/state enforcement, sampled catalog/IR correspondence. Generated laws refer to effective members and explicit classification predicates; interface validation still runs with zero implementors. Empty sets do not establish non-vacuity.
 
 Catalog facet edges use existing exact `MemberRef` identities for props, links,

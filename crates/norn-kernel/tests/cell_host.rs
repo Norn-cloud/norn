@@ -1104,7 +1104,7 @@ fn required_extension_links_refuse_missing_or_removed_last_targets()
         };
         let checked = check_commit(&missing, &required_model, &ExtensionView(None));
         assert!(
-            matches!(&checked, Err(CommitError::EffectiveValues { reason, .. }) if reason.contains("required link `demo__peer`") && reason.contains("no target")),
+            matches!(&checked, Err(CommitError::RequiredLinkProof { link, complete: true, .. }) if link == "demo__peer"),
             "POST-LINK-REQUIRED: missing on create: {checked:?}"
         );
         let remove = CellCommit::<(), (), ()> {
@@ -1122,7 +1122,7 @@ fn required_extension_links_refuse_missing_or_removed_last_targets()
                     &required_model,
                     &ExtensionView(Some(ObjectTypeName(source_type.into())))
                 ),
-                Err(CommitError::EffectiveValues { reason, .. }) if reason.contains("required link `demo__peer`") && reason.contains("no target")
+                Err(CommitError::RequiredLinkProof { link, complete: true, .. }) if link == "demo__peer"
             ),
             "POST-LINK-REQUIRED: last target removal"
         );

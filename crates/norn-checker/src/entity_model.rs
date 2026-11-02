@@ -67,6 +67,11 @@ use crate::property_types::{
 };
 use crate::{Diagnostic, interfaces};
 
+/// Canonical GRAPH-LINK-1 diagnostic used by commit/refusal adapters.
+pub const GRAPH_INVALID_LINK: &str = "core.graph.invalid_link";
+/// Canonical GRAPH-STATE-1 diagnostic used by lifecycle/refusal adapters.
+pub const GRAPH_INVALID_TRANSITION: &str = "core.graph.invalid_transition";
+
 mod lifecycles;
 mod links;
 

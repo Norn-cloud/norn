@@ -486,6 +486,16 @@ pub static REGISTRY: &[CodeEntry] = &[
         "classification requires complete supported semantic admission and evaluation",
     ),
     entry(
+        "core.graph.invalid_link",
+        Tier::T3,
+        "the final graph must satisfy required links, target types and cardinality",
+    ),
+    entry(
+        "core.graph.invalid_transition",
+        Tier::T3,
+        "lifecycle state changes require an admitted declared transition",
+    ),
+    entry(
         "core.graph.role_conflict",
         Tier::T3,
         "inherited concept roles disagree",

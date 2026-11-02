@@ -1387,6 +1387,16 @@ pub enum DecisionRefusal<X> {
         /// The aggregate count if this commit were accepted.
         actual: u64,
     },
+    /// GRAPH-LINK-1 operands preserved through decision/action refusal adapters.
+    #[error("{reason}")]
+    InvalidGraphLink {
+        /// The source object.
+        key: FactKey,
+        /// The declared relation role.
+        link: String,
+        /// The existing safe refusal message.
+        reason: String,
+    },
     /// A change names an object type the cell does not know.
     #[error("object type {object_type} is not declared in this cell")]
     UnknownType {
@@ -1618,7 +1628,7 @@ impl<X> DecisionRefusal<X> {
             Self::UnknownTransition { .. } => lifecycle_codes::UNKNOWN_TRANSITION,
             Self::GuardFalse { .. } => "decision.guard_false",
             Self::GuardError { .. } => "decision.guard_error",
-            Self::InvalidOutput { .. } => "decision.invalid_output",
+            Self::InvalidOutput { .. } | Self::InvalidGraphLink { .. } => "decision.invalid_output",
             Self::Stale { .. } => "decision.stale_state",
             Self::NotPending { .. } => "decision.not_pending",
             Self::AccountingPosting { reason, .. } => reason.code(),
@@ -1640,6 +1650,7 @@ impl<X> DecisionRefusal<X> {
             | Self::SourceOwnedTarget { key }
             | Self::ObjectMissing { key }
             | Self::ObjectExists { key }
+            | Self::InvalidGraphLink { key, .. }
             | Self::LifecyclePropertySet { key, .. }
             | Self::ImmutableStateWrite { key, .. }
             | Self::InvalidInitialState { key, .. }
@@ -1717,17 +1728,32 @@ impl<X> DecisionRefusal<X> {
             CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
                 reason: format!("link targets for {source_key} -{link}-> are malformed"),
             },
-            CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
+            CommitError::DanglingLink { key, missing } => Self::InvalidGraphLink {
+                key: key.source.clone(),
+                link: key.link.clone(),
                 reason: format!("link {key} would dangle: {missing} does not exist"),
             },
-            CommitError::LinkTarget { key } => Self::InvalidOutput {
+            CommitError::LinkTarget { key } => Self::InvalidGraphLink {
+                key: key.source.clone(),
+                link: key.link.clone(),
                 reason: format!("link {key} is not a declared link to an admitted target"),
             },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidOutput {
+            CommitError::LinkCardinality { key, endpoint } => Self::InvalidGraphLink {
+                key: key.source.clone(),
+                link: key.link.clone(),
                 reason: format!("link {key} exceeds its cardinality at {endpoint}"),
             },
-            CommitError::LinkRequired { parent, link } => Self::InvalidOutput {
+            CommitError::LinkRequired { parent, link } => Self::InvalidGraphLink {
                 reason: format!("{parent} has no required link {link}"),
+                key: parent,
+                link,
+            },
+            CommitError::RequiredLinkProof { key, link, .. } => Self::InvalidGraphLink {
+                reason: format!(
+                    "required link {link} from {key} has no proven target in the final graph"
+                ),
+                key,
+                link,
             },
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),

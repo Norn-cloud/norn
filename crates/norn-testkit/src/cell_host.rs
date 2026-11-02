@@ -1958,6 +1958,15 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         }
         CommitError::LinkRequired { parent, link } => CommitError::LinkRequired { parent, link },
         CommitError::TypeMismatch { key, concrete } => CommitError::TypeMismatch { key, concrete },
+        CommitError::RequiredLinkProof {
+            key,
+            link,
+            complete,
+        } => CommitError::RequiredLinkProof {
+            key,
+            link,
+            complete,
+        },
         CommitError::EffectiveValues { key, reason } => {
             CommitError::EffectiveValues { key, reason }
         }

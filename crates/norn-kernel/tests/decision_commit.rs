@@ -2242,3 +2242,41 @@ fn lean_l1_lifecycle_corpus_matches_real_commit() {
     }
     assert_eq!(count, 20);
 }
+
+#[test]
+fn graph_link_required_refusal_survives_decision_and_action_adapters() {
+    let mut types = types();
+    types[0].links.push(
+        serde_json::from_value(json!({
+            "id": "resource", "target": ORDER,
+            "cardinality": {"to": "one", "from": "many", "required": true}
+        }))
+        .unwrap(),
+    );
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|_| JsonObject::default()).with_types(types.clone());
+    let row = key(ORDER, "GRAPH-DRAFT");
+    let slice = load_slice(&cell, [row.clone()]).unwrap();
+    let output = output(json!({
+        "facts": [create(ORDER, "GRAPH-DRAFT", 5.0)],
+        "commands": [{"kind": "notify"}], "timers": [{"afterMillis": 1}]
+    }));
+    let refusal =
+        commit_decision(&mut cell, &catalog, &slice, &turn("graph-draft"), &output).unwrap_err();
+    let wire = norn_kernel::Refusable::refusal(&refusal);
+    assert_eq!(wire.code, "decision.invalid_output");
+    let reason = wire.reason.as_ref().unwrap();
+    assert_eq!(reason.law, "GRAPH-LINK-1");
+    assert_eq!(
+        reason.values["canonical_code"],
+        RuntimeValue::String("core.graph.invalid_link".into())
+    );
+    assert_eq!(
+        norn_kernel::Refusable::refusal(&norn_kernel::ActionRefusal::Decision(refusal)),
+        wire
+    );
+    assert!(!cell.load(&row).unwrap().exists());
+    assert!(cell.ledger().is_empty());
+    assert!(cell.outbox().is_empty());
+    assert!(cell.timers().is_empty());
+}

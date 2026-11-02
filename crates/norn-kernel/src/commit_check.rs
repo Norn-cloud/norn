@@ -1859,15 +1859,12 @@ fn check_required_links<E, C, T, V: CommitView + ?Sized>(
                 .collect();
             let present = view
                 .has_link_target(&source, role, &excluded)
-                .map_err(CommitError::Host)?
-                .ok_or_else(|| CommitError::EffectiveValues {
-                    key: source.clone(),
-                    reason: format!("required link `{role}` presence proof is incomplete"),
-                })?;
-            if !present {
-                return Err(CommitError::EffectiveValues {
+                .map_err(CommitError::Host)?;
+            if present != Some(true) {
+                return Err(CommitError::RequiredLinkProof {
                     key: source,
-                    reason: format!("required link `{role}` has no target in the final graph"),
+                    link: role.to_owned(),
+                    complete: present.is_some(),
                 });
             }
         }

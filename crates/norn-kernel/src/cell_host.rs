@@ -734,6 +734,16 @@ pub enum CommitError<X> {
         /// The required link id.
         link: String,
     },
+    /// GRAPH-LINK-1: a required relation has no proven surviving target.
+    #[error("required link {link} from {key} has no proven target in the final graph")]
+    RequiredLinkProof {
+        /// The source object.
+        key: FactKey,
+        /// The required role.
+        link: String,
+        /// Whether the host proved absence, rather than returning unknown.
+        complete: bool,
+    },
     /// An object is written through a type other than its live concrete type
     /// (#3018: one object, one concrete type; delete it first).
     #[error("{key} is live as {}; write it as that type", concrete.as_str())]
@@ -844,7 +854,9 @@ impl<X> CommitError<X> {
             Self::LinkRequired { .. } => "commit.link_required",
             Self::OwnedRowsProtected { .. } => "commit.owned_rows_protected",
             Self::TypeMismatch { .. } => "commit.type_mismatch",
-            Self::EffectiveValues { .. } => "commit.effective_values",
+            Self::EffectiveValues { .. } | Self::RequiredLinkProof { .. } => {
+                "commit.effective_values"
+            }
             Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
             Self::AccountingPosting { reason, .. } => reason.code(),
             Self::InvariantViolation { .. } => "commit.invariant_violation",
