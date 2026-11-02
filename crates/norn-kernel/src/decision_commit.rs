@@ -70,6 +70,9 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
 
+/// Stable platform rule for an exact retained property-domain declaration.
+pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
+
 /// The object types a cell knows, for resolving effective lifecycles and
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
@@ -556,6 +559,66 @@ impl<'a> TypeCatalog<'a> {
         }))
     }
 
+    /// PROPERTY-RULE-PIN-1 binds the property and its retained declaration closure,
+    /// including inherited, interface, extension and referenced type constraints.
+    /// The closure is conservative: unrelated shared declarations also invalidate it.
+    /// # Errors
+    /// Canonical serialization of the retained declarations failed.
+    pub fn property_domain_rule_ref(
+        &self,
+        object_type: &ObjectTypeName,
+        property: &PropertyId,
+    ) -> Result<Option<DataQualityRuleRef>, norn_ir::canonical::CanonicalJsonError> {
+        let Some(effective) = self.effective_property(object_type, property) else {
+            return Ok(None);
+        };
+        if effective.computed
+            || !matches!(
+                effective.kind,
+                EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Record { .. })
+            )
+        {
+            return Ok(None);
+        }
+        let declarations = (
+            PROPERTY_DOMAIN_RULE_ID,
+            object_type,
+            property,
+            self.ancestry(object_type),
+            self.interfaces.values().collect::<Vec<_>>(),
+            &self.property_types,
+            &self.extensions,
+        );
+        let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
+        Ok(Some(DataQualityRuleRef::Builtin {
+            id: PROPERTY_DOMAIN_RULE_ID.to_owned(),
+            version: format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            ),
+        }))
+    }
+
+    fn has_property_domain_rule(
+        &self,
+        rule: &DataQualityRuleRef,
+    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        for definition in self.types.values() {
+            if let Some(effective) = self.effective_type(&definition.name) {
+                for property in &effective.properties {
+                    if self
+                        .property_domain_rule_ref(&definition.name, &property.id)?
+                        .as_ref()
+                        == Some(rule)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolve a finding's classification only when its pinned rule reference
     /// matches the typed owner definition in this catalog.
     ///
@@ -570,13 +633,15 @@ impl<'a> TypeCatalog<'a> {
         rule_ref: &DataQualityRuleRef,
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
-            DataQualityRuleRef::Builtin { id, version } => {
-                Ok(if is_supported_builtin_rule(id, version) {
+            DataQualityRuleRef::Builtin { id, version } => Ok(
+                if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
+                    || is_supported_builtin_rule(id, version)
+                {
                     DataQualityRuleClassification::Builtin
                 } else {
                     DataQualityRuleClassification::Unverified
-                })
-            }
+                },
+            ),
             DataQualityRuleRef::Invariant {
                 owner,
                 invariant_id,
