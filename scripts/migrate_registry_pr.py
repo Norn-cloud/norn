@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Translate an old-layout PR delta onto an already migrated merge worktree."""
 import argparse
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +9,7 @@ import subprocess
 import tempfile
 
 import coverage_manifest as coverage
+from coverage_manifest import entry_bytes as json_bytes
 
 COVERAGE = "verification/coverage-v1/manifest"
 DIAGNOSTICS = "crates/norn-checker/conformance/diagnostic-codes"
@@ -43,8 +43,6 @@ def merge(base, current, proposed):
         return result
     raise ValueError("concurrent registry edit or delete/edit conflict")
 
-
-json_bytes = coverage.entry_bytes
 
 
 def object_bytes(raw):
@@ -153,7 +151,7 @@ def migrate(root, base, head):
         plan[path] = value
         record = RECORDS + path + ".json"
         raw = current(record)
-        metadata = copy.deepcopy(template if raw is MISSING else object_bytes(raw))
+        metadata = (template if raw is MISSING else object_bytes(raw)).copy()
         if value is not MISSING:
             metadata["sha256"] = hashlib.sha256(value).hexdigest()
         plan[record] = json_bytes(metadata) if value is not MISSING else MISSING
