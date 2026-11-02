@@ -934,7 +934,7 @@ def quint_apalache_retry_canaries() -> None:
                     [str(fake_quint), "verify", "model.qnt", "--out", str(root / "result.json")],
                     cwd=root,
                     environment=environment,
-                    timeout_seconds=1.5 if label.startswith("timeout after") else 30,
+                    timeout_seconds=5.0 if label.startswith("timeout after") else 30,
                     quint_home=root / "quint-home",
                     label=label,
                     emit=lambda _line: None,
