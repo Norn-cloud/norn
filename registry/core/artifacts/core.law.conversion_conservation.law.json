@@ -6,6 +6,12 @@
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Process.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
     }
   ],
   "irVersion": "0.1",
