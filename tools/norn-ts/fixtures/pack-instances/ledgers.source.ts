@@ -2,8 +2,8 @@ import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 export const Account = Norn.interfaceType({ name: "demo.GenericAccount", title: "Ledger account", version: "1.0.0", properties: Schema.Struct({ id: Schema.String }) })
 const LedgerId = Schema.Struct({ ledger_id: Schema.String })
-const usdInstance = { id: "usd_instance", expression: Norn.expression(LedgerId, x => x.ledger_id === "ledger-usd"), message: "The row belongs to the USD instance." }
-const fineInstance = { id: "fine_instance", expression: Norn.expression(LedgerId, x => x.ledger_id === "ledger-fine"), message: "The row belongs to the fine-gram instance." }
+export const UsdInstance = Norn.interfaceType({ name: "demo.UsdInstance", title: "USD instance", version: "1.0.0", properties: Schema.Struct({ ledger_id: Schema.Literals(["ledger-usd"]) }), invariants: [{ id: "usd_instance", expression: Norn.expression(LedgerId, x => x.ledger_id === "ledger-usd"), message: "The row belongs to the USD instance." }] })
+export const FineInstance = Norn.interfaceType({ name: "demo.FineInstance", title: "Fine-gram instance", version: "1.0.0", properties: Schema.Struct({ ledger_id: Schema.Literals(["ledger-fine"]) }), invariants: [{ id: "fine_instance", expression: Norn.expression(LedgerId, x => x.ledger_id === "ledger-fine"), message: "The row belongs to the fine-gram instance." }] })
 const Amounts = Schema.Struct({ debit: Schema.Finite, credit: Schema.Finite })
 export const Ledger = Norn.interfaceType({
   name: "demo.GenericLedger", title: "Generic ledger", version: "1.0.0",
@@ -17,16 +17,16 @@ export const UsdOnly = Norn.interfaceType({
   properties: Schema.Struct({ currency: Schema.Literals(["USD"]) }),
   invariants: [{ id: "usd_currency", expression: Norn.expression(Currency, x => x.currency === "USD"), message: "The monetary ledger is bound to USD." }],
 })
-export const UsdAccount = Norn.type({ name: "demo.UsdAccount", title: "USD account", version: "1.0.0", implements: [Account, UsdOnly], invariants: [usdInstance], properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-usd"]), currency: Schema.Literals(["USD"]) }), identity: [{ name: "primary", properties: ["id"] }] })
-export const FineAccount = Norn.type({ name: "demo.FineAccount", title: "Fine-gram account", version: "1.0.0", implements: [Account], invariants: [fineInstance], properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-fine"]) }), identity: [{ name: "primary", properties: ["id"] }] })
+export const UsdAccount = Norn.type({ name: "demo.UsdAccount", title: "USD account", version: "1.0.0", implements: [Account, UsdOnly, UsdInstance], properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-usd"]), currency: Schema.Literals(["USD"]) }), identity: [{ name: "primary", properties: ["id"] }] })
+export const FineAccount = Norn.type({ name: "demo.FineAccount", title: "Fine-gram account", version: "1.0.0", implements: [Account, FineInstance], properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-fine"]) }), identity: [{ name: "primary", properties: ["id"] }] })
 export const UsdTransfer = Norn.type({
-  name: "demo.UsdTransfer", title: "USD transfer", version: "1.0.0", implements: [Ledger, UsdOnly], invariants: [usdInstance],
+  name: "demo.UsdTransfer", title: "USD transfer", version: "1.0.0", implements: [Ledger, UsdOnly, UsdInstance],
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "from", target: UsdAccount, cardinality: { to: "one", from: "many", required: true } }, { id: "to", target: UsdAccount, cardinality: { to: "one", from: "many", required: true } }],
   properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-usd"]), from_account: Schema.String, to_account: Schema.String, currency: Schema.Literals(["USD"]), debit: Norn.decimal(2, { currency: "currency" }), credit: Norn.decimal(2, { currency: "currency" }) }),
 })
 export const FineTransfer = Norn.type({
-  name: "demo.FineTransfer", title: "Fine-gram transfer", version: "1.0.0", implements: [Ledger], invariants: [fineInstance],
+  name: "demo.FineTransfer", title: "Fine-gram transfer", version: "1.0.0", implements: [Ledger, FineInstance],
   identity: [{ name: "primary", properties: ["id"] }],
   links: [{ id: "from", target: FineAccount, cardinality: { to: "one", from: "many", required: true } }, { id: "to", target: FineAccount, cardinality: { to: "one", from: "many", required: true } }],
   properties: Schema.Struct({ id: Schema.String, ledger_id: Schema.Literals(["ledger-fine"]), from_account: Schema.String, to_account: Schema.String, debit: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), credit: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }) }),
