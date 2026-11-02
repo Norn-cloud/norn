@@ -5001,3 +5001,35 @@ fn adding_an_interface_parent_scans_existing_rows_before_activating_its_invarian
         }
     }
 }
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn historical_identity_survives_removed_and_reparented_types(first_a in norn_testkit::proptest::bool::ANY, unrelated_versions in 1u64..5) {
+        use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
+        let model_for = |parent: Option<&str>| {
+            let mut definitions = vec![json!({"name":"defs.A","properties":[{"id":"name","type":{"kind":"text"}}]}), json!({"name":"defs.B","properties":[{"id":"name","type":{"kind":"text"}}]})];
+            if let Some(parent)=parent {definitions.push(json!({"name":"defs.Child","extends":parent}));}
+            model_from_json(definitions)
+        };
+        let (old_root,new_root)=if first_a {("defs.A","defs.B")} else {("defs.B","defs.A")};
+        let original=model_for(Some(old_root));
+        let mut store=CellStore::open_in_memory(original.clone()).expect("store");
+        store.install_definitions(original.clone(),install_input("identity-v1",1,&original),Some(0),"org_demo/dev").expect("seed");
+        let write=|kind:&str|FactWriteRow::Put{object_type:kind.into(),key:"same".into(),values:[("name".into(),Value::from("retained"))].into()};
+        for version in 1..=unrelated_versions {store.commit(&batch(write(new_root),version.checked_add(1).expect("bounded"))).expect("independent same key");}
+        let at=unrelated_versions.checked_add(2).expect("bounded");
+        store.commit(&batch(write("defs.Child"),at)).expect("child");
+        let cutoff=KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(at),frontier:at};
+        store.commit(&batch(FactWriteRow::Delete{object_type:"defs.Child".into(),key:"same".into()},at.checked_add(1).expect("bounded"))).expect("delete");
+        for (index,parent) in [None,Some(new_root)].into_iter().enumerate() {
+            let candidate=model_for(parent);let clock=at.checked_add(u64::try_from(index).expect("index")).and_then(|n|n.checked_add(2)).expect("bounded");
+            store.install_definitions(candidate.clone(),install_input("identity-next",clock,&candidate),Some(u64::try_from(index).expect("index").checked_add(1).expect("bounded")),"org_demo/dev").expect("migration");
+            let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+            for kind in ["defs.Child",old_root] {
+                let HistoricalEvidence::Found(proof)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,kind,"same",cutoff,&mut DecodeBudget::new(&limits)).expect("retained identity") else {panic!("history disappeared")};
+                assert_eq!(proof.snapshot().root_type,old_root);assert_eq!(proof.snapshot().version,1);
+            }
+        }
+    }
+}
