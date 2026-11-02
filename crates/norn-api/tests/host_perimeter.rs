@@ -144,7 +144,7 @@ fn invariant_refusal_retains_pin_and_typed_reason_through_api() -> Result<(), Bo
 
 proptest::proptest! {
     #[test]
-    fn unauthorized_reason_projection_is_independent_of_secret(secret in ".{0,256}") {
+    fn unauthorized_reason_projection_is_independent_of_secret(secret in "(?s:.{0,256})") {
         use norn_kernel::RefusalCategory as Category;
         for category in [Category::Visibility, Category::Permission, Category::Precondition, Category::Conflict, Category::Invalid, Category::Limit, Category::Internal] {
             let make = |value: &str| {
@@ -154,6 +154,11 @@ proptest::proptest! {
                     values: [("secret".into(), norn_ir::RuntimeValue::from(value))].into(),
                     pin: Some(norn_ir::DataQualityRuleRef::Builtin { id: value.into(), version: value.into() }),
                 });
+                if matches!(category, Category::Visibility | Category::Internal) {
+                    let privileged = Refusal::from_kernel(source.clone(), true);
+                    assert!(privileged.reason.is_none());
+                    assert_eq!(privileged.explanation, Refusal::UNPROVEN_DETAIL);
+                }
                 Refusal::from_kernel(source, false)
             };
             proptest::prop_assert_eq!(make(&secret), make("different-secret"));
