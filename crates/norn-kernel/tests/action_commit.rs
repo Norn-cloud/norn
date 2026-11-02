@@ -4018,3 +4018,32 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn receipt_effect_declaration_never_commits_without_atomic_consumption(reference in "[a-zA-Z0-9:{}]{0,80}") {
+        let mut payload = serde_json::to_value(approve()).unwrap();
+        payload["inputSchema"]["properties"]["receipt"] = json!({"type":"string"});
+        payload["inputSchema"]["required"].as_array_mut().unwrap().push(json!("receipt"));
+        payload["effectProgram"]["acceptReceipt"] = json!({
+            "referenceField":"receipt", "manifestDigest":format!("sha256:{}", "a".repeat(64)),
+            "digestProperty":"so_number", "resultBindings":{"customer":"customer"}
+        });
+        let action: ActionRoot = serde_json::from_value(payload).unwrap();
+        let types = order_types(); let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut request = call(&action, "SO-1", "receipt-effect");
+        request.input.insert("receipt".to_owned(), JsonValue::String(reference));
+        let reference = norn_kernel::receipt_binding::ReceiptReference::parse(&JsonValue::String(format!("sha256:{}", "a".repeat(64)))).unwrap();
+        let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
+        let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
+        norn_testkit::proptest::prop_assert!(unresolved);
+        let refused = matches!(commit_action(&mut cell, &catalog, &request, &Allow), Err(ActionRefusal::UnsupportedEffect { .. }));
+        norn_testkit::proptest::prop_assert!(refused);
+        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+        request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
+        norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
+        norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
+    }
+}
