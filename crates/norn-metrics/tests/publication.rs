@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::{ActionCall,ActionOutcome,CellHost,DecisionTurn,FactKey,LogicalTime,TypeCatalog,World,commit_action};
-use policy::{payload,reviewer};
+use policy::reviewer;
 #[test]
 fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
     let action=policy::admitted_publish();
