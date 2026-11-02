@@ -67,6 +67,10 @@ class MigrationTests(unittest.TestCase):
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}
                 self.assertEqual(migration.migrate(root, base, head), [])
                 self.assertEqual(before, {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts})
+                old_head = json.loads(git("show", head + ":" + migration.DIAGNOSTICS + ".json"))
+                old_head["codes"][0]["message"] += " corrupted"
+                with self.assertRaisesRegex(ValueError, "disagree"):
+                    migration.rust_projection(root, head, migration.read(root, head, migration.RUST), old_head, helpers)
                 path = target / (next(e["code"] for e in expected_codes if e not in old["codes"] and e != extra) + ".json")
                 path.write_bytes(migration.json_bytes({**json.loads(path.read_text()), "message": "concurrent edit"}))
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}
