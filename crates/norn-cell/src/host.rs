@@ -1775,7 +1775,7 @@ where
     }
 }
 
-fn receipt_commit_error(error: CellError) -> CommitError<CellError> {
+pub(crate) fn receipt_commit_error(error: CellError) -> CommitError<CellError> {
     match error {
         CellError::ReceiptRefused(reason) => CommitError::ReceiptRefused { reason },
         other => CommitError::Host(other),

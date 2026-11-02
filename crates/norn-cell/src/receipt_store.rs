@@ -827,6 +827,20 @@ mod tests {
             exercise_receipt_action(&member, false);
         }
         #[test]
+        fn receipt_preconditions_preserve_safe_detail_and_storage_errors_stay_redacted(
+            reason in prop_oneof![Just("unknown"), Just("replayed_or_stale"), Just("manifest"), Just("binding")],
+            storage_detail in "[a-zA-Z0-9_/]{1,128}"
+        ) {
+            use norn_kernel::Refusable;
+            let expected = crate::host::receipt_commit_error(refused(reason)).refusal();
+            prop_assert_eq!(expected.code, "action.receipt_refused");
+            prop_assert_eq!(expected.category, norn_kernel::RefusalCategory::Precondition);
+            prop_assert!(expected.message.contains(reason));
+            let storage = crate::host::receipt_commit_error(CellError::Engine(storage_detail)).refusal();
+            prop_assert_eq!(storage.category, norn_kernel::RefusalCategory::Internal);
+            prop_assert_eq!(storage.message, norn_kernel::INTERNAL_MESSAGE);
+        }
+        #[test]
         fn consumed_or_different_frontier_never_admits(consumed in any::<bool>(), authenticated in any::<u64>(), current in any::<u64>()) {
             let admitted = crate::receipt_fence::usable(consumed, authenticated, current);
             prop_assert_eq!(admitted, !consumed && authenticated == current);
