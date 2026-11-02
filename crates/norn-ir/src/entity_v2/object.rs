@@ -147,6 +147,14 @@ pub struct ObjectTypeDef {
     /// Unique name, across object types and interfaces, within the artifact
     /// set and against every installed base type.
     pub name: ObjectTypeName,
+    /// Declared concept role; omission inherits, then defaults to `thing`.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "crate::ConceptRole")]
+    pub role: Option<crate::ConceptRole>,
     #[serde(
         default,
         deserialize_with = "present_non_null",

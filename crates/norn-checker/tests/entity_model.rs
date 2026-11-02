@@ -1866,3 +1866,66 @@ fn inverse_roles_cannot_shadow_members_of_descendant_interfaces_without_implemen
             .any(|(code, _)| code == codes::MEMBER_ID_CONFLICT)
     );
 }
+
+// GRAPH-ROLE-1: exercise admission, including interfaces with no implementors.
+fn role_diagnostics(declarations: &[Option<bool>], edges: &[u16]) -> Vec<String> {
+    let interfaces: Vec<_> = declarations
+        .iter()
+        .enumerate()
+        .map(|(i, role)| {
+            let mut def = serde_json::json!({
+                "name": format!("test.Node{i}"),
+                "extends": (0..i).filter(|parent| edges[i] & (1 << parent) != 0)
+                    .map(|parent| format!("test.Node{parent}")).collect::<Vec<_>>()
+            });
+            if let Some(happening) = role {
+                def["role"] = serde_json::json!(if *happening { "happening" } else { "thing" });
+            }
+            def
+        })
+        .collect();
+    let model = serde_json::json!({"interfaces": interfaces});
+    findings(&model)
+        .into_iter()
+        .map(|(code, pointer)| {
+            assert!(model.pointer(&pointer).is_some());
+            code
+        })
+        .collect()
+}
+
+#[test]
+fn graph_role_defaults_inherits_and_refuses_conflicts_without_implementors() {
+    assert!(role_diagnostics(&[None, None], &[0, 1]).is_empty());
+    assert!(role_diagnostics(&[Some(true), None], &[0, 1]).is_empty());
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false)], &[0, 1]),
+        ["core.graph.role_mismatch"]
+    );
+    assert_eq!(
+        role_diagnostics(&[Some(true), Some(false), None], &[0, 0, 3]),
+        ["core.graph.role_conflict"]
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn graph_role_dags_match_independent_bitset_oracle(nodes in proptest::collection::vec((proptest::option::of(proptest::bool::ANY), proptest::num::u16::ANY), 1..12)) {
+        let (roles, edges): (Vec<_>, Vec<_>) = nodes.into_iter().unzip();
+        let mut expected: Vec<Option<Result<bool, &str>>> = Vec::new();
+        for (i, declared) in roles.iter().enumerate() {
+            let parents: Option<Vec<_>> = (0..i).filter(|p| edges[i] & (1 << p) != 0).map(|p| expected[p].and_then(Result::ok)).collect();
+            let Some(parents) = parents else { expected.push(None); continue; };
+            let bits = parents.iter().fold(0_u8, |bits, role| bits | if *role { 2 } else { 1 });
+            expected.push(Some(if bits == 3 {
+                Err("core.graph.role_conflict")
+            } else if declared.is_some_and(|role| bits != 0 && bits != if role { 2 } else { 1 }) {
+                Err("core.graph.role_mismatch")
+            } else {
+                Ok(declared.unwrap_or(bits == 2))
+            }));
+        }
+        let refusals: Vec<_> = expected.into_iter().flatten().filter_map(Result::err).collect();
+        proptest::prop_assert_eq!(role_diagnostics(&roles, &edges), refusals);
+    }
+}
