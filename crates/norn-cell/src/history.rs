@@ -269,6 +269,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if known_as_of.frontier > 0 && self.receipt_at_with_budget(known_as_of.frontier,budget)?.is_none() {
             return Ok(HistoricalEvidence::Exhausted);
         }
+        self.fact_evidence_in_revision_with_budget(world,object_type,key,known_as_of,budget)
+    }
+
+    // The native query transaction has already admitted and authenticated its frontier.
+    pub(crate) fn fact_evidence_in_revision_with_budget(
+        &self,world:&str,object_type:&str,key:&str,known_as_of:KnowledgeCutoff,
+        budget:&mut crate::reactive::DecodeBudget,
+    )->Result<HistoricalEvidence,CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let capacity = budget.remaining_rows() / 2;
         let limit = capacity.saturating_add(1);
@@ -335,7 +343,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
             return Ok(None);
         }
-        self.receipt_at(commit_seq)?.map(Some).ok_or_else(unproven_snapshot)
+        let receipt=self.receipt_at(commit_seq)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash {return Err(unproven_snapshot())}
+        Ok(Some(receipt))
     }
 
     /// Bind a historical result to the actual immutable ledger prefix.
