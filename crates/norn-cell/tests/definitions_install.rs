@@ -5156,8 +5156,10 @@ fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
             norn_ir::EntityRoot::V2(root) => objects.push(root.object_type),
             norn_ir::EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
             norn_ir::EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-            norn_ir::EntityRoot::V2Markings(_) => {},
-            norn_ir::EntityRoot::V1(_) | norn_ir::EntityRoot::V2Extension(_) => panic!("unexpected fixture entity root"),
+            norn_ir::EntityRoot::V2Markings(_) => {}
+            norn_ir::EntityRoot::V1(_) | norn_ir::EntityRoot::V2Extension(_) => {
+                panic!("unexpected fixture entity root")
+            }
         }
     }
     Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)

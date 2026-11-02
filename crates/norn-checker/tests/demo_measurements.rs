@@ -443,5 +443,11 @@ fn data_quality_pack_wordings_bind_and_conversion_retains_its_core_origin() {
         conservation[0].origin.artifact_id,
         "core.Conversion.interface"
     );
-    assert_eq!(conservation[0].paths, vec![vec![conservation[0].origin.clone(), conservation[0].subject.clone()]]);
+    assert_eq!(
+        conservation[0].paths,
+        vec![vec![
+            conservation[0].origin.clone(),
+            conservation[0].subject.clone()
+        ]]
+    );
 }
