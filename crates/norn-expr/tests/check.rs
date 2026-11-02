@@ -70,7 +70,7 @@ fn rejects(self_type: &str, source: &str, expected: &Type, code: &str) {
 }
 
 fn decimal(scale: u64) -> Type {
-    Type::Decimal { scale, unit: None }
+    Type::Decimal { scale, unit: None, rounding: norn_ir::Rounding::Refuse }
 }
 
 fn temporal_input_env() -> ZenTypeEnv {
