@@ -253,7 +253,6 @@
     "Kernel L1 adds a single-object mathematical reference and a checked-successor correspondence fragment only. VersionProof does not prove stale-CAS admission, durable persistence, or whole-kernel refinement; no evidence status is promoted by its enrollment."
   ],
   "sourceFiles": [
-    "crates/norn-cell/src/compute/ivm.rs",
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
     "crates/norn-api/src/contracts.rs",
@@ -264,6 +263,9 @@
     "crates/norn-canonical/src/number.rs",
     "crates/norn-cell/Cargo.toml",
     "crates/norn-cell/src/codec.rs",
+    "crates/norn-cell/src/compute.rs",
+    "crates/norn-cell/src/compute/historical.rs",
+    "crates/norn-cell/src/compute/ivm.rs",
     "crates/norn-cell/src/engine.rs",
     "crates/norn-cell/src/error.rs",
     "crates/norn-cell/src/export.rs",
@@ -275,7 +277,6 @@
     "crates/norn-cell/src/migration.rs",
     "crates/norn-cell/src/model.rs",
     "crates/norn-cell/src/payload_storage.rs",
-    "crates/norn-cell/src/compute.rs",
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
@@ -283,6 +284,7 @@
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
     "crates/norn-cell/src/write.rs",
+    "crates/norn-cell/tests/historical_question.rs",
     "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-checker-wasm/Cargo.toml",
     "crates/norn-checker/Cargo.toml",

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Receipt-driven query maintenance.
 pub mod ivm;
+mod historical;
+pub use historical::HistoricalQuestionResult;
 
 use crate::{
     CellError, CellStore, LedgerHead, ObjectRecord,
@@ -171,45 +173,48 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_at(plan,context,None,visible)
+    }
+    fn question_snapshot_at(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 return Err(refused(UNSUPPORTED_ENGINE));
             }
-            let model = self.model().query_contract(plan.grain().as_str())?;
-            if plan.properties().iter().any(|p| {
-                model
-                    .property(p.id.as_str())
-                    .is_none_or(|actual| !p.same_contract(actual))
-            }) {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
-            let revision = self.verified_head()?;
+            self.check_question_model(plan)?;
+            let mut revision = self.verified_head()?;
             let reader = self.read();
             let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
             let mut budget = DecodeBudget::new(&limits);
             let max = usize::try_from(plan.max_items())
                 .map_err(|_bound| refused("core.compute.bound_exceeded"))?;
-            let (ids, complete) = reader.root_rows_with_budget(
-                &context.world,
-                plan.grain().as_str(),
-                max,
-                &mut budget,
-            )?;
+            let mut historical_receipt=None;
+            let (ids,complete)=if let Some(cutoff)=cutoff {
+                (revision,historical_receipt)=historical::frame(&reader,cutoff,context.now_ms,&mut budget)?;
+                historical::history_ids(&reader,&context.world,plan.grain().as_str(),cutoff.frontier,max,&mut budget)?
+            } else {
+                let (rows,complete)=reader.root_rows_with_budget(&context.world,plan.grain().as_str(),max,&mut budget)?;
+                (rows.into_iter().map(|(id,_)|id).collect(),complete)
+            };
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
-            for (id, _) in ids {
-                let BudgetedRead::Found(record) = reader.object_with_budget(
-                    &context.world,
-                    plan.grain().as_str(),
-                    &id,
-                    &mut budget,
-                )?
-                else {
-                    return Err(refused("core.compute.bound_exceeded"));
+            for id in ids {
+                let selected=if let Some(cutoff)=cutoff {
+                    historical::historical_record(&reader,&context.world,plan.grain().as_str(),&id,cutoff,self.model().model_hash(),&mut budget)?
+                } else { reader.object_with_budget(&context.world,plan.grain().as_str(),&id,&mut budget)? };
+                let record=match selected {
+                    BudgetedRead::Found(record)=>record,
+                    BudgetedRead::Missing if cutoff.is_some()=>continue,
+                    BudgetedRead::Missing|BudgetedRead::Exhausted=>return Err(refused("core.compute.bound_exceeded")),
                 };
                 if record.scope != context.scope {
                     return Err(refused("core.compute.stale_input"));
@@ -222,23 +227,7 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
-            let definition_pin = match reader.active_definitions_version()? {
-                Some(version) => {
-                    reader
-                        .installed_definitions(Some(version))?
-                        .ok_or_else(|| refused("core.compute.stale_input"))?
-                        .receipt_sha256
-                }
-                None => self.model().model_hash().to_owned(),
-            };
-            let query_pin = crate::codec::hash_json(&(
-                &definition_pin,
-                self.model().model_hash(),
-                plan.question(),
-                plan.definitions(),
-                plan.max_items(),
-                "norn.query/1",
-            ))?;
+            let (query_pin,definition_pin)=self.question_pins(plan,cutoff)?;
             let result = materialize(
                 plan,
                 context,
@@ -251,12 +240,29 @@ impl<E: SqlEngine> CellStore<E> {
                 result,
                 contributions,
                 members,
+                historical_receipt,
             })
         })
     }
+    fn check_question_model(&self,plan:&QuestionPlan)->Result<(),CellError> {
+        let model=self.model().query_contract(plan.grain().as_str())?;
+        if plan.properties().iter().any(|p|model.property(p.id.as_str()).is_none_or(|actual|!p.same_contract(actual))) {return Err(refused(UNSUPPORTED_ENGINE))}
+        Ok(())
+    }
+    fn question_pins(&self,plan:&QuestionPlan,cutoff:Option<crate::KnowledgeCutoff>)->Result<(String,String),CellError> {
+        let reader=self.read();
+        let definition_pin=match reader.active_definitions_version()? {
+            Some(version)=>reader.installed_definitions(Some(version))?.ok_or_else(||refused("core.compute.stale_input"))?.receipt_sha256,
+            None=>self.model().model_hash().to_owned(),
+        };
+        let pin=historical::query_pin(self.model().model_hash(),plan,&definition_pin,cutoff)?;
+        Ok((pin,definition_pin))
+    }
+
 }
 
 struct Snapshot {
+    historical_receipt: Option<String>,
     result: QueryResult,
     contributions: Contributions,
     members: BTreeSet<String>,
