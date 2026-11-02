@@ -2236,7 +2236,7 @@ fn validate_setting_typed_value(
         )),
         (Some("number"), Some(_)) => diagnostics.push(invalid_diagnostic(
             CODE,
-            "payload.value must be an exact decimal string for number settings",
+            if historical { "payload.value must be a JSON number for historical number settings" } else { "payload.value must be an exact decimal string for number settings" },
             "payload.value",
             artifact_id,
         )),
