@@ -246,7 +246,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        self.fact_version_evidence_at_root_with_budget(world, root, object_type, key, version, budget)
+        self.fact_version_evidence_at_root_with_budget(
+            world,
+            root,
+            object_type,
+            key,
+            version,
+            budget,
+        )
     }
 
     fn fact_version_evidence_at_root_with_budget(
@@ -340,8 +347,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let row = SqlRow(row);
             let root: String = row.get(0)?;
             let version = to_u64(row.get(1)?, "fact version")?;
-            let Some(candidate) =
-                self.fact_version_evidence_at_root_with_budget(world, &root, &root, key, version, budget)?
+            let Some(candidate) = self.fact_version_evidence_at_root_with_budget(
+                world, &root, &root, key, version, budget,
+            )?
             else {
                 return Ok(HistoricalEvidence::Exhausted);
             };

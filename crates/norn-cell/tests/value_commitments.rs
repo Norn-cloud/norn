@@ -1772,8 +1772,19 @@ fn fact_version_receipts_reject_missing_or_tampered_identity_lookup_and_receipt(
         (MAIN_WORLD, "proof.Item", "item", 3),
     ] {
         assert!(read(world, ty, key, version).is_err());
-        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-        assert!(store.read().fact_version_evidence_with_budget(world,ty,key,version,&mut DecodeBudget::new(&limits)).is_err());
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(
+            store
+                .read()
+                .fact_version_evidence_with_budget(
+                    world,
+                    ty,
+                    key,
+                    version,
+                    &mut DecodeBudget::new(&limits)
+                )
+                .is_err()
+        );
     }
     let conn = rusqlite::Connection::open(path).expect("corruption fixture");
     // The locator's seq is not itself a proof: even authentic other receipts
