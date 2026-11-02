@@ -84,39 +84,8 @@ impl Expression {
     ///
     /// # Errors
     /// Returns structural/type findings or refusals from the exact arithmetic profile.
-    pub fn check_typed(
-        &self,
-        env: &crate::ZenTypeEnv,
-        expected: &crate::Type,
-    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
-        let checked = crate::check_expression_with(
-            self,
-            env,
-            expected,
-            &ResourceLimitProfile::norn_limits_v1(),
-        )?;
-        if checked.uses_exact_arithmetic() {
-            let found = zen_expression::intellisense::IntelliSense::new()
-                .with_strict(true)
-                .with_ast(&self.source, false, |ast, metadata| {
-                    crate::check::exact_admission(
-                        ast,
-                        metadata,
-                        crate::check::decimal_destination(expected).is_some(),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    vec![crate::Diagnostic {
-                        code: crate::check::codes::SYNTAX,
-                        message: "expression does not parse".to_owned(),
-                        span: (0, 0),
-                    }]
-                });
-            if !found.is_empty() {
-                return Err(found);
-            }
-        }
-        Ok(checked)
+    pub fn check_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+        crate::check::check_typed_expression(self, env, expected)
     }
 
     /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
@@ -145,11 +114,7 @@ impl Expression {
             }
         };
         if checked.uses_exact_arithmetic() {
-            self.evaluate_exact_metered(
-                context,
-                budget,
-                crate::check::decimal_destination(expected).as_ref(),
-            )
+            self.evaluate_exact_site(context, budget, crate::check::decimal_destination(expected).as_ref(), matches!(expected, crate::Type::Optional(_)))
         } else {
             self.evaluate_metered(context, budget)
         }
@@ -164,6 +129,10 @@ impl Expression {
         budget: EvaluationBudget,
         site: Option<&norn_ir::PropertyType>,
     ) -> EvaluationAttempt {
+        self.evaluate_exact_site(context, budget, site, false)
+    }
+
+    fn evaluate_exact_site(&self, context: &Value, budget: EvaluationBudget, site: Option<&norn_ir::PropertyType>, nullable: bool) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
         let result = (|| {
             let profile = match site {
@@ -183,6 +152,7 @@ impl Expression {
             let evaluated =
                 self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
             let mut evaluated = evaluated.result?;
+            if nullable && evaluated.value == Value::Null { return Ok(evaluated); }
             if let Some(site) = site {
                 let Value::Number(number) = &evaluated.value else {
                     return Err(ExprError::Evaluation {

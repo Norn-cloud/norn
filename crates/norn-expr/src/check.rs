@@ -467,7 +467,7 @@ pub fn check_expression_with_root_bounds(
     limits: &ResourceLimitProfile,
     root_bounds: &BTreeMap<String, RootCostBounds>,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, Some(root_bounds))
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, Some(root_bounds), false)
         .map(|(checked, _)| checked)
 }
 
@@ -487,7 +487,11 @@ pub fn check_expression_with_sources(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
+}
+
+pub(crate) fn check_typed_expression(expr: &Expression, env: &ZenTypeEnv, expected: &Type) -> Result<CheckedExpression, Vec<Diagnostic>> {
+    check_expression_with_sources_and_root_bounds(expr, env, expected, &ResourceLimitProfile::norn_limits_v1(), None, true).map(|(checked, _)| checked)
 }
 
 fn check_expression_with_sources_and_root_bounds(
@@ -496,6 +500,7 @@ fn check_expression_with_sources_and_root_bounds(
     expected: &Type,
     limits: &ResourceLimitProfile,
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
@@ -517,6 +522,7 @@ fn check_expression_with_sources_and_root_bounds(
             return (None, found, whole, None, None, false);
         }
         let mut checker = Checker::new(env, metadata, None);
+        checker.exact_math = exact_enabled;
         let expectation = checker.expectation(expected);
         let found = checker.infer(ast, expectation.as_ref());
         let inferred = found.and_then(|ty| checker.representable(&ty, whole));
@@ -543,6 +549,11 @@ fn check_expression_with_sources_and_root_bounds(
             span: (0, 0),
         }]);
     };
+    // Only declared exact sites use error-on-zero division. Plain Number keeps
+    // the legacy nullable division contract in this same checker.
+    if exact_enabled && !exact {
+        return check_expression_with_sources_and_root_bounds(expr, env, expected, limits, root_bounds, false);
+    }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -1044,6 +1055,7 @@ struct Checker<'a> {
     /// estimate.
     types: HashMap<usize, T>,
     exact: bool,
+    exact_math: bool,
 }
 
 /// The node inside any number of parentheses.
@@ -1101,6 +1113,7 @@ impl<'a> Checker<'a> {
             diagnostics: Vec::new(),
             types: HashMap::new(),
             exact: false,
+            exact_math: false,
         }
     }
 
@@ -1860,7 +1873,7 @@ impl<'a> Checker<'a> {
                 let bounded_literal =
                     matches!(right, Node::Number(divisor) if divisor.abs() >= 1.into());
                 l.and(r).map(|()| {
-                    if bounded_literal {
+                    if bounded_literal || self.exact_math {
                         T::Number
                     } else {
                         optional(T::Number)

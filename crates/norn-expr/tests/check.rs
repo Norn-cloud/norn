@@ -1681,6 +1681,25 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
 }
 
 #[test]
+fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
+    let env = ZenTypeEnv::input_only(fields([("a", decimal(2)), ("b", decimal(2))]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("input.a / input.b").unwrap();
+    assert!(expression.check_typed(&env, &decimal(2)).is_ok());
+    for (denominator, success) in [("2",true),("3",false),("0",false)] {
+        let context = Value::object([("input", Value::object([("a",Value::Number("1".parse().unwrap())),("b",Value::Number(denominator.parse().unwrap()))]))]);
+        assert_eq!(expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2)).result.is_ok(), success);
+    }
+}
+
+#[test]
+fn val_exact_optional_decimal_retains_declared_null() {
+    let env = ZenTypeEnv::input_only(fields([]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("null").unwrap();
+    assert_eq!(expression.evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, &decimal(2).optional()).result.unwrap().into_value(), Value::Null);
+    assert!(expression.check_typed(&env, &decimal(2)).is_err());
+}
+
+#[test]
 fn val_round_explicit_site_scopes_division_and_rescale() {
     let env = ZenTypeEnv::input_only(fields([("x", Type::Number)]), EnvOptions::default()).unwrap();
     let run = |source: &str, expected: &Type| {
