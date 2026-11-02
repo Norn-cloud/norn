@@ -1373,6 +1373,23 @@ fn check_qualified_receipt_fence(first: u128) {
         AcceptedReceiptStore, ReceiptBindingError, ReceiptReference, ReceiptResolution,
         bind_receipt,
     };
+    struct ScopedStore<'a> {
+        cell: &'a CellId,
+        acceptance: &'a Acceptance,
+        receipt: &'a FunctionReceipt,
+    }
+    impl AcceptedReceiptStore for ScopedStore<'_> {
+        type Error = Infallible;
+        fn origin_context(&self) -> Option<(&CellId, &str)> {
+            Some((self.cell, "main"))
+        }
+        fn resolve(&self, _: &Digest) -> Result<ReceiptResolution<'_>, Self::Error> {
+            Ok(ReceiptResolution::Accepted {
+                acceptance: self.acceptance,
+                receipt: self.receipt,
+            })
+        }
+    }
     let a = CellId::try_from(format!("{first:032x}")).expect("cell");
     let b = CellId::try_from(format!("{:032x}", first ^ 1)).expect("cell");
     let mut case = case("wasm");
@@ -1397,23 +1414,6 @@ fn check_qualified_receipt_fence(first: u128) {
         Reconciliation::Refused(_)
     ));
     let acceptance = accepted(run_with(&case, &case.receipt, &local, &ALLOW));
-    struct ScopedStore<'a> {
-        cell: &'a CellId,
-        acceptance: &'a Acceptance,
-        receipt: &'a FunctionReceipt,
-    }
-    impl AcceptedReceiptStore for ScopedStore<'_> {
-        type Error = Infallible;
-        fn origin_context(&self) -> Option<(&CellId, &str)> {
-            Some((self.cell, "main"))
-        }
-        fn resolve(&self, _: &Digest) -> Result<ReceiptResolution<'_>, Self::Error> {
-            Ok(ReceiptResolution::Accepted {
-                acceptance: self.acceptance,
-                receipt: self.receipt,
-            })
-        }
-    }
     let reference_digest = norn_kernel::cell_provenance::receipt_reference(&acceptance.record)
         .expect("qualified reference")
         .expect("portable evidence");

@@ -1138,7 +1138,9 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
-    /// Inspect and durably claim the outbox head before external dispatch.
+    /// Inspect and durably claim the outbox head for this bound host's adapter.
+    /// Returned command keys are local; portable transport and foreign provider
+    /// deduplication use [`CellStore::export_command`]'s qualified envelope.
     ///
     /// A restored perform fence takes precedence over both a saved result and
     /// a saved claim. A fresh command is returned only after the claim's

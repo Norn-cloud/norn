@@ -223,19 +223,30 @@ fn wrong_function_origin_refuses_before_any_effect() {
         invocation.provenance_commit =
             CommitProvenance::Qualified(QualifiedCommit::new(cell, world.into(), commit));
         let before = target.read().dump().expect("before");
-        let batch = CommitBatch {
-            world: "main".into(),
-            effects: vec![command(
-                norn_ir::runtime::encode(&invocation).expect("payload"),
-            )],
-            ..CommitBatch::default()
+        let wrapped = norn_kernel::Command {
+            id: norn_kernel::CommandId("same-command".into()),
+            generation: norn_kernel::Generation(0),
+            idempotency_key: norn_kernel::IdempotencyKey("same-operation".into()),
+            freshness: norn_kernel::FreshnessPolicy::AppendOnly,
+            deadline: None,
+            payload: invocation.clone(),
         };
-        assert!(target.commit(&batch).is_err());
-        assert_eq!(
-            target.read().dump().expect("after"),
-            before,
-            "refusal leaves no effects"
-        );
+        for payload in [
+            norn_ir::runtime::encode(&invocation).expect("direct invocation"),
+            norn_ir::runtime::encode(&wrapped).expect("wrapped invocation"),
+        ] {
+            let batch = CommitBatch {
+                world: "main".into(),
+                effects: vec![command(payload)],
+                ..CommitBatch::default()
+            };
+            assert!(target.commit(&batch).is_err());
+            assert_eq!(
+                target.read().dump().expect("after"),
+                before,
+                "refusal leaves no effects"
+            );
+        }
     }
     invocation.provenance_commit =
         CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1));
