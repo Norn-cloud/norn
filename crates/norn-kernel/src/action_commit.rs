@@ -5111,20 +5111,17 @@ fn load_action_parameter<H: CellHost + ?Sized>(
                 .ok_or_else(invalid)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let default = default_from
-        .as_ref()
-        .map(|name| {
-            let key = state
-                .entry_keys
-                .get(name)
-                .and_then(Option::as_ref)
-                .ok_or_else(invalid)?;
-            Ok::<_, ActionRefusal<H::Error>>((
+    let default = match default_from {
+        None => None,
+        Some(name) => match state.entry_keys.get(name) {
+            Some(Some(key)) => Some((
                 key.clone(),
                 state.facts.get(key).ok_or_else(invalid)?.clone(),
-            ))
-        })
-        .transpose()?;
+            )),
+            Some(None) => None,
+            None => return Err(invalid()),
+        },
+    };
     let dimension = |name| context.call.scope.get(name).cloned();
     let scope = norn_ir::ScopeRef {
         org_id: dimension("orgId"),
