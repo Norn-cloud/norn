@@ -122,6 +122,26 @@ fn nanos(value: f64) -> Result<i64, ForecastFailure> {
     format!("{scaled:.0}").parse().map_err(failure)
 }
 
+/// Pin fixed alpha, chronological split, ontology columns/units and freshness before fitting.
+/// # Errors
+/// Parameters cannot be represented canonically.
+pub fn parameter_digest(plan: &TemporalPlan, boundary: i64) -> Result<Digest, ForecastFailure> {
+    let parameters = norn_ir::canonical::canonical_json_of(&(
+        "0.05",
+        boundary,
+        plan.object_type(),
+        plan.max_age_micros(),
+        plan
+            .features()
+            .iter()
+            .map(|p| (&p.property, &p.unit))
+            .collect::<Vec<_>>(),
+        (&plan.outcome().property, &plan.outcome().unit),
+    ))
+    .map_err(failure)?;
+    Digest::of_json_document(parameters).map_err(failure)
+}
+
 fn assessment(
     export: &ForecastExport<'_>,
     input: &ForecastInput,
@@ -155,20 +175,6 @@ fn assessment(
         .max()
         .ok_or_else(|| failure("empty training partition"))?;
     let latest_ms = latest.div_euclid(1000);
-    let parameters = norn_ir::canonical::canonical_json_of(&(
-        "0.05",
-        input.split_boundary,
-        export.plan.object_type(),
-        export.plan.max_age_micros(),
-        export
-            .plan
-            .features()
-            .iter()
-            .map(|p| (&p.property, &p.unit))
-            .collect::<Vec<_>>(),
-        (&export.plan.outcome().property, &export.plan.outcome().unit),
-    ))
-    .map_err(failure)?;
     let error_unit = match export.plan.outcome().unit.as_ref() {
         None => "1".into(),
         Some(unit) if unit.system == norn_ir::UnitSystem::Ucum => unit.code.clone(),
@@ -191,7 +197,7 @@ fn assessment(
         complete: export.complete,
         quarantine_count: export.quarantine_count,
         fresh: export.fresh,
-        parameters_digest: Digest::of_json_document(parameters).map_err(failure)?,
+        parameters_digest: parameter_digest(export.plan,input.split_boundary)?,
         assumptions_digest: export.assumptions_digest.clone(),
         remedy_digest: export.remedy_digest.clone(),
         split_at_ms: input.split_boundary.div_euclid(1000),
