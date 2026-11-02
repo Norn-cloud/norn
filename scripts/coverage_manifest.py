@@ -148,6 +148,10 @@ def load(directory: Path = COVERAGE) -> dict[str, Any]:
     return document
 
 
+def entry_bytes(value: Any) -> bytes:
+    return (json.dumps(value, indent=2) + "\n").encode("utf-8")
+
+
 def write(document: dict[str, Any], directory: Path, *, split_entries: bool = False) -> None:
     """Replace `directory` with `document` in the split layout (codemod and canaries)."""
     index = {key: value for key, value in document.items() if key != "subsystems"}
@@ -160,10 +164,10 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
         bodies[identity] = body
     shutil.rmtree(directory, ignore_errors=True)
     (directory / SUBSYSTEMS).mkdir(parents=True)
-    (directory / INDEX).write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    (directory / INDEX).write_bytes(entry_bytes(index))
     for identity, body in bodies.items():
         if not split_entries:
-            (directory / SUBSYSTEMS / f"{identity}.json").write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+            (directory / SUBSYSTEMS / f"{identity}.json").write_bytes(entry_bytes(body))
             continue
         target = directory / SUBSYSTEMS / identity
         target.mkdir()
@@ -183,12 +187,12 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
                     seen[name] = occurrence + 1
                     if occurrence:
                         name += f"dup{occurrence}"
-                    (folder / f"{name}.json").write_text(json.dumps({"order": order, "value": split(item, [*parts, "entry" + name])}, indent=2) + "\n")
+                    (folder / f"{name}.json").write_bytes(entry_bytes({"order": order, "value": split(item, [*parts, "entry" + name])}))
                 return {"$entries": field}
             if isinstance(value, dict):
                 return {key: split(item, [*parts, key]) for key, item in value.items()}
             return value
-        (target / INDEX).write_text(json.dumps(split(body, []), indent=2) + "\n")
+        (target / INDEX).write_bytes(entry_bytes(split(body, [])))
 
 
 def write_entries(document: dict[str, Any], directory: Path) -> None:
