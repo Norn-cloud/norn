@@ -1970,12 +1970,14 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
         } => CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
