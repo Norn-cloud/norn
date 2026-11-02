@@ -5148,13 +5148,15 @@ fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
         .iter()
         .filter(|a| a.kind() == norn_ir::ArtifactKind::Entity)
     {
-        let root: norn_ir::EntityRoot =
-            serde_json::from_str(&serde_json::to_string(&artifact.payload.to_json_value()).expect("compiled root JSON")).expect("entity root");
+        let root: norn_ir::EntityRoot = serde_json::from_str(
+            &serde_json::to_string(&artifact.payload.to_json_value()).expect("compiled root JSON"),
+        )
+        .expect("entity root");
         match root {
             norn_ir::EntityRoot::V2(root) => objects.push(root.object_type),
             norn_ir::EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
             norn_ir::EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-            _ => panic!("unexpected fixture entity root"),
+            norn_ir::EntityRoot::V1(_) | norn_ir::EntityRoot::V2Extension(_) | norn_ir::EntityRoot::V2Markings(_) => panic!("unexpected fixture entity root"),
         }
     }
     Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
@@ -5247,13 +5249,13 @@ type MeasurementCell = norn_cell::SqliteCell<
 >;
 
 fn capture_purity(cell: &mut MeasurementCell, delivery: &str, purity: &str) {
-    capture_measurement(cell, delivery, measurement_values(purity));
+    capture_measurement(cell, delivery, &measurement_values(purity));
 }
 
 fn capture_measurement(
     cell: &mut MeasurementCell,
     delivery: &str,
-    values: BTreeMap<String, Value>,
+    values: &BTreeMap<String, Value>,
 ) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
     use norn_kernel::{
@@ -5295,7 +5297,7 @@ fn capture_measurement(
     };
     let snapshot = ObservedSnapshot {
         key: &key,
-        values: &values,
+        values,
         lifecycles: &[],
         provenance: &provenance,
     };
@@ -6154,11 +6156,11 @@ norn_testkit::proptest::proptest! {
         let mut cell = purity_quality_host(&directory.path().join("pack.sqlite"));
         let mut values = measurement_values("1.20");
         values.insert("fine_grams".into(), Value::from_json_text("0.5").expect("fine mass"));
-        for delivery in 0..deliveries { capture_measurement(&mut cell, &format!("bad-{delivery}"), values.clone()); }
+        for delivery in 0..deliveries { capture_measurement(&mut cell, &format!("bad-{delivery}"), &values); }
         let review = |cell: &MeasurementCell| cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("review");
         prop_assert_eq!(review(&cell).len(), 2);
         values.insert("purity".into(), Value::from_json_text("0.8").expect("valid purity"));
-        capture_measurement(&mut cell, "purity-fixed", values);
+        capture_measurement(&mut cell, "purity-fixed", &values);
         let findings = review(&cell);
         for finding in &findings {
             let norn_ir::DataQualityRuleRef::Law { law_id, .. } = &finding.rule_ref else { panic!("admitted pack law") };
