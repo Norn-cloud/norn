@@ -460,6 +460,9 @@
     "scripts/demo/drop-01-authored-laws.sh",
     "scripts/demo/drop-02-exact-values-units.sh",
     "scripts/demo/drop-common.sh",
+    "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
+    "tools/norn-ts/src/parity/stock-trace.ts",
+    "tools/norn-ts/test/stock-trace.test.ts",
     "tools/norn-ts/fixtures/definitions/decimal-input.source.ts",
     "tools/norn-ts/fixtures/schema/invalid/decimal-output.ts",
     "tools/norn-ts/test/decimal-input.test.ts"
