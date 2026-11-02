@@ -766,6 +766,10 @@
               "type": "string",
               "const": "decimal"
             },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
             "rounding": {
               "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
               "$ref": "#/$defs/Rounding"

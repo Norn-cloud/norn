@@ -235,7 +235,11 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     );
     let stored = compact(&receipt);
     let hash = receipt.content_sha256().unwrap();
-    assert_eq!(recover_legacy_admission_receipt(&hash, &artifacts, &[], &limits).expect("historical hash-only receipt recovery"), stored);
+    assert_eq!(
+        recover_legacy_admission_receipt(&hash, &artifacts, &[], &limits)
+            .expect("historical hash-only receipt recovery"),
+        stored
+    );
     verify_admission_receipt(&stored, &hash, &artifacts, &[], &limits)
         .expect("historical /1 receipt verifies");
     let mut relabelled: Value = serde_json::from_str(&stored).unwrap();

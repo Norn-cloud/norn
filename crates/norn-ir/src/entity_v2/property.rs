@@ -165,7 +165,11 @@ pub enum PropertyType {
         #[schemars(with = "crate::metric::DimensionPath")]
         currency_source: Option<crate::metric::DimensionPath>,
         /// VAL-RATE: currency per this unit, distinct from a quantity's `unit`.
-        #[serde(default, deserialize_with = "present_non_null", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
         #[schemars(with = "UnitRef")]
         per_unit: Option<UnitRef>,
     },

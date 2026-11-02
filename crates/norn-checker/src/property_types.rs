@@ -477,10 +477,20 @@ pub(crate) fn check_type_members(
             currency_source,
         } => {
             if let Some(per_unit) = per_unit {
-                if currency_source.is_none() || unit.is_some() || per_unit.code.is_empty() || per_unit.code.chars().any(char::is_whitespace) || scale.0 > 18 {
+                if currency_source.is_none()
+                    || unit.is_some()
+                    || per_unit.code.is_empty()
+                    || per_unit.code.chars().any(char::is_whitespace)
+                    || scale.0 > 18
+                {
                     out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
                 }
-                out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires the bounded rate consumer profile before activation".to_owned(), span_at(base, &["type", "perUnit"])));
+                out.push(error(
+                    crate::property_codec::INEXACT,
+                    "VAL-RATE requires the bounded rate consumer profile before activation"
+                        .to_owned(),
+                    span_at(base, &["type", "perUnit"]),
+                ));
             }
             check_rounding_site(base, *rounding, out);
             if scale.0 > MAX_DECIMAL_SCALE {

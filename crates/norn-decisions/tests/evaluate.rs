@@ -1639,7 +1639,9 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
         scale: WholeNumber(2),
         rounding,
         unit: None,
-        currency_source: None, per_unit: None, };
+        currency_source: None,
+        per_unit: None,
+    };
     let run = |source: &str, site: Option<&PropertyType>| {
         Expression::compile(source)
             .unwrap()

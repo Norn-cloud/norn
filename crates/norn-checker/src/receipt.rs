@@ -766,7 +766,9 @@ pub fn recover_legacy_admission_receipt(
         historical_current.type_env = Some(type_env.clone());
         let recovered = String::from_utf8(historical_current.canonical_json()?)
             .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
-        if admission_receipt_sha256(&recovered)? == expected_sha256 { return Ok(recovered); }
+        if admission_receipt_sha256(&recovered)? == expected_sha256 {
+            return Ok(recovered);
+        }
     }
     let warnings: Vec<Diagnostic> = historical_check
         .diagnostics

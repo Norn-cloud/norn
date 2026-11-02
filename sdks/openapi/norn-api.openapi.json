@@ -9751,6 +9751,10 @@
               "decimal"
             ]
           },
+          "perUnit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`."
+          },
           "rounding": {
             "type": "string",
             "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",

@@ -219,8 +219,16 @@ impl Type {
                         ]),
                     ));
                 }
-                if version == TypeEnvVersion::V2 && let Some(unit) = per_unit {
-                    fields.push(("perUnit", object([("system", string(unit_system(unit.system))), ("code", string(&unit.code))])));
+                if version == TypeEnvVersion::V2
+                    && let Some(unit) = per_unit
+                {
+                    fields.push((
+                        "perUnit",
+                        object([
+                            ("system", string(unit_system(unit.system))),
+                            ("code", string(&unit.code)),
+                        ]),
+                    ));
                 }
                 if let Some(mode) = rounding.canonical_field() {
                     fields.push(("rounding", string(mode)));
@@ -875,12 +883,28 @@ impl ZenTypeEnv {
         version: TypeEnvVersion,
     ) -> Result<Vec<u8>, CanonicalJsonError> {
         let is_rate = |mut ty: &Type| {
-            while let Type::List(inner) | Type::Optional(inner) = ty { ty = inner; }
-            matches!(ty, Type::Decimal { per_unit: Some(_), .. })
+            while let Type::List(inner) | Type::Optional(inner) = ty {
+                ty = inner;
+            }
+            matches!(
+                ty,
+                Type::Decimal {
+                    per_unit: Some(_),
+                    ..
+                }
+            )
         };
-        if version == TypeEnvVersion::V1 && (self.variables.values().any(is_rate)
-            || self.records.values().flat_map(|record| record.fields.values()).any(|field| is_rate(&field.ty))) {
-            return Err(CanonicalJsonError::Serialize { message: "Rate requires norn.expr.env/2".to_owned() });
+        if version == TypeEnvVersion::V1
+            && (self.variables.values().any(is_rate)
+                || self
+                    .records
+                    .values()
+                    .flat_map(|record| record.fields.values())
+                    .any(|field| is_rate(&field.ty)))
+        {
+            return Err(CanonicalJsonError::Serialize {
+                message: "Rate requires norn.expr.env/2".to_owned(),
+            });
         }
         norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }

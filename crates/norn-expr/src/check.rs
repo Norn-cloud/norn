@@ -1150,7 +1150,11 @@ impl<'a> Checker<'a> {
 
     fn admit_exact(&mut self, node: &Node<'_>, expected: &Type) {
         if self.rate || rate_type(expected) {
-            self.report::<()>(node, "core.values.inexact", "Rate requires the bounded rate consumer profile before activation".to_owned());
+            self.report::<()>(
+                node,
+                "core.values.inexact",
+                "Rate requires the bounded rate consumer profile before activation".to_owned(),
+            );
         }
         if expected_exact_type(expected, self.env) && decimal_destination(expected).is_none() {
             self.report::<()>(
@@ -2407,8 +2411,16 @@ fn exact_type(mut ty: &Type) -> bool {
 }
 
 fn rate_type(mut ty: &Type) -> bool {
-    while let Type::Optional(inner) | Type::List(inner) = ty { ty = inner; }
-    matches!(ty, Type::Decimal { per_unit: Some(_), .. })
+    while let Type::Optional(inner) | Type::List(inner) = ty {
+        ty = inner;
+    }
+    matches!(
+        ty,
+        Type::Decimal {
+            per_unit: Some(_),
+            ..
+        }
+    )
 }
 
 fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {

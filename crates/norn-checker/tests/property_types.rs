@@ -355,7 +355,9 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         scale: WholeNumber(scale),
         rounding,
         unit: None,
-        currency_source: None, per_unit: None, };
+        currency_source: None,
+        per_unit: None,
+    };
     for (text, rounding, expected) in [
         ("1.005", None, None),
         ("1.0100", None, Some("1.01")),
