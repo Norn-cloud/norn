@@ -2021,12 +2021,22 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
         HistoricalEvidence::Exhausted
     ));
     let mut bounded = limits;
-    let partial_refuses = (1..16_384).step_by(32).any(|bytes| {
+    let mut partial_refuses = false;
+    for bytes in (1..16_384).step_by(32) {
         bounded.max_candidate_bytes_per_commit = bytes;
         let mut budget = DecodeBudget::new(&bounded);
-        matches!(read(20, &mut budget), Ok(HistoricalEvidence::Exhausted))
-            && budget.remaining_rows() <= limits.max_scan.saturating_sub(7)
-    });
+        match read(20, &mut budget).expect("bounded historical read") {
+            HistoricalEvidence::Exhausted => {
+                partial_refuses |= budget.remaining_rows() <= limits.max_scan.saturating_sub(7);
+            }
+            HistoricalEvidence::Found(proof) => assert_eq!(
+                proof.snapshot().version,
+                2,
+                "complete latest eligible answer"
+            ),
+            HistoricalEvidence::Missing => panic!("retained eligible answer disappeared"),
+        }
+    }
     assert!(
         partial_refuses,
         "exhaustion after the first candidate never returns a partial answer"
@@ -2146,6 +2156,7 @@ proptest! {
         prop_assert!(matches!(store.read().object_at_version_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().receipt_for_fact_version(MAIN_WORLD,"proof.Item","item",version),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(u64::MAX),frontier:version},&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))), "joint tampering must refuse historical selection");
         prop_assert_eq!(store.read().receipt_at(version).expect("receipt unchanged").expect("receipt"),evidence.receipt().clone());
         drop(store);drop(connection);
         prop_assert!(matches!(CellStore::open(&path,model(),StoreOptions::default()),Err(CellError::HistoricalValueUnproven(_))));
