@@ -512,7 +512,10 @@ async fn version_zero_then_two_installs_restore_through_typed_models_and_preserv
         let expected_bindings = {
             let mut expected = bindings.clone();
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -627,7 +630,10 @@ async fn readmission_export_restores_the_receipt_and_original_prefix_exactly() {
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -735,7 +741,10 @@ async fn typed_install_tampering_version_jumps_and_untyped_schema_changes_fail_i
             let expected_bindings = {
                 let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
                 let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+                expected.extend(
+                    ["cell_id", "cell_identity_format"]
+                        .map(|key| (key.to_owned(), source.bindings[key].clone())),
+                );
                 expected
             };
             CellStore::restore_from(
@@ -761,7 +770,7 @@ fn unqualified_definition_history_reopens_locally_without_portable_export() {
     drop(CellStore::open(&path, model.clone(), StoreOptions::default()).expect("empty store"));
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
     engine
-        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .execute("DELETE FROM _norn_meta WHERE key IN ('binding:cell_id', 'binding:cell_identity_format')", &[])
         .expect("legacy fixture");
     let mut store = CellStore::from_engine(engine, model.clone()).expect("legacy open");
     store

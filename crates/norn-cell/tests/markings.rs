@@ -494,7 +494,10 @@ async fn property_lineage_keeps_exact_operands_unknowns_and_restore() {
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -649,7 +652,10 @@ async fn reference_lineage_preserves_occurrence_unknown_full_reads_and_restore()
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -2203,7 +2209,10 @@ async fn canonical_fact_provenance_survives_declassification_restart_and_restore
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -2528,7 +2537,10 @@ async fn public_and_classified_delete_recreate_preserve_tombstone_lineage_after_
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -3337,7 +3349,10 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".to_owned(), SCOPE.to_owned())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(

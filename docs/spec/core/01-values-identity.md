@@ -68,7 +68,8 @@ At the README baseline: `crates/norn-ir/src/entity_v2/{object,property}.rs`, `ru
 ### CELL-ID-1 — durable logical cell boundary
 
 A fresh store obtains one opaque 128-bit CellId from an injectable source and
-persists its 32 lowercase hexadecimal digits as `binding:cell_id` in the creation
+persists its 32 lowercase hexadecimal digits as `binding:cell_id`, alongside
+`binding:cell_identity_format = norn.cell.identity/v1`, in the creation
 transaction. Scope and physical host do not contribute to it. Reopen validates
 its canonical representation and its retained journal binding. An explicitly
 bound open refuses a different identity. An existing unqualified file remains
@@ -86,3 +87,8 @@ source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identitie
 **CELL-ID-OPEN** refuses a different expected CellId; **CELL-ID-RESTORE** refuses
 a different or missing target binding without publishing a destination;
 **CELL-ID-LEGACY** refuses portable export/adoption of unqualified history.
+
+The format marker is mandatory for portable identity. An old generic binding
+named `cell_id`, even when it contains 32 hexadecimal digits, stays unqualified.
+**CELL-ID-UNVERSIONED** checks that neither open nor binding the marker can adopt
+that history; local replay remains valid and portable export refuses.

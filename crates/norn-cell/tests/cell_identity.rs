@@ -98,6 +98,10 @@ async fn restore_requires_same_explicit_identity_and_export_refuses_unqualified_
     let mut bindings = BTreeMap::from([
         ("scope".into(), "org_demo/dev".into()),
         ("cell_id".into(), String::from(b())),
+        (
+            "cell_identity_format".into(),
+            norn_cell::cell_identity::FORMAT.into(),
+        ),
     ]);
     assert!(matches!(
         CellStore::restore_from(
@@ -156,7 +160,7 @@ fn legacy_history_stays_local_and_cannot_adopt_an_identity() {
     drop(CellStore::open(&path, model(), StoreOptions::default()).expect("empty store"));
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
     engine
-        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .execute("DELETE FROM _norn_meta WHERE key IN ('binding:cell_id', 'binding:cell_identity_format')", &[])
         .expect("legacy fixture");
     let mut store = CellStore::from_engine(engine, model()).expect("legacy local open");
     assert_eq!(store.cell_id().expect("unqualified"), None);
@@ -209,7 +213,7 @@ fn unqualified_local_history_can_record_external_results() {
     drop(CellStore::open(&path, model(), StoreOptions::default()).expect("empty store"));
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
     engine
-        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .execute("DELETE FROM _norn_meta WHERE key IN ('binding:cell_id', 'binding:cell_identity_format')", &[])
         .expect("legacy fixture");
     let mut store = CellStore::from_engine(engine, model()).expect("legacy open");
     store
@@ -245,5 +249,38 @@ fn unqualified_local_history_can_record_external_results() {
             .expect("pending")
             .result,
         Some(norn_ir::RuntimeValue::Bool(true))
+    );
+}
+
+#[test]
+fn unversioned_cell_named_binding_cannot_gain_portable_provenance() {
+    use norn_cell::engine::SqlEngine as _;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("legacy.sqlite");
+    drop(CellStore::open_bound(&path, model(), StoreOptions::default(), &a()).expect("seed"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute(
+            "DELETE FROM _norn_meta WHERE key = 'binding:cell_identity_format'",
+            &[],
+        )
+        .expect("unversioned binding");
+    let mut store = CellStore::from_engine(engine, model()).expect("legacy open");
+    assert_eq!(store.cell_id().expect("identity"), None);
+    assert!(
+        store
+            .bind("cell_identity_format", norn_cell::cell_identity::FORMAT)
+            .is_err()
+    );
+    assert!(store.require_cell_id(&a()).is_err());
+    store.commit(&CommitBatch::default()).expect("local commit");
+    assert!(store.export_record(1).is_err());
+    drop(store);
+    assert_eq!(
+        CellStore::open(&path, model(), StoreOptions::default())
+            .expect("legacy reopen")
+            .cell_id()
+            .expect("identity"),
+        None
     );
 }

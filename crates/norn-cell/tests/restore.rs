@@ -115,7 +115,10 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
             let expected_bindings = {
                 let mut expected = bindings();
                 let source = exporter.verify().await.expect("source identity");
-                expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+                expected.extend(
+                    ["cell_id", "cell_identity_format"]
+                        .map(|key| (key.to_owned(), source.bindings[key].clone())),
+                );
                 expected
             };
             CellStore::restore_from(
@@ -139,7 +142,10 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
         let expected_bindings = {
             let mut expected = bindings();
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -238,7 +244,13 @@ fn batch(seq: u64) -> CommitBatch {
     }
 }
 fn bindings() -> BTreeMap<String, String> {
-    BTreeMap::from([("scope".to_owned(), "org_demo/dev".to_owned())])
+    BTreeMap::from([
+        ("scope".to_owned(), "org_demo/dev".to_owned()),
+        (
+            "cell_identity_format".to_owned(),
+            norn_cell::cell_identity::FORMAT.to_owned(),
+        ),
+    ])
 }
 fn command(generation: u64) -> OutboxCommand {
     OutboxCommand {

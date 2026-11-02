@@ -4351,7 +4351,10 @@ async fn quantity_retry_binds_first_definition_and_submitted_values_before_new_d
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".into(), "org_demo/dev".into())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(

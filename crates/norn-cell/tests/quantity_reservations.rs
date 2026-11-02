@@ -1003,7 +1003,10 @@ async fn reopen_restore_replay_preserve_heads_holds_history_and_receipts() {
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".into(), "tenant/dev".into())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(
@@ -2610,7 +2613,10 @@ async fn post_atomic_partitions_refusal_retry_reopen_restore() {
         let expected_bindings = {
             let mut expected = BTreeMap::from([("scope".into(), "tenant/dev".into())]);
             let source = exporter.verify().await.expect("source identity");
-            expected.insert("cell_id".to_owned(), source.bindings["cell_id"].clone());
+            expected.extend(
+                ["cell_id", "cell_identity_format"]
+                    .map(|key| (key.to_owned(), source.bindings[key].clone())),
+            );
             expected
         };
         CellStore::restore_from(

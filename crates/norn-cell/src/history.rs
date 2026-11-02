@@ -1566,11 +1566,7 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
-        let cell_id = first
-            .bindings
-            .get(crate::cell_identity::KEY)
-            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
-            .ok_or_else(refused)?;
+        let cell_id = crate::cell_identity::from_bindings(&first.bindings)?.ok_or_else(refused)?;
         let mut store =
             Self::from_engine_with_identity_source(engine, Model::from_snapshot(initial)?, |_| {
                 Ok(cell_id.clone())
