@@ -57,6 +57,7 @@ mod convert;
 pub mod env;
 mod error;
 mod expression;
+mod linear;
 mod reads;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
@@ -80,3 +81,5 @@ pub use expression::{
 };
 pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
 pub use value::{Number, Value};
+
+pub use linear::{LinearGuard, linear_guard, linear_symbol};

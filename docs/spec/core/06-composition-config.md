@@ -60,13 +60,15 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
 
+`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority. Division is refused until checked-Decimal range/precision semantics are lowered; the remaining arithmetic goals require numerical correspondence before solver evidence is accepted.
+
 ## Named acceptance scenarios
 
 - **MAP-PINS/ROLES/MULTI/MEMBERS/UNITS:** Given two mappings from one layer, when checked, then retain both; stale pins, role swaps, omitted required transitions or unit changes refuse.
 - **LAYERS-CHAIN/FORGED/EXACT:** Given three separately admitted layers, when retained authority verifies, then extensions resolve; tampered/reordered predecessors or same-version source changes refuse.
 - **WRITER-NEW/EDGE-NEW/EDGE-OMIT/EDGE-NOPROOF:** Given a law challenge, when a writer/mapping changes, then regenerate goals; removed/substituted goals refuse; review evidence alone leaves proof unknown.
 - **PARAM-TAX:** Given USD 100 net, 10% before July 1 and 12% thereafter, when posting June 30 and July 1, then tax is 10 and 12 with distinct pinned versions; later setting edits leave both receipts unchanged.
-- **PARAM-NO-MATCH:** Given no candidate at the declared scope/effective date/recorded snapshot, when resolving, then select only an explicit default and persist its version; without one refuse `core.composition.parameter_missing` with no writes.
+- **PARAM-NO-MATCH:** Given no active candidate in any applicable precedence scope at the declared effective date/recorded snapshot, when resolving, then select only an explicit default and persist its version; without one refuse `core.composition.parameter_missing` with no writes.
 - **MIGRATE-FLIGHT:** Given a process started under v1, when v2 activates, then it continues under v1; an explicit supported migration changes its pin atomically or refuses without changes.
 
 ## Main and gaps
