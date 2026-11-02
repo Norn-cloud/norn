@@ -1620,16 +1620,57 @@ fn generated_accepted_unary_tests_are_total() {
 
 #[test]
 fn val_exact_typed_sites_bind_admission_and_execution() {
-    let env = ZenTypeEnv::input_only(fields([("amount", decimal(3))]), EnvOptions::default()).unwrap();
-    let context = Value::object([("input", Value::object([("amount", Value::Number("1.005".parse().unwrap()))]))]);
-    let run = |source: &str, expected: &Type| Expression::compile(source).unwrap().evaluate_typed_metered(&context, EvaluationBudget::default(), &env, expected);
-    assert_eq!(run("input.amount * 0.1 > 0", &Type::Bool).result.unwrap().into_value(), Value::Bool(true));
+    let env =
+        ZenTypeEnv::input_only(fields([("amount", decimal(3))]), EnvOptions::default()).unwrap();
+    let context = Value::object([(
+        "input",
+        Value::object([("amount", Value::Number("1.005".parse().unwrap()))]),
+    )]);
+    let run = |source: &str, expected: &Type| {
+        Expression::compile(source).unwrap().evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            expected,
+        )
+    };
+    assert_eq!(
+        run("input.amount * 0.1 > 0", &Type::Bool)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Bool(true)
+    );
     assert!(run("input.amount / 3 > 0", &Type::Bool).result.is_err());
-    assert!(run("round(input.amount, 2) > 0", &Type::Bool).result.is_err());
-    let destination = Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::HalfAwayFromZero };
-    assert_eq!(run("input.amount", &destination).result.unwrap().into_value(), Value::Number("1.01".parse().unwrap()));
-    let plain = ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
+    assert!(
+        run("round(input.amount, 2) > 0", &Type::Bool)
+            .result
+            .is_err()
+    );
+    let destination = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfAwayFromZero,
+    };
+    assert_eq!(
+        run("input.amount", &destination)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    let plain =
+        ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
     let expression = Expression::compile("input.amount / 3 > 0").unwrap();
-    assert!(!check_expression(&expression, &plain, &Type::Bool).unwrap().uses_exact_arithmetic());
-    assert!(expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &plain, &Type::Bool).result.is_ok());
+    assert!(
+        !check_expression(&expression, &plain, &Type::Bool)
+            .unwrap()
+            .uses_exact_arithmetic()
+    );
+    assert!(
+        expression
+            .evaluate_typed_metered(&context, EvaluationBudget::default(), &plain, &Type::Bool)
+            .result
+            .is_ok()
+    );
 }

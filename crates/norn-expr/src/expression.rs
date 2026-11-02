@@ -83,13 +83,34 @@ impl Expression {
     /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
     /// and declared environment; plain Number retains its existing evaluator.
     #[must_use]
-    pub fn evaluate_typed_metered(&self, context: &Value, budget: EvaluationBudget, env: &crate::ZenTypeEnv, expected: &crate::Type) -> EvaluationAttempt {
+    pub fn evaluate_typed_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
         let checked = match crate::check_expression(self, env, expected) {
             Ok(checked) => checked,
-            Err(found) => return EvaluationAttempt { result: Err(ExprError::Compile { message: found.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ") }), units_used: 0 },
+            Err(found) => {
+                return EvaluationAttempt {
+                    result: Err(ExprError::Compile {
+                        message: found
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    }),
+                    units_used: 0,
+                };
+            }
         };
         if checked.uses_exact_arithmetic() {
-            self.evaluate_exact_metered(context, budget, crate::check::decimal_destination(expected).as_ref())
+            self.evaluate_exact_metered(
+                context,
+                budget,
+                crate::check::decimal_destination(expected).as_ref(),
+            )
         } else {
             self.evaluate_metered(context, budget)
         }

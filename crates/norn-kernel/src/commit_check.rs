@@ -819,8 +819,18 @@ fn evaluate_invariants_for_class(
             }
         };
         let attempt = match &environment {
-            Ok(env) => expression.evaluate_typed_metered(&context, EvaluationBudget::new(*remaining), env, &norn_expr::Type::Bool),
-            Err(reason) => norn_expr::EvaluationAttempt { result: Err(ExprError::Compile { message: reason.clone() }), units_used: 0 },
+            Ok(env) => expression.evaluate_typed_metered(
+                &context,
+                EvaluationBudget::new(*remaining),
+                env,
+                &norn_expr::Type::Bool,
+            ),
+            Err(reason) => norn_expr::EvaluationAttempt {
+                result: Err(ExprError::Compile {
+                    message: reason.clone(),
+                }),
+                units_used: 0,
+            },
         };
         *remaining = (*remaining).saturating_sub(attempt.units_used);
         match attempt.result {
