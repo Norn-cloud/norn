@@ -48,8 +48,7 @@ def merge(base, current, proposed):
     raise ValueError("concurrent registry edit or delete/edit conflict")
 
 
-def json_bytes(value):
-    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
+json_bytes = coverage.entry_bytes
 
 
 def object_bytes(raw):
@@ -111,17 +110,15 @@ def rust_projection(root, revision, raw, manifest, expected_helpers):
         position = match.end()
     if entries != manifest["codes"]:
         raise ValueError("Rust registry and diagnostic JSON disagree")
-    helpers = prefix[prefix.index("const fn entry("):]
     # Only the known, unchanged constructors may be discarded.
-    if helpers != expected_helpers:
+    if prefix[prefix.index("const fn entry("):] != expected_helpers:
         raise ValueError("Rust registry constructors changed")
     return (prefix[:prefix.index("const fn entry(")] + 'include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"));'
             + suffix).replace("conformance/diagnostic-codes.json", "conformance/diagnostic-codes/").encode()
 
 
 def migrate(root, base, head):
-    base = git(root, "rev-parse", "--verify", "--end-of-options", base + "^{commit}").stdout.decode().strip()
-    head = git(root, "rev-parse", "--verify", "--end-of-options", head + "^{commit}").stdout.decode().strip()
+    base, head = (git(root, "rev-parse", "--verify", "--end-of-options", ref + "^{commit}").stdout.decode().strip() for ref in (base, head))
     git(root, "merge-base", "--is-ancestor", base, head)
     changed = git(root, "diff", "--name-only", "--no-renames", base, head, "--", COVERAGE, COVERAGE + ".json", DIAGNOSTICS, DIAGNOSTICS + ".json", RUST).stdout.decode().splitlines()
     for line in git(root, "diff", "--raw", "--no-renames", base, head, "--", *changed).stdout.decode().splitlines() if changed else []:
@@ -132,19 +129,17 @@ def migrate(root, base, head):
     plan = {}
     def current(path):
         target = root / path
-        stages = git(root, "ls-files", "-u", "--", path).stdout
-        if stages:
+        if git(root, "ls-files", "-u", "--", path).stdout:
             if not path.startswith(RECORDS) and path != RUST:
                 raise ValueError(f"conflicted new-layout entry {path}")
-            selected = read(root, ":3", path)
+            sides = [read(root, f":{stage}", path) for stage in (2, 3)]
+            selected = sides[1]
             if path == RUST:
-                sides = [read(root, f":{stage}", path) for stage in (2, 3)]
                 migrated = [s for s in sides if s is not MISSING and b'include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"))' in s]
                 if len(migrated) != 1:
                     raise ValueError("no unambiguous migrated Rust side")
                 selected = migrated[0]
             if path.startswith(RECORDS):
-                sides = [read(root, f":{stage}", path) for stage in (2, 3)]
                 if any(s is MISSING for s in sides) or any(
                     {k: v for k, v in object_bytes(sides[0]).items() if k != "sha256"}
                     != {k: v for k, v in object_bytes(s).items() if k != "sha256"} for s in sides[1:]):
@@ -205,8 +200,7 @@ def migrate(root, base, head):
             manifests = [object_bytes(read(root, rev, DIAGNOSTICS + ".json")) for rev in (base, head)]
             if {k: v for k, v in manifests[0].items() if k != "codes"} != {k: v for k, v in manifests[1].items() if k != "codes"}:
                 raise ValueError("diagnostic manifest header changed")
-            old_rust = read(root, base, RUST)
-            helpers = "const fn entry(" + old_rust.decode().split("pub static REGISTRY: &[CodeEntry] = &[\n")[0].split("const fn entry(", 1)[1]
+            helpers = "const fn entry(" + read(root, base, RUST).decode().split("pub static REGISTRY: &[CodeEntry] = &[\n")[0].split("const fn entry(", 1)[1]
             projections = [rust_projection(root, rev, read(root, rev, RUST), doc, helpers) for rev, doc in zip((base, head), manifests)]
             template = object_bytes(read(root, head, RECORDS + RUST + ".json"))
             maps = [{e["code"] + ".json": e for e in doc["codes"]} for doc in manifests]
@@ -236,7 +230,6 @@ if __name__ == "__main__":
     parser.add_argument("head")
     args = parser.parse_args()
     try:
-        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").stdout.decode().strip())
-        print("\n".join(migrate(root, args.base, args.head)))
+        print("\n".join(migrate(Path(git(Path.cwd(), "rev-parse", "--show-toplevel").stdout.decode().strip()), args.base, args.head)))
     except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"needs-human: {error}\n")
