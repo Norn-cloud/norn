@@ -102,7 +102,6 @@
     "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
   ],
   "sourceFiles": [
-    "crates/norn-cell/tests/incremental_question.rs",
     "crates/norn-authz/tests/compile.rs",
     "crates/norn-canonical/tests/legacy_fixtures.rs",
     "crates/norn-canonical/tests/map_order.rs",
@@ -122,9 +121,6 @@
     "crates/norn-cell/tests/quantity_refusal_boundary.rs",
     "crates/norn-cell/tests/quantity_reservations.rs",
     "crates/norn-cell/tests/quantity_support/mod.rs",
-    "crates/norn-cell/tests/query_support/mod.rs",
-    "crates/norn-cell/tests/exact_question.rs",
-    "crates/norn-cell/tests/query_envelope.rs",
     "crates/norn-cell/tests/reactive_query.rs",
     "crates/norn-cell/tests/recovery.rs",
     "crates/norn-cell/tests/restore.rs",
@@ -463,6 +459,8 @@
     "crates/norn-checker/examples/jewelry_demo.rs",
     "scripts/demo/drop-01-authored-laws.sh",
     "scripts/demo/drop-02-exact-values-units.sh",
+    "scripts/migrate_registry_pr.py",
+    "scripts/test_migrate_registry_pr.py",
     "scripts/demo/drop-common.sh",
     "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
     "tools/norn-ts/src/parity/stock-trace.ts",
@@ -471,6 +469,10 @@
     "crates/norn-checker/src/metric/compute/contribution.rs",
     "verification/query-compute-v1/arithmetic_kani.rs",
     "verification/canonical-values-v1/diagnostic_kani.rs",
+    "crates/norn-cell/tests/incremental_question.rs",
+    "crates/norn-cell/tests/query_support/mod.rs",
+    "crates/norn-cell/tests/exact_question.rs",
+    "crates/norn-cell/tests/query_envelope.rs",
     "crates/norn-cell/tests/restatement_activation.rs",
     "verification/kernel-l1/restatement_selection_kani.rs"
   ]

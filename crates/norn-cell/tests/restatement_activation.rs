@@ -18,9 +18,10 @@ use norn_cell::{
 };
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{ActionRoot, ObjectTypeDef};
+use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, DecisionTurn,
-    FactEvent, JsonObject, LogicalTime, TypeCatalog, World, commit_action,
+    FactEvent, LogicalTime, TypeCatalog, World, commit_action,
 };
 use query_support::*;
 use serde_json::{Value, json};

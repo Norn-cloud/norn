@@ -276,7 +276,6 @@
     "crates/norn-cell/src/reactive.rs",
     "crates/norn-cell/src/reactive_read.rs",
     "crates/norn-cell/src/read.rs",
-    "crates/norn-cell/src/receipt_commitment.rs",
     "crates/norn-cell/src/restore.rs",
     "crates/norn-cell/src/store.rs",
     "crates/norn-cell/src/system.rs",
@@ -498,13 +497,14 @@
     "verification/kernel-l1/Audit.lean",
     "verification/kernel-l1/Reference.lean",
     "verification/kernel-l1/VersionProof.lean",
-    "verification/kernel-l1/receipt_commitment_kani.rs",
     "verification/kernel-l1/version_kani.rs",
     "verification/kernel-l1/version_verus.rs",
     "crates/norn-cell/tests/temporal_source_world.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",
     "crates/norn-api/tests/host_perimeter.rs",
+    "crates/norn-cell/src/receipt_commitment.rs",
+    "verification/kernel-l1/receipt_commitment_kani.rs",
     "crates/norn-cell/src/compute.rs",
     "crates/norn-cell/src/compute/historical.rs",
     "crates/norn-cell/src/compute/ivm.rs",
@@ -513,7 +513,6 @@
     "crates/norn-cell/tests/historical_question.rs",
     "verification/kernel-l1/history_selection_kani.rs",
     "crates/norn-cell/src/compute/restatement.rs",
-    "registry/core/src/restatement.ts",
     "crates/norn-cell/src/compute/restatement_state.rs"
   ]
 }

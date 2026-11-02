@@ -206,6 +206,10 @@
     "tools/norn-ts/fixtures/vertical/invalid/non-projectable-schema.ts",
     "vendor/zen/core/expression/src/functions/registry.rs",
     "verification/stripmine-2026-08-22/models/active-artifact-authority.qnt",
-    "verification/stripmine-2026-08-22/models/artifact-promotion.qnt"
+    "verification/stripmine-2026-08-22/models/artifact-promotion.qnt",
+    "registry/core/src/restatement.ts",
+    "registry/core/artifacts/core.analytics.Restatement.entity.json",
+    "registry/core/artifacts/core.analytics.restatement.approve.action.json",
+    "registry/core/artifacts/core.analytics.restatement.activate.action.json"
   ]
 }
