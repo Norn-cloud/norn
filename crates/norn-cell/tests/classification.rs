@@ -24,7 +24,7 @@ fn fixture(max_records: u32) -> (Model, InstalledDefinitionInput, Classifier) {
     let model = Model::from_definitions(
         &[
             serde_json::from_value(definition.clone()).expect("base"),
-            serde_json::from_value(obligation).expect("obligation"),
+            serde_json::from_value(obligation.clone()).expect("obligation"),
         ],
         &[],
     )
@@ -35,6 +35,10 @@ fn fixture(max_records: u32) -> (Model, InstalledDefinitionInput, Classifier) {
         "provenance":{"source":"system"}, "payload":{"entityVersion":"2.0", "objectType":definition}
     }))
     .expect("artifact");
+    let mut approval = serde_json::to_value(&base).expect("approval envelope");
+    approval["artifactId"] = json!("test.Approval.entity");
+    approval["name"] = json!("Approval");
+    approval["payload"]["objectType"] = obligation;
     let mut bounds = ResourceLimitProfile::norn_limits_v1();
     bounds.slice.max_records = max_records;
     let class: ArtifactEnvelope = serde_json::from_value(json!({
@@ -55,7 +59,7 @@ fn fixture(max_records: u32) -> (Model, InstalledDefinitionInput, Classifier) {
     .expect("admission");
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
-            RuntimeValue::from_json(json!([base, class]))
+            RuntimeValue::from_json(json!([base, class, approval]))
                 .expect("set")
                 .canonical_json()
                 .expect("canonical"),
