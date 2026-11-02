@@ -1690,3 +1690,11 @@ fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
         assert_eq!(expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2)).result.is_ok(), success);
     }
 }
+
+#[test]
+fn val_exact_optional_decimal_retains_declared_null() {
+    let env = ZenTypeEnv::input_only(fields([]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("null").unwrap();
+    assert_eq!(expression.evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, &decimal(2).optional()).result.unwrap().into_value(), Value::Null);
+    assert!(expression.check_typed(&env, &decimal(2)).is_err());
+}
