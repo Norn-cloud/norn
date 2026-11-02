@@ -5149,7 +5149,7 @@ fn measurement_model(artifacts: &[norn_ir::ArtifactEnvelope]) -> Model {
         .filter(|a| a.kind() == norn_ir::ArtifactKind::Entity)
     {
         let root: norn_ir::EntityRoot =
-            norn_ir::runtime::decode(&artifact.payload.to_json_value()).expect("entity root");
+            serde_json::from_str(&serde_json::to_string(&artifact.payload.to_json_value()).expect("compiled root JSON")).expect("entity root");
         match root {
             norn_ir::EntityRoot::V2(root) => objects.push(root.object_type),
             norn_ir::EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),

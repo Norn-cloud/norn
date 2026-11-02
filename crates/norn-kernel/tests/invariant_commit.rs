@@ -3345,8 +3345,8 @@ fn native_pack_scrap_melt_uses_the_core_conversion_binding() {
     let interface: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.Conversion.interface.json"
     )).expect("generated core invariant");
-    let root: norn_ir::EntityRootV2 = norn_ir::runtime::decode(&entity.payload.to_json_value()).expect("object");
-    let contract: norn_ir::EntityInterfaceRootV2 = norn_ir::runtime::decode(&interface.payload.to_json_value()).expect("interface");
+    let root: norn_ir::EntityRootV2 = serde_json::from_str(&serde_json::to_string(&entity.payload.to_json_value()).expect("compiled root JSON")).expect("object");
+    let contract: norn_ir::EntityInterfaceRootV2 = serde_json::from_str(&serde_json::to_string(&interface.payload.to_json_value()).expect("compiled root JSON")).expect("interface");
     for (output, loss, accepted) in [("99.2","0.8",true),("99.2","0",false),("100.1","-0.1",false),("99.1999","0.8001",false)] {
         let mut cell: CommandCell = MemoryCell::new(|_| JsonObject::new()).with_types(vec![root.object_type.clone()]).with_interfaces(vec![contract.interface.clone()]);
         let values = serde_json::from_str(&format!(r#"{{"id":"MELT-1","input_quantity":100,"output_quantity":{output},"loss_quantity":{loss}}}"#)).expect("exact g@3 values");
