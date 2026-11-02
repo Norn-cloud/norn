@@ -1,0 +1,4 @@
+{
+  "extends": "../norn-sdk/tsconfig.json",
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
