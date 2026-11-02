@@ -212,6 +212,10 @@ impl<'a> TypeCatalog<'a> {
         &self,
         object_type: &ObjectTypeName,
     ) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.base_expression_environment()?.bind_self(object_type).map_err(|error|error.to_string())
+    }
+
+    pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv,String> {
         let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
         let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
         let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
@@ -228,9 +232,7 @@ impl<'a> TypeCatalog<'a> {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join("; ")
-            })?
-            .bind_self(object_type)
-            .map_err(|error| error.to_string())
+            })
     }
 
     /// Materialize declared defaults without filling other absent properties

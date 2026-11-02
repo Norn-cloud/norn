@@ -912,6 +912,7 @@ pub fn action_environment(action: &norn_ir::ActionRoot, catalog: Option<&crate::
     records.insert(slice_record.clone(),slice);
     let mut env = ZenTypeEnv::input_only_with_records(records,fields.clone(),EnvOptions::default()).map_err(|e|e.to_string())?;
     env=env.bind_operand("slice",Type::Record(slice_record)).map_err(|e|e.to_string())?;
+    if let Some(ty) = catalog.and_then(|env|env.variables().get("self")) {env=env.bind_operand("self",ty.clone()).map_err(|e|e.to_string())?;}
     for (name,ty) in fields {if name != "input" && name != "slice" {env=env.bind_operand(&name,ty).map_err(|e|e.to_string())?;}}
     Ok(env)
 }
