@@ -1,0 +1,66 @@
+{
+  "artifactId": "demo.erpnext.fine_mass_definition.wording",
+  "format": "norn.law_wording/1",
+  "lawArtifactId": "demo.erpnext.fine_mass_definition.law",
+  "lawSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "requirement": {
+    "norm": {
+      "authorityId": "demo.erpnext.controls",
+      "authorityVersion": "0.1.0",
+      "defeatedBy": [],
+      "exceptions": [],
+      "law": {
+        "id": "demo.erpnext.fine_mass_definition",
+        "lawVersion": "0.1",
+        "modality": {
+          "kind": "always"
+        },
+        "owner": "demo.erpnext.controls",
+        "provenance": {
+          "source": "authoring_sdk",
+          "sourcePath": "registry/packs/demo-erpnext/measurements.ts"
+        },
+        "rationale": "Fine-metal mass is defined exactly by gross mass times purity.",
+        "response": {
+          "expression": "self.fine_grams == self.gross_grams * self.purity",
+          "kind": "predicate"
+        },
+        "scope": {
+          "objectTypes": [
+            "demo.erpnext.StockEntryMeasurement"
+          ],
+          "root": {
+            "id": "demo.erpnext.StockEntryMeasurement",
+            "kind": "entity"
+          }
+        },
+        "severity": "error",
+        "subject": "demo.erpnext.StockEntryMeasurement"
+      },
+      "modality": "obligation",
+      "source": {
+        "artifactId": "demo.erpnext.fine_mass_definition.wording",
+        "pointer": "/requirement/norm"
+      }
+    },
+    "timing": "every_committed_state",
+    "wording": {
+      "activation": {
+        "ar": "في كل حالة معتمدة",
+        "en": "At every committed state"
+      },
+      "component": {
+        "ar": "كتلة معدنه الخالص بالغرام",
+        "en": "Its fine-metal mass in grams"
+      },
+      "response": {
+        "ar": "كتلة المعدن الخالص تساوي الكتلة الإجمالية مضروبة في النقاء",
+        "en": "Fine mass equals gross mass multiplied by purity"
+      },
+      "scope": {
+        "ar": "كل قياس اصطناعي من ERPNext",
+        "en": "Each synthetic ERPNext measurement"
+      }
+    }
+  }
+}
