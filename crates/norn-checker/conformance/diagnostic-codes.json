@@ -3173,6 +3173,20 @@
       "tier": "T2"
     },
     {
+      "code": "rule.validation.ordered_fold_invalid",
+      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_unsupported",
+      "message": "ordered-fold execution is unavailable in this semantics profile",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
       "code": "sealing.extension_point.capability_missing",
       "message": "operation lacks the capabilities its extension point grants: {capabilities}",
       "severity": "error",
