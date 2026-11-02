@@ -7,7 +7,7 @@ import { compilePack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
 function sources(directory: string): string[] {
-  return readdirSync(directory, { recursive: true }).filter(path => path.endsWith(".ts")).map(path => join(directory, path)).sort()
+  return readdirSync(directory, { recursive: true, encoding: "utf8" }).filter(path => path.endsWith(".ts")).map(path => join(directory, path)).sort()
 }
 
 test("fmt_idempotent", () => {
