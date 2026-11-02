@@ -685,8 +685,10 @@ fn param_fallthrough_boundaries_ambiguity_and_explicit_default() {
         std::ptr::from_ref(&candidates[0])
     ));
     context.effective_at = "2026-07-01T00:00:00Z";
+    let fallback = candidate(&second, &broad, 1);
     assert!(std::ptr::eq(
-        resolve_parameter(&candidates, &context, None).expect("fallthrough"),
+        resolve_parameter(&candidates, &context, Some(&fallback))
+            .expect("candidate before default"),
         std::ptr::from_ref(&candidates[1])
     ));
     context.revision = 1;
