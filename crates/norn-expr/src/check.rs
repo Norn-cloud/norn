@@ -2463,6 +2463,19 @@ impl<'a> Checker<'a> {
     }
 }
 
+pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(),String> {
+    for (name,record) in env.records().iter().filter(|(name,_)|name.starts_with(prefix)) {
+        for field in record.fields.values() {
+            let mut ty = &field.ty;
+            while let Type::Optional(inner) | Type::List(inner) = ty {ty=inner;}
+            if let Type::Decimal {unit,currency_source,per_unit,..} = ty && matches!(units::declared(env,Some(name),unit.as_ref(),currency_source.as_ref(),per_unit.as_ref()),Operand::Unresolved) {
+                return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// VAL-EXACT-1: record references are inspected when their members are read.
 fn exact_type(mut ty: &Type) -> bool {
     while let Type::Optional(inner) | Type::List(inner) = ty {

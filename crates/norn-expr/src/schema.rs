@@ -134,7 +134,7 @@ impl Schema {
         let schema_type = type_value
             .as_string()
             .ok_or_else(|| Violation::new(path, "a closed schema requires one explicit type"))?;
-        if action_input && schema_type == "string" && schema.contains_key("enum") {
+        if action_input && schema_type == "string" && schema.contains_key("enum") && !fixed_currency_schema(value) {
             return Err(Violation::new(
                 path,
                 "ActionIR input string schemas do not admit enum",
@@ -374,6 +374,12 @@ impl Schema {
     }
 }
 
+/// Whether a string schema declares one fixed ISO-spelled currency code.
+#[must_use]
+pub fn fixed_currency_schema(value: &JsonValue) -> bool {
+    value.as_object().and_then(|schema|schema.get("enum")).and_then(JsonValue::as_array).is_some_and(|values|values.len()==1 && values[0].as_string().is_some_and(|code|code.len()==3 && code.bytes().all(|c|c.is_ascii_uppercase())))
+}
+
 /// VAL-EXACT-1: decode only the existing strict Decimal representation.
 ///
 /// # Errors
@@ -384,7 +390,7 @@ pub fn decimal_refinement(value: &JsonValue, path: &str) -> Result<Option<norn_i
     if schema.get("type").and_then(JsonValue::as_string) != Some("number") { return Err(Violation::new(path,"nornType requires type:number")); }
     let site = norn_ir::PropertyType::deserialize(annotation.clone().into_deserializer()).map_err(|e: serde::de::value::Error| Violation::new(path,e.to_string()))?;
     let norn_ir::PropertyType::Decimal { scale, unit, currency_source, per_unit, .. } = &site else { return Err(Violation::new(path,"nornType must be Decimal")); };
-    if scale.0 > 18 || unit.is_some() && currency_source.is_some() || per_unit.is_some() && (unit.is_some() || currency_source.is_none()) || unit.iter().chain(per_unit.iter()).any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace)) {
+    if currency_source.as_ref().is_some_and(|source|source.property.as_str().trim().is_empty() || source.links.iter().any(|link|link.as_str().trim().is_empty())) || scale.0 > 18 || unit.is_some() && currency_source.is_some() || per_unit.is_some() && (unit.is_some() || currency_source.is_none()) || unit.iter().chain(per_unit.iter()).any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace)) {
         return Err(Violation::new(path,"invalid bounded Decimal refinement"));
     }
     Ok(Some(site))
@@ -915,5 +921,6 @@ pub fn action_environment(action: &norn_ir::ActionRoot, catalog: Option<&crate::
     env=env.bind_operand("slice",Type::Record(slice_record)).map_err(|e|e.to_string())?;
     if let Some(ty) = catalog.and_then(|env|env.variables().get("self")) {env=env.bind_operand("self",ty.clone()).map_err(|e|e.to_string())?;}
     for (name,ty) in fields {if name != "input" && name != "slice" {env=env.bind_operand(&name,ty).map_err(|e|e.to_string())?;}}
+    crate::check::validate_exact_environment(&env,"exact.action")?;
     Ok(env)
 }

@@ -1417,7 +1417,10 @@ pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
         return None;
     }
     match type_value.as_string()? {
-        "string" => Some(Type::text()),
+        "string" => match schema.get("enum").and_then(JsonValue::as_array) {
+            Some(values) => Some(Type::enumeration(values.iter().map(JsonValue::as_string).collect::<Option<Vec<_>>>()?)),
+            None => Some(Type::text()),
+        },
         "integer" => Some(Type::Integer),
         "number" => Some(Type::Number),
         "boolean" => Some(Type::Bool),

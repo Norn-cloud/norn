@@ -133,6 +133,8 @@ fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
             code: code.to_owned(),
         }),
         currency_source: None,
+        per_unit: None,
+        rounding: None,
     }
 }
 

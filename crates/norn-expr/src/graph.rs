@@ -52,6 +52,7 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>,String> {
     let mut env = ZenTypeEnv::input_only_with_records(records,fields.clone(),EnvOptions::default()).map_err(|e|e.to_string())?;
     for (name,ty) in fields { env = env.bind_operand(&name,ty).map_err(|e|e.to_string())?; }
     let Type::Record(output_name) = output_type else {return Err("exact output must be a record".into());};
+    crate::check::validate_exact_environment(&env, "exact.")?;
     let outputs = env.record(&output_name).ok_or("missing output record")?;
     let mut result = Vec::new();
     for expression in &content.expressions {

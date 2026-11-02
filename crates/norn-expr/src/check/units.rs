@@ -21,7 +21,7 @@ fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Opti
             record = next;
         }
         let Type::Enum { values } = &env.record(record)?.fields.get(path.property.as_str())?.ty else { return None; };
-        (values.len() == 1).then(|| values[0].clone())
+        (values.len() == 1 && values[0].len() == 3 && values[0].bytes().all(|c|c.is_ascii_uppercase())).then(|| values[0].clone())
     }
     if let Some(owner) = owner { return record_currency(env,owner,path); }
     let mut candidates = Vec::new();

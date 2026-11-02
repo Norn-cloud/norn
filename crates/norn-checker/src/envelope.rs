@@ -1670,7 +1670,7 @@ pub(crate) fn validate_closed_schema(
         "number" => &["type", "nornType"],
         "object" => &["type", "properties", "required", "additionalProperties"],
         "array" => &["type", "items"],
-        "string" if profile.string_enums => &["type", "enum"],
+        "string" if profile.string_enums || profile.subject == "ActionIR" && value.is_some_and(norn_expr::schema::fixed_currency_schema) => &["type", "enum"],
         _ => &["type"],
     };
     reject_unknown_object_fields(schema, allowed, path, diagnostics, artifact_id, code);
