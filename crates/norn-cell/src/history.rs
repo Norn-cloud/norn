@@ -280,8 +280,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let receipt = self
             .receipt_at(to_u64(commit_seq, "fact commit seq")?)?
             .ok_or_else(unproven_snapshot)?;
-        if snapshot.root_type != root
-            || hash_json(&receipt.body)? != receipt.hash
+        if hash_json(&receipt.body)? != receipt.hash
             || receipt.body.world != world
             || !receipt.body.written.iter().any(|row| {
                 row.object_type == snapshot.object_type && row.key == key && row.version == version
@@ -545,7 +544,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
                 )?;
                 let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
-                let snapshot = decode_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version, &encoded, &hash)?;
+                let snapshot = decode_snapshot(
+                    &receipt.body.world,
+                    &row.object_type,
+                    &row.key,
+                    row.version,
+                    &encoded,
+                    &hash,
+                )?;
                 if snapshot.root_type != root || snapshot.object_type != row.object_type {
                     return Err(unproven_snapshot());
                 }
