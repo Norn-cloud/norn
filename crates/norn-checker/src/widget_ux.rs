@@ -6829,9 +6829,10 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
     let ty = match &property.kind {
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
         EffectiveKind::Base(PropertyType::Integer {}) => Type::Integer,
-        EffectiveKind::Base(PropertyType::Decimal { scale, unit, .. }) => Type::Decimal {
+        EffectiveKind::Base(PropertyType::Decimal { scale, unit, rounding, .. }) => Type::Decimal {
             scale: scale.0,
             unit: unit.clone(),
+            rounding: norn_ir::Rounding::effective(*rounding),
         },
         EffectiveKind::Base(PropertyType::Boolean {}) => Type::Bool,
         EffectiveKind::Base(PropertyType::Timestamp { timezone }) => Type::Timestamp {

@@ -45,7 +45,7 @@ use norn_ir::canonical::{CanonicalJsonError, HashProfile, JsonValue};
 use norn_ir::{
     InterfaceDef, InterfaceName, Link, LinkCardinality, Multiplicity, ObjectTypeDef,
     ObjectTypeExtension, ObjectTypeName, Property, PropertyType, PropertyTypeDef, PropertyTypeName,
-    ResourceLimitProfile, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
+    ResourceLimitProfile, Rounding, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
 };
 
 use crate::actor;
@@ -53,8 +53,9 @@ use crate::actor;
 /// Identifier of the type-environment format.
 pub const TYPE_ENV_ID: &str = "norn.expr.env";
 
-/// Version of the type-environment format. Any change to how an environment
-/// is derived or serialized is a new version.
+/// Version of the type-environment format. Bump when existing bytes or their
+/// meaning change, not for a canonically defaulted optional field that occurs
+/// only in newly admitted policies.
 pub const TYPE_ENV_VERSION: u32 = 1;
 
 /// The hash profile the environment content hash is computed under.
@@ -90,6 +91,8 @@ pub enum Type {
         scale: u64,
         /// The unit of a quantity, if declared.
         unit: Option<UnitRef>,
+        /// Effective destination mode; omitted declarations become Refuse.
+        rounding: Rounding,
     },
     /// Any exact decimal number (no declared scale).
     Number,
@@ -172,24 +175,18 @@ impl Type {
                 Some(format) => kind("text", [("format", string(text_format(*format)))]),
             },
             Self::Integer => kind("integer", []),
-            Self::Decimal { scale, unit } => {
-                let scale = ("scale", number(*scale));
-                match unit {
-                    None => kind("decimal", [scale]),
-                    Some(unit) => kind(
-                        "decimal",
-                        [
-                            scale,
-                            (
-                                "unit",
-                                object([
-                                    ("system", string(unit_system(unit.system))),
-                                    ("code", string(&unit.code)),
-                                ]),
-                            ),
-                        ],
-                    ),
+            Self::Decimal { scale, unit, rounding } => {
+                let mut fields = vec![("scale", number(*scale))];
+                if let Some(unit) = unit {
+                    fields.push(("unit", object([
+                        ("system", string(unit_system(unit.system))),
+                        ("code", string(&unit.code)),
+                    ])));
                 }
+                if let Some(mode) = rounding.canonical_field() {
+                    fields.push(("rounding", string(mode)));
+                }
+                kind("decimal", fields)
             }
             Self::Number => kind("number", []),
             Self::Timestamp { timezone } => {
@@ -1531,9 +1528,10 @@ impl<'d, 'e> Derivation<'d, 'e> {
             let ty = match current {
                 PropertyType::Text { format } => Type::Text { format: *format },
                 PropertyType::Integer {} => Type::Integer,
-                PropertyType::Decimal { scale, unit, .. } => Type::Decimal {
+                PropertyType::Decimal { scale, unit, rounding, .. } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
+                    rounding: Rounding::effective(*rounding),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {
@@ -1679,7 +1677,7 @@ fn object<const N: usize>(entries: [(&str, JsonValue); N]) -> JsonValue {
     )
 }
 
-fn kind<const N: usize>(name: &str, entries: [(&str, JsonValue); N]) -> JsonValue {
+fn kind<'a>(name: &str, entries: impl IntoIterator<Item = (&'a str, JsonValue)>) -> JsonValue {
     let mut map: BTreeMap<String, JsonValue> = entries
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value))

@@ -27,6 +27,8 @@ The explicit exact-expression runtime uses this same VM/core, retains intermedia
 
 A destination Decimal with omitted rounding supplies effective Refuse just like explicit Refuse: exact quotients are accepted, nonzero remainders refuse, and their type-environment fingerprints canonicalize omission to Refuse; predicates without a destination require explicit round(value, scale, mode) around division.
 
+VAL-ROUND keeps `norn.expr.env/1` bytes and pins unchanged by omitting canonical Refuse, adding a rounding field only for newly admitted non-default policies that strict older decoders reject; a version bump is required only when existing bytes or their meaning change.
+
 ## Evaluation and enforcement
 
 1. Construction decodes exact numeric tokens without a float round trip; rejects non-finite, range/scale overflow and unknown units. Canonical equality ignores representational trailing zeroes but preserves declared type/unit and original source evidence bytes separately.
