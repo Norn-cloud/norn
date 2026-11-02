@@ -11255,7 +11255,7 @@
               },
               "value": {
                 "$ref": "#/components/schemas/NornIrJsonValue",
-                "description": "Numbers use exact `DecimalLiteral` strings; other branches retain their\nJSON type. A `json` setting may be `null`."
+                "description": "Version 0.2 numbers use exact decimal strings; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`."
               },
               "valueType": {
                 "$ref": "#/components/schemas/NornIrSettingValueType"

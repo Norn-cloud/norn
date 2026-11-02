@@ -519,7 +519,8 @@ fn check_artifact_set_with_profile(
     let mut diagnostics = crate::check_artifact_set(artifacts, context);
     if !retained {
         for artifact in artifacts {
-            if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into()))) {
+            if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
+            {
                 diagnostics.push(Diagnostic { code: DiagnosticCode::new("setting.validation.invalid_payload"), severity: DiagnosticSeverity::Error,
                     message: format!("new setting admissions require settingVersion {CURRENT_SETTING_VERSION}; retained value profiles require their verified receipt"),
                     span: None, artifact_id: Some(artifact.artifact_id.clone()), remediation: Some(DiagnosticRemediation::FixDefinition) });
@@ -1861,30 +1862,76 @@ mod tests {
 
 #[cfg(test)]
 mod retained_setting_tests {
-    #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "retained profile correspondence")]
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "retained profile correspondence"
+    )]
     use super::*;
     #[test]
     fn tagged_historical_settings_recheck_only_with_unchanged_verified_source() {
-        let raw = RuntimeValue::from_json_text(include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json")).expect("immutable original");
-        let sources = ReceiptSources::new(&[raw.clone()], &[]).expect("source");
+        let raw = RuntimeValue::from_json_text(include_str!(
+            "../../../fixtures/ir/retail-reorder-threshold.setting.json"
+        ))
+        .expect("immutable original");
+        let sources = ReceiptSources::new(std::slice::from_ref(&raw), &[]).expect("source");
         let registry = BTreeSet::new();
-        let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
         let limits = ResourceLimitProfile::norn_limits_v1();
-        assert_eq!(check_artifact_set_with_receipt(&sources, &context, &limits).expect("current admission").receipt.admitted, CURRENT_SETTING_VERSION == "0.1");
-        let mut old = check_artifact_set_with_profile(&sources.artifacts, &context, &limits, sources.identity.clone(), HISTORICAL_IDENTIFIER_PROFILE, None, true).expect("historical validation").receipt;
+        assert_eq!(
+            check_artifact_set_with_receipt(&sources, &context, &limits)
+                .expect("current admission")
+                .receipt
+                .admitted,
+            CURRENT_SETTING_VERSION == "0.1"
+        );
+        let mut old = check_artifact_set_with_profile(
+            &sources.artifacts,
+            &context,
+            &limits,
+            sources.identity.clone(),
+            HISTORICAL_IDENTIFIER_PROFILE,
+            None,
+            true,
+        )
+        .expect("historical validation")
+        .receipt;
         assert!(old.admitted);
         old.checker_version = "0.1.0".into();
         old.expr_profile = "norn-zen/5".into();
-        old.artifact_set = ArtifactSetRef::of_legacy(&sources.artifacts, &[]).expect("original identity");
-        let body = String::from_utf8(old.legacy_canonical_json().expect("historical body")).expect("UTF8");
+        old.artifact_set =
+            ArtifactSetRef::of_legacy(&sources.artifacts, &[]).expect("original identity");
+        let body =
+            String::from_utf8(old.legacy_canonical_json().expect("historical body")).expect("UTF8");
         let digest = admission_receipt_sha256(&body).expect("digest");
-        let token = verify_admission_receipt_sources(&body, &digest, &[raw], &[], &limits).expect("verified historical authority");
-        assert!(check_artifact_set_with_verified_receipt(&sources, &context, &limits, &token).expect("recheck").receipt.admitted);
-        let mut changed = sources.artifacts.clone();
+        let token = verify_admission_receipt_sources(&body, &digest, &[raw], &[], &limits)
+            .expect("verified historical authority");
+        assert!(
+            check_artifact_set_with_verified_receipt(&sources, &context, &limits, &token)
+                .expect("recheck")
+                .receipt
+                .admitted
+        );
+        let mut changed = sources.artifacts;
         changed[0].name.push_str(" edited");
-        let changed = changed.iter().map(|a| norn_ir::runtime::encode(a).expect("source")).collect::<Vec<_>>();
+        let changed = changed
+            .iter()
+            .map(|a| norn_ir::runtime::encode(a).expect("source"))
+            .collect::<Vec<_>>();
         let changed = ReceiptSources::new(&changed, &[]).expect("edited source");
-        assert!(check_artifact_set_with_verified_receipt(&changed, &context, &limits, &token).is_err());
-        assert_eq!(check_artifact_set_for_install(&changed, &context, &limits, Some(&token)).expect("changed admission").receipt.admitted, CURRENT_SETTING_VERSION == "0.1");
+        assert!(
+            check_artifact_set_with_verified_receipt(&changed, &context, &limits, &token).is_err()
+        );
+        assert_eq!(
+            check_artifact_set_for_install(&changed, &context, &limits, Some(&token))
+                .expect("changed admission")
+                .receipt
+                .admitted,
+            CURRENT_SETTING_VERSION == "0.1"
+        );
     }
 }
