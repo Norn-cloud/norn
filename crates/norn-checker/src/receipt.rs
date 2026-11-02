@@ -736,6 +736,7 @@ pub fn recover_legacy_admission_receipt(
         tenant: None,
     };
     let checked = check_artifact_set_with_receipt(artifacts, &context, limits)?;
+    let current_sha256 = checked.receipt.content_sha256()?;
 
     if checked.receipt.admitted {
         let bytes = checked.receipt.canonical_json()?;
@@ -762,7 +763,7 @@ pub fn recover_legacy_admission_receipt(
         })?
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)?;
     if checked.receipt.admitted {
-        let mut historical_current = checked.receipt.clone();
+        let mut historical_current = checked.receipt;
         historical_current.type_env = Some(type_env.clone());
         let recovered = String::from_utf8(historical_current.canonical_json()?)
             .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
@@ -810,7 +811,7 @@ pub fn recover_legacy_admission_receipt(
 
     Err(ReceiptError::ReceiptHashMismatch {
         expected: expected_sha256.to_owned(),
-        actual: checked.receipt.content_sha256()?,
+        actual: current_sha256,
     })
 }
 

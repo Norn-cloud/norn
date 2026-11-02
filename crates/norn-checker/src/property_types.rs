@@ -429,6 +429,30 @@ fn check_rounding_site(
     }
 }
 
+/// VAL-RATE: refuse malformed declarations and premature arithmetic activation.
+fn check_rate_site(
+    base: &[&str], scale: u64, unit: Option<&norn_ir::UnitRef>,
+    per_unit: Option<&norn_ir::UnitRef>, currency_source: Option<&norn_ir::metric::DimensionPath>,
+    out: &mut Vec<Diagnostic>,
+) {
+            if let Some(per_unit) = per_unit {
+                if currency_source.is_none()
+                    || unit.is_some()
+                    || per_unit.code.is_empty()
+                    || per_unit.code.chars().any(char::is_whitespace)
+                    || scale > 18
+                {
+                    out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
+                }
+                out.push(error(
+                    crate::property_codec::INEXACT,
+                    "VAL-RATE requires the bounded rate consumer profile before activation"
+                        .to_owned(),
+                    span_at(base, &["type", "perUnit"]),
+                ));
+            }
+ }
+
 /// Per-kind member checks of one type (`scale`, `unit`, enum `values`); `base`
 /// is the JSON-pointer prefix of the object holding `type`.
 pub(crate) fn check_type_members(
@@ -476,22 +500,7 @@ pub(crate) fn check_type_members(
             per_unit,
             currency_source,
         } => {
-            if let Some(per_unit) = per_unit {
-                if currency_source.is_none()
-                    || unit.is_some()
-                    || per_unit.code.is_empty()
-                    || per_unit.code.chars().any(char::is_whitespace)
-                    || scale.0 > 18
-                {
-                    out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
-                }
-                out.push(error(
-                    crate::property_codec::INEXACT,
-                    "VAL-RATE requires the bounded rate consumer profile before activation"
-                        .to_owned(),
-                    span_at(base, &["type", "perUnit"]),
-                ));
-            }
+            check_rate_site(base, scale.0, unit.as_ref(), per_unit.as_ref(), currency_source.as_ref(), out);
             check_rounding_site(base, *rounding, out);
             if scale.0 > MAX_DECIMAL_SCALE {
                 out.push(error(
