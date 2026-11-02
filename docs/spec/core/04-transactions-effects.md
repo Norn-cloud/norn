@@ -129,8 +129,13 @@ Malformed or out-of-range inline indexes refuse. Indexes into declared runtime
 arrays refuse during authoring because the admitted expression profile supports
 only indexes into list literals; no nullable missing-item semantics are inferred.
 
-`atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry` executes
-the typed fixture after full artifact-set admission. Both directions of the link,
+`typed_atomic_writer_admits_and_an_uncovered_creation_refuses` checks full
+artifact-set admission, including the action's dependency pin, against the
+compiler-generated fixture. Separately,
+`atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry` checks
+kernel/SQLite correspondence using extracted object types and an independently
+admitted rule; it does not recheck the action envelope's dependency pin.
+Both directions of the link,
 the secondary fact, primary transition, receipt and one pending payment intent
 survive reopening; exact retry changes no table and changed principal refuses.
 `late_link_failure_and_secondary_denial_persist_no_partial_proposal` covers a
