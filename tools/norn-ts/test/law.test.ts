@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 import { L, S, X } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
@@ -91,7 +91,7 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
     writeFileSync(join(dir, "law.ts"), L.printLaw(meta))
     const pack = compilePack(dir, { ...options, root: join(TOOL_ROOT, "..", "..") })
     if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
-    expect(canonicalJson(pack.artifacts)).toBe(canonicalJson([golden]))
+    expect(canonicalJson(pack.artifacts)).toBe(canonicalJson([L.lowerLaw(def, { ...options, sourcePath: relative(join(TOOL_ROOT, "../.."), join(dir, "law.ts")) }).artifact]))
     expect(pack.wordingArtifacts).toEqual(L.wordingArtifacts(def))
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })

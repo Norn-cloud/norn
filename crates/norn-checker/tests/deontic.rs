@@ -461,16 +461,25 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
 }
 
 #[allow(clippy::expect_used, reason = "typed wording fixture")]
-fn wording_fixture(minimum: i32) -> (norn_ir::ArtifactEnvelope, norn_checker::law_wording::LawWordingArtifact) {
+fn wording_fixture(
+    minimum: i32,
+) -> (
+    norn_ir::ArtifactEnvelope,
+    norn_checker::law_wording::LawWordingArtifact,
+) {
     let mut requirement = requirement();
-    requirement.norm.law.response = norn_ir::LawResponse::Predicate { expression: norn_ir::ZenExpression(format!("input.quantity >= {minimum}")) };
+    requirement.norm.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression(format!("input.quantity >= {minimum}")),
+    };
     let law: norn_ir::ArtifactEnvelope = serde_json::from_value(json!({
         "irVersion":"0.1", "artifactId":"toy.requirement.law", "kind":"law", "namespace":"toy", "name":"Requirement", "version":"1.0.0", "lifecycle":"draft", "scope":{}, "dependencies":[], "provenance":{"source":"authoring_sdk"}, "payload": requirement.norm.law
     })).expect("law envelope");
-    let wording = norn_checker::law_wording::LawWordingArtifact {
-        format:"norn.law_wording/1".into(), artifact_id:format!("{}.wording", requirement.norm.law.id),
-        law_artifact_id:law.artifact_id.clone(), law_sha256:norn_checker::ArtifactRef::of(&law).expect("pin").sha256, requirement,
-    };
+    let document = json!({
+        "format":"norn.law_wording/1", "artifactId":format!("{}.wording", requirement.norm.law.id),
+        "lawArtifactId":law.artifact_id, "lawSha256":norn_checker::ArtifactRef::of(&law).expect("pin").sha256, "requirement":requirement,
+    });
+    let wording = norn_checker::law_wording::LawWordingArtifact::parse(&document.to_string())
+        .expect("compiled wording");
     (law, wording)
 }
 
@@ -498,11 +507,26 @@ proptest::proptest! {
 #[test]
 #[allow(clippy::expect_used, reason = "wording refusal assertions")]
 fn wording_admission_refuses_missing_templates_and_malformed_pins() {
-    use norn_checker::law_wording::{admit_wording, WordingError};
+    use norn_checker::law_wording::{WordingError, admit_wording};
     use norn_ir::requirement_display::RequirementLocale;
     let (law, mut wording) = wording_fixture(0);
     wording.requirement.wording.response.ar.clear();
-    assert!(matches!(admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En), Err(WordingError::Requirement(_))));
+    assert!(matches!(
+        admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),
+        Err(WordingError::Requirement(_))
+    ));
+    wording.law_sha256 = "0".repeat(64);
+    assert!(matches!(
+        admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),
+        Err(WordingError::Requirement(_))
+    ));
+    assert!(
+        norn_checker::law_wording::LawWordingArtifact::parse(r#"{"format":"one","format":"two"}"#)
+            .is_err()
+    );
     wording.law_sha256 = "not-a-digest".into();
-    assert!(matches!(admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En), Err(WordingError::Document)));
+    assert!(matches!(
+        admit_wording(&wording, &law, &requirement_env(), RequirementLocale::En),
+        Err(WordingError::Document)
+    ));
 }
