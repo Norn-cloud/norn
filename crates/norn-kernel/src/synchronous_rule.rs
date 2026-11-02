@@ -174,7 +174,9 @@ pub(crate) fn writer_target<X>(
     let operation = match change {
         FactChange::Create { .. } => WriteChange::Created,
         FactChange::Set { .. } | FactChange::Transition { .. } => WriteChange::Modified,
-        FactChange::Delete { .. } => return Err(refused("synchronous action rules cannot delete facts")),
+        FactChange::Delete { .. } => {
+            return Err(refused("synchronous action rules cannot delete facts"));
+        }
     };
     Ok((crate::decision_commit::fact_key(change), operation))
 }
