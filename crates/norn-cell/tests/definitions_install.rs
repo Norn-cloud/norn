@@ -5269,7 +5269,7 @@ norn_testkit::proptest::proptest! {
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("second role").is_none());
-            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
             norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);

@@ -146,13 +146,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let root = self.root_type(object_type)?;
             let mut affected = false;
             let related = self.source_event_bundles(&conflict.incoming)?;
-            for subject in related
-                .iter()
-                .flat_map(|b| &b.records)
-                .chain(&conflict.incoming.records)
-            {
-                if subject.key == key && self.root_type(subject.object_type.as_str())? == root {
-                    affected = true;
+            for bundle in related.iter().chain(std::iter::once(&conflict.incoming)) {
+                for subject in &bundle.records {
+                    if subject.key == key && self.retained_mapping_root(bundle.definitions_version, subject.object_type.as_str())? == root {
+                        affected = true;
+                    }
                 }
             }
             if affected {
