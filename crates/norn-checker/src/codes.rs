@@ -471,6 +471,24 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.duplicate_instance",
+        Tier::T3,
+        "instance ID must be unique in the retained scoped graph",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.instance_cycle",
+        Tier::T3,
+        "instance imports and containment must be acyclic",
+        "0.2.0",
+    ),
+    introduced(
+        "core.composition.unresolved_pin",
+        Tier::T3,
+        "instance reference must resolve to an exact scoped pack pin",
+        "0.2.0",
+    ),
+    introduced(
         "core.compute.ambiguous_grain",
         Tier::T3,
         "Query requires an explicit unambiguous identity grain.",
@@ -480,6 +498,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "core.compute.unsupported_engine",
         Tier::T3,
         "Query semantics are unsupported by the selected compute profile.",
+        "0.2.0",
+    ),
+    introduced(
+        crate::property_codec::INEXACT,
+        Tier::T6,
+        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
         "0.2.0",
     ),
     entry(
@@ -2445,6 +2469,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         "rule.validation.jdm_unresolved_sub_decision",
         Tier::T2,
         "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
+    ),
+    introduced(
+        "rule.validation.ordered_fold_invalid",
+        Tier::T2,
+        "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+        "0.2.0",
+    ),
+    introduced(
+        "rule.validation.ordered_fold_unsupported",
+        Tier::T2,
+        "ordered-fold execution is unavailable in this semantics profile",
+        "0.2.0",
     ),
     entry(
         "sealing.extension_point.capability_missing",

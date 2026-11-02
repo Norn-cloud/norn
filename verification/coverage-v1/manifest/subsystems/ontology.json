@@ -199,7 +199,6 @@
     "crates/norn-checker/src/consistency/divergence.rs",
     "crates/norn-checker/src/consistency/exchange.rs",
     "crates/norn-checker/src/consistency/theory.rs",
-    "crates/norn-checker/src/definition_catalog.rs",
     "crates/norn-checker/src/lint/mapping.rs",
     "crates/norn-checker/src/mapping.rs",
     "crates/norn-checker/src/mapping/compile.rs",
@@ -213,7 +212,7 @@
     "crates/norn-checker/tests/consistency.rs",
     "crates/norn-checker/tests/consistency_divergence.rs",
     "crates/norn-checker/tests/consistency_exchange.rs",
-    "crates/norn-checker/tests/definition_catalog.rs",
+    "crates/norn-checker/tests/core_units.rs",
     "crates/norn-checker/tests/ontology_link.rs",
     "crates/norn-checker/tests/registry_packs.rs",
     "crates/norn-dataplane/Cargo.toml",
@@ -227,6 +226,8 @@
     "fixtures/ir/synthetic-contact.source_schema.json",
     "fixtures/ir/synthetic-rows.mapping.json",
     "fixtures/projections/sqlite/entity-v2-object-types.sql",
+    "registry/core/artifacts/core.units.json",
+    "registry/core/src/units.rs",
     "registry/packs/canon/artifacts/norn.ontology-pack.canon.json",
     "registry/packs/canon/canon.pack.ts",
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
@@ -257,6 +258,14 @@
     "verification/ontology/scripts/build_company_commerce_pack.py",
     "verification/ontology/scripts/semantic_check.py",
     "verification/ontology/scripts/validate.py",
-    "verification/ontology/scripts/validate_semantics.py"
+    "verification/ontology/scripts/validate_semantics.py",
+    "crates/norn-checker/tests/demo_measurements.rs",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.Measurement.interface.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.StockEntryMeasurement.entity.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
+    "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
+    "registry/packs/demo-erpnext/measurements.ts",
+    "crates/norn-checker/src/definition_catalog.rs",
+    "crates/norn-checker/tests/definition_catalog.rs"
   ]
 }
