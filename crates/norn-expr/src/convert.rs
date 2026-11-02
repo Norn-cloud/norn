@@ -35,8 +35,13 @@ pub(crate) fn canonical_engine_number(input: &str) -> Result<String, String> {
 /// error for unsupported scale (above 18), inexact refusal or checked overflow.
 pub fn rescale_decimal(site: &norn_ir::PropertyType, value: &Number) -> Result<Number, ExprError> {
     use zen_expression::scaled::{Rounding, ScaledArithmetic};
-    let norn_ir::PropertyType::Decimal { scale, rounding, .. } = site else {
-        return Err(ExprError::Evaluation { message: "exact site must be a declared Decimal".to_owned() });
+    let norn_ir::PropertyType::Decimal {
+        scale, rounding, ..
+    } = site
+    else {
+        return Err(ExprError::Evaluation {
+            message: "exact site must be a declared Decimal".to_owned(),
+        });
     };
     let invalid = |reason: String| ExprError::InvalidNumber {
         input: value.as_str().to_owned(),
