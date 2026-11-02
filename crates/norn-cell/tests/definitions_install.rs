@@ -6158,6 +6158,14 @@ norn_testkit::proptest::proptest! {
             drop(cell);
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
         }
+        let mut correction = bundle_raw("MEAS-1", "0.80");
+        correction.input.as_object_mut().expect("raw").insert("event_id".into(), Value::from("2"));
+        let (id, _) = store.inject_mapping_bundle(&correction, &input).expect("new source event");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&id).expect("capture correction");
+        norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+        norn_testkit::proptest::prop_assert_eq!(cell.store().read().object_at_version(MAIN_WORLD, "quality.Measurement", "MEAS-1", before.version).expect("immutable first version"), Some(before));
+
     }
 }
 
