@@ -41,7 +41,11 @@ a declared base type/interface, a pure Boolean predicate over its exact type clo
 and `norn_limits_v1` bounds at or below every admitted field. Missing/ambiguous members,
 invalid predicates or excessive bounds refuse `core.graph.incomplete_classification`.
 Per-artifact checking validates transport shape; cross-artifact admission checks semantics.
-GRAPH-CLASS-1 evaluation is a separate cut; admission creates no writable membership.
+GRAPH-CLASS-1 uses an admitted pure classifier over complete, schema-checked base rows.
+It returns original base IDs and refuses missing read paths, duplicate IDs, partial
+snapshots, and aggregate record/byte/fuel exhaustion without publishing partial membership.
+The host must bind the authorized snapshot to the pinned definitions and capture its reads.
+No classifier stores membership or emits effects; admission creates no writable membership.
 GRAPH-DAG-1 checks classification dependencies over exact artifact/version identities,
 including retained declarations. A cycle containing a candidate refuses `core.graph.cycle`;
 self references count as cycles and ambiguous identities never select a version.

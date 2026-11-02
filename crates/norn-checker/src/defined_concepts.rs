@@ -215,12 +215,12 @@ fn bounded(limits: &norn_ir::ResourceLimitProfile) -> bool {
             helper.max_guest_memory_bytes,
         )
 }
-fn qualify(
+pub(crate) fn qualify(
     artifact: &ArtifactEnvelope,
     root: &DefinedConceptRoot,
     pool: &[&ArtifactEnvelope],
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
-) -> Result<(), &'static str> {
+) -> Result<norn_expr::Expression, &'static str> {
     use crate::entity_artifacts::{Decoded, decode_v2};
     use norn_ir::definition_catalog::Member;
     if root.id.is_empty() || root.version != artifact.version || !bounded(&root.bounds) {
@@ -267,5 +267,5 @@ fn qualify(
         .map_err(
             |_error| "classification predicate must be Boolean within its declared resource bounds",
         )?;
-    Ok(())
+    Ok(expression)
 }

@@ -26,6 +26,7 @@
 pub mod action_set;
 pub mod artifact_set;
 pub mod codes;
+pub mod classification;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;

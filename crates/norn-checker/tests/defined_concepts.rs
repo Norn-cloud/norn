@@ -231,3 +231,90 @@ proptest::proptest! {
             .any(|d| d.code.as_str() == "core.graph.incomplete_classification"));
     }
 }
+
+fn classifier(wire: serde_json::Value) -> norn_checker::classification::Classifier {
+    norn_checker::classification::Classifier::prepare(
+        &serde_json::from_value(wire).expect("class"),
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[item()],
+            tenant: None,
+        },
+    )
+    .expect("admitted classifier")
+}
+fn row(id: &str, amount: i64) -> (String, norn_ir::RuntimeValue) {
+    (
+        id.into(),
+        norn_ir::RuntimeValue::from_json_text(&format!("{{\"amount\":{amount}}}")).expect("row"),
+    )
+}
+#[test]
+fn graph_classify_keeps_base_ids_and_membership_exit_is_a_pure_read() {
+    let class = classifier(serde_json::to_value(qualified()).expect("wire"));
+    let original = [row("lot-7", 101)];
+    assert_eq!(
+        class.classify(&original, true).expect("complete"),
+        BTreeSet::from(["lot-7".into()])
+    );
+    assert!(
+        class
+            .classify(&[row("lot-7", 99)], true)
+            .expect("complete")
+            .is_empty()
+    );
+    assert_eq!(original, [row("lot-7", 101)]);
+    assert_eq!(class.definitions().len(), 2);
+}
+#[test]
+fn graph_classify_refuses_partial_missing_duplicate_and_exhausted_inputs() {
+    let wire = serde_json::to_value(qualified()).expect("wire");
+    let class = classifier(wire.clone());
+    assert!(class.classify(&[], false).is_err());
+    assert!(
+        class
+            .classify(
+                &[(
+                    "unknown".into(),
+                    norn_ir::RuntimeValue::Object(Default::default())
+                )],
+                true
+            )
+            .is_err()
+    );
+    assert!(
+        class
+            .classify(&[row("same", 101), row("same", 99)], true)
+            .is_err()
+    );
+    for (pointer, cap) in [
+        ("/payload/bounds/slice/maxRecords", 1),
+        ("/payload/bounds/slice/maxCanonicalBytes", 1),
+    ] {
+        let mut bounded = wire.clone();
+        *bounded.pointer_mut(pointer).expect("cap") = json!(cap);
+        let class = classifier(bounded);
+        assert!(
+            class
+                .classify(&[row("a", 101), row("b", 101)], true)
+                .is_err()
+        );
+    }
+    // Admission estimates per evaluation; one runtime budget covers every row.
+    let mut bounded = wire;
+    bounded["payload"]["bounds"]["decide"]["fuelUnits"] = json!(1000);
+    let class = classifier(bounded);
+    let rows: Vec<_> = (0..1000).map(|i| row(&i.to_string(), 101)).collect();
+    assert!(class.classify(&rows, true).is_err());
+}
+proptest::proptest! {
+    #[test]
+    fn graph_classify_matches_recompute_over_original_ids(amounts in proptest::collection::vec(-1000_i64..1000, 0..40)) {
+        let class = classifier(serde_json::to_value(qualified()).expect("wire"));
+        let rows: Vec<_> = amounts.iter().enumerate().map(|(i, amount)| row(&i.to_string(), *amount)).collect();
+        let expected: BTreeSet<_> = amounts.iter().enumerate().filter(|(_, amount)| **amount > 100)
+            .map(|(i, _)| i.to_string()).collect();
+        proptest::prop_assert_eq!(class.classify(&rows, true).expect("complete"), expected);
+        proptest::prop_assert!(class.classify(&rows, false).is_err());
+    }
+}
