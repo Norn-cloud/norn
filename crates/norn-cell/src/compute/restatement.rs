@@ -139,17 +139,17 @@ fn selected(values: &BTreeMap<String, RuntimeValue>) -> Result<(&str, &str), Cel
         None => Err(refused(INVALID)),
     }
 }
-fn authorized(context: &QueryContext, result: &QueryResult) -> bool {
+fn authorized(context: &QueryContext, candidate: &QueryContext) -> bool {
     (
         &context.world,
         &context.scope,
         &context.population_pin,
         context.authorization_epoch,
     ) == (
-        &result.context.world,
-        &result.context.scope,
-        &result.context.population_pin,
-        result.context.authorization_epoch,
+        &candidate.world,
+        &candidate.scope,
+        &candidate.population_pin,
+        candidate.authorization_epoch,
     )
 }
 fn slot<E: SqlEngine>(
@@ -222,7 +222,7 @@ impl<E: SqlEngine> CellStore<E> {
             if prior
                 .outputs
                 .values()
-                .any(|answer| !authorized(&context, &answer.result))
+                .any(|answer| !authorized(&context, &answer.result.context))
             {
                 return Err(refused("core.compute.stale_input"));
             }
@@ -295,13 +295,19 @@ impl<E: SqlEngine> CellStore<E> {
         {
             return Err(refused(INVALID));
         }
+        if slices
+            .iter()
+            .any(|slice| !authorized(&build.context, &slice.context))
+        {
+            return Err(refused("core.compute.stale_input"));
+        }
         let (encoded, previous_digest) = selected(&build.values)?;
         let previous = decode(encoded, previous_digest)?;
         if previous.as_ref().is_some_and(|g| {
             g.outputs.keys().cloned().collect::<BTreeSet<_>>() != expected
                 || g.outputs
                     .values()
-                    .any(|a| !authorized(&build.context, &a.result))
+                    .any(|a| !authorized(&build.context, &a.result.context))
         }) {
             return Err(refused(INVALID));
         }
@@ -318,7 +324,7 @@ impl<E: SqlEngine> CellStore<E> {
                 slice.cutoff,
                 &mut visible,
             )?;
-            if !authorized(&build.context, &answer.result) || !answer.result.complete {
+            if !answer.result.complete {
                 return Err(refused(INVALID));
             }
             let old = previous.as_ref().and_then(|g| g.outputs.get(slice.id));
@@ -482,7 +488,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .collect(),
             ..CommitBatch::default()
         };
-        let (_, outcome) = self
+        let ((), outcome) = self
             .commit_guarded(
                 &batch,
                 |reader| {
@@ -538,7 +544,7 @@ impl<E: SqlEngine> CellStore<E> {
         if generation
             .outputs
             .values()
-            .any(|a| !authorized(context, &a.result))
+            .any(|a| !authorized(context, &a.result.context))
         {
             return Err(refused("core.compute.stale_input"));
         }
