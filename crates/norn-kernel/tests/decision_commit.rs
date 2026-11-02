@@ -2394,3 +2394,42 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
         );
     }
 }
+
+#[test]
+fn immutable_objects_use_pre_decision_existence_for_change_sequences() {
+    let mut definitions = types();
+    definitions[0].immutable = true;
+    let catalog = TypeCatalog::new(&definitions);
+    let key = FactKey::new(ORDER, "new-immutable");
+    for change in [
+        json!({"op":"set", "objectType":ORDER, "key":key.key, "property":"amount", "value":2}),
+        json!({"op":"transition", "objectType":ORDER, "key":key.key, "lifecycle":"status", "transition":"submit"}),
+        json!({"op":"delete", "objectType":ORDER, "key":key.key}),
+    ] {
+        let output: DecisionOutput = serde_json::from_value(json!({
+            "facts":[{"op":"create", "objectType":ORDER, "key":key.key,
+                "values":{"order_no":"new-immutable", "amount":1, "status":"draft"}}, change],
+            "commands":[], "timers":[],
+        }))
+        .unwrap();
+        prepare_decision::<Infallible>(&catalog, &FactSlice::new(), &turn("new"), &output)
+            .expect("new instances may reach their final state within one decision");
+        let existing = FactSlice::from([(
+            key.clone(),
+            FactState {
+                version: FactVersion(1),
+                values: Some(record(
+                    json!({"order_no":"new-immutable", "amount":1, "status":"draft"}),
+                )),
+            },
+        )]);
+        let output = DecisionOutput {
+            facts: vec![output.facts[1].clone()],
+            ..output
+        };
+        let error = prepare_decision::<Infallible>(&catalog, &existing, &turn("existing"), &output)
+            .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(error.to_string().contains("immutable"));
+    }
+}

@@ -13,7 +13,7 @@ use std::convert::Infallible;
 use norn_decisions::DecisionBinding;
 use norn_expr::{EvaluationBudget, Value};
 use norn_ir::{ObjectTypeDef, RuleRoot};
-use norn_kernel::cell_host::JsonValue;
+use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     AdmittedRule, DecisionTurn, FactKey, FactSlice, FactState, FactVersion, LogicalTime,
     TypeCatalog, World, evaluate_rule, prepare_rule_decision,
@@ -112,6 +112,26 @@ fn forged_rule_identity_or_definition_pin_is_refused() {
         prepare_rule_decision::<Infallible>(&catalog, &slice, &turn, &evaluated, &BTreeSet::new())
             .unwrap();
     assert_eq!(prepared.writes.len(), 1);
+    let mut host: norn_testkit::cell_host::MemoryCell<
+        norn_kernel::FactEvent,
+        JsonObject,
+        JsonObject,
+    > = norn_testkit::cell_host::MemoryCell::new(|command: &norn_kernel::Command<JsonObject>| {
+        command.payload.clone()
+    });
+    let refusal = norn_kernel::commit_rule_decision(
+        &mut host,
+        &catalog,
+        &slice,
+        &turn,
+        &evaluated,
+        &BTreeSet::from([FactKey::new("demo.Order", "o1")]),
+    )
+    .unwrap_err();
+    assert_eq!(refusal.code(), "decision.source_owned_target");
+    assert!(host.ledger().is_empty());
+    assert!(host.outbox().is_empty());
+    assert!(host.timers().is_empty());
     let forged: norn_ir::DecisionOutput = serde_json::from_value(serde_json::json!({"facts":[{
         "op":"set", "objectType":"demo.Order", "key":"o1", "property":"half", "value":4
     }], "commands":[], "timers":[]}))

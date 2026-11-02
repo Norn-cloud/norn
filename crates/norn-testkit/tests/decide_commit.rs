@@ -192,7 +192,15 @@ impl Harness {
             consumes: None,
         };
         let catalog = TypeCatalog::new(&self.types).with_rules([&self.decision]);
-        commit_rule_decision(&mut self.cell, &catalog, &slice, &turn, &evaluated).map(|_| ())
+        commit_rule_decision(
+            &mut self.cell,
+            &catalog,
+            &slice,
+            &turn,
+            &evaluated,
+            &Default::default(),
+        )
+        .map(|_| ())
     }
 
     fn status(&self, key: &str) -> Option<JsonValue> {

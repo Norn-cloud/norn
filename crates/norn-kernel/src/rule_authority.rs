@@ -139,6 +139,7 @@ pub fn prepare_rule_decision<X>(
 }
 
 /// Atomically commit a sealed rule result through the shared commit boundary.
+/// Source-owned targets come from the same trusted host resolution as preparation.
 ///
 /// # Errors
 /// Returns rule binding, admission or host commit refusals without applying effects.
@@ -148,6 +149,7 @@ pub fn commit_rule_decision<H>(
     slice: &FactSlice,
     turn: &DecisionTurn,
     decision: &RuleDecision,
+    source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<CommitReceipt, DecisionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -155,7 +157,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let prepared = prepare_rule_decision(catalog, slice, turn, decision, &BTreeSet::new())?;
+    let prepared = prepare_rule_decision(catalog, slice, turn, decision, source_owned_targets)?;
     let counts = EnvelopeCounts::new(
         prepared.events.len(),
         decision.output.commands.len(),

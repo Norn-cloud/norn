@@ -117,7 +117,7 @@ fn defs_response(
     })
 }
 
-#[cfg(feature = "http-host")]
+#[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]
 /// HTTP adapter over the same authorized read used by other transports.
 pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -> axum::Router {
     use axum::{

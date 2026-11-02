@@ -112,7 +112,7 @@ fn installation(
     )
 }
 
-#[cfg(all(test, feature = "native"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[allow(
     clippy::expect_used,
     missing_docs,
@@ -207,7 +207,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "native"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[allow(
     clippy::expect_used,
     missing_docs,
@@ -434,7 +434,7 @@ mod defs_read {
     }
 }
 
-#[cfg(all(test, feature = "native", feature = "http-host"))]
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "http-host"))]
 #[allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -814,6 +814,6 @@ mod alpha_surface {
     }
 }
 
-#[cfg(all(test, feature = "native", feature = "http-host"))]
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "http-host"))]
 #[path = "four_surfaces.rs"]
 mod four_surfaces;

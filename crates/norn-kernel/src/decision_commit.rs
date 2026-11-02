@@ -2435,7 +2435,7 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
-    if entry.values.is_some()
+    if slice.get(&key).is_some_and(|state| state.values.is_some())
         && catalog.immutable(&key.object_type)
         && !matches!(change, FactChange::Create { .. })
     {

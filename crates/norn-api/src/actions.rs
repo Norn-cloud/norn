@@ -166,10 +166,10 @@ fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
     Refusal::new(status, &safe.code, safe.message.clone(), safe.message).with_category(category)
 }
 
-#[cfg(feature = "http-host")]
+#[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]
 pub(crate) use http_adapter::router;
 
-#[cfg(feature = "http-host")]
+#[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]
 mod http_adapter {
     use super::{DefinitionsQuery, DevHost, Refusal, SqlEngine, call_action_in_epoch};
     use axum::{extract::State, response::IntoResponse};
