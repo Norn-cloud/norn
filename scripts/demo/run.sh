@@ -17,7 +17,7 @@ printf 'not yet: #340 #218 (admitted catalog and equivalent governed UI/API/MCP/
 printf 'Beat 3 — sell → scrap → melt\nnot yet: #216 #341 #342 (see TARGET definitions in scripts/demo/README.md)\n'
 printf 'Beat 4 — laws carry through (accepted measurements)\n'
 cargo test --locked -p norn-kernel --test conversion_conservation
-printf 'CURRENT: inherited core measurement law; atomic omitted-loss refusal scenarios passed.\nnot yet: #343 #344 (stock/value effect closure and shared overlay admission)\n'
+printf 'CURRENT: inherited core measurement law; atomic omitted-loss refusal scenarios and shared weakening-overlay refusal passed.\nnot yet: #343 #344 (stock/value effect closure; additive overlay SAT/progress evidence)\n'
 printf 'Beat 5 — evidence (generated Guarantees matrix)\n'
 bun tools/norn-ts/src/cli.ts compile scripts/demo/jewelry.source.ts --org org_demo --env dev \
   | cargo run --locked --quiet -p norn-checker --example jewelry_demo -- --challenge-json \
