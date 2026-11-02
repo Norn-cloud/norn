@@ -14,7 +14,7 @@ use norn_checker::{
 };
 use norn_ir::{ArtifactEnvelope, RuntimeValue, provenance::UtcTimestamp};
 
-fn compiled() -> CompiledMapping {
+fn measurement_artifacts() -> Vec<ArtifactEnvelope> {
     compile("demo-erpnext", "demo.erpnext.measurements.mapping")
 }
 
@@ -45,6 +45,8 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
                 "core.Hold.interface",
                 "core.LedgerEffect.interface",
                 "core.Claim.interface",
+                "core.Conversion.interface",
+                "core.law.conversion_conservation.law",
             ]
             .contains(&a.artifact_id.as_str())
     });
@@ -53,6 +55,11 @@ fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
         .find(|a| a.artifact_id == mapping_id)
         .expect("mapping");
     let value = serde_json::to_value(mapping).expect("JSON");
+    artifacts
+}
+
+fn compiled() -> CompiledMapping {
+    let artifacts = measurement_artifacts();
     let source = artifacts
         .iter()
         .find(|a| Some(a.artifact_id.as_str()) == value["payload"]["source"]["schemaId"].as_str())
@@ -347,25 +354,7 @@ fn data_quality_pack_wordings_bind_and_conversion_retains_its_core_origin() {
     use norn_checker::law_wording::{LawWordingArtifact, WordingBinding, admit_wording};
     use norn_ir::requirement_display::RequirementLocale;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let artifacts: Vec<ArtifactEnvelope> = [
-        "registry/core/artifacts",
-        "registry/packs/demo-erpnext/artifacts",
-    ]
-    .iter()
-    .flat_map(|dir| {
-        fs::read_dir(root.join(dir)).expect("directory").map(|p| {
-            serde_json::from_str(&fs::read_to_string(p.expect("entry").path()).expect("artifact"))
-                .expect("envelope")
-        })
-    })
-    .filter(|a: &ArtifactEnvelope| {
-        a.artifact_id.starts_with("demo.")
-            || a.artifact_id == "std.value_types.entity"
-            || a.artifact_id == "core.value_types.entity"
-            || (a.artifact_id.ends_with(".interface") && a.artifact_id != "core.Order.interface")
-            || a.artifact_id == "core.law.conversion_conservation.law"
-    })
-    .collect();
+    let artifacts = measurement_artifacts();
     let context = norn_checker::EntityArtifactSetContext {
         registry: &std::collections::BTreeSet::new(),
         base: &[],
