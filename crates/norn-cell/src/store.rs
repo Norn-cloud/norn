@@ -2648,7 +2648,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 validate(
-                    &StoreReader::new(&self.conn, commit_model),
+                    &writer.reader(),
                     effective_batch,
                     installation.is_some(),
                 )?;

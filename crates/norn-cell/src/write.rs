@@ -214,7 +214,7 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     world: &'a str,
     commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
-    pending_snapshot_scopes: BTreeMap<(String, String, u64), String>,
+    pending_snapshot_digests: crate::read::PendingDigests,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -231,12 +231,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             world: &batch.world,
             commit_seq,
             batch_output_facts: None,
-            pending_snapshot_scopes: BTreeMap::new(),
+            pending_snapshot_digests: BTreeMap::new(),
         }
     }
 
-    const fn reader(&self) -> StoreReader<'a, E> {
-        StoreReader::new(self.conn, self.model)
+    pub(crate) const fn reader(&self) -> StoreReader<'_, E> {
+        StoreReader::new(self.conn, self.model).with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
     }
 
     fn commit_seq_sql(&self) -> Result<i64, CellError> {
@@ -2104,25 +2104,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         };
         let hash = hash_json(&snapshot)?;
         self.conn.execute(&format!("INSERT INTO \"{}\" (\"world\", \"root_type\", \"object_type\", \"id\", \"version\", \"commit_seq\", \"snapshot\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", crate::system::FACT_VALUES), params![self.world, root, row.object_type, row.key, to_i64(row.version, "fact version")?, self.commit_seq_sql()?, canonical_json(&snapshot)?, hash])?;
-        self.pending_snapshot_scopes
-            .insert((root, row.key.clone(), row.version), snapshot.scope);
+        self.pending_snapshot_digests
+            .insert((root, row.key.clone(), row.version), hash.clone());
         Ok(hash)
     }
 
-    fn retained_fact_scope(
-        &self,
-        root: &str,
-        key: &str,
-        version: u64,
-    ) -> Result<String, CellError> {
-        if let Some(scope) =
-            self.pending_snapshot_scopes
-                .get(&(root.to_owned(), key.to_owned(), version))
-        {
-            return Ok(scope.clone());
-        }
-        self.reader()
-            .retained_fact_scope(self.world, root, key, version)
+    fn retained_fact_scope(&self, root: &str, key: &str, version: u64) -> Result<String, CellError> {
+        self.reader().retained_fact_scope(self.world, root, key, version)
     }
 
     #[allow(
