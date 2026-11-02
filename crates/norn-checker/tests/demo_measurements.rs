@@ -55,7 +55,10 @@ fn pack_artifacts(pack: &str) -> Vec<ArtifactEnvelope> {
 
 fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
     let artifacts = pack_artifacts(pack);
-    let mapping = artifacts.iter().find(|a| a.artifact_id == mapping_id).expect("mapping");
+    let mapping = artifacts
+        .iter()
+        .find(|a| a.artifact_id == mapping_id)
+        .expect("mapping");
     let value = serde_json::to_value(mapping).expect("JSON");
     let source = artifacts
         .iter()

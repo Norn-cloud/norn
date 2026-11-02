@@ -2,7 +2,7 @@
   "artifactId": "demo.erpnext.purity_in_range.wording",
   "format": "norn.law_wording/1",
   "lawArtifactId": "demo.erpnext.purity.law",
-  "lawSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "lawSha256": "5f430bdd5473e7eac2d6f5ebb08d1f2b399598000772d774b64221e9065c4a5f",
   "requirement": {
     "norm": {
       "authorityId": "demo.erpnext.controls",
