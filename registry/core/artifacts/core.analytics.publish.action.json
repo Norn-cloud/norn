@@ -17,6 +17,7 @@
         "resultBindings": {
           "complete": "complete",
           "diagnostics_passed": "diagnostics_passed",
+          "fresh": "fresh",
           "frontier_age_ms": "frontier_age_ms",
           "holdout_count": "holdout_rows",
           "holdout_error_nanos": "rmse_nanos",

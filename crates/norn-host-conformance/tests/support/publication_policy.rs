@@ -84,7 +84,12 @@ pub(crate) fn proposal(plan: &norn_metrics::temporal::TemporalPlan) -> RuntimeOb
     ] {
         values.insert(field.into(), Value::from(0));
     }
-    for field in ["complete", "fresh", "temporal_leakage", "diagnostics_passed"] {
+    for field in [
+        "complete",
+        "fresh",
+        "temporal_leakage",
+        "diagnostics_passed",
+    ] {
         values.insert(field.into(), Value::from(false));
     }
     values.extend(norn_ir::runtime_object! {"id"=>"forecast","status"=>"proposed","mode"=>"descriptive","holdout_error_nanos"=>Value::Null,"holdout_error_limit_nanos"=>1_000_000_000i64,"error_unit"=>"g","parameters_digest"=>norn_metrics::producer::parameter_digest(plan,source::micros(source::SPLIT)).expect("preregister parameters before holdout").0,"source_digest"=>format!("sha256:{}",source::TABLE_SHA),"model_digest"=>norn_metrics::host::implementation_digest().expect("configured method before observing holdout").0,"split_at_ms"=>i64::try_from(source::millis(source::SPLIT)).expect("split"),"assumptions_digest"=>docs().0,"remedy_digest"=>docs().0}.as_object().expect("policy").clone());

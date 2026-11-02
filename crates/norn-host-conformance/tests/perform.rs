@@ -43,12 +43,7 @@ fn export<'a>(
 }
 fn enqueue(invocation: &FunctionInvocation, path: &std::path::Path) -> CellStore {
     let model = Model::from_definitions(&[], &[]).expect("model");
-    let mut store = CellStore::open(
-        path,
-        model,
-        StoreOptions::default(),
-    )
-    .expect("store");
+    let mut store = CellStore::open(path, model, StoreOptions::default()).expect("store");
     let command = Command {
         id: CommandId(invocation.command_id.clone()),
         generation: Generation(invocation.run.generation),

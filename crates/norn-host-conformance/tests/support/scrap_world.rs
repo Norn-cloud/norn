@@ -168,18 +168,38 @@ pub(crate) fn world(
 
 fn record_sources(store: &mut CellStore, bulk: bool) {
     if bulk {
-        let writes = source_events(true).into_iter().map(|(_, key, values)| FactWriteRow::Put {
-            object_type: "demo.Measurement".into(), key, values,
-        }).collect();
-        store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(),
-            logical_time: millis(BULK_AT), writes, ..CommitBatch::default()
-        }).expect("record the bulk population at one authenticated knowledge time");
+        let writes = source_events(true)
+            .into_iter()
+            .map(|(_, key, values)| FactWriteRow::Put {
+                object_type: "demo.Measurement".into(),
+                key,
+                values,
+            })
+            .collect();
+        store
+            .commit(&CommitBatch {
+                world: "main".into(),
+                scope: SCOPE.into(),
+                logical_time: millis(BULK_AT),
+                writes,
+                ..CommitBatch::default()
+            })
+            .expect("record the bulk population at one authenticated knowledge time");
     } else {
         for (logical_time, key, values) in source_events(false) {
-            store.commit(&CommitBatch { world: "main".into(), scope: SCOPE.into(), logical_time,
-                writes: vec![FactWriteRow::Put { object_type: "demo.Measurement".into(), key, values }],
-                ..CommitBatch::default()
-            }).expect("record timed source incarnation");
+            store
+                .commit(&CommitBatch {
+                    world: "main".into(),
+                    scope: SCOPE.into(),
+                    logical_time,
+                    writes: vec![FactWriteRow::Put {
+                        object_type: "demo.Measurement".into(),
+                        key,
+                        values,
+                    }],
+                    ..CommitBatch::default()
+                })
+                .expect("record timed source incarnation");
         }
     }
 }

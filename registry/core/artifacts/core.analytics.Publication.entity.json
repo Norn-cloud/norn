@@ -41,7 +41,7 @@
                 "((((((self.table_version != '') and (self.table_digest != '')) and (self.source_digest != '')) and (self.result_table_version == self.table_version)) and (self.result_table_digest == self.table_digest)) and (self.result_source_digest == self.source_digest)) and (self.result_split_at_ms == self.split_at_ms)",
                 "(((self.model_digest != '') and (self.parameters_digest != '')) and (self.result_model_digest == self.model_digest)) and (self.result_parameters_digest == self.parameters_digest)",
                 "self.complete and (self.quarantined_count == 0)",
-                "((self.frontier_age_ms >= 0) and (self.max_frontier_age_ms >= 0)) and (self.frontier_age_ms <= self.max_frontier_age_ms)",
+                "((self.fresh and (self.frontier_age_ms >= 0)) and (self.max_frontier_age_ms >= 0)) and (self.frontier_age_ms <= self.max_frontier_age_ms)",
                 "not self.temporal_leakage",
                 "self.late_feature_count == 0",
                 "self.latest_training_label_ms < self.split_at_ms",
@@ -207,6 +207,12 @@
         },
         {
           "id": "complete",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "fresh",
           "type": {
             "kind": "boolean"
           }
