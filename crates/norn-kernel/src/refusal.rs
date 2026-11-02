@@ -256,7 +256,29 @@ impl<X> Refusable for CommitError<X> {
             | Self::LinkCardinality { key, .. } => Some((&key.source, key.link.as_str())),
             Self::LinkRequired { parent, link } => Some((parent, link.as_str())),
             Self::RequiredLinkProof { key, link, .. } => Some((key, link.as_str())),
-            _ => None,
+            Self::DuplicateKey { .. }
+            | Self::NotPending { .. }
+            | Self::Conflict { .. }
+            | Self::DuplicateLink { .. }
+            | Self::IdentifierTooLong { .. }
+            | Self::LinkConflict { .. }
+            | Self::LinkReadConflict { .. }
+            | Self::UnsupportedLinkRead { .. }
+            | Self::DuplicateLinkRead { .. }
+            | Self::LinkReadTooLarge { .. }
+            | Self::InvalidLinkRead { .. }
+            | Self::OwnedRowsProtected { .. }
+            | Self::TypeMismatch { .. }
+            | Self::EffectiveValues { .. }
+            | Self::TraversalLimitExceeded { .. }
+            | Self::AccountingPosting { .. }
+            | Self::InvariantViolation { .. }
+            | Self::InvariantBudgetExceeded { .. }
+            | Self::InvariantModel { .. }
+            | Self::ObservationAuthorization
+            | Self::EventLimitExceeded { .. }
+            | Self::Overflow
+            | Self::Host(_) => None,
         };
         refusal.reason = relation.map(|(key, link)| graph_link_reason(key, link));
         refusal
