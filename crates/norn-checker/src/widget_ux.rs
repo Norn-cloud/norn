@@ -6315,6 +6315,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
             Schema::Number => Type::Number,
+            Schema::Decimal(ty) => ty.clone(),
             Schema::Boolean => Type::Bool,
             Schema::Null | Schema::Json => Type::Json,
             Schema::Nullable(inner) => self.schema_type(inner, records).optional(),
@@ -6955,6 +6956,7 @@ fn schema_accepts_empty_array(schema: &Schema) -> bool {
         | Schema::String(_)
         | Schema::Integer
         | Schema::Number
+        | Schema::Decimal(_)
         | Schema::Boolean
         | Schema::Null => false,
     }

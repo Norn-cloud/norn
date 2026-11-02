@@ -479,7 +479,7 @@ impl ZenTypeEnv {
         let schema = crate::schema::Schema::parse(value,name).map_err(|e| e.reason)?;
         if !schema.has_exact() { return Ok(self); }
         let mut records = BTreeMap::new();
-        schema.expression_type(name,&mut records);
+        let _ = schema.expression_type(name,&mut records);
         for (name,fields) in records {
             if self.records.contains_key(&name) { return Err("duplicate exact schema record".into()); }
             self.records.insert(name,RecordType {kind:RecordKind::Builtin,fields:fields.into_iter().map(|(name,ty)| (name,Field {ty,source:FieldSource::Builtin})).collect()});

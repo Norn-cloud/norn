@@ -22,6 +22,7 @@ fn visit(node: &Node<'_>, expected: &Type, env: &ZenTypeEnv, metadata: &AstMetad
     if let Type::Optional(inner) = expected { return visit(node,inner,env,metadata,edits); }
     if matches!(node,Node::Null) { return Ok(()); }
     if let Type::Decimal {scale,rounding,..} = expected {
+        if *scale > 18 {return Err("exact destination scale exceeds 18".into());}
         let (start,end) = metadata.get(&address(node)).ok_or("missing exact site span")?.span;
         edits.push((start,end,*scale,rounding.canonical_field().unwrap_or("refuse"))); return Ok(());
     }
