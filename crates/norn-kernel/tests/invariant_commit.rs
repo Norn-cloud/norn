@@ -3106,7 +3106,9 @@ fn law_invariant_runtime_valid_response_admits() {
 #[test]
 fn law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin() {
     let laws = vec![invariant_amount_law()];
-    let types = vec![quality_item_type()];
+    let mut retained = quality_item_type();
+    retained.invariants[0].classification = norn_ir::ConstraintClass::Integrity;
+    let types = vec![retained];
     let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
     let key = FactKey::new(ITEM, "invariant-law-invalid");
     let values = object(json!({"item_id":"invalid", "amount":0}));
@@ -3150,7 +3152,7 @@ fn law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin(
             ],
             ..CellCommit::empty()
         })
-        .expect_err("retained law refuses a quality-class invariant violation");
+        .expect_err("retained law pin survives the integrity evaluator's refusal");
     assert!(
         matches!(refusal, CommitError::Law {reason: norn_kernel::governing_laws::LawEvaluationError::Violated(ref retained), ..}
         if retained.rule_ref == failure.rule_ref)

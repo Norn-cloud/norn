@@ -459,6 +459,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     check_required_links(commit, model, view, authorization)?;
     check_acyclic_links(commit, model, view)?;
     check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
+        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
         InvariantAdmissionError::EffectiveValues { key, reason } => {
             CommitError::EffectiveValues { key, reason }
         }
@@ -985,6 +986,10 @@ fn expression_type_name(value: &ExprValue) -> &'static str {
 }
 
 enum InvariantAdmissionError {
+    Law {
+        key: FactKey,
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     EffectiveValues {
         key: FactKey,
         reason: String,
@@ -1071,6 +1076,20 @@ fn check_invariants<E, C, T>(
             .into_iter()
             .find(|failure| failure.classification == ConstraintClass::Integrity)
         {
+            if let Some(law_failure) =
+                crate::governing_laws::invariant_failure(catalog, &write.key.object_type, &failure)
+                    .map_err(|reason| InvariantAdmissionError::Law {
+                        key: write.key.clone(),
+                        reason,
+                    })?
+            {
+                return Err(InvariantAdmissionError::Law {
+                    key: write.key.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(
+                        law_failure,
+                    )),
+                });
+            }
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
                 version: catalog

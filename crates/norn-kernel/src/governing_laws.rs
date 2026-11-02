@@ -161,6 +161,50 @@ fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, L
         ),
     })
 }
+
+fn law_failure(
+    artifact: &ArtifactEnvelope,
+    law: &LawIR,
+    outcome: DataQualityOutcome,
+) -> Result<LawFailure, LawEvaluationError> {
+    Ok(LawFailure {
+        refuses_native: law.severity == LawSeverity::Error,
+        outcome,
+        rule_ref: pin(artifact, law)?,
+        severity: match law.severity {
+            LawSeverity::Error => DataQualitySeverity::Error,
+            LawSeverity::Warning => DataQualitySeverity::Warning,
+        },
+        message: format!("{}: {}", law.id, law.rationale),
+    })
+}
+
+/// LAW-COMMIT-1: preserve the governing law pin when the shared integrity
+/// evaluator has already found the referenced invariant violation.
+pub(crate) fn invariant_failure(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    failure: &crate::commit_check::InvariantFailure,
+) -> Result<Option<LawFailure>, LawEvaluationError> {
+    if failure.finding_outcome.is_some() {
+        return Ok(None);
+    }
+    for artifact in catalog.governing_laws(subject)? {
+        let law = decode(artifact)?;
+        if !matches!(&law.response, LawResponse::Invariant { invariant_id, .. }
+            if invariant_id == failure.id.as_str())
+            || law.severity != LawSeverity::Error
+        {
+            continue;
+        }
+        if !supported(&law) {
+            return Err(LawEvaluationError::Unsupported(law.id));
+        }
+        invariant_binding(catalog, subject, &law)?;
+        return law_failure(artifact, &law, failure.outcome.clone()).map(Some);
+    }
+    Ok(None)
+}
 pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
@@ -252,16 +296,7 @@ pub fn evaluate(
             },
         };
         if let Err(outcome) = result {
-            failures.push(LawFailure {
-                refuses_native: law.severity == LawSeverity::Error,
-                outcome,
-                rule_ref: pin(artifact, &law)?,
-                severity: match law.severity {
-                    LawSeverity::Error => DataQualitySeverity::Error,
-                    LawSeverity::Warning => DataQualitySeverity::Warning,
-                },
-                message: format!("{}: {}", law.id, law.rationale),
-            });
+            failures.push(law_failure(artifact, &law, outcome)?);
         }
     }
     Ok(failures)
