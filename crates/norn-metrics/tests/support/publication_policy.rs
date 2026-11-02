@@ -178,3 +178,22 @@ impl ReceiptValidator for Checks {
         }
     }
 }
+
+pub(crate) fn admitted_publish() -> norn_ir::ActionRoot {
+    let artifacts = source::artifacts();
+    let diagnostics = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::default(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "admit the actual typed declarations: {diagnostics:?}"
+    );
+    let action: norn_ir::ActionRoot =
+        serde_json::from_value(payload("core.analytics.publish.action")).expect("declared PUBLISH");
+    action
+}

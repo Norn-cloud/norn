@@ -9,21 +9,7 @@ use norn_kernel::{ActionCall,ActionOutcome,CellHost,DecisionTurn,FactKey,Logical
 use policy::{payload,reviewer};
 #[test]
 fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
-    let artifacts = source::artifacts();
-    let diagnostics = norn_checker::check_artifact_set(
-        &artifacts,
-        &norn_checker::EntityArtifactSetContext {
-            registry: &std::collections::BTreeSet::default(),
-            base: &[],
-            tenant: None,
-        },
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "admit the actual typed declarations: {diagnostics:?}"
-    );
-    let action: norn_ir::ActionRoot =
-        serde_json::from_value(payload("core.analytics.publish.action")).expect("declared PUBLISH");
+    let action=policy::admitted_publish();
     for bulk in [false, true] {
         let host::Host {mut cell,receipt,reference,prepared,model}=host::retained_host(bulk);
         let now=source::millis(source::BULK_AT);

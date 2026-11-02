@@ -105,21 +105,7 @@ pub(crate) fn world(
     )
     .expect("ontology units");
     let mut store = CellStore::open_in_memory(model(&artifacts)).expect("cell");
-    if let Some(propose) = proposal {
-        let values = propose(&plan);
-        store
-            .commit(&CommitBatch {
-                world: "main".into(),
-                scope: SCOPE.into(),
-                writes: vec![FactWriteRow::Put {
-                    object_type: "core.analytics.Publication".into(),
-                    key: "forecast".into(),
-                    values,
-                }],
-                ..CommitBatch::default()
-            })
-            .expect("preregister policy");
-    }
+    preregister(&mut store,&plan,proposal);
     for (logical_time, key, values) in source_events(bulk) {
         store
             .commit(&CommitBatch {
@@ -223,4 +209,22 @@ fn source_events(bulk:bool) -> Vec<(u64,String,RuntimeObject)> {
     }
     events.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     events
+}
+
+fn preregister(store:&mut CellStore,plan:&TemporalPlan,proposal:Option<fn(&TemporalPlan)->RuntimeObject>) {
+    if let Some(propose) = proposal {
+        let values = propose(plan);
+        store
+            .commit(&CommitBatch {
+                world: "main".into(),
+                scope: SCOPE.into(),
+                writes: vec![FactWriteRow::Put {
+                    object_type: "core.analytics.Publication".into(),
+                    key: "forecast".into(),
+                    values,
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("preregister policy");
+    }
 }
