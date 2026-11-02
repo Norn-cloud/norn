@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.normalization_not_applicable",
+  "message": "normalization applies to text, but component {property} is {kind}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

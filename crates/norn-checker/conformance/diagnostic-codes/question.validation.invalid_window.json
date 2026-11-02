@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.invalid_window",
+  "message": "The time window must be an ordered half-open UTC interval.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

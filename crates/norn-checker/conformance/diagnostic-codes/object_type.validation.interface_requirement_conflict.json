@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.interface_requirement_conflict",
+  "message": "interfaces {interfaces} all require member {id}, but no single member can meet them together: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

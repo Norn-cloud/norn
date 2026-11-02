@@ -1,0 +1,7 @@
+{
+  "code": "sealing.extension_point.kind_mismatch",
+  "message": "extension-point contribution kind does not match the operation",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

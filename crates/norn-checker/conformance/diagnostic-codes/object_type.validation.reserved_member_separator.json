@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.reserved_member_separator",
+  "message": "{member} id {id} contains \"__\", which is reserved for extension members (\"<namespace>__<name>\")",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

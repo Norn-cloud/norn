@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.kind_mismatch",
+  "message": "{artifactId} is referenced as a {declaredKind} artifact but is a {kind} artifact",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

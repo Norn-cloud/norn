@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unknown_entitlement_field",
+  "message": "entitlement mapping references an undeclared or unbound source field",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

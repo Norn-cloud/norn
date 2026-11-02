@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.marking.duplicate",
+  "message": "marking id {id} is already declared in the base or candidate set, or a marking reference is repeated",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
