@@ -1356,6 +1356,7 @@ where
             let store_model = self.store.model();
             let catalog = TypeCatalog::new(store_model.object_types())
                 .with_interfaces(store_model.interfaces())
+                .with_governing_laws(store_model.law_artifacts())
                 .with_property_types(store_model.property_types());
             let model = CommitModel::new(&catalog);
             let reader = self.store.read();
@@ -1420,6 +1421,7 @@ where
             let model = reader.model();
             let catalog = TypeCatalog::new(model.object_types())
                 .with_interfaces(model.interfaces())
+                .with_governing_laws(model.law_artifacts())
                 .with_property_types(model.property_types());
             let model = CommitModel::new(&catalog);
             match (authorization, owned_rows) {
