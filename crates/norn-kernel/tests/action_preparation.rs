@@ -183,6 +183,70 @@ impl norn_kernel::ActionAuthorizer for PrincipalOnly<'_> {
     }
 }
 
+#[test]
+fn featureless_actions_keep_large_inputs_without_allowing_identity_claims() {
+    let mut action = action();
+    action.derive.clear();
+    action.input_schema = serde_json::from_value(json!({
+        "type":"object", "additionalProperties":false,
+        "properties":{"code":{"type":"string"},"large":{"type":"string"}},
+        "required":["code","large"]
+    }))
+    .unwrap();
+    let mut definitions = types();
+    definitions[0].properties.push(
+        serde_json::from_value(json!({
+            "id":"large", "type":{"kind":"text"}
+        }))
+        .unwrap(),
+    );
+    let catalog = TypeCatalog::new(&definitions);
+    let limit = usize::try_from(
+        norn_ir::ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_canonical_bytes,
+    )
+    .unwrap();
+    let mut raw = input("C26");
+    raw.insert(
+        "large".into(),
+        norn_ir::RuntimeValue::String("x".repeat(limit + 1)),
+    );
+    let mut storage = cell();
+    assert!(matches!(
+        commit_action(
+            &mut storage,
+            &catalog,
+            &call(&action, raw.clone(), "1.0.0"),
+            &Allow
+        )
+        .unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    for field in ["actor", "approved"] {
+        let mut spoof = raw.clone();
+        spoof.insert(field.into(), norn_ir::RuntimeValue::String("forged".into()));
+        assert!(
+            matches!(prepare_action_input_for_call::<Infallible>(&action, &spoof, "test.target.create.action", "1.0.0", "test:caller"), Err(norn_kernel::ActionRefusal::InvalidInput {field: rejected}) if rejected == field)
+        );
+    }
+    action.derive = vec![norn_ir::ActionInputDerivation {
+        field: "code".into(),
+        expression: ZenExpression("input.code".into()),
+        input_required: true,
+    }];
+    assert!(matches!(
+        prepare_action_input_for_call::<Infallible>(
+            &action,
+            &raw,
+            "test.target.create.action",
+            "1.0.0",
+            "test:caller"
+        ),
+        Err(norn_kernel::ActionRefusal::InputBoundExceeded { .. })
+    ));
+}
+
 proptest::proptest! {
     #[test]
     fn action_actor_is_identical_in_derivation_pdp_and_retained_receipt(principal in "person:[a-z0-9é\u{301}]{1,24}") {
