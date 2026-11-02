@@ -15405,7 +15405,7 @@
             "description": "Why, and what would make the request admissible."
           },
           "format": {
-            "type": "string",
+            "$ref": "#/components/schemas/RefusalFormat",
             "description": "Versioned projection; stored checker receipts keep their original bytes."
           },
           "message": {
@@ -15439,6 +15439,13 @@
           "invalid",
           "limit",
           "internal"
+        ]
+      },
+      "RefusalFormat": {
+        "type": "string",
+        "description": "Version of the public refusal projection, independent of stored receipt formats.",
+        "enum": [
+          "norn/refusal@2"
         ]
       }
     }

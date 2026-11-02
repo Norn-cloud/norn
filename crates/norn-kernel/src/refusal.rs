@@ -110,7 +110,10 @@ pub struct Refusal {
 
 pub use norn_ir::RefusalReason;
 
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde skip_serializing_if passes a field reference")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a field reference"
+)]
 fn is_false(value: &bool) -> bool {
     !value
 }
@@ -390,11 +393,18 @@ fn invariant_reason(
     }
 }
 
-fn builtin_reason(law: &str, key: &crate::FactKey, values: BTreeMap<String, RuntimeValue>) -> RefusalReason {
+fn builtin_reason(
+    law: &str,
+    key: &crate::FactKey,
+    values: BTreeMap<String, RuntimeValue>,
+) -> RefusalReason {
     RefusalReason {
-        law: law.to_owned(), subject: key.to_string(), values,
+        law: law.to_owned(),
+        subject: key.to_string(),
+        values,
         pin: Some(norn_ir::DataQualityRuleRef::Builtin {
-            id: law.to_owned(), version: "1".to_owned(),
+            id: law.to_owned(),
+            version: "1".to_owned(),
         }),
     }
 }

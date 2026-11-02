@@ -5977,7 +5977,7 @@ export interface components {
             /** @description Why, and what would make the request admissible. */
             explanation: string;
             /** @description Versioned projection; stored checker receipts keep their original bytes. */
-            format: string;
+            format: components["schemas"]["RefusalFormat"];
             /** @description One-line summary. */
             message: string;
             reason: components["schemas"]["NornIrRefusalReason"] | null;
@@ -5990,6 +5990,11 @@ export interface components {
          * @enum {string}
          */
         RefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+        /**
+         * @description Version of the public refusal projection, independent of stored receipt formats.
+         * @enum {string}
+         */
+        RefusalFormat: "norn/refusal@2";
     };
     responses: never;
     parameters: never;
