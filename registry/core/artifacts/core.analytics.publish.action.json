@@ -12,7 +12,7 @@
     "effectProgram": {
       "acceptReceipt": {
         "digestProperty": "receipt_digest",
-        "manifestDigest": "sha256:2de09c876595b80a485d51dabd90cd0865d33fb70e9feb3f7f83e7348aa9e0fa",
+        "manifestDigest": "sha256:00dd93de17400854809de915099142a2a4e4c992eb48e357a8eec554bbaa63a9",
         "referenceField": "receipt",
         "resultBindings": {
           "complete": "complete",
