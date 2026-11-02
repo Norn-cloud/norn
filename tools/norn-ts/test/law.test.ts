@@ -7,6 +7,7 @@ import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/defi
 import { fromStatement, toStatement, parseSentence, renderSentence, serializeStatement, parseStatement, renderCounterexample } from "../src/law-statement.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
+import { compilePack } from "../src/pack.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 const ROOT = join(TOOL_ROOT, "..", "..", "fixtures/law-ir")
 const goldens = JSON.parse(readFileSync(join(ROOT, "laws.json"), "utf8")) as Array<{ artifactId: string; name: string; version: string; payload: L.LawIR; dependencies: L.LawDef["dependencies"] }>
@@ -84,4 +85,12 @@ test("wording sidecars retain typed EN/AR slots without altering LawIR", () => {
   expect(L.wordingArtifacts(def)).toMatchObject([{format:"norn.law_wording/1", lawArtifactId:golden.artifactId,
     lawSha256:"0".repeat(64), requirement:{norm:{law:golden.payload}, wording:{response:text}}}])
   expect(() => L.decodeLawWordings({bad:{lawDigest:"0".repeat(64), slots:{scope:text}}})).toThrow()
+  const dir = mkdtempSync(join(ROOT, "wording-"))
+  try {
+    writeFileSync(join(dir, "law.ts"), L.printLaw(def))
+    const pack = compilePack(dir, { ...options, root: join(TOOL_ROOT, "..", "..") })
+    if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+    expect(canonicalJson(pack.artifacts)).toBe(canonicalJson([golden]))
+    expect(pack.wordingArtifacts).toEqual(L.wordingArtifacts(def))
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

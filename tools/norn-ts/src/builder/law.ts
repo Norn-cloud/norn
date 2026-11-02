@@ -6,10 +6,10 @@ import * as X from "./expr.ts"
 import type { ValueSchema } from "./schema.ts"
 
 const TextSlot = Schema.Struct({ en: Schema.String, ar: Schema.String })
-const Wordings = Schema.Record({ key: Schema.String, value: Schema.Struct({
+const Wordings = Schema.Record(Schema.String, Schema.Struct({
   lawDigest: Schema.String,
   slots: Schema.Struct({ scope: TextSlot, activation: TextSlot, component: TextSlot, response: TextSlot }),
-}) })
+}))
 export const decodeLawWordings = (value: unknown) => Schema.decodeUnknownSync(Wordings)(value, { onExcessProperty: "error" })
 
 export type LawModality = { readonly kind: "always" | "never" | "eventually" } | { readonly kind: "until"; readonly predicate: string }
