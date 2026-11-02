@@ -1756,7 +1756,7 @@ proptest::proptest! {
         use norn_expr::env::TypeEnvVersion::V1;
         let env = |property: &str| norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("money".to_owned(), norn_expr::Type::Decimal {
             scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse,
-            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: property.parse().unwrap() }),
+            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: norn_ir::PropertyId(property.to_owned()) }),
         })]), norn_expr::EnvOptions::default()).unwrap();
         let (first_env, second_env) = (env(&first), env(&second));
         proptest::prop_assert_eq!(first_env.reference_at_version(V1).unwrap(), second_env.reference_at_version(V1).unwrap());

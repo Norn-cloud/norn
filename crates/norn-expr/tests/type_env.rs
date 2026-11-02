@@ -928,7 +928,7 @@ fn val_env_v2_binds_currency_sources_and_preserves_v1_projection() {
                     rounding: norn_ir::Rounding::Refuse,
                     currency_source: Some(norn_ir::metric::DimensionPath {
                         links: Vec::new(),
-                        property: property.parse().unwrap(),
+                        property: norn_ir::PropertyId(property.to_owned()),
                     }),
                 },
             )]),

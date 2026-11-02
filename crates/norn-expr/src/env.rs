@@ -196,25 +196,11 @@ impl Type {
                         ]),
                     ));
                 }
-                if version == TypeEnvVersion::V2 {
-                    if let Some(source) = currency_source {
-                        fields.push((
-                            "currencySource",
-                            object([
-                                (
-                                    "links",
-                                    JsonValue::Array(
-                                        source
-                                            .links
-                                            .iter()
-                                            .map(|link| string(link.as_str()))
-                                            .collect(),
-                                    ),
-                                ),
-                                ("property", string(source.property.as_str())),
-                            ]),
-                        ));
-                    }
+                if version == TypeEnvVersion::V2 && let Some(source) = currency_source {
+                    fields.push(("currencySource", object([
+                        ("links", JsonValue::Array(source.links.iter().map(|link| string(link.as_str())).collect())),
+                        ("property", string(source.property.as_str())),
+                    ])));
                 }
                 if let Some(mode) = rounding.canonical_field() {
                     fields.push(("rounding", string(mode)));
