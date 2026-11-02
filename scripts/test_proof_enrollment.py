@@ -6,6 +6,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import coverage_manifest
@@ -142,6 +143,8 @@ class EnrollmentTests(unittest.TestCase):
 class CoverageLayoutTests(unittest.TestCase):
     def test_entry_layout_preserves_every_claim_and_order(self):
         document = coverage_manifest.load()
+        subsystem = next(s for s in document["subsystems"] if s["runtime"]["artifacts"])
+        subsystem["runtime"]["artifacts"] *= 2
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "manifest"
             coverage_manifest.write(document, target)
@@ -150,6 +153,35 @@ class CoverageLayoutTests(unittest.TestCase):
                     folder.rmdir()
             self.assertEqual(coverage_manifest.load(target), document)
             self.assertTrue(coverage_manifest.digest(target))
+
+    def test_migration_preserves_duplicates_and_rolls_back_failures(self):
+        for failure in (None, "conversion", "commit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                directory = root / "verification/coverage-v1/manifest"
+                record_root = root / ".github/ci/provenance/artifacts/verification/coverage-v1/manifest"
+                body = {"runtime": {"artifacts": ["a.rs", "a.rs"]}}
+                if failure == "conversion":
+                    body["../invalid"] = []
+                for path, value in ((directory / "index.json", {}), (directory / "subsystems/toy.json", body),
+                                    (record_root / "index.json.json", {}), (record_root / "subsystems/toy.json.json", {})):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(value))
+                before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+                rename = Path.rename
+                def commit(path, target):
+                    if failure == "commit" and path.name == "records":
+                        raise OSError("synthetic swap failure")
+                    return rename(path, target)
+                with mock.patch.multiple(coverage_manifest, ROOT=root, COVERAGE=directory), mock.patch.object(Path, "rename", commit):
+                    if failure:
+                        with self.assertRaises((coverage_manifest.InvalidCoverageLayout, OSError)):
+                            coverage_manifest.migrate_entries()
+                    else:
+                        coverage_manifest.migrate_entries()
+                        self.assertEqual(coverage_manifest.load(directory), {"subsystems": [{"id": "toy", **body}]})
+                if failure:
+                    self.assertEqual({p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}, before)
 
     def test_nested_evidence_additions_touch_independent_files(self):
         original = {"subsystems": [{"id": "toy", "obligationClaims": [{"id": "INV-X", "evidence": {"runtime": [{"artifact": "a.rs", "selectors": ["test:a"]}]}}]}]}
