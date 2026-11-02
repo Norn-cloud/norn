@@ -183,7 +183,6 @@ def write(document: dict[str, Any], directory: Path) -> None:
 
 
 def write_entries(document: dict[str, Any], directory: Path) -> None:
-    """Write independently addressed entries for migrations and fixtures."""
     write(document, directory)
 
 
@@ -297,4 +296,7 @@ def apply_entries(root: Path, updates: dict, legacy=()) -> None:
                 else:
                     (root / path).parent.mkdir(parents=True, exist_ok=True)
                     (root / path).write_bytes(content)
+            for folder in sorted((root / relative).rglob("*"), reverse=True):
+                if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                    folder.rmdir()
             raise
