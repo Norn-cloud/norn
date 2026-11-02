@@ -1,7 +1,6 @@
 //! Pure, pinned synchronous writers for the governed action transaction.
 
-use crate::cell_host::JsonObject;
-use crate::{ActionCall, ActionRefusal, FactKey, TypeCatalog};
+use crate::{ActionCall, ActionRefusal, FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_decisions::{AdmittedDecision, DecisionBinding};
 use norn_ir::{ActionRuleRef, DecisionOutput, RuleRoot, RuntimeValue};
 use std::collections::BTreeMap;
