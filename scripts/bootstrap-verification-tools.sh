@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
+tool_root="$(realpath -m "$tool_root")"
 download_root="$tool_root/downloads"
 bin_root="$tool_root/bin"
 
@@ -33,7 +34,7 @@ JRE_VERSION="21.0.12.1_1"
 export ELAN_HOME="$tool_root/elan"
 receipt="$tool_root/verification-install.sha256"
 installation_digest() {
-  sha256sum "${BASH_SOURCE[0]}"
+  sha256sum < "${BASH_SOURCE[0]}"
   find -L "$ELAN_HOME/bin" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_VERSION" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v4.34.1" \

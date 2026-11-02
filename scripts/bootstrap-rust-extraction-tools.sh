@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
+tool_root="$(realpath -m "$tool_root")"
 download_root="$tool_root/downloads"
 source_root="$tool_root/sources"
 bin_root="$tool_root/bin"
@@ -92,14 +93,14 @@ export OPAMROOT="$tool_root/opam-root"
 export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
 # OCaml native compilation is memory intensive even with only four CPUs.
 export OPAMJOBS="${OPAMJOBS:-1}"
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-${NORN_VERIFICATION_BUILD_JOBS:-2}}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 export OPAMSWITCH="$OPAM_SWITCH"
 receipt="$tool_root/extraction-install.sha256"
 
 installation_digest() {
   # Bind the recipe (all pins), package inventory, installed code and libraries.
   # Build/download caches are deliberately excluded; they are never executed.
-  sha256sum "${BASH_SOURCE[0]}"
+  sha256sum < "${BASH_SOURCE[0]}"
   "$opam_binary" list --installed --short --columns=name,version
   find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" "$OPAMROOT/$OPAM_SWITCH/share" \
     "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
@@ -176,15 +177,15 @@ ln -sfn "$hax_engine" "$bin_root/hax-engine"
 
 
 if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
-  env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" setup-charon
+  env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" setup-charon
 fi
 test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
 if [[ -n "$(git -C "$source_root/aeneas/charon" status --porcelain=v1 --untracked-files=all)" ]]; then
   echo "pinned source tree is dirty: $source_root/aeneas/charon" >&2
   exit 1
 fi
-env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas/charon" build-dev
-env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" build-dev
+env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas/charon" build-dev
+env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" build-dev
 ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
 ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
 
