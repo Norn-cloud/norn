@@ -29,6 +29,8 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod catalog;
+pub mod classification;
 mod codec;
 pub mod engine;
 pub mod error;
@@ -43,6 +45,7 @@ pub mod quantity;
 pub mod reactive;
 mod reactive_read;
 pub mod read;
+mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod store;

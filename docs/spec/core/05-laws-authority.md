@@ -73,3 +73,24 @@ Scenarios: **GUARANTEES-CHECKED** retains checked reference/implementation scope
 **PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
 
 **LAW-CONVERSION-OVERLAY:** Given retained core law and concrete Melt bindings, adding a loss bound retains the same effective law digest and generates pending guard goals; replacing its inherited invariant with `true` refuses through the shared Core 06 validator as `core.composition.overlay_conflict` / `weakens_inherited`, with no new approval authority.
+
+## Shared refusal diagnostics (#517)
+
+**DIAG-REASON-1:** commit and action invariant refusals retain the owning
+object/interface, invariant identity and canonical owner-definition digest in
+`RefusalReason.pin`. Lifecycle reasons pin their built-in semantics version.
+Typed operands share the existing `RuntimeValue` model. Evaluator failure text
+and non-boolean values are represented by outcome categories, not raw values.
+
+**DIAG-REDACT-1:** API `norn/refusal@2` projections require proven disclosure
+authority to expose a reason. Without it, the entire pin, subject and operands
+are absent, and the explanation is fixed. Visibility/internal details remain
+hidden even with a disclosure grant. Retryability defaults to false; only
+engine-defined stale preparation and concurrency paths set it true.
+
+**DIAG-HISTORY-1:** stored receipt formats, diagnostics and content hashes are
+unchanged by transport projection versions. Historical receipts still verify.
+
+Named scenarios: invariant refusal retains a declaration pin through the API;
+unauthorized projections are independent of arbitrary secret operands;
+a pre-change checker receipt verifies against its original hash.
