@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.target_not_writable",
+  "message": "{target} of {objectKind} is not writable by a generic action: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -153,10 +153,10 @@ def coverage_layout_canaries() -> None:
 
     def edit(name: str, change: Callable[[dict[str, Any]], object]) -> Callable[[Path], object]:
         def arrange(candidate: Path) -> None:
-            path = candidate / "subsystems" / f"{name}.json"
-            body = json.loads(path.read_text(encoding="utf-8"))
+            coverage = coverage_manifest.load(candidate)
+            body = next(item for item in coverage["subsystems"] if item["id"] == name)
             change(body)
-            path.write_text(json.dumps(body), encoding="utf-8")
+            coverage_manifest.write(coverage, candidate)
         return arrange
 
     def wrong_status(body: dict[str, Any]) -> None:
@@ -166,24 +166,25 @@ def coverage_layout_canaries() -> None:
             edit("ontology", lambda body: body["sourceFiles"].pop()))
     rejects("claim status outside the vocabulary", "implementation_proven", edit("ontology", wrong_status))
     rejects("unknown subsystem", "mandatory subsystem mismatch",
-            lambda c: (c / "subsystems/ontology.json").rename(c / "subsystems/analytics-projection.json"))
+            lambda c: (c / "subsystems/ontology").rename(c / "subsystems/analytics-projection"))
     def drop_cala_boundary(candidate: Path) -> None:
         # Keep its sources enrolled elsewhere so the mandatory-set check is what fires.
-        dropped = candidate / "subsystems/cala-boundary.json"
-        sources = json.loads(dropped.read_text(encoding="utf-8"))["sourceFiles"]
-        edit("ontology", lambda body: body["sourceFiles"].extend(sources))(candidate)
-        dropped.unlink()
+        coverage = coverage_manifest.load(candidate)
+        dropped = next(item for item in coverage["subsystems"] if item["id"] == "cala-boundary")
+        next(item for item in coverage["subsystems"] if item["id"] == "ontology")["sourceFiles"].extend(dropped["sourceFiles"])
+        coverage["subsystems"].remove(dropped)
+        coverage_manifest.write(coverage, candidate)
 
     rejects("missing mandatory subsystem", "mandatory subsystem mismatch", drop_cala_boundary)
     rejects("subsystem file claims an id", "drop the id field",
-            edit("ontology", lambda body: body.update(id="ontology")))
+            lambda c: (c / "subsystems/ontology/index.json").write_text(json.dumps({**json.loads((c / "subsystems/ontology/index.json").read_text()), "id": "ontology"})))
     rejects("index lists subsystems", "must not list subsystems",
             lambda c: (c / "index.json").write_text(json.dumps({**json.loads((c / "index.json").read_text()), "subsystems": []})))
     rejects("stray coverage file", "unknown coverage entries", lambda c: (c / "notes.json").write_text("{}"))
     rejects("misnamed subsystem file", "unknown subsystem files", lambda c: (c / "subsystems/Ontology.json").write_text("{}"))
-    rejects("symlinked subsystem file", "not a regular file", lambda c: (
-        (c / "subsystems/ontology.json").rename(c.parent / "ontology.real"),
-        (c / "subsystems/ontology.json").symlink_to(c.parent / "ontology.real"),
+    rejects("symlinked subsystem file", "not a regular directory", lambda c: (
+        (c / "subsystems/ontology").rename(c.parent / "ontology.real"),
+        (c / "subsystems/ontology").symlink_to(c.parent / "ontology.real"),
     ))
 
 
@@ -596,6 +597,10 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
+        def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
+            return next(step for step in document["jobs"][job]["steps"]
+                        if step.get("uses", "").startswith(action + "@"))
+
         runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
             unsafe = ["self-hosted", ["self-hosted", "norn-merge"],
@@ -629,14 +634,14 @@ def workflow_context_canaries(source: str) -> None:
                                ("path", "other-checkout"), ("persist-credentials", True),
                                ("persist-credentials", 0), ("fetch-depth", False)):
                 document = copy.deepcopy(workflow)
-                document["jobs"][name]["steps"][0]["with"][key] = value
+                action_step(document, name, "actions/checkout")["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
             for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["steps"][2]["with"]["bun-version"] = "latest"
+        action_step(document, "test", "oven-sh/setup-bun")["with"]["bun-version"] = "latest"
         rejected("altered preparation action inputs", document)
         for location in ("workflow", "job", "step"):
             document = copy.deepcopy(workflow)
@@ -654,7 +659,9 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["test"]["steps"].insert(-1, {"run": "echo NORN_CI_PACKAGES=norn-canonical >> $GITHUB_ENV"})
         rejected("test preparation can override plan inputs", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["core"]["steps"].append(document["jobs"]["core"]["steps"].pop(0))
+        checkout = action_step(document, "core", "actions/checkout")
+        document["jobs"]["core"]["steps"].remove(checkout)
+        document["jobs"]["core"]["steps"].append(checkout)
         rejected("candidate checkout after the gate", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
@@ -818,6 +825,7 @@ if plan.get("server_lines"):
     time.sleep(0.5)
 if out is not None and plan.get("out_json") is not None:
     out.write_text(json.dumps(plan["out_json"]))
+time.sleep(plan.get("sleep", 0))
 print(plan.get("output", ""), flush=True)
 sys.exit(plan.get("exit", 0))
 """
@@ -838,6 +846,11 @@ def quint_apalache_retry_canaries() -> None:
         "exit": 0,
     }
     cases = (
+        (
+            "timeout after the checker started is unknown and never retried",
+            [{"server_lines": ["PASS #0: SanyParser"], "sleep": 30}, success],
+            False,
+        ),
         (
             "transport error after a server-logged Error outcome",
             [
@@ -922,7 +935,7 @@ def quint_apalache_retry_canaries() -> None:
                     [str(fake_quint), "verify", "model.qnt", "--out", str(root / "result.json")],
                     cwd=root,
                     environment=environment,
-                    timeout_seconds=30,
+                    timeout_seconds=5.0 if label.startswith("timeout after") else 30,
                     quint_home=root / "quint-home",
                     label=label,
                     emit=lambda _line: None,
@@ -930,7 +943,12 @@ def quint_apalache_retry_canaries() -> None:
             except quint_apalache.HarnessError as error:
                 raise AssertionError(f"retry canary could not run: {label}: {error}") from error
         classes = [attempt.classification for attempt in run.attempts]
-        if should_pass:
+        if label.startswith("timeout after"):
+            if run.returncode != 124 or classes != ["timeout"] or "[unknown]" not in run.output:
+                raise AssertionError(f"timeout was retried or accepted as evidence: {classes}")
+            if not run.attempts[0].check_started:
+                raise AssertionError("timeout canary did not reach PASS #0")
+        elif should_pass:
             if run.returncode != 0 or len(run.attempts) != 2:
                 raise AssertionError(f"retry control did not recover once: {label}: {classes}")
             if counterexampled(run):

@@ -28,6 +28,19 @@ pub enum PropertyCodecError {
     Runtime(RuntimeValueError),
 }
 
+/// VAL-EXACT-1: stable diagnostic for a refused exact-number conversion.
+pub const INEXACT: &str = "core.values.inexact";
+
+/// Canonical Core 01 code alongside an adapter's existing transport error.
+/// Malformed JSON is distinct from a number that cannot be represented exactly.
+#[must_use]
+pub const fn runtime_error_code(error: &RuntimeValueError) -> Option<&'static str> {
+    match error {
+        RuntimeValueError::Inexact { .. } | RuntimeValueError::NonFinite => Some(INEXACT),
+        RuntimeValueError::InvalidJson { .. } => None,
+    }
+}
+
 /// Materialize the persisted representation before checking its constraints.
 pub(crate) fn stored_value(
     kind: PropertyKind,
@@ -65,7 +78,9 @@ pub fn encode(
         PropertyKind::Decimal => {
             let decimal = match value {
                 RuntimeValue::Number(number) => Some(*number),
-                RuntimeValue::String(text) if is_decimal(text) => text.parse().ok(),
+                RuntimeValue::String(text) if is_decimal(text) => {
+                    Some(text.parse().map_err(PropertyCodecError::Runtime)?)
+                }
                 RuntimeValue::Null
                 | RuntimeValue::Bool(_)
                 | RuntimeValue::String(_)
@@ -174,7 +189,52 @@ fn is_decimal(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_decimal;
+    use super::{INEXACT, PropertyCodecError, encode, is_decimal, runtime_error_code};
+    use norn_ir::{PropertyKind, RuntimeValue, RuntimeValueError};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn val_exact_decimal_codec_is_idempotent(whole in any::<i64>(), fraction in 0_u32..1_000_000) {
+            let text = format!("{whole}.{fraction:06}");
+            let value = RuntimeValue::from_json_text(&text).map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let stored = encode(PropertyKind::Decimal, &value).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            let back = super::decode(PropertyKind::Decimal, &stored).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            prop_assert_eq!(&back, &value);
+            let from_text = encode(PropertyKind::Decimal, &RuntimeValue::from(text)).map_err(|error| TestCaseError::fail(format!("{error:?}")))?;
+            prop_assert_eq!(from_text, stored);
+            let wire = serde_json::to_string(&back).map_err(|error| TestCaseError::fail(error.to_string()))?;
+            prop_assert_eq!(RuntimeValue::from_json_text(wire).map_err(|error| TestCaseError::fail(error.to_string()))?, value);
+        }
+    }
+
+    #[test]
+    fn core_values_inexact_preserves_the_numeric_refusal() -> Result<(), &'static str> {
+        for text in [
+            "79228162514264337593543950336",
+            "0.00000000000000000000000000001",
+        ] {
+            let error = encode(PropertyKind::Decimal, &RuntimeValue::from(text));
+            let Err(PropertyCodecError::Runtime(error @ RuntimeValueError::Inexact { .. })) = error
+            else {
+                return Err("out-of-profile decimal must retain its numeric refusal");
+            };
+            assert_eq!(runtime_error_code(&error), Some(INEXACT));
+        }
+        assert_eq!(
+            runtime_error_code(&RuntimeValueError::NonFinite),
+            Some(INEXACT)
+        );
+        let malformed = RuntimeValueError::InvalidJson {
+            message: "invalid token".to_owned(),
+        };
+        assert_eq!(runtime_error_code(&malformed), None);
+        assert!(matches!(
+            encode(PropertyKind::Decimal, &RuntimeValue::from("NaN")),
+            Err(PropertyCodecError::ValueType(_))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn decimal_grammar() {

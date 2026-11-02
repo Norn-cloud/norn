@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.unknown_kind",
+  "message": "artifact kind '{kind}' is not a known kind",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

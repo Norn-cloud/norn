@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.invalid_evidence",
+  "message": "evidence {uri} needs a non-blank uri and a lower-case hex SHA-256",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

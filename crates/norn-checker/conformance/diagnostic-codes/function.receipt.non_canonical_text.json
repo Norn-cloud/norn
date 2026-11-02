@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.non_canonical_text",
+  "message": "a receipt string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

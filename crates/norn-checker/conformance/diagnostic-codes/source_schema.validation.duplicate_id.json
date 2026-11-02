@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.duplicate_id",
+  "message": "{list} declares id {id} twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

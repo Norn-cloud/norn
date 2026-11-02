@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "A general expected-owner-version compare-and-swap path exists in the retained in-memory store, but legacy unversioned callers remain and no transport TransitionEnvelope routes custom state effects through it."
+}

@@ -52,7 +52,15 @@ interface EffectTarget {
 /** `ActionEffectProgram`: the closed, declarative authority-bearing operations. */
 export type ActionEffect =
   | ({ readonly kind: "upsert_input_object"; readonly writeMode?: UpsertWriteMode } & EffectTarget)
-  | ({ readonly kind: "fire_transition"; readonly lifecycle: string; readonly transition: string } & EffectTarget)
+  | ({ readonly kind: "fire_transition"; readonly lifecycle: string; readonly transition: string; readonly acceptReceipt?: ReceiptAcceptance } & EffectTarget)
+
+/** Host-resolved Function evidence; result values never come from action JSON. */
+export interface ReceiptAcceptance {
+  readonly referenceField: string
+  readonly manifestDigest: string
+  readonly digestProperty: string
+  readonly resultBindings: Readonly<Record<string, string>>
+}
 
 export type UpsertWriteMode =
   | { readonly kind: "upsert" }
@@ -108,8 +116,8 @@ export function target(type: Pick<ObjectTypeDef, "name" | "version">, objectIdFi
 }
 
 /** Fire one declared transition of `lifecycle` on the object the input names. */
-export function fireTransition(type: Pick<ObjectTypeDef, "name" | "version">, objectIdField: string, lifecycle: string, transition: string): ActionEffect {
-  return { kind: "fire_transition", ...target(type, objectIdField), lifecycle, transition }
+export function fireTransition(type: Pick<ObjectTypeDef, "name" | "version">, objectIdField: string, lifecycle: string, transition: string, acceptReceipt?: ReceiptAcceptance): ActionEffect {
+  return { kind: "fire_transition", ...target(type, objectIdField), lifecycle, transition, ...(acceptReceipt ? { acceptReceipt } : {}) }
 }
 
 /** Upsert the object the input describes. */

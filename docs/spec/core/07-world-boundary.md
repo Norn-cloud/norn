@@ -16,6 +16,18 @@ Reuse `ConnectorRoot`, `SourceSchemaIr`, `MappingIr`, mapping evidence/gaps, `Fu
 
 Functions use canonical `FunctionManifest {abi, function_id, version, input_schema, output_schema, error_schema, implementation, dependency_closure, runtime, platform, capabilities, determinism, bounds, cache, retention, steps}`. Admission rejects a missing `dependency_closure` and requires its declared digest to equal the digest computed from its entries. WIT/language bindings must agree; opaque scoped secret handles resolve only inside authorized performers, never the pure evaluator.
 
+The checker requires `dependency_closure.entries` in strictly increasing order
+by `name`. Names must be non-blank; empty or whitespace-only names refuse.
+Each name must be unique, regardless of entry kind or digest;
+duplicates and out-of-order names refuse rather than being silently sorted or
+deduplicated. An `OciImage` implementation with an empty dependency closure
+refuses admission.
+
+OBS-EVIDENCE-1 findings may reference a law by its artifact ID, stable LawIR ID
+and canonical declaration digest. A law pin records identity; it does not prove
+evaluation, authorize promotion or inherit an invariant's verified classification.
+The observation evaluator must bind that pin to the retained governing law.
+
 ## Ingestion versus governed action
 
 [Owner] Imported events already happened. Validate their framing/provenance; durably capture representable source observations and advance the cursor atomically with capture. Mapping/law violations produce **findings + quarantine**, not a refused source fact. Quarantined rows retain raw evidence and stay out of authoritative aggregates unless an explicit observed-data question includes them with quality labels. Invalid transport/authentication is still a boundary failure; it is not a business-law refusal of an external occurrence.
@@ -64,5 +76,11 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 4. Complete B1 mapping/role preservation with 06; EVENT-MULTI and source echo tests.
 5. Add uncertainty/reconciliation state contract, then dispatch/lookup tests, then compensation races with 04; each supported provider declares its assumptions.
 6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.
+
+## Host Function execution
+
+FUNCTION-HOST-1: `implementation.format: host` declares host-provided native code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The host must resolve its configured implementation by these exact pins or refuse.
+
+Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
 **PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.

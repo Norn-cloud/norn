@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unknown_dataset",
+  "message": "dataset {dataset} is not declared by the source schema",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
