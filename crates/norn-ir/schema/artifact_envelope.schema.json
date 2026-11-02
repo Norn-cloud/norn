@@ -701,6 +701,10 @@
           "description": "Fire one declared transition of the object the action input names\n(`objectIdField`), pinned by Entity artifact identity. `lifecycle` is\nthe lifecycle property and `transition` the transition id it declares;\nthe lifecycle owns the source states, the target state, and the\nguards, so the effect writes that one property and nothing else\n(T3-LIFE-3, #2867).",
           "type": "object",
           "properties": {
+            "acceptReceipt": {
+              "description": "Bind a host-authenticated Function result before firing the transition.",
+              "$ref": "#/$defs/ReceiptAcceptance"
+            },
             "entityArtifactId": {
               "type": "string"
             },
@@ -3331,6 +3335,11 @@
         "outputSchema",
         "maintenance"
       ]
+    },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
     },
     "DimensionPath": {
       "description": "A property reached by zero or more declared directional link roles.",
@@ -8074,6 +8083,41 @@
         "migration",
         "import",
         "system"
+      ]
+    },
+    "ReceiptAcceptance": {
+      "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+      "type": "object",
+      "properties": {
+        "digestProperty": {
+          "description": "Writable text property receiving the checked receipt digest.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "manifestDigest": {
+          "description": "Exact admitted Function manifest the host must authenticate.",
+          "$ref": "#/$defs/Digest"
+        },
+        "referenceField": {
+          "description": "Required string input member naming the immutable receipt digest.",
+          "type": "string"
+        },
+        "resultBindings": {
+          "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/PropertyId"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "referenceField",
+        "manifestDigest",
+        "digestProperty",
+        "resultBindings"
       ]
     },
     "RecordMember": {

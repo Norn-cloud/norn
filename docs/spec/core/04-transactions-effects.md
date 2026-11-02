@@ -60,3 +60,19 @@ Present: `crates/norn-ir/src/{decision_output,fact_change,action}.rs`, `crates/n
 4. Add definition/settings/authorization conflict pins and stale-intent diagnostics with 05/06; TXN-APPROVAL/CROSS.
 5. Qualify host/surfaces #270, #308–#312, #317 against exact same generic actions/refusals; no transport-local permissions.
 6. Lane C receipt/delivery, then transfers/returns/corrections as declared rules after 03 folds and 05 safety; retain ERPNext oracle vectors.
+
+### RECEIPT-EFFECT-1 — reference-only receipt effects
+
+A declared transition may carry `acceptReceipt`: a required string reference input,
+an immutable Function manifest digest, a writable digest property and typed result bindings. Action JSON never supplies a receipt body or result.
+Admission rejects unknown, computed, reserved and lifecycle binding targets.
+Both destinations exclude objectIdField and every effective identity-key component; a result destination cannot equal digestProperty. The exact writer closure remains required; catalogs preserve the declaration.
+Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
+Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
+
+RECEIPT-STORE-1: only authenticated reconciliation of the cell’s recorded performer result may populate its scoped, persisted receipt store. Intake records source receipt and knowledge time; it grants no action/publication authority. Unknown, forged, wrong-scope or differently recorded results refuse without a write. Predicate and collection freshness adapters are currently unavailable and refuse closed. Generic event export does not restore private receipt authority.
+
+RECEIPT-ONCE-1: SqliteCell resolves references only from its authenticated scoped store. The accepting transaction checks the intake frontier, claims one unconsumed reference, consumes its performer delivery and writes the accepted command state with the action effects. Any refusal rolls back the claim and effects; replay, unknown, stale or mismatched manifest references refuse. Unsupported hosts refuse. This host boundary alone does not open acceptReceipt action execution or publication.
+
+RECEIPT-EFFECT-1 execution: non-Main calls refuse before retry lookup; only Main exact retries may replay. After current authorization and exact action retry lookup, acceptReceipt resolves a reference through the authenticated host seam. Its digest and result bindings are typed property changes before the lifecycle transition. Guard/type failure leaves evidence unconsumed. The host atomically consumes only on successful action commit. Historical/fork execution and receipt-plus-quantity combinations refuse.
+RECEIPT-STORE-AUTH-1: the intake ledger event binds the canonical digest of the complete stored receipt, acceptance, source and frontier. Preparation captures its frontier before reconciliation; commit rechecks that frontier and actual performer delivery atomically. Resolving or exporting evidence verifies the complete body against that event. Changed acceptance/read pins, a forged frontier and legacy events lacking the authority digest refuse; refusal grants no authority and writes no action effects.

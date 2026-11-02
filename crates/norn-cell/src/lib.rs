@@ -43,6 +43,8 @@ pub mod quantity;
 pub mod reactive;
 mod reactive_read;
 pub mod read;
+mod receipt_fence;
+mod receipt_store;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod store;

@@ -7,7 +7,7 @@
  * Refresh goldens after an intentional change: `UPDATE_GOLDENS=1 bun --cwd tools/norn-ts test entity-builders`.
  */
 import { describe, expect, test } from "bun:test"
-import { readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { A, E, M, P, S } from "../src/builder/index.ts"
 import { type Json, canonicalJson } from "../src/canonical.ts"
@@ -395,3 +395,22 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(canonicalJson(compiled.artifacts)).toBe(canonicalJson([built.artifact]))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(true)
 })
+
+
+test("acceptReceipt syntax lowers reference and result bindings", () => {
+  const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts" })
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
+})
+
+
+test("receipt result binding refuses a literal __proto__ member", () => {
+  const dir = mkdtempSync(join(TOOL_ROOT, "fixtures/definitions/receipt-proto-"))
+  try {
+    const file = join(dir, "source.ts")
+    writeFileSync(file, readFileSync(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), "utf8").replace('score: "score"', '"__proto__": "score"'))
+    const result = compileDefinitions(file, { scope, sourcePath: "receipt-proto.ts" })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.diagnostics.map(d => d.code)).toContain("NORN-FLOW-LITERAL")
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+}, 30_000)
