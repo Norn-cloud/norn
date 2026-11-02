@@ -252,12 +252,15 @@ class CoverageLayoutTests(unittest.TestCase):
                     coverage_manifest.load(target)
 
     def test_entry_identity_and_envelope_refusals(self):
-        for change in ("identity", "unknown", "order", "directory"):
+        for change in ("identity", "unknown", "order", "directory", "obligation-suffix"):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / "manifest"
-                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"]}]}, target)
+                coverage_manifest.write({"subsystems": [{"id": "toy", "sourceFiles": ["a.rs"], "obligations": ["INV-X"]}]}, target)
                 entry = next((target / "subsystems/toy/sourceFiles").iterdir())
-                if change == "directory":
+                if change == "obligation-suffix":
+                    entry = next((target / "subsystems/toy/obligations").iterdir())
+                    entry.rename(entry.with_stem(entry.stem + "dup1"))
+                elif change == "directory":
                     entry.unlink(); entry.mkdir()
                 else:
                     value = json.loads(entry.read_text())
