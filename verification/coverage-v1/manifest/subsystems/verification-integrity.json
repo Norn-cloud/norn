@@ -356,6 +356,7 @@
     "scripts/verify-kernel-l1-version-body.py",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/write-verification-result.py",
+    "tools/norn-ts/fixtures/decisions/action-writer.source.ts",
     "tools/norn-ts/fixtures/decisions/ordered-fold.source.ts",
     "tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
