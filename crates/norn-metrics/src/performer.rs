@@ -276,9 +276,9 @@ mod tests {
             invocation.inputs = norn_ir::runtime::encode(&input).expect("input").as_object().expect("object").clone();
             invocation.blobs = [("table".into(), blob)].into();
             let result = perform_forecast(&invocation, &export, "unit-host", 10_000).expect("measured attempt");
-            prop_assert!(matches!(result.outcome, FunctionOutcome::ResourceExhausted { resource: ExhaustedResource::Output }));
-            prop_assert!(result.resources.output_bytes > norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES);
-            prop_assert!(norn_checker::function::check_function_receipt(&result, &invocation, &admitted).is_empty());
+            proptest::prop_assert!(matches!(result.outcome, FunctionOutcome::ResourceExhausted { resource: ExhaustedResource::Output }), "oversized report must exhaust output");
+            proptest::prop_assert!(result.resources.output_bytes > norn_ir::function::MAX_RECEIPT_SUMMARY_BYTES);
+            proptest::prop_assert!(norn_checker::function::check_function_receipt(&result, &invocation, &admitted).is_empty());
         }
     }
     proptest::proptest! {
