@@ -4444,8 +4444,8 @@ export interface components {
             /** @description The setting version this one replaces. */
             supersedes?: components["schemas"]["NornIrSettingSupersedes"];
             /**
-             * @description The value, whose JSON type agrees with `valueType`. A `json` setting
-             *     may be `null`.
+             * @description Numbers use exact `DecimalLiteral` strings; other branches retain their
+             *     JSON type. A `json` setting may be `null`.
              */
             value: components["schemas"]["NornIrJsonValue"];
             valueType: components["schemas"]["NornIrSettingValueType"];
