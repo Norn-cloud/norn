@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.invalid_source_command",
+  "message": "a declared source command does not bind an exact observed mapping and guarded connector capability: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

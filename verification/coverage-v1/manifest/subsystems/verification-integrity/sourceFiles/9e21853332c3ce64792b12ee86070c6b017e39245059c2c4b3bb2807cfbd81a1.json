@@ -1,0 +1,4 @@
+{
+  "order": 33,
+  "value": "crates/norn-checker/scripts/non-code-literals-shrink-only.sh"
+}

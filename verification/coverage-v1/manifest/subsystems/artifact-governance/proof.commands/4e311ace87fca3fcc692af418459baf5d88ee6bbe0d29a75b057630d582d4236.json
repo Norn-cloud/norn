@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactPromotion.lean"
+}

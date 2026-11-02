@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_accounting_leg_declaration",
+  "message": "accounting leg declaration on {type} is invalid: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.cache_origin",
+  "message": "{detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

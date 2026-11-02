@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.duplicate_metric",
+  "message": "Metric names must be unique.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

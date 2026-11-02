@@ -1,0 +1,7 @@
+{
+  "code": "ledger.amount.normalization_overflow",
+  "message": "constant cannot be normalized to unit precision without i128 overflow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
