@@ -42,6 +42,7 @@ impl CellId {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "property assertions")]
 mod tests {
     use super::CellId;
     use proptest::prelude::*;
