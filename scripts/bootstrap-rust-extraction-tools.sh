@@ -65,23 +65,7 @@ printf '%s  %s\n' \
 ln -sfn "$opam_binary" "$bin_root/opam"
 
 fstar_archive="$download_root/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz"
-download_verified \
-  "https://github.com/FStarLang/FStar/releases/download/v$FSTAR_VERSION/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz" \
-  "e8718fad41c51ef212aa6bfd7418796ab5e32f24e490eb0d7bef9357486fa6ab" \
-  "$fstar_archive"
-
 fstar_root="$tool_root/fstar-$FSTAR_VERSION"
-fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit 2>/dev/null || true)"
-if [[ -z "$fstar_binary" ]]; then
-  mkdir -p "$fstar_root"
-  tar -xzf "$fstar_archive" -C "$fstar_root"
-  fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit)"
-fi
-if [[ -z "$fstar_binary" ]]; then
-  echo "F* archive did not contain fstar.exe" >&2
-  exit 1
-fi
-ln -sfn "$fstar_binary" "$bin_root/fstar.exe"
 
 clone_pin "https://github.com/cryspen/hax.git" "$HAX_COMMIT" "$source_root/hax"
 clone_pin "https://github.com/AeneasVerif/aeneas.git" "$AENEAS_COMMIT" "$source_root/aeneas"
@@ -105,7 +89,7 @@ installation_digest() {
   find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" "$OPAMROOT/$OPAM_SWITCH/share" \
     "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
     "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
-    "$fstar_root" -type f -print0 | sort -z | xargs -0 -r sha256sum
+    "$fstar_root" -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
 }
 
 if [[ -f "$receipt" ]]; then
@@ -120,6 +104,24 @@ if [[ -f "$receipt" ]]; then
   echo "Exact pinned extraction installation verified: $installed_digest"
   exit 0
 fi
+
+download_verified \
+  "https://github.com/FStarLang/FStar/releases/download/v$FSTAR_VERSION/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz" \
+  "e8718fad41c51ef212aa6bfd7418796ab5e32f24e490eb0d7bef9357486fa6ab" \
+  "$fstar_archive"
+
+fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit 2>/dev/null || true)"
+if [[ -z "$fstar_binary" ]]; then
+  mkdir -p "$fstar_root"
+  tar -xzf "$fstar_archive" -C "$fstar_root"
+  fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit)"
+fi
+if [[ -z "$fstar_binary" ]]; then
+  echo "F* archive did not contain fstar.exe" >&2
+  exit 1
+fi
+ln -sfn "$fstar_binary" "$bin_root/fstar.exe"
+
 
 if [[ ! -d "$RUSTUP_HOME/toolchains/$HAX_RUST_TOOLCHAIN" ]]; then
   rustup toolchain install "$HAX_RUST_TOOLCHAIN" \

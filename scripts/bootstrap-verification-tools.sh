@@ -35,7 +35,7 @@ export ELAN_HOME="$tool_root/elan"
 receipt="$tool_root/verification-install.sha256"
 installation_digest() {
   sha256sum < "${BASH_SOURCE[0]}"
-  find -L "$ELAN_HOME/bin" \
+  find -L "$ELAN_HOME/settings.toml" "$ELAN_HOME/bin" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_VERSION" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v4.34.1" \
     "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_COMPAT_VERSION" \
@@ -46,7 +46,7 @@ installation_digest() {
     "$bin_root/elan" "$bin_root/lean" "$bin_root/lake" "$bin_root/leanc" \
     "$bin_root/leanmake" "$bin_root/quint" "$bin_root/kani" \
     "$bin_root/cargo-kani" "$bin_root/z3" "$bin_root/java" \
-    -type f -print0 | sort -z | xargs -0 -r sha256sum
+    -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
 }
 if [[ -f "$receipt" ]]; then
   installed_digest="$(installation_digest | sha256sum)"
@@ -80,6 +80,8 @@ for version in "$LEAN_VERSION" 4.34.1 "$LEAN_COMPAT_VERSION"; do
   fi
   "$ELAN_HOME/bin/elan" run "leanprover/lean4:v$version" lean --version | grep -F "version $version,"
 done
+
+"$ELAN_HOME/bin/elan" default "leanprover/lean4:v$LEAN_VERSION"
 
 for proxy in elan lean lake leanc leanmake; do
   ln -sfn "$ELAN_HOME/bin/$proxy" "$bin_root/$proxy"
