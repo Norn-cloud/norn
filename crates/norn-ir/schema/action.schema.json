@@ -85,6 +85,9 @@
         "$ref": "#/$defs/SliceDeclaration"
       }
     },
+    "synchronousRule": {
+      "$ref": "#/$defs/ActionRuleRef"
+    },
     "title": {
       "type": "string"
     },
@@ -549,6 +552,25 @@
       "required": [
         "field",
         "scale"
+      ]
+    },
+    "ActionRuleRef": {
+      "description": "Closed reference to the admitted synchronous writer of an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Exact RuleIR artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version; no latest-version resolution.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
       ]
     },
     "ActionUiEffects": {

@@ -1578,6 +1578,9 @@
               "$ref": "#/components/schemas/NornIrSliceDeclaration"
             }
           },
+          "synchronousRule": {
+            "$ref": "#/components/schemas/NornIrActionRuleRef"
+          },
           "title": {
             "type": "string"
           },
@@ -1736,6 +1739,25 @@
             "description": "Scale expected by the pinned template parameter.",
             "maximum": 9007199254740992,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionRuleRef": {
+        "type": "object",
+        "description": "Closed reference to the admitted synchronous writer of an action.",
+        "required": [
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Exact RuleIR artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version; no latest-version resolution."
           }
         },
         "additionalProperties": false

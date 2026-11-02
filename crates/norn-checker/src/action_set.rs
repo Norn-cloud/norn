@@ -2106,7 +2106,7 @@ mod synchronous_rule_tests {
             );
         }
         rule.payload =
-            ArtifactPayload::from_kind_json(ArtifactKind::Rule, payload).expect("rule payload");
+            ArtifactPayload::from_kind_json(&ArtifactKind::Rule, payload).expect("rule payload");
         action.dependencies.push(norn_ir::ArtifactDependency {
             artifact_id: rule.artifact_id.clone(),
             kind: ArtifactKind::Rule,
@@ -2136,7 +2136,13 @@ mod synchronous_rule_tests {
         let (action, mut root, rule) = fixture("1.0.0");
         assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
         assert!(
-            !synchronous_rule_findings(&action, &root, &[rule.clone()], &[rule.clone()]).is_empty()
+            !synchronous_rule_findings(
+                &action,
+                &root,
+                std::slice::from_ref(&rule),
+                std::slice::from_ref(&rule)
+            )
+            .is_empty()
         );
         root.scope_required.clear();
         assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
