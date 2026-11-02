@@ -4647,7 +4647,9 @@ fn check_action_identity_input<X>(
             }
         }
     }
-    if actor.is_some_and(|a| a.len() > max_bytes || a.trim().is_empty()) {
+    if actor.is_some_and(|a| {
+        a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
+    }) {
         return Err(ActionRefusal::InvalidInput {
             field: "actor".into(),
         });

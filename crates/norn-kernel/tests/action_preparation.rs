@@ -147,6 +147,29 @@ fn action_actor_preparation_cannot_be_reused_under_a_different_principal() {
     );
 }
 
+#[test]
+fn action_actor_noncanonical_principal_refuses_before_any_write() {
+    let action = action();
+    let definitions = types();
+    let catalog = TypeCatalog::new(&definitions);
+    let mut invocation = call(&action, input(" c26 "), "1.0.0");
+    invocation.actor = "person:g\u{301}".into();
+    let mut storage = cell();
+    assert_eq!(
+        commit_action(&mut storage, &catalog, &invocation, &Allow)
+            .unwrap_err()
+            .code(),
+        "action.invalid_input"
+    );
+    assert!(storage.ledger().is_empty());
+    assert!(
+        !storage
+            .load(&FactKey::new("test.Target", "C26"))
+            .unwrap()
+            .exists()
+    );
+}
+
 struct PrincipalOnly<'a>(&'a str);
 impl norn_kernel::ActionAuthorizer for PrincipalOnly<'_> {
     fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
@@ -167,7 +190,13 @@ proptest::proptest! {
         action.derive = vec![norn_ir::ActionInputDerivation {field:"code".into(),expression:ZenExpression("actor.subjectId".into()),input_required:false}];
         let mut invocation = call(&action,JsonObject::new(),"1.0.0"); invocation.actor = principal.clone();
         let definitions = types(); let catalog = TypeCatalog::new(&definitions); let mut storage = cell();
-        let outcome = commit_action(&mut storage,&catalog,&invocation,&PrincipalOnly(&principal)).unwrap();
+        let outcome = commit_action(&mut storage,&catalog,&invocation,&PrincipalOnly(&principal));
+        if norn_ir::canonical::nfc(&principal) != principal {
+            proptest::prop_assert!(matches!(outcome,Err(norn_kernel::ActionRefusal::InvalidInput {..})), "identity outside the expression profile must refuse");
+            proptest::prop_assert!(storage.ledger().is_empty());
+            return Ok(());
+        }
+        let outcome = outcome.unwrap();
         let ActionOutcome::Committed {record,..} = outcome else { proptest::prop_assert!(false,"fresh call must commit"); return Ok(()); };
         proptest::prop_assert_eq!(&record.actor,&principal);
         let expected = norn_ir::RuntimeValue::String(principal.clone());
