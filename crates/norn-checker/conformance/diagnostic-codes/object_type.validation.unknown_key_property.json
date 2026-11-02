@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.unknown_key_property",
+  "message": "key component {property} names no property of the object type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

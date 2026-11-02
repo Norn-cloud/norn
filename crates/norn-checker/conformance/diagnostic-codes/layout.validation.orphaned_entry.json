@@ -1,0 +1,7 @@
+{
+  "code": "layout.validation.orphaned_entry",
+  "message": "layout {kind} id {id} has no matching semantic entry and was pruned",
+  "severity": "warning",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "quint test verification/kernel-v2/models/quantity-ledger.qnt --backend rust --match conservation.*Test --max-samples 1 --seed 1"
+}

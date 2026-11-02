@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.invalid_bound",
+  "message": "{member} {bound} must be an exact decimal literal such as \"-12.50\"",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

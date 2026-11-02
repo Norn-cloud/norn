@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.normalization_not_in_key",
+  "message": "normalization names {property}, which is not a component of key {key}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

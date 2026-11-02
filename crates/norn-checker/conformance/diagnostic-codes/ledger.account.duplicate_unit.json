@@ -1,0 +1,7 @@
+{
+  "code": "ledger.account.duplicate_unit",
+  "message": "account `{accountId}` declares unit `{unitId}` more than once",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

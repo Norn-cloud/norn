@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.version_mismatch",
+  "message": "{artifactId} is pinned at version {version}, but resolves only at {available}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

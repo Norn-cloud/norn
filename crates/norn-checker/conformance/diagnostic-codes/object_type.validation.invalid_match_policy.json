@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_match_policy",
+  "message": "match policy {policy} must be dot-separated segments of [a-z][a-z0-9_]*",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
