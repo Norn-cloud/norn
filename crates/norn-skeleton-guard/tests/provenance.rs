@@ -632,7 +632,7 @@ fn trusted_policy_reads_entry_obligations_and_refuses_malformed_or_removed_entri
         );
         let id = "synthetic-preserved-obligation";
         let hash = "2b6e3370813437d16485a55299d0d399cbbc4a57dc45f9202e8652184984af26";
-        let name = if change == "identity" { "wrong" } else { &hash };
+        let name = if change == "identity" { "wrong" } else { hash };
         let mut value = json!({"order": 0, "value": id});
         if change == "order" {
             value["order"] = json!(true);
