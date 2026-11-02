@@ -780,7 +780,8 @@ fn non_nfc_sources_return_findings_and_rejected_receipts_in_both_layers() {
         } else {
             (sources.clone(), "null".to_owned())
         };
-        let output = json_of(&check_artifact_set_json(&artifacts, &context).expect("checker reply"));
+        let output =
+            json_of(&check_artifact_set_json(&artifacts, &context).expect("checker reply"));
         assert_eq!(output["admitted"], false);
         assert_eq!(output["receipt"]["admitted"], false);
         assert!(
