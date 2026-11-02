@@ -19,7 +19,7 @@ use norn_ir::{
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial,
-    ActionOutcome, CellHost, DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World,
+    ActionOutcome, CellHost, DecisionTurn, FactEvent, LogicalTime, TypeCatalog, World,
     commit_action,
 };
 use std::{
@@ -254,7 +254,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     let all = artifacts();
     let findings = norn_checker::check_artifact_set(&all, &context());
     assert!(findings.is_empty(), "{findings:?}");
-    let instances = norn_checker::effective_law_instances(
+    let instances = norn_checker::verification::effective_law_instances(
         &all,
         &context(),
         norn_graph::Budget {
@@ -330,7 +330,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             InstalledDefinitionInput {
                 canonical_set: canonical_set.clone(),
                 registry: vec![],
-                receipt_sha256: checked.receipt.sha256().expect("digest"),
+                receipt_sha256: norn_checker::admission_receipt_sha256(&receipt).expect("digest"),
                 admission_receipt: Some(receipt),
                 readmission: None,
                 diff: serde_json::json!({}),
@@ -568,7 +568,7 @@ fn pack_law_substitution_follows_only_the_selected_instance() {
         serde_json::from_value(serde_json::to_value(root).expect("typed law")).expect("tree"),
     )
     .expect("payload");
-    let instances = norn_checker::effective_law_instances(
+    let instances = norn_checker::verification::effective_law_instances(
         &[law],
         &norn_checker::EntityArtifactSetContext {
             registry: context().registry,
