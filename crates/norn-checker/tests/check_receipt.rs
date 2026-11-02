@@ -1212,3 +1212,126 @@ fn typed_historical_verification_cannot_authorize_lossy_rechecks() {
         );
     }
 }
+
+#[test]
+fn raw_nfc_findings_survive_every_receipt_writer_and_existing_tokens() {
+    use norn_checker::receipt::verify_admission_receipt_sources;
+    use norn_checker::{
+        check_artifact_set_for_install as install,
+        check_artifact_set_for_install_with_flow_source_map as install_flow,
+        check_artifact_set_with_flow_source_map as flow, check_artifact_set_with_receipt as write,
+        check_artifact_set_with_verified_receipt as recheck,
+    };
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for unknown_key in [false, true] {
+        let mut valid = exact_setting("1");
+        let scope = valid.as_object_mut().unwrap().get_mut("scope").unwrap();
+        let (key, value) = if unknown_key {
+            ("Café", "ok")
+        } else {
+            ("extra", "Café")
+        };
+        scope
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), norn_ir::RuntimeValue::String(value.into()));
+        let mut invalid = valid.clone();
+        let scope = invalid
+            .as_object_mut()
+            .unwrap()
+            .get_mut("scope")
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        scope.remove(key);
+        let (key, value) = if unknown_key {
+            ("Cafe\u{301}", "ok")
+        } else {
+            ("extra", "Cafe\u{301}")
+        };
+        scope.insert(key.into(), norn_ir::RuntimeValue::String(value.into()));
+        assert_eq!(
+            valid.canonical_json().unwrap(),
+            invalid.canonical_json().unwrap()
+        );
+        for in_base in [false, true] {
+            let (candidate, base) = if in_base {
+                (&[][..], std::slice::from_ref(&valid))
+            } else {
+                (std::slice::from_ref(&valid), &[][..])
+            };
+            let receipt = exact_receipt(candidate, base);
+            let token = verify_admission_receipt_sources(
+                &compact(&receipt),
+                &receipt.content_sha256().unwrap(),
+                candidate,
+                base,
+                &limits,
+            )
+            .unwrap();
+            let (candidate, base) = if in_base {
+                (&[][..], std::slice::from_ref(&invalid))
+            } else {
+                (std::slice::from_ref(&invalid), &[][..])
+            };
+            let sources = norn_checker::ReceiptSources::new(candidate, base).unwrap();
+            let typed = base
+                .iter()
+                .map(|source| norn_ir::runtime::decode(source).unwrap())
+                .collect::<Vec<ArtifactEnvelope>>();
+            let context = EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &typed,
+                tenant: None,
+            };
+            for result in [
+                write(&sources, &context, &limits),
+                flow(&sources, &context, &limits, None),
+                recheck(&sources, &context, &limits, &token),
+                install(&sources, &context, &limits, None),
+                install(&sources, &context, &limits, Some(&token)),
+                install_flow(&sources, &context, &limits, None, None),
+                install_flow(&sources, &context, &limits, Some(&token), None),
+            ] {
+                let checked = result.expect("structured source refusal");
+                assert!(!checked.receipt.admitted);
+                assert!(checked.receipt.type_env.is_none());
+                assert!(
+                    checked
+                        .diagnostics
+                        .iter()
+                        .any(|finding| finding.code.as_str() == "definition.text.not_nfc")
+                );
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config {
+        cases: 32,
+        failure_persistence: None,
+        ..proptest::test_runner::Config::default()
+    })]
+    #[test]
+    fn generated_raw_scope_metadata_keeps_nfc_refusals(
+        key in "[a-z]{1,12}", in_base in proptest::bool::ANY,
+    ) {
+        let mut source = exact_setting("1");
+        let field = format!("extra_{key}");
+        source.as_object_mut().unwrap().get_mut("scope").unwrap().as_object_mut().unwrap()
+            .insert(field.clone(), norn_ir::RuntimeValue::String(format!("{key}e\u{301}")));
+        let sources = [source];
+        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+            if in_base { &[] } else { &sources },
+            if in_base { &sources } else { &[] },
+            &BTreeSet::new(), None, &ResourceLimitProfile::norn_limits_v1(), None,
+        ).unwrap();
+        proptest::prop_assert!(!checked.receipt.admitted);
+        let pointer = format!("/scope/{field}");
+        proptest::prop_assert!(checked.diagnostics.iter().any(|finding|
+            finding.code.as_str() == "definition.text.not_nfc"
+                && finding.span.as_ref().map(|span| span.pointer.as_str()) == Some(pointer.as_str())
+        ));
+    }
+}

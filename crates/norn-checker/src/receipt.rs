@@ -303,6 +303,8 @@ pub struct ReceiptSources {
     artifacts: Vec<ArtifactEnvelope>,
     base: Vec<ArtifactEnvelope>,
     identity: ArtifactSetRef,
+    /// ADMITTED-TEXT-NFC findings from exact source before typed projection.
+    source_diagnostics: Vec<Diagnostic>,
 }
 
 impl ReceiptSources {
@@ -310,12 +312,14 @@ impl ReceiptSources {
     /// # Errors
     /// Refuses undecodable sources or values outside Norn1.
     pub fn new(artifacts: &[RuntimeValue], base: &[RuntimeValue]) -> Result<Self, ReceiptError> {
-        let (artifacts, candidates) = source_refs(artifacts)?;
-        let (base, installed) = source_refs(base)?;
+        let mut source_diagnostics = Vec::new();
+        let (artifacts, candidates) = source_refs(artifacts, &mut source_diagnostics)?;
+        let (base, installed) = source_refs(base, &mut source_diagnostics)?;
         Ok(Self {
             artifacts,
             base,
             identity: ArtifactSetRef::from_refs(candidates, installed)?,
+            source_diagnostics,
         })
     }
 
@@ -359,6 +363,7 @@ pub fn check_artifact_set_with_receipt(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        &artifacts.source_diagnostics,
     )
 }
 
@@ -390,6 +395,7 @@ pub fn check_artifact_sources_with_receipt(
         sources.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
+        &sources.source_diagnostics,
     )
 }
 
@@ -406,22 +412,19 @@ pub fn verify_admission_receipt_sources(
     limits: &ResourceLimitProfile,
 ) -> Result<ReceiptVersion, ReceiptError> {
     for source in artifacts.iter().chain(base) {
-        let mut semantic = source.clone();
-        drop(crate::layout::extract_inline_layout(&mut semantic));
-        let document: serde_json::Value =
-            norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
-        crate::layout::require_nfc_text(&document).map_err(|findings| {
-            invalid_receipt(
+        let findings = source_nfc_findings(source)?;
+        if !findings.is_empty() {
+            return Err(invalid_receipt(
                 findings
                     .iter()
                     .map(|finding| format!("{}: {}", finding.code, finding.message))
                     .collect::<Vec<_>>()
                     .join("; "),
-            )
-        })?;
+            ));
+        }
     }
-    let (_, candidates) = source_refs(artifacts)?;
-    let (_, installed) = source_refs(base)?;
+    let (_, candidates) = source_refs(artifacts, &mut Vec::new())?;
+    let (_, installed) = source_refs(base, &mut Vec::new())?;
     let original = |sources: &[RuntimeValue]| {
         sources
             .iter()
@@ -439,20 +442,33 @@ pub fn verify_admission_receipt_sources(
     )
 }
 
+fn source_nfc_findings(source: &RuntimeValue) -> Result<Vec<Diagnostic>, ReceiptError> {
+    let mut semantic = source.clone();
+    drop(crate::layout::extract_inline_layout(&mut semantic));
+    let document: serde_json::Value =
+        norn_ir::runtime::decode(&semantic).map_err(invalid_receipt)?;
+    Ok(crate::layout::require_nfc_text(&document)
+        .err()
+        .unwrap_or_default())
+}
+
 fn source_refs(
     sources: &[RuntimeValue],
+    source_diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(Vec<ArtifactEnvelope>, Vec<ArtifactRef>), ReceiptError> {
     let mut artifacts = Vec::with_capacity(sources.len());
     let mut refs = Vec::with_capacity(sources.len());
     for source in sources {
         let (artifact, semantic_source) =
-            if let Ok(prepared) = crate::layout::prepare_artifact_source(source.clone()) {
-                (prepared.artifact, prepared.source)
-            } else {
-                (
-                    norn_ir::runtime::decode(source).map_err(invalid_receipt)?,
-                    source.clone(),
-                )
+            match crate::layout::prepare_artifact_source(source.clone()) {
+                Ok(prepared) => (prepared.artifact, prepared.source),
+                Err(_) => {
+                    source_diagnostics.extend(source_nfc_findings(source)?);
+                    (
+                        norn_ir::runtime::decode(source).map_err(invalid_receipt)?,
+                        source.clone(),
+                    )
+                }
             };
         let bytes = semantic_source
             .canonical_json()
@@ -497,6 +513,7 @@ pub fn check_artifact_set_with_flow_source_map(
         artifacts.identity.clone(),
         IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
+        &artifacts.source_diagnostics,
     )
 }
 
@@ -526,6 +543,7 @@ pub fn check_artifact_set_with_verified_receipt(
         artifacts.identity.clone(),
         &version.identifier_profile,
         version.flow_source_map.as_ref(),
+        &artifacts.source_diagnostics,
     )
 }
 
@@ -591,9 +609,17 @@ fn check_artifact_set_with_profile(
     artifact_set: ArtifactSetRef,
     identifier_profile: &str,
     flow_source_map: Option<&FlowSourceMap>,
+    source_diagnostics: &[Diagnostic],
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let limit_profile = limits.reference()?;
     let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    if !source_diagnostics.is_empty() {
+        diagnostics = crate::entity_artifacts::dedupe_findings(
+            diagnostics
+                .into_iter()
+                .chain(source_diagnostics.iter().cloned()),
+        );
+    }
     if let Some(flow_source_map) = flow_source_map {
         diagnostics.extend(crate::validate_flow_source_map(
             flow_source_map,
@@ -919,6 +945,7 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         IDENTIFIER_ADMISSION_PROFILE,
         None,
+        &[],
     )?;
 
     for format in [FLOAT_RECEIPT_FORMAT, FLOAT_LAW_RECEIPT_FORMAT] {
@@ -946,6 +973,7 @@ pub fn recover_legacy_admission_receipt(
         ArtifactSetRef::of(artifacts, base)?,
         HISTORICAL_IDENTIFIER_PROFILE,
         None,
+        &[],
     )?;
 
     let limit_profile = limits.reference()?;

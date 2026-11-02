@@ -769,32 +769,38 @@ fn abi_exact_receipt_writer_conformance() {
 
 #[test]
 fn non_nfc_sources_return_findings_and_rejected_receipts_in_both_layers() {
-    let case = cases()
-        .into_iter()
-        .find(|case| case["name"] == "non-nfc-setting-is-a-checker-finding")
-        .expect("NFC refusal vector");
-    let sources = artifacts_text(&case);
-    for in_base in [false, true] {
-        let (artifacts, context) = if in_base {
-            ("[]".to_owned(), format!("{{\"base\":{sources}}}"))
-        } else {
-            (sources.clone(), "null".to_owned())
-        };
-        let output =
-            json_of(&check_artifact_set_json(&artifacts, &context).expect("checker reply"));
-        assert_eq!(output["admitted"], false);
-        assert_eq!(output["receipt"]["admitted"], false);
-        assert!(
-            output["receiptSha256"]
-                .as_str()
-                .is_some_and(|hash| hash.len() == 64)
-        );
-        assert!(
-            output["diagnostics"]["diagnostics"]
-                .as_array()
-                .expect("findings")
-                .iter()
-                .any(|finding| finding["code"] == "definition.text.not_nfc")
-        );
+    for name in [
+        "non-nfc-setting-is-a-checker-finding",
+        "non-nfc-unknown-scope-key",
+        "non-nfc-unknown-scope-value",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case["name"] == name)
+            .expect("NFC refusal vector");
+        let sources = artifacts_text(&case);
+        for in_base in [false, true] {
+            let (artifacts, context) = if in_base {
+                ("[]".to_owned(), format!("{{\"base\":{sources}}}"))
+            } else {
+                (sources.clone(), "null".to_owned())
+            };
+            let output =
+                json_of(&check_artifact_set_json(&artifacts, &context).expect("checker reply"));
+            assert_eq!(output["admitted"], false);
+            assert_eq!(output["receipt"]["admitted"], false);
+            assert!(
+                output["receiptSha256"]
+                    .as_str()
+                    .is_some_and(|hash| hash.len() == 64)
+            );
+            assert!(
+                output["diagnostics"]["diagnostics"]
+                    .as_array()
+                    .expect("findings")
+                    .iter()
+                    .any(|finding| finding["code"] == "definition.text.not_nfc")
+            );
+        }
     }
 }
