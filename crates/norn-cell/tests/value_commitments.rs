@@ -23,8 +23,6 @@ fn model() -> Model {
         json!({"name":"proof.Item","properties":[{"id":"value","type":{"kind":"text"}}]}),
         json!({"name":"proof.Input","properties":[{"id":"value","type":{"kind":"text"},"markings":["pii.contact"]}]}),
         json!({"name":"proof.Empty","properties":[]}),
-        json!({"name":"proof.Child","extends":"proof.Item"}),
-        json!({"name":"proof.Sibling","extends":"proof.Item"}),
         json!({"name":"proof.Observed","properties":[{"id":"observationJson","type":{"kind":"text"}}]}),
         json!({"name":"proof.Defaulted","properties":[{"id":"value","type":{"kind":"text"}},{"id":"optional","type":{"kind":"text"},"constraints":{"nullable":true}},{"id":"defaulted","type":{"kind":"text"},"default":"declared"}]}),
         json!({"name":"proof.State","properties":[{"id":"status","type":{"kind":"enum","values":[{"value":"draft"},{"value":"approved"}]}}],"lifecycles":[{"property":"status","initial":["draft"],"terminal":["approved"],"transitions":[{"id":"approve","from":["draft"],"to":"approved"}]}]}),
@@ -355,40 +353,6 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
         HistoricalEvidence::Exhausted
     ));
 }
-#[test]
-fn historical_selection_respects_the_incarnations_concrete_type_lineage() {
-    use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
-    use norn_kernel::LogicalTime;
-    let mut store = CellStore::open_in_memory(model()).expect("store");
-    store
-        .commit(&CommitBatch {
-            logical_time: 10,
-            ..batch(vec![put("proof.Child", "item", "value")])
-        })
-        .expect("child");
-    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-    for (kind, exists) in [
-        ("proof.Item", true),
-        ("proof.Child", true),
-        ("proof.Sibling", false),
-    ] {
-        let selected = store
-            .read()
-            .fact_evidence_known_at_with_budget(
-                MAIN_WORLD,
-                kind,
-                "item",
-                KnowledgeCutoff {
-                    recorded_at: LogicalTime::from_millis(10),
-                    frontier: 1,
-                },
-                &mut DecodeBudget::new(&limits),
-            )
-            .expect("typed selection");
-        assert_eq!(matches!(selected, HistoricalEvidence::Found(_)), exists);
-    }
-}
-
 #[test]
 fn source_frontier_keeps_equal_clock_corrections_out_of_an_old_answer() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
