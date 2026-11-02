@@ -888,10 +888,28 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
         norn_ir::Rounding::HalfEven,
         norn_ir::Rounding::HalfAwayFromZero,
     ] {
+        let mut model = Model::retail();
+        let property = model
+            .object_types
+            .iter_mut()
+            .flat_map(|object| &mut object.properties)
+            .find(|property| property.id.as_str() == "price")
+            .unwrap();
+        property.property_type = PropertyType::Decimal {
+            scale: norn_ir::WholeNumber(2),
+            unit: None,
+            rounding: Some(mode),
+            currency_source: None,
+        };
+        assert_eq!(field(&model.env(), "retail.Sku", "price").0, decimal(mode));
         let env = fields(decimal(mode));
         assert_ne!(env.canonical_json().unwrap(), bytes);
         let value: serde_json::Value =
             serde_json::from_slice(&env.canonical_json().unwrap()).unwrap();
+        assert_eq!(
+            find_decimal(&value).unwrap()["rounding"],
+            serde_json::to_value(mode).unwrap()
+        );
         let error = serde_json::from_value::<LegacyDecimal>(find_decimal(&value).unwrap().clone())
             .err()
             .unwrap();
