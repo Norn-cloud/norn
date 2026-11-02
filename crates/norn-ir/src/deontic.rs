@@ -102,16 +102,22 @@ pub enum RequirementTiming {
 /// Wording is never executable and does not change the law's semantic identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct RequirementWording(pub std::collections::BTreeMap<String, LocalizedRequirement>);
+pub struct RequirementWording(
+    #[schemars(length(min = 1))] pub std::collections::BTreeMap<String, LocalizedRequirement>,
+);
 
 /// One complete translation, including every phrase used by the renderer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalizedRequirement {
     pub direction: TextDirection,
+    #[schemars(pattern = r"\S")]
     pub scope: String,
+    #[schemars(pattern = r"\S")]
     pub activation: String,
+    #[schemars(pattern = r"\S")]
     pub component: String,
+    #[schemars(pattern = r"\S")]
     pub response: String,
     pub labels: RequirementLabels,
     pub terms: RequirementTerms,
@@ -251,14 +257,23 @@ impl<'de> Deserialize<'de> for RequirementWording {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementLabels {
+    #[schemars(pattern = r"\S")]
     pub scope: String,
+    #[schemars(pattern = r"\S")]
     pub condition: String,
+    #[schemars(pattern = r"\S")]
     pub component: String,
+    #[schemars(pattern = r"\S")]
     pub grade: String,
+    #[schemars(pattern = r"\S")]
     pub timing: String,
+    #[schemars(pattern = r"\S")]
     pub response: String,
+    #[schemars(pattern = r"\S")]
     pub source: String,
+    #[schemars(pattern = r"\S")]
     pub preferences: String,
+    #[schemars(pattern = r"\S")]
     pub exception: String,
 }
 
@@ -266,16 +281,27 @@ pub struct RequirementLabels {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementTerms {
+    #[schemars(pattern = r"\S")]
     pub company: String,
+    #[schemars(pattern = r"\S")]
     pub application: String,
+    #[schemars(pattern = r"\S")]
     pub cell: String,
+    #[schemars(pattern = r"\S")]
     pub entity: String,
+    #[schemars(pattern = r"\S")]
     pub commitments: String,
+    #[schemars(pattern = r"\S")]
     pub obligation: String,
+    #[schemars(pattern = r"\S")]
     pub permission: String,
+    #[schemars(pattern = r"\S")]
     pub prohibition: String,
+    #[schemars(pattern = r"\S")]
     pub same_commit: String,
+    #[schemars(pattern = r"\S")]
     pub every_committed_state: String,
+    #[schemars(pattern = r"\S")]
     pub grounding: String,
 }
 
@@ -286,7 +312,6 @@ pub fn structured_requirement_schema() -> schemars::Schema {
 }
 
 // RFC 5646 §§2.1, 2.2.9: syntactic well-formedness, not registry membership.
-// Keep the parser in the IR boundary; ring zero admits no new runtime dependency.
 fn valid_locale_tag(tag: &str) -> bool {
     const IRREGULAR: &[&str] = &[
         "en-gb-oed",
