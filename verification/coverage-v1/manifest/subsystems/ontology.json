@@ -235,6 +235,7 @@
     "crates/norn-metrics/tests/demand.source.ts",
     "crates/norn-metrics/tests/forecast.rs",
     "crates/norn-metrics/tests/ols.rs",
+    "crates/norn-metrics/tests/publication.rs",
     "crates/norn-metrics/tests/scrap.source.ts",
     "crates/norn-metrics/tests/scrap_world.rs",
     "crates/norn-metrics/tests/support/scrap_world.rs",

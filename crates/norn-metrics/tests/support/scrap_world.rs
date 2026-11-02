@@ -6,27 +6,28 @@ use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_ir::{ArtifactEnvelope, RuntimeObject, RuntimeValue as Value};
 use norn_metrics::temporal::{TemporalPlan, TemporalRow, TemporalValue};
 
-pub const CSV: &str = include_str!("../../../../fixtures/demo/scrap-yield-k1.csv");
-pub const TABLE_SHA: &str = "22cee20298906d6f1ecb8bd3eabc3d405409d7c3091c275cbfe0a8932694c28d";
-pub const BULK_AT: &str = "2026-10-26T00:00:00Z";
-pub const SPLIT: &str = "2026-09-28T00:00:00Z";
-pub const SCOPE: &str = "org_demo/dev";
-pub fn millis(time: &str) -> u64 {
+pub(crate) const CSV: &str = include_str!("../../../../fixtures/demo/scrap-yield-k1.csv");
+pub(crate) const TABLE_SHA: &str = "22cee20298906d6f1ecb8bd3eabc3d405409d7c3091c275cbfe0a8932694c28d";
+pub(crate) const BULK_AT: &str = "2026-10-26T00:00:00Z";
+pub(crate) const SPLIT: &str = "2026-09-28T00:00:00Z";
+pub(crate) const SCOPE: &str = "org_demo/dev";
+pub(crate) fn millis(time: &str) -> u64 {
     u64::try_from(chrono::DateTime::parse_from_rfc3339(time).expect("UTC").timestamp_millis()).expect("post-epoch")
 }
-pub fn micros(time: &str) -> i64 { i64::try_from(millis(time)).expect("bounded clock").checked_mul(1000).expect("microseconds") }
-pub fn sha(bytes: &[u8]) -> String {
+pub(crate) fn micros(time: &str) -> i64 { i64::try_from(millis(time)).expect("bounded clock").checked_mul(1000).expect("microseconds") }
+pub(crate) fn sha(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
 }
-pub fn artifacts() -> Vec<ArtifactEnvelope> {
+pub(crate) fn artifacts() -> Vec<ArtifactEnvelope> {
     let root = std::path::PathBuf::from(std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("fixtures"));
     serde_json::from_slice(&std::fs::read(root.join("scrap-publication.json")).expect("compiled typed declaration")).expect("artifacts")
 }
-pub fn model(artifacts: &[ArtifactEnvelope]) -> Model {
+pub(crate) fn model(artifacts: &[ArtifactEnvelope]) -> Model {
     let mut objects = Vec::new(); let mut interfaces = Vec::new();
     for artifact in artifacts {
-        let payload = serde_json::to_value(&artifact.payload).expect("payload");
+        let envelope = serde_json::to_value(artifact).expect("envelope");
+        let payload = &envelope["payload"];
         if let Some(value) = payload.get("objectType") { objects.push(serde_json::from_value(value.clone()).expect("type")); }
         if let Some(value) = payload.get("interface") { interfaces.push(serde_json::from_value(value.clone()).expect("interface")); }
     }
@@ -35,14 +36,14 @@ pub fn model(artifacts: &[ArtifactEnvelope]) -> Model {
     objects.push(serde_json::from_value(serde_json::json!({"name":"norn.ActionCall","properties":fields.map(|id| serde_json::json!({"id":id,"type":{"kind":"json-ext"},"constraints":{"nullable":true}}))})).expect("generic action receipt oracle"));
     Model::from_definitions_with_interfaces(&objects, &[], &interfaces).expect("declared model")
 }
-pub struct SourceWorld {
-    pub store: CellStore,
-    pub rows: Vec<TemporalRow>,
-    pub evidence: Vec<FactVersionEvidence>,
-    pub head: u64,
-    pub plan: TemporalPlan,
+pub(crate) struct SourceWorld {
+    pub(crate) store: CellStore,
+    pub(crate) rows: Vec<TemporalRow>,
+    pub(crate) evidence: Vec<FactVersionEvidence>,
+    pub(crate) head: u64,
+    pub(crate) plan: TemporalPlan,
 }
-pub fn world(bulk: bool, proposal: Option<RuntimeObject>) -> SourceWorld {
+pub(crate) fn world(bulk: bool, proposal: Option<RuntimeObject>) -> SourceWorld {
     assert_eq!(sha(CSV.as_bytes()), TABLE_SHA, "integrator recipe must not drift");
     let artifacts = artifacts();
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
