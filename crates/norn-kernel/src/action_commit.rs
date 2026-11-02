@@ -1764,10 +1764,24 @@ fn derive_row_values<X>(
             ),
         }));
     }
-    let base_env = catalog.base_expression_environment().map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason}))?;
-    let excluded = config.derive.keys().map(|property|property.as_str().to_owned()).collect();
-    let base_env = base_env.bind_self_to_stored_fields(&collection.child_type,&excluded).map_err(|error|ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason:error.to_string()}))?;
-    let env = norn_expr::schema::action_environment(action,Some(&base_env),action.derive.len()).map_err(|reason|ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason}))?;
+    let base_env = catalog
+        .base_expression_environment()
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let excluded = config
+        .derive
+        .keys()
+        .map(|property| property.as_str().to_owned())
+        .collect();
+    let base_env = base_env
+        .bind_self_to_stored_fields(&collection.child_type, &excluded)
+        .map_err(|error| {
+            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                reason: error.to_string(),
+            })
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for (property, expression) in &config.derive {
         let context = row_expression_context::<X>(input, &proposed)?;
         let invalid = |reason| {
@@ -1778,8 +1792,23 @@ fn derive_row_values<X>(
                 ),
             })
         };
-        let expected = catalog.expression_environment(&collection.child_type).ok().and_then(|env|env.record(collection.child_type.as_str()).and_then(|record|record.fields.get(property.as_str())).map(|field|field.ty.clone())).ok_or_else(||invalid("unknown derived property type".into()))?;
-        let evaluated = evaluate_row_expression(expression.as_str(), &context, remaining_fuel, &env, &expected, invalid)?;
+        let expected = catalog
+            .expression_environment(&collection.child_type)
+            .ok()
+            .and_then(|env| {
+                env.record(collection.child_type.as_str())
+                    .and_then(|record| record.fields.get(property.as_str()))
+                    .map(|field| field.ty.clone())
+            })
+            .ok_or_else(|| invalid("unknown derived property type".into()))?;
+        let evaluated = evaluate_row_expression(
+            expression.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &expected,
+            invalid,
+        )?;
         let value = expression_value_to_runtime(&evaluated).map_err(invalid)?;
         proposed.insert(property.as_str().to_owned(), value);
     }
@@ -1797,14 +1826,29 @@ fn check_row_preconditions<X>(
     remaining_fuel: &mut u64,
 ) -> Result<(), ActionRefusal<X>> {
     let context = row_expression_context::<X>(input, proposed)?;
-    let base_env = catalog.base_expression_environment().and_then(|env|env.bind_self_to_stored_fields(child_type,&BTreeSet::new()).map_err(|e|e.to_string())).map_err(|reason|ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason}))?;
-    let env = norn_expr::schema::action_environment(action,Some(&base_env),action.derive.len()).map_err(|reason|ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason}))?;
+    let base_env = catalog
+        .base_expression_environment()
+        .and_then(|env| {
+            env.bind_self_to_stored_fields(child_type, &BTreeSet::new())
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for precondition in &config.preconditions {
         let invalid = |reason| ActionRefusal::PreconditionFailed {
             precondition: precondition.as_str().to_owned(),
             reason: Some(reason),
         };
-        match evaluate_row_expression(precondition.as_str(), &context, remaining_fuel, &env, &norn_expr::Type::Bool, invalid)? {
+        match evaluate_row_expression(
+            precondition.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &norn_expr::Type::Bool,
+            invalid,
+        )? {
             ExprValue::Bool(true) => {}
             ExprValue::Bool(false) => {
                 return Err(ActionRefusal::PreconditionFailed {
@@ -1835,7 +1879,12 @@ fn evaluate_row_expression<X>(
     invalid: impl Fn(String) -> ActionRefusal<X>,
 ) -> Result<ExprValue, ActionRefusal<X>> {
     let expression = Expression::compile(source).map_err(|error| invalid(error.to_string()))?;
-    let attempt = expression.evaluate_typed_metered(context, EvaluationBudget::new(*remaining_fuel),env,expected);
+    let attempt = expression.evaluate_typed_metered(
+        context,
+        EvaluationBudget::new(*remaining_fuel),
+        env,
+        expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     #[expect(
         clippy::wildcard_enum_match_arm,
@@ -2795,7 +2844,8 @@ where
                     || order_changed;
                 if recompute_derived {
                     values = derive_row_values::<H::Error>(
-                        call.action, catalog,
+                        call.action,
+                        catalog,
                         collection,
                         snapshot_config(&configs, collection_id)?,
                         &preparation.effective_input,
@@ -2981,9 +3031,18 @@ where
     // Do not expose a row guard's outcome until every proposed write has
     // passed authorization. Removed rows use their authorized current state.
     for ((collection_id, row_id), values) in &guarded_rows {
-        let child_type = &declared.get(collection_id).ok_or_else(||ActionRefusal::Decision(DecisionRefusal::InvalidOutput {reason:"unknown owned collection".into()}))?.child_type;
+        let child_type = &declared
+            .get(collection_id)
+            .ok_or_else(|| {
+                ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                    reason: "unknown owned collection".into(),
+                })
+            })?
+            .child_type;
         check_row_preconditions::<H::Error>(
-            call.action,catalog,child_type,
+            call.action,
+            catalog,
+            child_type,
             snapshot_config(&configs, collection_id)?,
             &preparation.effective_input,
             row_states
@@ -3225,7 +3284,7 @@ where
         )?;
         let mut receipt_evidence_bytes = preparation.receipt_evidence_bytes;
         let precondition_outcomes = check_action_preconditions(
-        catalog,
+            catalog,
             call.action,
             &generated_input,
             &slice.values,
@@ -4594,9 +4653,11 @@ fn prepare_action_input_inner<'a, X>(
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = profile.turn.fuel_units;
 
-    for (index,derivation) in action.derive.iter().enumerate() {
+    for (index, derivation) in action.derive.iter().enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
-            action, index, derivation,
+            action,
+            index,
+            derivation,
             &effective_input,
             &mut remaining_fuel,
             receipt_evidence_bytes,
@@ -4654,12 +4715,36 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let env = norn_expr::schema::action_environment(action,None,completed).map_err(|reason| ActionRefusal::DerivationFailed {field:derivation.field.clone(),expression:derivation.expression.as_str().to_owned(),reason})?;
-    let expected_schema = action.input_schema.get("properties").and_then(norn_ir::JsonValue::as_object).and_then(|fields| fields.get(&derivation.field));
-    let declared = env.record(norn_expr::env::INPUT_RECORD).and_then(|record| record.fields.get(&derivation.field)).map(|field| field.ty.clone()).unwrap_or(norn_expr::Type::Json);
-    let explicit_nullable = expected_schema.and_then(|schema| norn_expr::schema::Schema::parse(schema,"target").ok()).is_some_and(|schema| matches!(schema,norn_expr::schema::Schema::Nullable(_)));
-    let expected = match declared { norn_expr::Type::Optional(inner) if !explicit_nullable => *inner, ty => ty };
-    let attempt = expression.evaluate_typed_metered(&context,EvaluationBudget::new(*remaining_fuel),&env,&expected);
+    let env = norn_expr::schema::action_environment(action, None, completed).map_err(|reason| {
+        ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
+        }
+    })?;
+    let expected_schema = action
+        .input_schema
+        .get("properties")
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|fields| fields.get(&derivation.field));
+    let declared = env
+        .record(norn_expr::env::INPUT_RECORD)
+        .and_then(|record| record.fields.get(&derivation.field))
+        .map(|field| field.ty.clone())
+        .unwrap_or(norn_expr::Type::Json);
+    let explicit_nullable = expected_schema
+        .and_then(|schema| norn_expr::schema::Schema::parse(schema, "target").ok())
+        .is_some_and(|schema| matches!(schema, norn_expr::schema::Schema::Nullable(_)));
+    let expected = match declared {
+        norn_expr::Type::Optional(inner) if !explicit_nullable => *inner,
+        ty => ty,
+    };
+    let attempt = expression.evaluate_typed_metered(
+        &context,
+        EvaluationBudget::new(*remaining_fuel),
+        &env,
+        &expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     let evaluated = attempt
         .result
@@ -5546,8 +5631,21 @@ fn check_action_preconditions<X>(
             reason: Some(reason),
         }
     })?;
-    let catalog_env = action.slice.first().map(|entry| catalog.expression_environment(&entry.object_type)).transpose().map_err(|reason| ActionRefusal::PreconditionFailed {precondition:String::new(),reason:Some(reason)})?;
-    let env = norn_expr::schema::action_environment(action,catalog_env.as_ref(),action.derive.len()).map_err(|reason| ActionRefusal::PreconditionFailed {precondition:String::new(),reason:Some(reason)})?;
+    let catalog_env = action
+        .slice
+        .first()
+        .map(|entry| catalog.expression_environment(&entry.object_type))
+        .transpose()
+        .map_err(|reason| ActionRefusal::PreconditionFailed {
+            precondition: String::new(),
+            reason: Some(reason),
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, catalog_env.as_ref(), action.derive.len())
+            .map_err(|reason| ActionRefusal::PreconditionFailed {
+                precondition: String::new(),
+                reason: Some(reason),
+            })?;
     let mut outcomes = Vec::with_capacity(action.preconditions.len());
     for precondition in &action.preconditions {
         let source = precondition.as_str();
@@ -5557,7 +5655,12 @@ fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_typed_metered(&context,EvaluationBudget::new(*remaining_fuel),&env,&norn_expr::Type::Bool);
+        let attempt = expression.evaluate_typed_metered(
+            &context,
+            EvaluationBudget::new(*remaining_fuel),
+            &env,
+            &norn_expr::Type::Bool,
+        );
         *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
         let evaluated = attempt
             .result

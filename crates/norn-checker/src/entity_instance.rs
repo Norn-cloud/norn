@@ -942,7 +942,9 @@ impl EffectiveProperty {
                     ..
                 }),
             ) = (&previous.kind, &self.kind)
-            && (previous_unit != candidate_unit || previous_currency != candidate_currency || previous_per != candidate_per)
+            && (previous_unit != candidate_unit
+                || previous_currency != candidate_currency
+                || previous_per != candidate_per)
         {
             return Err(InstanceError::Unsupported(format!(
                 "decimal unit changed from {previous_unit:?} to {candidate_unit:?}; stored value needs an explicit conversion"

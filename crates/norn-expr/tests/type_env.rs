@@ -1039,16 +1039,23 @@ fn val_rate_env2_pins_denominator_and_refuses_historical_serialization() {
 fn val_env_exact_schema_refinements_are_strict_and_pinned_in_v2() {
     use norn_expr::schema::Schema;
     let schema: norn_ir::JsonValue = serde_json::from_str(r#"{"type":"object","properties":{"amount":{"type":"number","nornType":{"kind":"decimal","scale":2,"rounding":"half_even"}}},"required":["amount"],"additionalProperties":false}"#).unwrap();
-    let legacy = ZenTypeEnv::input_only(std::collections::BTreeMap::new(),EnvOptions::default()).unwrap();
-    let annotated = legacy.clone().bind_exact_schema("demo.exact",&schema).unwrap();
-    assert_ne!(legacy.reference().unwrap(),annotated.reference().unwrap());
+    let legacy =
+        ZenTypeEnv::input_only(std::collections::BTreeMap::new(), EnvOptions::default()).unwrap();
+    let annotated = legacy
+        .clone()
+        .bind_exact_schema("demo.exact", &schema)
+        .unwrap();
+    assert_ne!(legacy.reference().unwrap(), annotated.reference().unwrap());
     let mut malformed: serde_json::Value = serde_json::to_value(&schema).unwrap();
     malformed["properties"]["amount"]["nornType"]["unknown"] = true.into();
     let malformed: norn_ir::JsonValue = serde_json::from_value(malformed).unwrap();
-    assert!(Schema::parse(&malformed,"schema").is_err());
+    assert!(Schema::parse(&malformed, "schema").is_err());
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct HistoricalNumber { #[serde(rename="type")] _kind: String }
+    struct HistoricalNumber {
+        #[serde(rename = "type")]
+        _kind: String,
+    }
     let annotation = serde_json::to_value(schema).unwrap()["properties"]["amount"].clone();
     assert!(serde_json::from_value::<HistoricalNumber>(annotation).is_err());
 }

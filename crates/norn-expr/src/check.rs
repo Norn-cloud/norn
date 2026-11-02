@@ -100,8 +100,8 @@ use crate::{Expression, Number, UnaryTest};
 
 pub(crate) mod bounds;
 mod cost;
-mod units;
 mod sites;
+mod units;
 use units::{Operand, Operation};
 
 pub use bounds::StructuralLimits;
@@ -309,11 +309,15 @@ pub enum ConstructionSource {
 impl CheckedExpression {
     /// VAL-ROUND: source with declared result sites lowered to shared rescale.
     #[must_use]
-    pub fn runtime_source(&self) -> &str { &self.runtime_source }
+    pub fn runtime_source(&self) -> &str {
+        &self.runtime_source
+    }
 
     /// VAL-UNIT: informational literal-unit inference evidence.
     #[must_use]
-    pub fn notes(&self) -> &[Diagnostic] { &self.notes }
+    pub fn notes(&self) -> &[Diagnostic] {
+        &self.notes
+    }
 
     /// VAL-EXACT-1: the expression reads or produces a declared Decimal.
     #[must_use]
@@ -558,7 +562,16 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         );
         if !found.is_empty() {
-            return (None, found, whole, None, None, false, Vec::new(), Ok(source.to_owned()));
+            return (
+                None,
+                found,
+                whole,
+                None,
+                None,
+                false,
+                Vec::new(),
+                Ok(source.to_owned()),
+            );
         }
         let mut checker = Checker::new(env, metadata, None);
         checker.exact_math = exact_enabled;
@@ -576,11 +589,21 @@ fn check_expression_with_sources_and_root_bounds(
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || expected_exact_type(expected, env);
         let runtime_source = if exact_enabled && exact {
-            if checker.types.values().any(|ty| matches!(ty,T::Number(Operand::Legacy))) {
-                checker.report::<()>(ast,"core.values.inexact","bare number cannot enter a declared exact site".into());
+            if checker
+                .types
+                .values()
+                .any(|ty| matches!(ty, T::Number(Operand::Legacy)))
+            {
+                checker.report::<()>(
+                    ast,
+                    "core.values.inexact",
+                    "bare number cannot enter a declared exact site".into(),
+                );
             }
-            sites::lower(ast,expected,env,metadata,source)
-        } else { Ok(source.to_owned()) };
+            sites::lower(ast, expected, env, metadata, source)
+        } else {
+            Ok(source.to_owned())
+        };
 
         (
             inferred,
@@ -593,7 +616,9 @@ fn check_expression_with_sources_and_root_bounds(
             runtime_source,
         )
     });
-    let Some((inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source)) = outcome else {
+    let Some((inferred, mut diagnostics, span, cost, construction, exact, notes, runtime_source)) =
+        outcome
+    else {
         return Err(vec![Diagnostic {
             code: codes::SYNTAX,
             message: "expression does not parse".to_owned(),
@@ -622,10 +647,28 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     };
-    let runtime_source = runtime_source.map_err(|message| vec![Diagnostic { code:"core.values.inexact",message,span }])?;
+    let runtime_source = runtime_source.map_err(|message| {
+        vec![Diagnostic {
+            code: "core.values.inexact",
+            message,
+            span,
+        }]
+    })?;
     if exact_enabled && exact {
         let mut exact_parser = IntelliSense::new();
-        diagnostics.extend(exact_parser.with_ast(&runtime_source,false,|ast,metadata| exact_admission(ast,metadata,false)).unwrap_or_else(|| vec![Diagnostic {code:codes::SYNTAX,message:"lowered exact sites do not parse".into(),span}]));
+        diagnostics.extend(
+            exact_parser
+                .with_ast(&runtime_source, false, |ast, metadata| {
+                    exact_admission(ast, metadata, false)
+                })
+                .unwrap_or_else(|| {
+                    vec![Diagnostic {
+                        code: codes::SYNTAX,
+                        message: "lowered exact sites do not parse".into(),
+                        span,
+                    }]
+                }),
+        );
     }
     // Cross-check: zen's strict analysis must not report an error either.
     let root = ZenEnv::new(env).root(None);
@@ -641,8 +684,20 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     }
-    let quantizers = runtime_source.matches("round((").count().saturating_sub(source.matches("round((").count());
-    let cost = within_budget(cost.saturating_mul(if runtime_source.contains("== null ? null : round") {2} else {1}).saturating_add((quantizers as u64).saturating_mul(8)), limits, span)?;
+    let quantizers = runtime_source
+        .matches("round((")
+        .count()
+        .saturating_sub(source.matches("round((").count());
+    let cost = within_budget(
+        cost.saturating_mul(if runtime_source.contains("== null ? null : round") {
+            2
+        } else {
+            1
+        })
+        .saturating_add((quantizers as u64).saturating_mul(8)),
+        limits,
+        span,
+    )?;
     Ok((
         CheckedExpression {
             inferred,
@@ -1069,7 +1124,7 @@ fn join(a: &T, b: &T) -> Option<T> {
             (Some(a), Some(b)) => Some(a.union(b).cloned().collect()),
             _ => None,
         }),
-        (T::Number(a), T::Number(b)) => T::Number(units::join(a,b)?),
+        (T::Number(a), T::Number(b)) => T::Number(units::join(a, b)?),
         (T::List(a), T::List(b)) => T::List(Box::new(join(a, b)?)),
         (T::Record(Rec::Literal(a)), T::Record(Rec::Literal(b))) => {
             if a.len() != b.len() {
@@ -1095,7 +1150,18 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>) -> Option
         Type::Date => T::Date,
         Type::Integer => T::Number(Operand::Dimensionless),
         Type::Number => T::Number(Operand::Legacy),
-        Type::Decimal { unit, currency_source, per_unit, .. } => T::Number(units::declared(env, owner, unit.as_ref(), currency_source.as_ref(), per_unit.as_ref())),
+        Type::Decimal {
+            unit,
+            currency_source,
+            per_unit,
+            ..
+        } => T::Number(units::declared(
+            env,
+            owner,
+            unit.as_ref(),
+            currency_source.as_ref(),
+            per_unit.as_ref(),
+        )),
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
         Type::Record(name) => T::Record(Rec::Env {
@@ -1242,16 +1308,37 @@ impl<'a> Checker<'a> {
     fn numeric(&mut self, node: &Node<'_>) -> Option<Operand> {
         match self.value(node, None)? {
             T::Number(operand) => Some(operand),
-            ty => self.report(node, codes::TYPE_ERROR, format!("expected a number, found `{ty}`")),
+            ty => self.report(
+                node,
+                codes::TYPE_ERROR,
+                format!("expected a number, found `{ty}`"),
+            ),
         }
     }
 
-    fn numeric_operation(&mut self, node: &Node<'_>, op: Operation, a: &Operand, b: &Operand) -> Option<Operand> {
-        let Some((result, inferred)) = units::admit(op,a,b) else {
-            return self.report(node,codes::UNIT,format!("VAL-UNIT / VAL-RATE: {op:?} refuses {a:?} and {b:?}"));
+    fn numeric_operation(
+        &mut self,
+        node: &Node<'_>,
+        op: Operation,
+        a: &Operand,
+        b: &Operand,
+    ) -> Option<Operand> {
+        let Some((result, inferred)) = units::admit(op, a, b) else {
+            return self.report(
+                node,
+                codes::UNIT,
+                format!("VAL-UNIT / VAL-RATE: {op:?} refuses {a:?} and {b:?}"),
+            );
         };
         if let Some(unit) = inferred {
-            self.notes.push(Diagnostic { code: codes::LITERAL_UNIT, message: format!("numeric literal inherits {:?} unit {}",unit.system,unit.code), span:self.span(node) });
+            self.notes.push(Diagnostic {
+                code: codes::LITERAL_UNIT,
+                message: format!(
+                    "numeric literal inherits {:?} unit {}",
+                    unit.system, unit.code
+                ),
+                span: self.span(node),
+            });
         }
         Some(result)
     }
@@ -1259,33 +1346,71 @@ impl<'a> Checker<'a> {
     fn numeric_binary(&mut self, left: &Node<'_>, right: &Node<'_>, op: Operation) -> Option<T> {
         let a = self.numeric(left)?;
         let b = self.numeric(right)?;
-        self.numeric_operation(left,op,&a,&b).map(T::Number)
+        self.numeric_operation(left, op, &a, &b).map(T::Number)
     }
 
     fn check_destination(&mut self, node: &Node<'_>, found: &T, expected: &T) {
-        self.check_destination_at(node,found,expected,0);
+        self.check_destination_at(node, found, expected, 0);
     }
 
     fn check_destination_at(&mut self, node: &Node<'_>, found: &T, expected: &T, depth: u32) {
-        if depth > 128 {self.report::<()>(node,codes::BOUND_DEPTH,"destination type nesting exceeds profile".into());return;}
-        match (found,expected) {
-            (T::Number(a),T::Number(b)) if !units::destination(a,b) => { self.report::<()>(node,codes::UNIT,format!("numeric destination {b:?} refuses {a:?}")); }
-            (T::List(a),T::List(b)) | (T::Optional(a),T::Optional(b)) => self.check_destination_at(node,a,b,depth+1),
-            (a,T::Optional(b)) if !matches!(a,T::Null) => self.check_destination_at(node,a,b,depth+1),
-            (T::Record(Rec::Env {name,depth:links}),expected) => {
+        if depth > 128 {
+            self.report::<()>(
+                node,
+                codes::BOUND_DEPTH,
+                "destination type nesting exceeds profile".into(),
+            );
+            return;
+        }
+        match (found, expected) {
+            (T::Number(a), T::Number(b)) if !units::destination(a, b) => {
+                self.report::<()>(
+                    node,
+                    codes::UNIT,
+                    format!("numeric destination {b:?} refuses {a:?}"),
+                );
+            }
+            (T::List(a), T::List(b)) | (T::Optional(a), T::Optional(b)) => {
+                self.check_destination_at(node, a, b, depth + 1)
+            }
+            (a, T::Optional(b)) if !matches!(a, T::Null) => {
+                self.check_destination_at(node, a, b, depth + 1)
+            }
+            (T::Record(Rec::Env { name, depth: links }), expected) => {
                 if let Some(record) = self.env.record(name) {
-                    let fields = record.fields.iter().filter_map(|(field_name,field)| {
-                        let next = if matches!(field.source,FieldSource::Link {..} | FieldSource::Inverse {..}) {links.checked_sub(1)?} else {*links};
-                        lower(&field.ty,next,self.env,Some(name)).map(|ty|(field_name.clone(),ty))
-                    }).collect();
-                    self.check_destination_at(node,&T::Record(Rec::Literal(fields)),expected,depth+1);
+                    let fields = record
+                        .fields
+                        .iter()
+                        .filter_map(|(field_name, field)| {
+                            let next = if matches!(
+                                field.source,
+                                FieldSource::Link { .. } | FieldSource::Inverse { .. }
+                            ) {
+                                links.checked_sub(1)?
+                            } else {
+                                *links
+                            };
+                            lower(&field.ty, next, self.env, Some(name))
+                                .map(|ty| (field_name.clone(), ty))
+                        })
+                        .collect();
+                    self.check_destination_at(
+                        node,
+                        &T::Record(Rec::Literal(fields)),
+                        expected,
+                        depth + 1,
+                    );
                 }
             }
-            (T::Record(Rec::Literal(fields)),T::Record(Rec::Env { name,depth:links })) => {
+            (T::Record(Rec::Literal(fields)), T::Record(Rec::Env { name, depth: links })) => {
                 if let Some(record) = self.env.record(name) {
-                    for (field_name,found) in fields {
-                        if let Some(expected) = record.fields.get(field_name).and_then(|field| lower(&field.ty,*links,self.env,Some(name))) {
-                            self.check_destination_at(node,found,&expected,depth+1);
+                    for (field_name, found) in fields {
+                        if let Some(expected) = record
+                            .fields
+                            .get(field_name)
+                            .and_then(|field| lower(&field.ty, *links, self.env, Some(name)))
+                        {
+                            self.check_destination_at(node, found, &expected, depth + 1);
                         }
                     }
                 }
@@ -1692,7 +1817,14 @@ impl<'a> Checker<'a> {
             };
             let field_expected = match expected {
                 Some(T::Record(Rec::Literal(fields))) => fields.get(*name).cloned(),
-                Some(T::Record(Rec::Env {name:record,depth})) => self.env.record(record).and_then(|r| r.fields.get(*name)).and_then(|field| lower(&field.ty,*depth,self.env,Some(record))),
+                Some(T::Record(Rec::Env {
+                    name: record,
+                    depth,
+                })) => self
+                    .env
+                    .record(record)
+                    .and_then(|r| r.fields.get(*name))
+                    .and_then(|field| lower(&field.ty, *depth, self.env, Some(record))),
                 _ => None,
             };
             match self.infer(value, field_expected.as_ref()) {
@@ -1936,7 +2068,9 @@ impl<'a> Checker<'a> {
                 codes::CONSTANT_COMPARISON,
                 "nothing is an element of the empty list".to_owned(),
             ),
-            (T::Number(a), T::Number(b)) => self.numeric_operation(node,Operation::Compare,&a,&b).map(|_| T::Bool),
+            (T::Number(a), T::Number(b)) => self
+                .numeric_operation(node, Operation::Compare, &a, &b)
+                .map(|_| T::Bool),
             (T::Bool, T::Bool) | (T::Str(_), T::Str(_)) => Some(T::Bool),
             _ => self.report(
                 node,
@@ -1950,7 +2084,11 @@ impl<'a> Checker<'a> {
     fn plus(&mut self, left: &Node<'_>, right: &Node<'_>) -> Option<T> {
         match self.value(left, None) {
             Some(T::Str(_)) => self.string(right).map(|()| T::Str(None)),
-            Some(T::Number(a)) => {let b = self.numeric(right)?; self.numeric_operation(left,Operation::Add,&a,&b).map(T::Number)},
+            Some(T::Number(a)) => {
+                let b = self.numeric(right)?;
+                self.numeric_operation(left, Operation::Add, &a, &b)
+                    .map(T::Number)
+            }
             Some(ty) => {
                 self.value(right, None);
                 self.report(
@@ -1984,12 +2122,25 @@ impl<'a> Checker<'a> {
                 self.membership(node, left, right)
             }
             Operator::Arithmetic(ArithmeticOperator::Subtract | ArithmeticOperator::Multiply) => {
-                self.numeric_binary(left, right, if matches!(operator, Operator::Arithmetic(ArithmeticOperator::Subtract)) { Operation::Subtract } else { Operation::Multiply })
+                self.numeric_binary(
+                    left,
+                    right,
+                    if matches!(operator, Operator::Arithmetic(ArithmeticOperator::Subtract)) {
+                        Operation::Subtract
+                    } else {
+                        Operation::Multiply
+                    },
+                )
             }
             Operator::Arithmetic(ArithmeticOperator::Divide) => {
                 let result = self.numeric_binary(left, right, Operation::Divide)?;
-                let bounded_literal = matches!(right, Node::Number(divisor) if divisor.abs() >= 1.into());
-                Some(if bounded_literal || self.exact_math { result } else { optional(result) })
+                let bounded_literal =
+                    matches!(right, Node::Number(divisor) if divisor.abs() >= 1.into());
+                Some(if bounded_literal || self.exact_math {
+                    result
+                } else {
+                    optional(result)
+                })
             }
             Operator::Logical(LogicalOperator::And | LogicalOperator::Or) => {
                 let l = self.boolean(left);
@@ -2061,7 +2212,9 @@ impl<'a> Checker<'a> {
                         codes::CONSTANT_COMPARISON,
                         format!("`{l}` and `{r}` never share a value"),
                     ),
-                    (T::Number(a), T::Number(b)) => self.numeric_operation(node, Operation::Compare, a, b).map(|_| T::Bool),
+                    (T::Number(a), T::Number(b)) => self
+                        .numeric_operation(node, Operation::Compare, a, b)
+                        .map(|_| T::Bool),
                     (T::Bool, T::Bool)
                     | (T::Str(_), T::Str(_))
                     | (T::Date, T::Date)
@@ -2085,9 +2238,12 @@ impl<'a> Checker<'a> {
                 let r = self.value(right, None);
                 let (l, r) = (l?, r?);
                 match (&l, &r) {
-                    (T::Number(a), T::Number(b)) => self.numeric_operation(node, Operation::Compare, a, b).map(|_| T::Bool),
-                    (T::ParsedDate, T::ParsedDate)
-                    | (T::ParsedTimestamp, T::ParsedTimestamp) => Some(T::Bool),
+                    (T::Number(a), T::Number(b)) => self
+                        .numeric_operation(node, Operation::Compare, a, b)
+                        .map(|_| T::Bool),
+                    (T::ParsedDate, T::ParsedDate) | (T::ParsedTimestamp, T::ParsedTimestamp) => {
+                        Some(T::Bool)
+                    }
                     _ => self.report(
                         node,
                         codes::TYPE_ERROR,
@@ -2321,7 +2477,10 @@ impl<'a> Checker<'a> {
             }
             F::Sum => {
                 self.arity(node, arguments, 1)?;
-                match self.value(first?, Some(&T::List(Box::new(T::Number(Operand::Dimensionless)))))? {
+                match self.value(
+                    first?,
+                    Some(&T::List(Box::new(T::Number(Operand::Dimensionless)))),
+                )? {
                     T::List(item) if matches!(*item, T::Number(_)) => Some(*item),
                     ty @ (T::Null
                     | T::Bool
@@ -2418,7 +2577,9 @@ impl<'a> Checker<'a> {
                 ),
             },
             C::Filter => self.boolean(body).map(|()| T::List(Box::new(element))),
-            C::Count => self.boolean(body).map(|()| T::Number(Operand::Dimensionless)),
+            C::Count => self
+                .boolean(body)
+                .map(|()| T::Number(Operand::Dimensionless)),
             C::All | C::None | C::Some | C::One => self.boolean(body).map(|()| T::Bool),
         };
         self.scopes.pop();
@@ -2477,12 +2638,34 @@ impl<'a> Checker<'a> {
     }
 }
 
-pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(),String> {
-    for (name,record) in env.records().iter().filter(|(name,_)|name.starts_with(prefix)) {
+pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(), String> {
+    for (name, record) in env
+        .records()
+        .iter()
+        .filter(|(name, _)| name.starts_with(prefix))
+    {
         for field in record.fields.values() {
             let mut ty = &field.ty;
-            while let Type::Optional(inner) | Type::List(inner) = ty {ty=inner;}
-            if let Type::Decimal {unit,currency_source,per_unit,..} = ty && matches!(units::declared(env,Some(name),unit.as_ref(),currency_source.as_ref(),per_unit.as_ref()),Operand::Unresolved) {
+            while let Type::Optional(inner) | Type::List(inner) = ty {
+                ty = inner;
+            }
+            if let Type::Decimal {
+                unit,
+                currency_source,
+                per_unit,
+                ..
+            } = ty
+                && matches!(
+                    units::declared(
+                        env,
+                        Some(name),
+                        unit.as_ref(),
+                        currency_source.as_ref(),
+                        per_unit.as_ref()
+                    ),
+                    Operand::Unresolved
+                )
+            {
                 return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
             }
         }
@@ -2497,7 +2680,6 @@ fn exact_type(mut ty: &Type) -> bool {
     }
     matches!(ty, Type::Decimal { .. })
 }
-
 
 fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
     let mut pending = vec![ty];

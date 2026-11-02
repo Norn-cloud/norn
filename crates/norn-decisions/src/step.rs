@@ -18,17 +18,36 @@ use crate::convert::from_variable;
 #[derive(Debug, Default)]
 pub(crate) struct StepContracts {
     pub(crate) schemas: BTreeMap<String, (Schema, Schema)>,
-    pub(crate) expressions: BTreeMap<(String,String,String), zen_engine::nodes::ExpressionContract>,
+    pub(crate) expressions:
+        BTreeMap<(String, String, String), zen_engine::nodes::ExpressionContract>,
     pub(crate) folds: BTreeMap<String, crate::fold::FoldPlan>,
 }
 
 impl StepContracts {
-    pub(crate) fn bind_expressions(&mut self, root: &norn_ir::RuleRoot) -> Result<(),crate::AdmissionError> {
-        let assignments = norn_expr::graph::bind(root).map_err(|reason| crate::AdmissionError::InvalidSchema {rule_id:root.rule_id.clone(),path:"nornType".into(),reason})?;
+    pub(crate) fn bind_expressions(
+        &mut self,
+        root: &norn_ir::RuleRoot,
+    ) -> Result<(), crate::AdmissionError> {
+        let assignments = norn_expr::graph::bind(root).map_err(|reason| {
+            crate::AdmissionError::InvalidSchema {
+                rule_id: root.rule_id.clone(),
+                path: "nornType".into(),
+                reason,
+            }
+        })?;
         for binding in assignments {
-            let key = (binding.node,binding.key,binding.source);
-            let contract = zen_engine::nodes::ExpressionContract {source:binding.runtime_source,exact:binding.exact};
-            if self.expressions.insert(key,contract).is_some() { return Err(crate::AdmissionError::InvalidSchema {rule_id:root.rule_id.clone(),path:"graph".into(),reason:"ambiguous exact expression binding in closure".into()}); }
+            let key = (binding.node, binding.key, binding.source);
+            let contract = zen_engine::nodes::ExpressionContract {
+                source: binding.runtime_source,
+                exact: binding.exact,
+            };
+            if self.expressions.insert(key, contract).is_some() {
+                return Err(crate::AdmissionError::InvalidSchema {
+                    rule_id: root.rule_id.clone(),
+                    path: "graph".into(),
+                    reason: "ambiguous exact expression binding in closure".into(),
+                });
+            }
         }
         Ok(())
     }
@@ -77,7 +96,16 @@ impl StepContracts {
 }
 
 impl DecisionContracts for StepContracts {
-    fn expression(&self,node: &str,key: &str,source: &str) -> Option<zen_engine::nodes::ExpressionContract> { self.expressions.get(&(node.to_owned(),key.to_owned(),source.to_owned())).cloned() }
+    fn expression(
+        &self,
+        node: &str,
+        key: &str,
+        source: &str,
+    ) -> Option<zen_engine::nodes::ExpressionContract> {
+        self.expressions
+            .get(&(node.to_owned(), key.to_owned(), source.to_owned()))
+            .cloned()
+    }
 
     fn derive(
         &self,

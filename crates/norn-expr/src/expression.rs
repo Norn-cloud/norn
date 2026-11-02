@@ -120,11 +120,18 @@ impl Expression {
         if checked.uses_exact_arithmetic() {
             let lowered = match Self::compile(checked.runtime_source()) {
                 Ok(lowered) => lowered,
-                Err(error) => return EvaluationAttempt {result:Err(error),units_used:0},
+                Err(error) => {
+                    return EvaluationAttempt {
+                        result: Err(error),
+                        units_used: 0,
+                    };
+                }
             };
-            let mut attempt = lowered.evaluate_exact_site(context,budget,None,false);
+            let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
             if let Ok(evaluation) = &mut attempt.result {
-                if let Err(error) = materialize(expected,env,&mut evaluation.value) { attempt.result = Err(error); }
+                if let Err(error) = materialize(expected, env, &mut evaluation.value) {
+                    attempt.result = Err(error);
+                }
             }
             attempt
         } else {
@@ -531,17 +538,39 @@ mod tests {
     }
 }
 
-fn materialize(ty: &crate::Type, env: &crate::ZenTypeEnv, value: &mut Value) -> Result<(),ExprError> {
-    match (ty,value) {
-        (crate::Type::Optional(_),Value::Null) => Ok(()),
-        (crate::Type::Optional(inner),value) => materialize(inner,env,value),
-        (crate::Type::Decimal {..},Value::Number(number)) => {
-            *number = crate::rescale_decimal(&crate::check::decimal_destination(ty).ok_or_else(|| ExprError::Evaluation {message:"invalid Decimal site".into()})?,number)?; Ok(())
+fn materialize(
+    ty: &crate::Type,
+    env: &crate::ZenTypeEnv,
+    value: &mut Value,
+) -> Result<(), ExprError> {
+    match (ty, value) {
+        (crate::Type::Optional(_), Value::Null) => Ok(()),
+        (crate::Type::Optional(inner), value) => materialize(inner, env, value),
+        (crate::Type::Decimal { .. }, Value::Number(number)) => {
+            *number = crate::rescale_decimal(
+                &crate::check::decimal_destination(ty).ok_or_else(|| ExprError::Evaluation {
+                    message: "invalid Decimal site".into(),
+                })?,
+                number,
+            )?;
+            Ok(())
         }
-        (crate::Type::Record(name),Value::Object(fields)) => {
-            if let Some(record) = env.record(name) { for (key,value) in fields { if let Some(field) = record.fields.get(key) { materialize(&field.ty,env,value)?; } } } Ok(())
+        (crate::Type::Record(name), Value::Object(fields)) => {
+            if let Some(record) = env.record(name) {
+                for (key, value) in fields {
+                    if let Some(field) = record.fields.get(key) {
+                        materialize(&field.ty, env, value)?;
+                    }
+                }
+            }
+            Ok(())
         }
-        (crate::Type::List(item),Value::Array(items)) => { for value in items {materialize(item,env,value)?;} Ok(()) }
+        (crate::Type::List(item), Value::Array(items)) => {
+            for value in items {
+                materialize(item, env, value)?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }

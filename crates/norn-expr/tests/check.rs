@@ -1837,42 +1837,112 @@ fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
     }
 }
 
-fn rate_environment(currency: &str, denominator: &str) -> (ZenTypeEnv,Type) {
-    let unit = |code: &str| norn_ir::UnitRef {system:norn_ir::UnitSystem::Ucum,code:code.into()};
-    let decimal = |unit,currency_source,per_unit| Type::Decimal {scale:3,unit,currency_source,per_unit,rounding:norn_ir::Rounding::Refuse};
-    let currency_source = Some(norn_ir::metric::DimensionPath {links:Vec::new(),property:norn_ir::PropertyId("currency".into())});
+fn rate_environment(currency: &str, denominator: &str) -> (ZenTypeEnv, Type) {
+    let unit = |code: &str| norn_ir::UnitRef {
+        system: norn_ir::UnitSystem::Ucum,
+        code: code.into(),
+    };
+    let decimal = |unit, currency_source, per_unit| Type::Decimal {
+        scale: 3,
+        unit,
+        currency_source,
+        per_unit,
+        rounding: norn_ir::Rounding::Refuse,
+    };
+    let currency_source = Some(norn_ir::metric::DimensionPath {
+        links: Vec::new(),
+        property: norn_ir::PropertyId("currency".into()),
+    });
     let fields = std::collections::BTreeMap::from([
-        ("currency".into(),Type::enumeration([currency])),
-        ("rate".into(),decimal(None,currency_source.clone(),Some(unit(denominator)))),
-        ("grams".into(),decimal(Some(unit("g")),None,None)),
-        ("scalar".into(),Type::Number),
+        ("currency".into(), Type::enumeration([currency])),
+        (
+            "rate".into(),
+            decimal(None, currency_source.clone(), Some(unit(denominator))),
+        ),
+        ("grams".into(), decimal(Some(unit("g")), None, None)),
+        ("scalar".into(), Type::Number),
     ]);
-    let env = ZenTypeEnv::input_only(fields,norn_expr::EnvOptions::default()).unwrap();
-    let money = Type::Decimal {scale:2,unit:None,currency_source,per_unit:None,rounding:norn_ir::Rounding::Refuse};
-    (env,money)
+    let env = ZenTypeEnv::input_only(fields, norn_expr::EnvOptions::default()).unwrap();
+    let money = Type::Decimal {
+        scale: 2,
+        unit: None,
+        currency_source,
+        per_unit: None,
+        rounding: norn_ir::Rounding::Refuse,
+    };
+    (env, money)
 }
 
 #[test]
 fn val_rate_usd_per_gram_times_grams_uses_destination_and_literal_unit_note() {
-    let (env,money) = rate_environment("USD","g");
+    let (env, money) = rate_environment("USD", "g");
     let source = Expression::compile("input.rate * input.grams").unwrap();
-    let checked = source.check_typed(&env,&money).expect("bounded rate product");
+    let checked = source
+        .check_typed(&env, &money)
+        .expect("bounded rate product");
     assert!(checked.uses_exact_arithmetic());
     assert!(checked.runtime_source().contains("round(("));
-    let context = Value::object([("input",Value::object([("currency",Value::String("USD".into())),("rate",Value::Number("15".parse().unwrap())),("grams",Value::Number("20".parse().unwrap())),("scalar",Value::Number("2".parse().unwrap()))]))]);
-    let result = source.evaluate_typed_metered(&context,norn_expr::EvaluationBudget::default(),&env,&money).result.unwrap();
-    assert_eq!(result.value(),&norn_expr::Value::Number("300".parse().unwrap()));
-    let checked = Expression::compile("input.grams > 0").unwrap().check_typed(&env,&Type::Bool).unwrap();
-    assert!(checked.notes().iter().any(|note| note.code == "core.values.literal_unit" && note.message.contains('g')));
+    let context = Value::object([(
+        "input",
+        Value::object([
+            ("currency", Value::String("USD".into())),
+            ("rate", Value::Number("15".parse().unwrap())),
+            ("grams", Value::Number("20".parse().unwrap())),
+            ("scalar", Value::Number("2".parse().unwrap())),
+        ]),
+    )]);
+    let result = source
+        .evaluate_typed_metered(
+            &context,
+            norn_expr::EvaluationBudget::default(),
+            &env,
+            &money,
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        result.value(),
+        &norn_expr::Value::Number("300".parse().unwrap())
+    );
+    let checked = Expression::compile("input.grams > 0")
+        .unwrap()
+        .check_typed(&env, &Type::Bool)
+        .unwrap();
+    assert!(
+        checked
+            .notes()
+            .iter()
+            .any(|note| note.code == "core.values.literal_unit" && note.message.contains('g'))
+    );
 }
 
 #[test]
 fn val_rate_refuses_mismatched_units_compounds_erased_scalars_and_wrong_destinations() {
-    let (env,money) = rate_environment("USD","mg");
-    assert!(Expression::compile("input.rate * input.grams").unwrap().check_typed(&env,&money).is_err());
-    let (env,money) = rate_environment("USD","g");
-    for source in ["input.rate * input.rate","input.grams + input.scalar","input.scalar * input.grams"] {
-        assert!(Expression::compile(source).unwrap().check_typed(&env,&money).is_err(),"{source}");
+    let (env, money) = rate_environment("USD", "mg");
+    assert!(
+        Expression::compile("input.rate * input.grams")
+            .unwrap()
+            .check_typed(&env, &money)
+            .is_err()
+    );
+    let (env, money) = rate_environment("USD", "g");
+    for source in [
+        "input.rate * input.rate",
+        "input.grams + input.scalar",
+        "input.scalar * input.grams",
+    ] {
+        assert!(
+            Expression::compile(source)
+                .unwrap()
+                .check_typed(&env, &money)
+                .is_err(),
+            "{source}"
+        );
     }
-    assert!(Expression::compile("input.rate * input.grams").unwrap().check_typed(&env,&Type::Number).is_err());
+    assert!(
+        Expression::compile("input.rate * input.grams")
+            .unwrap()
+            .check_typed(&env, &Type::Number)
+            .is_err()
+    );
 }

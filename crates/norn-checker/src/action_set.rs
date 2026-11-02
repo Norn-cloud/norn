@@ -99,9 +99,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{
-    EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv,
-};
+use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
 use norn_ir::{
     ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactPayload,
     DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority, JsonObject, JsonValue,

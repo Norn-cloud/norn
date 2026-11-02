@@ -1663,14 +1663,22 @@ pub(crate) fn validate_closed_schema(
         return;
     }
 
-    if let Some(value) = value && let Err(error) = norn_expr::schema::decimal_refinement(value,path) {
-        diagnostics.push(invalid_diagnostic(code,error.reason,path,artifact_id));
+    if let Some(value) = value
+        && let Err(error) = norn_expr::schema::decimal_refinement(value, path)
+    {
+        diagnostics.push(invalid_diagnostic(code, error.reason, path, artifact_id));
     }
     let allowed: &[&str] = match schema_type {
         "number" => &["type", "nornType"],
         "object" => &["type", "properties", "required", "additionalProperties"],
         "array" => &["type", "items"],
-        "string" if profile.string_enums || profile.subject == "ActionIR" && value.is_some_and(norn_expr::schema::fixed_currency_schema) => &["type", "enum"],
+        "string"
+            if profile.string_enums
+                || profile.subject == "ActionIR"
+                    && value.is_some_and(norn_expr::schema::fixed_currency_schema) =>
+        {
+            &["type", "enum"]
+        }
         _ => &["type"],
     };
     reject_unknown_object_fields(schema, allowed, path, diagnostics, artifact_id, code);

@@ -952,15 +952,29 @@ pub fn derive_type_env(
         object_types: &layer.object_types,
         extensions: &layer.extensions,
     };
-    let mut env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    let mut env =
+        ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
     for artifact in base.iter().chain(artifacts) {
-        if matches!(&artifact.payload,norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)) {
+        if matches!(
+            &artifact.payload,
+            norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)
+        ) {
             let payload_value = artifact.payload.to_json_value();
-            let Some(payload) = payload_value.as_object() else {continue;};
-            for member in ["inputSchema","outputSchema"] {
+            let Some(payload) = payload_value.as_object() else {
+                continue;
+            };
+            for member in ["inputSchema", "outputSchema"] {
                 if let Some(schema) = payload.get(member) {
-                    let name = format!("exact.{}.{}.{}",artifact.artifact_id,artifact.version,member);
-                    env = env.bind_exact_schema(&name,schema).map_err(|reason| vec![norn_expr::EnvError::Unresolved {site:name,name:reason}])?;
+                    let name = format!(
+                        "exact.{}.{}.{}",
+                        artifact.artifact_id, artifact.version, member
+                    );
+                    env = env.bind_exact_schema(&name, schema).map_err(|reason| {
+                        vec![norn_expr::EnvError::Unresolved {
+                            site: name,
+                            name: reason,
+                        }]
+                    })?;
                 }
             }
         }

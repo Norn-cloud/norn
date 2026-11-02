@@ -15,8 +15,10 @@ pub(crate) fn check(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) 
         let vocabulary = pinned_codes(artifact, candidates, base);
         let codes = vocabulary.as_deref();
         let payload = artifact.payload.to_json_value();
-        visit_schema(&payload,"/payload",artifact,codes,0,&mut out);
-        let Decoded::Root(root) = decode_v2(artifact) else { continue; };
+        visit_schema(&payload, "/payload", artifact, codes, 0, &mut out);
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
         let mut inspect = |path: &str, i, ty: &PropertyType| {
             let pointer = format!("/payload/{path}/{i}/type");
             visit(ty, &pointer, artifact, codes, &mut out);
@@ -109,12 +111,22 @@ fn visit(
     out: &mut Vec<Diagnostic>,
 ) {
     match ty {
-        PropertyType::Decimal {unit,per_unit,..} => {
-            for (field,unit) in [("unit",unit.as_ref()),("perUnit",per_unit.as_ref())] {
-                let Some(unit) = unit else {continue;};
-                if !crate::unit_codes::admitted(unit.system == UnitSystem::Ucum,&unit.code,codes.into_iter().flatten().map(|value| value.value.as_str())) {
+        PropertyType::Decimal { unit, per_unit, .. } => {
+            for (field, unit) in [("unit", unit.as_ref()), ("perUnit", per_unit.as_ref())] {
+                let Some(unit) = unit else {
+                    continue;
+                };
+                if !crate::unit_codes::admitted(
+                    unit.system == UnitSystem::Ucum,
+                    &unit.code,
+                    codes
+                        .into_iter()
+                        .flatten()
+                        .map(|value| value.value.as_str()),
+                ) {
                     let mut diagnostic = crate::property_types::error(MISMATCH,"VAL-UNIT-1: unit requires a visible, exact core unit catalog pin and an admitted UCUM code; conversion must be explicit".to_owned(),Span::pointer(format!("{path}/{field}")));
-                    diagnostic.artifact_id = Some(owner.artifact_id.clone()); out.push(diagnostic);
+                    diagnostic.artifact_id = Some(owner.artifact_id.clone());
+                    out.push(diagnostic);
                 }
             }
         }
@@ -141,14 +153,40 @@ fn visit(
     }
 }
 
-fn visit_schema(value: &norn_ir::JsonValue, path: &str, owner: &ArtifactEnvelope, codes: Option<&[EnumValue]>, depth: usize, out: &mut Vec<Diagnostic>) {
-    if depth > 64 { return; }
+fn visit_schema(
+    value: &norn_ir::JsonValue,
+    path: &str,
+    owner: &ArtifactEnvelope,
+    codes: Option<&[EnumValue]>,
+    depth: usize,
+    out: &mut Vec<Diagnostic>,
+) {
+    if depth > 64 {
+        return;
+    }
     match value {
         norn_ir::JsonValue::Object(fields) => {
-            if fields.contains_key("nornType") && let Ok(Some(ty)) = norn_expr::schema::decimal_refinement(value,path) { visit(&ty,&format!("{path}/nornType"),owner,codes,out); }
-            for (key,value) in fields {visit_schema(value,&format!("{path}/{key}"),owner,codes,depth+1,out);}
+            if fields.contains_key("nornType")
+                && let Ok(Some(ty)) = norn_expr::schema::decimal_refinement(value, path)
+            {
+                visit(&ty, &format!("{path}/nornType"), owner, codes, out);
+            }
+            for (key, value) in fields {
+                visit_schema(
+                    value,
+                    &format!("{path}/{key}"),
+                    owner,
+                    codes,
+                    depth + 1,
+                    out,
+                );
+            }
         }
-        norn_ir::JsonValue::Array(items) => {for (i,value) in items.iter().enumerate() {visit_schema(value,&format!("{path}/{i}"),owner,codes,depth+1,out);}}
+        norn_ir::JsonValue::Array(items) => {
+            for (i, value) in items.iter().enumerate() {
+                visit_schema(value, &format!("{path}/{i}"), owner, codes, depth + 1, out);
+            }
+        }
         _ => {}
     }
 }

@@ -475,14 +475,39 @@ impl ZenTypeEnv {
     ///
     /// # Errors
     /// Refuses malformed schemas or colliding schema record identities.
-    pub fn bind_exact_schema(mut self, name: &str, value: &norn_ir::JsonValue) -> Result<Self,String> {
-        let schema = crate::schema::Schema::parse(value,name).map_err(|e| e.reason)?;
-        if !schema.has_exact() { return Ok(self); }
+    pub fn bind_exact_schema(
+        mut self,
+        name: &str,
+        value: &norn_ir::JsonValue,
+    ) -> Result<Self, String> {
+        let schema = crate::schema::Schema::parse(value, name).map_err(|e| e.reason)?;
+        if !schema.has_exact() {
+            return Ok(self);
+        }
         let mut records = BTreeMap::new();
-        let _ = schema.expression_type(name,&mut records);
-        for (name,fields) in records {
-            if self.records.contains_key(&name) { return Err("duplicate exact schema record".into()); }
-            self.records.insert(name,RecordType {kind:RecordKind::Builtin,fields:fields.into_iter().map(|(name,ty)| (name,Field {ty,source:FieldSource::Builtin})).collect()});
+        let _ = schema.expression_type(name, &mut records);
+        for (name, fields) in records {
+            if self.records.contains_key(&name) {
+                return Err("duplicate exact schema record".into());
+            }
+            self.records.insert(
+                name,
+                RecordType {
+                    kind: RecordKind::Builtin,
+                    fields: fields
+                        .into_iter()
+                        .map(|(name, ty)| {
+                            (
+                                name,
+                                Field {
+                                    ty,
+                                    source: FieldSource::Builtin,
+                                },
+                            )
+                        })
+                        .collect(),
+                },
+            );
         }
         Ok(self)
     }

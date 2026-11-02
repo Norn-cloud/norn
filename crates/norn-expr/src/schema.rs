@@ -21,8 +21,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Value;
-use serde::{Deserialize, de::IntoDeserializer};
 use norn_ir::JsonValue;
+use serde::{Deserialize, de::IntoDeserializer};
 
 /// Deepest schema nesting the checker admits.
 const MAX_SCHEMA_DEPTH: usize = 32;
@@ -134,7 +134,11 @@ impl Schema {
         let schema_type = type_value
             .as_string()
             .ok_or_else(|| Violation::new(path, "a closed schema requires one explicit type"))?;
-        if action_input && schema_type == "string" && schema.contains_key("enum") && !fixed_currency_schema(value) {
+        if action_input
+            && schema_type == "string"
+            && schema.contains_key("enum")
+            && !fixed_currency_schema(value)
+        {
             return Err(Violation::new(
                 path,
                 "ActionIR input string schemas do not admit enum",
@@ -334,9 +338,14 @@ impl Schema {
             | (Self::Null | Self::Nullable(_), Value::Null)
             | (Self::Json, _) => Ok(()),
             (Self::Decimal(site), Value::Number(number)) => {
-                let mut exact = crate::check::decimal_destination(site).ok_or_else(|| Violation::new(path,"invalid Decimal schema"))?;
-                if let norn_ir::PropertyType::Decimal { rounding, .. } = &mut exact { *rounding = None; }
-                crate::rescale_decimal(&exact,number).map(|_| ()).map_err(|e| Violation::new(path,e.to_string()))
+                let mut exact = crate::check::decimal_destination(site)
+                    .ok_or_else(|| Violation::new(path, "invalid Decimal schema"))?;
+                if let norn_ir::PropertyType::Decimal { rounding, .. } = &mut exact {
+                    *rounding = None;
+                }
+                crate::rescale_decimal(&exact, number)
+                    .map(|_| ())
+                    .map_err(|e| Violation::new(path, e.to_string()))
             }
             (Self::Nullable(inner), actual) => inner.check(actual, path),
             (Self::String(Some(allowed)), Value::String(text)) => {
@@ -377,21 +386,62 @@ impl Schema {
 /// Whether a string schema declares one fixed ISO-spelled currency code.
 #[must_use]
 pub fn fixed_currency_schema(value: &JsonValue) -> bool {
-    value.as_object().and_then(|schema|schema.get("enum")).and_then(JsonValue::as_array).is_some_and(|values|values.len()==1 && values[0].as_string().is_some_and(|code|code.len()==3 && code.bytes().all(|c|c.is_ascii_uppercase())))
+    value
+        .as_object()
+        .and_then(|schema| schema.get("enum"))
+        .and_then(JsonValue::as_array)
+        .is_some_and(|values| {
+            values.len() == 1
+                && values[0].as_string().is_some_and(|code| {
+                    code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())
+                })
+        })
 }
 
 /// VAL-EXACT-1: decode only the existing strict Decimal representation.
 ///
 /// # Errors
 /// Refuses annotations on other schema kinds, unknown fields or invalid Decimal sites.
-pub fn decimal_refinement(value: &JsonValue, path: &str) -> Result<Option<norn_ir::PropertyType>, Violation> {
-    let Some(schema) = value.as_object() else { return Ok(None); };
-    let Some(annotation) = schema.get("nornType") else { return Ok(None); };
-    if schema.get("type").and_then(JsonValue::as_string) != Some("number") { return Err(Violation::new(path,"nornType requires type:number")); }
-    let site = norn_ir::PropertyType::deserialize(annotation.clone().into_deserializer()).map_err(|e: serde::de::value::Error| Violation::new(path,e.to_string()))?;
-    let norn_ir::PropertyType::Decimal { scale, unit, currency_source, per_unit, .. } = &site else { return Err(Violation::new(path,"nornType must be Decimal")); };
-    if currency_source.as_ref().is_some_and(|source|source.property.as_str().trim().is_empty() || source.links.iter().any(|link|link.as_str().trim().is_empty())) || scale.0 > 18 || unit.is_some() && currency_source.is_some() || per_unit.is_some() && (unit.is_some() || currency_source.is_none()) || unit.iter().chain(per_unit.iter()).any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace)) {
-        return Err(Violation::new(path,"invalid bounded Decimal refinement"));
+pub fn decimal_refinement(
+    value: &JsonValue,
+    path: &str,
+) -> Result<Option<norn_ir::PropertyType>, Violation> {
+    let Some(schema) = value.as_object() else {
+        return Ok(None);
+    };
+    let Some(annotation) = schema.get("nornType") else {
+        return Ok(None);
+    };
+    if schema.get("type").and_then(JsonValue::as_string) != Some("number") {
+        return Err(Violation::new(path, "nornType requires type:number"));
+    }
+    let site = norn_ir::PropertyType::deserialize(annotation.clone().into_deserializer())
+        .map_err(|e: serde::de::value::Error| Violation::new(path, e.to_string()))?;
+    let norn_ir::PropertyType::Decimal {
+        scale,
+        unit,
+        currency_source,
+        per_unit,
+        ..
+    } = &site
+    else {
+        return Err(Violation::new(path, "nornType must be Decimal"));
+    };
+    if currency_source.as_ref().is_some_and(|source| {
+        source.property.as_str().trim().is_empty()
+            || source
+                .links
+                .iter()
+                .any(|link| link.as_str().trim().is_empty())
+    }) || scale.0 > 18
+        || unit.is_some() && currency_source.is_some()
+        || per_unit.is_some() && (unit.is_some() || currency_source.is_none())
+        || unit
+            .iter()
+            .chain(per_unit.iter())
+            .any(|u| u.code.is_empty() || u.code.chars().any(char::is_whitespace))
+    {
+        return Err(Violation::new(path, "invalid bounded Decimal refinement"));
     }
     Ok(Some(site))
 }
@@ -401,28 +451,60 @@ pub fn decimal_refinement(value: &JsonValue, path: &str) -> Result<Option<norn_i
 /// # Errors
 /// Returns the same strict decoder findings as [`decimal_refinement`].
 pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>, Violation> {
-    match decimal_refinement(value,"nornType")? {
+    match decimal_refinement(value, "nornType")? {
         None => Ok(None),
-        Some(norn_ir::PropertyType::Decimal { scale,unit,currency_source,per_unit,rounding }) => Ok(Some(crate::Type::Decimal {scale:scale.0,unit,currency_source,per_unit,rounding:rounding.unwrap_or(norn_ir::Rounding::Refuse)})),
-        Some(_) => Err(Violation::new("nornType","expected Decimal")),
+        Some(norn_ir::PropertyType::Decimal {
+            scale,
+            unit,
+            currency_source,
+            per_unit,
+            rounding,
+        }) => Ok(Some(crate::Type::Decimal {
+            scale: scale.0,
+            unit,
+            currency_source,
+            per_unit,
+            rounding: rounding.unwrap_or(norn_ir::Rounding::Refuse),
+        })),
+        Some(_) => Err(Violation::new("nornType", "expected Decimal")),
     }
 }
 
 impl Schema {
     /// VAL-EXACT-1: retain refinements in the same env/2 record graph.
     #[must_use]
-    pub fn expression_type(&self, name: &str, records: &mut BTreeMap<String,BTreeMap<String,crate::Type>>) -> crate::Type {
+    pub fn expression_type(
+        &self,
+        name: &str,
+        records: &mut BTreeMap<String, BTreeMap<String, crate::Type>>,
+    ) -> crate::Type {
         use crate::Type;
         match self {
-            Self::Object { properties,required } => {
-                let fields = properties.iter().map(|(key,schema)| {
-                    let ty = schema.expression_type(&format!("{name}.{key}"),records);
-                    (key.clone(),if required.contains(key) { ty } else { ty.optional() })
-                }).collect();
-                records.insert(name.to_owned(),fields); Type::Record(name.to_owned())
+            Self::Object {
+                properties,
+                required,
+            } => {
+                let fields = properties
+                    .iter()
+                    .map(|(key, schema)| {
+                        let ty = schema.expression_type(&format!("{name}.{key}"), records);
+                        (
+                            key.clone(),
+                            if required.contains(key) {
+                                ty
+                            } else {
+                                ty.optional()
+                            },
+                        )
+                    })
+                    .collect();
+                records.insert(name.to_owned(), fields);
+                Type::Record(name.to_owned())
             }
-            Self::Array(item) => self::Schema::expression_type(item,&format!("{name}.item"),records).list(),
-            Self::Nullable(item) => item.expression_type(name,records).optional(),
+            Self::Array(item) => {
+                self::Schema::expression_type(item, &format!("{name}.item"), records).list()
+            }
+            Self::Nullable(item) => item.expression_type(name, records).optional(),
             Self::String(Some(values)) => Type::enumeration(values.clone()),
             Self::String(None) => Type::text(),
             Self::Integer => Type::Integer,
@@ -437,7 +519,7 @@ impl Schema {
     pub fn has_exact(&self) -> bool {
         match self {
             Self::Decimal(_) => true,
-            Self::Object {properties,..} => properties.values().any(Self::has_exact),
+            Self::Object { properties, .. } => properties.values().any(Self::has_exact),
             Self::Array(item) | Self::Nullable(item) => item.has_exact(),
             _ => false,
         }
@@ -895,32 +977,85 @@ mod tests {
 ///
 /// # Errors
 /// Refuses invalid closed schemas or unresolved catalog/slice records.
-pub fn action_environment(action: &norn_ir::ActionRoot, catalog: Option<&crate::ZenTypeEnv>, completed: usize) -> Result<crate::ZenTypeEnv,String> {
-    use crate::{Type,ZenTypeEnv,EnvOptions,FieldSource,RecordKind};
-    let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()),"input").map_err(|e|e.reason)?;
-    let mut records: BTreeMap<String,BTreeMap<String,Type>> = catalog.map_or_else(BTreeMap::new, |catalog| catalog.records().iter().map(|(name,record)| (name.clone(),record.fields.iter().filter(|(_,field)| record.kind == RecordKind::Builtin || matches!(field.source,FieldSource::Property {..})).map(|(name,field)| (name.clone(),field.ty.clone())).collect())).collect());
-    let root = schema.expression_type("exact.action.input",&mut records);
-    let Type::Record(name) = root else {return Err("action input must be a record".into());};
+pub fn action_environment(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    use crate::{EnvOptions, FieldSource, RecordKind, Type, ZenTypeEnv};
+    let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
+        .map_err(|e| e.reason)?;
+    let mut records: BTreeMap<String, BTreeMap<String, Type>> =
+        catalog.map_or_else(BTreeMap::new, |catalog| {
+            catalog
+                .records()
+                .iter()
+                .map(|(name, record)| {
+                    (
+                        name.clone(),
+                        record
+                            .fields
+                            .iter()
+                            .filter(|(_, field)| {
+                                record.kind == RecordKind::Builtin
+                                    || matches!(field.source, FieldSource::Property { .. })
+                            })
+                            .map(|(name, field)| (name.clone(), field.ty.clone()))
+                            .collect(),
+                    )
+                })
+                .collect()
+        });
+    let root = schema.expression_type("exact.action.input", &mut records);
+    let Type::Record(name) = root else {
+        return Err("action input must be a record".into());
+    };
     let mut fields = records.remove(&name).ok_or("missing action input record")?;
     let properties = schema.properties().ok_or("missing input fields")?;
     for derivation in action.derive.iter().take(completed) {
-        let target = properties.get(&derivation.field).ok_or("unknown derivation target")?;
-        fields.insert(derivation.field.clone(),target.expression_type(&format!("exact.action.target.{}",derivation.field),&mut records));
+        let target = properties
+            .get(&derivation.field)
+            .ok_or("unknown derivation target")?;
+        fields.insert(
+            derivation.field.clone(),
+            target.expression_type(
+                &format!("exact.action.target.{}", derivation.field),
+                &mut records,
+            ),
+        );
     }
     let mut slice = BTreeMap::new();
     for entry in action.slice.iter().filter(|_| catalog.is_some()) {
-        if !records.contains_key(entry.object_type.as_str()) {return Err("unresolved action slice type".into());}
+        if !records.contains_key(entry.object_type.as_str()) {
+            return Err("unresolved action slice type".into());
+        }
         let mut ty = Type::Record(entry.object_type.as_str().to_owned());
-        if entry.is_list() {ty=ty.list();}
-        if entry.optional {ty=ty.optional();}
-        slice.insert(entry.name.clone(),ty);
+        if entry.is_list() {
+            ty = ty.list();
+        }
+        if entry.optional {
+            ty = ty.optional();
+        }
+        slice.insert(entry.name.clone(), ty);
     }
     let slice_record = "exact.action.slice".to_owned();
-    records.insert(slice_record.clone(),slice);
-    let mut env = ZenTypeEnv::input_only_with_records(records,fields.clone(),EnvOptions::default()).map_err(|e|e.to_string())?;
-    env=env.bind_operand("slice",Type::Record(slice_record)).map_err(|e|e.to_string())?;
-    if let Some(ty) = catalog.and_then(|env|env.variables().get("self")) {env=env.bind_operand("self",ty.clone()).map_err(|e|e.to_string())?;}
-    for (name,ty) in fields {if name != "input" && name != "slice" {env=env.bind_operand(&name,ty).map_err(|e|e.to_string())?;}}
-    crate::check::validate_exact_environment(&env,"exact.action")?;
+    records.insert(slice_record.clone(), slice);
+    let mut env =
+        ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
+            .map_err(|e| e.to_string())?;
+    env = env
+        .bind_operand("slice", Type::Record(slice_record))
+        .map_err(|e| e.to_string())?;
+    if let Some(ty) = catalog.and_then(|env| env.variables().get("self")) {
+        env = env
+            .bind_operand("self", ty.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    for (name, ty) in fields {
+        if name != "input" && name != "slice" {
+            env = env.bind_operand(&name, ty).map_err(|e| e.to_string())?;
+        }
+    }
+    crate::check::validate_exact_environment(&env, "exact.action")?;
     Ok(env)
 }

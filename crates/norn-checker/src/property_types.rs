@@ -435,7 +435,6 @@ fn check_rate_site(
         {
             out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
         }
-
     }
 }
 
@@ -459,7 +458,11 @@ fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut 
         out,
     );
     if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) && scale.0 > 18 {
-        out.push(error(crate::property_codec::INEXACT,"declared rounding scale exceeds exact profile maximum 18".into(),span_at(base,&["type","scale"])));
+        out.push(error(
+            crate::property_codec::INEXACT,
+            "declared rounding scale exceeds exact profile maximum 18".into(),
+            span_at(base, &["type", "scale"]),
+        ));
     }
     if scale.0 > MAX_DECIMAL_SCALE {
         out.push(error(
