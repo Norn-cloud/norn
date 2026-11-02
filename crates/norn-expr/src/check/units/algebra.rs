@@ -24,7 +24,7 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     left: &Operand<U, C>,
     right: &Operand<U, C>,
 ) -> Option<(Operand<U, C>, Option<U>)> {
-    use Operand::{Dimensionless, Legacy, Literal, Money, Quantity, Rate, Unresolved};
+    use self::Operand::{Dimensionless, Legacy, Literal, Money, Quantity, Rate, Unresolved};
     if matches!(left, Unresolved) || matches!(right, Unresolved) {
         return None;
     }

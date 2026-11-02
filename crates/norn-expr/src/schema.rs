@@ -490,7 +490,7 @@ impl Schema {
                 let fields = properties
                     .iter()
                     .map(|(key, schema)| {
-                        let ty = schema.expression_type(&format!("{name}.{key}"), records);
+                        let ty = schema.expression_type(&format!("{name}/field:{}",key.replace('~',"~0").replace('/',"~1")), records);
                         (
                             key.clone(),
                             if required.contains(key) {
@@ -505,7 +505,7 @@ impl Schema {
                 Type::Record(name.to_owned())
             }
             Self::Array(item) => {
-                self::Schema::expression_type(item, &format!("{name}.item"), records).list()
+                self::Schema::expression_type(item, &format!("{name}/item"), records).list()
             }
             Self::Nullable(item) => item.expression_type(name, records).optional(),
             Self::String(Some(values)) => Type::enumeration(values.clone()),

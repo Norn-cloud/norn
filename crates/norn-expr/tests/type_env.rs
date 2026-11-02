@@ -1059,3 +1059,13 @@ fn val_env_exact_schema_refinements_are_strict_and_pinned_in_v2() {
     let annotation = serde_json::to_value(schema).unwrap()["properties"]["amount"].clone();
     assert!(serde_json::from_value::<HistoricalNumber>(annotation).is_err());
 }
+
+#[test]
+fn val_env_schema_member_paths_do_not_alias_nested_or_array_records() {
+    let schema: norn_ir::JsonValue = serde_json::from_str(r#"{"type":"object","properties":{"a.b":{"type":"object","properties":{},"additionalProperties":false},"a":{"type":"object","properties":{"b":{"type":"object","properties":{},"additionalProperties":false}},"additionalProperties":false}},"additionalProperties":false}"#).unwrap();
+    let schema = norn_expr::schema::Schema::parse(&schema,"schema").unwrap();
+    let mut records = std::collections::BTreeMap::new();
+    let root = schema.expression_type("root",&mut records);
+    assert_eq!(records.len(),4);
+    assert_eq!(root,Type::Record("root".into()));
+}
