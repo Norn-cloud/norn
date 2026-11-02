@@ -6188,7 +6188,7 @@ fn feed_conflict_uses_ingress_content_and_partition_semantics() {
         ("kind", Value::from("delete")),
         (
             "redaction",
-            norn_ir::runtime_object! {"policy"=>"synthetic"},
+            norn_ir::runtime_object! {"policy_id"=>"synthetic", "policy_version"=>"1", "redacted"=>Value::Array(Vec::new())},
         ),
     ] {
         let mut changed = raw.clone();
