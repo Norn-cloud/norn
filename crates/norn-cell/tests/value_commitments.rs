@@ -362,6 +362,24 @@ fn historical_selection_respects_the_incarnations_concrete_type_lineage() {
 }
 
 #[test]
+fn historical_revision_reproduces_real_prefixes_and_refuses_future_or_unbudgeted_receipts() {
+    use norn_cell::KnowledgeCutoff;
+    use norn_kernel::LogicalTime;
+    let mut store=CellStore::open_in_memory(model()).expect("store");
+    store.commit(&CommitBatch{logical_time:10,..batch(vec![])}).expect("event-free commit");
+    let old=store.verified_head().expect("actual old prefix");
+    store.commit(&CommitBatch{logical_time:20,events:vec![Value::from("later")],..batch(vec![])}).expect("later commit");
+    let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let cutoff=KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1};
+    assert_eq!(store.read().historical_revision_with_budget(cutoff,&mut DecodeBudget::new(&limits)).expect("historical revision"),Some(old));
+    assert!(matches!(store.read().historical_revision_with_budget(KnowledgeCutoff{frontier:2,..cutoff},&mut DecodeBudget::new(&limits)),Err(CellError::TemporalLeakage)));
+    let empty=KnowledgeCutoff{frontier:0,..cutoff};
+    assert_eq!(store.read().historical_revision_with_budget(empty,&mut DecodeBudget::new(&limits)).expect("empty history"),Some(norn_cell::LedgerHead::genesis()));
+    let mut tiny=limits;tiny.max_candidate_bytes_per_commit=0;
+    assert!(store.read().historical_revision_with_budget(cutoff,&mut DecodeBudget::new(&tiny)).expect("budget refusal").is_none());
+}
+
+#[test]
 fn source_frontier_keeps_equal_clock_corrections_out_of_an_old_answer() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;
