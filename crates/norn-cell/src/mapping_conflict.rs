@@ -32,16 +32,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Find a conflict against the first captured source event, including consumed captures.
     pub(crate) fn mapping_conflict(&self, incoming: &MappingBundle) -> Result<Option<MappingConflict>, CellError> {
         let new = content(incoming)?;
-        let captured: Option<String> = self.conn.query_optional(
-            &format!("SELECT observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position LIMIT 1"),
+        let captured: Option<(String, String)> = self.conn.query_optional(
+            &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position LIMIT 1"),
             params![&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let Some(captured) = captured else { return Ok(None); };
+        let Some((stored_id, captured)) = captured else { return Ok(None); };
         let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
         let accepted: MappingBundle = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         self.recheck_mapping_bundle(&accepted)?;
-        if observed.id.0 != format!("mapping-bundle:{}", accepted.digest) {
+        if observed.id.0 != stored_id || stored_id != format!("mapping-bundle:{}", accepted.digest) {
             return Err(CellError::MappingBundleMismatch);
         }
         let old = content(&accepted)?;
@@ -64,14 +64,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// OBS-EVIDENCE-1: disputed source identities quarantine every affected live subject.
     pub(crate) fn source_conflict_findings(&self, object_type: &str, key: &str) -> Result<Vec<DataQualityFinding>, CellError> {
-        let rows = self.conn.query(&format!("SELECT observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
+        let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
         let mut findings = Vec::new();
         for values in rows {
-            let encoded: String = crate::engine::SqlRow(values).get(0)?;
+            let row = crate::engine::SqlRow(values);
+            let stored_id: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let conflict: MappingConflict = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
             self.recheck_mapping_conflict(&conflict)?;
-            if observed.id.0 != format!("mapping-conflict:{}", conflict.finding.id) { return Err(CellError::MappingBundleMismatch); }
+            if observed.id.0 != stored_id || stored_id != format!("mapping-conflict:{}", conflict.finding.id) { return Err(CellError::MappingBundleMismatch); }
             if conflict.finding.subjects.iter().any(|s| s.object_type.as_str() == object_type && s.key == key) {
                 findings.push(conflict.finding);
             }

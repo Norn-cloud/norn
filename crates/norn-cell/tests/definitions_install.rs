@@ -6145,6 +6145,8 @@ norn_testkit::proptest::proptest! {
             let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::UnsupportedMappingProfile)));
             if attempt + 1 == deliveries {
+                let delivery = norn_kernel::CellHost::observe(&mut cell).expect("queue").expect("conflict");
+                norn_kernel::CellHost::commit(&mut cell, norn_kernel::CellCommit::empty().consuming(delivery.consumed())).expect("ordinary acknowledgement receipt");
                 norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&bypass), Err(CellError::UnsupportedMappingProfile)));
             }
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
