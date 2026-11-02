@@ -71,7 +71,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source_id: &str,
         event_id: &str,
     ) -> Result<Vec<MappingBundle>, CellError> {
-        let [connector_instance, partition, source, source_id, event_id]: [String; 5] = serde_json::from_slice(&norn_ir::canonical::canonical_json_of(&(connector_instance, partition, source, source_id, event_id))?)?;
+        let [connector_instance, partition, source, source_id, event_id]: [String; 5] =
+            serde_json::from_slice(&norn_ir::canonical::canonical_json_of(&(
+                connector_instance,
+                partition,
+                source,
+                source_id,
+                event_id,
+            ))?)?;
         let rows = self.conn.query(
             &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position"),
             params![&connector_instance, &partition, &source, &source_id, &event_id],
@@ -99,8 +106,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// # Errors
     /// Missing/corrupt retained definitions or an unknown subject type.
-    pub fn retained_mapping_root(&self, version: u64, object_type: &str) -> Result<String, CellError> {
-        self.retained_definition_model(version)?.chain(object_type)?.first().cloned().ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
+    pub fn retained_mapping_root(
+        &self,
+        version: u64,
+        object_type: &str,
+    ) -> Result<String, CellError> {
+        self.retained_definition_model(version)?
+            .chain(object_type)?
+            .first()
+            .cloned()
+            .ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
     }
 
     fn mapping_bundle(
