@@ -175,14 +175,17 @@ These sampled properties supplement the named boundary scenarios; no exhaustive
 proof is claimed. Production fold execution and scaled arithmetic are covered
 by these sampled properties and the separately scoped engine harnesses below.
 The serialized graph evaluator uses heap-backed dynamic values and host graph
-loading, so a bounded Kani model of that path is not supplied here; arithmetic
-and atomic-meter Kani qualification is described in the correspondence below.
+loading, so a bounded Kani model of that path is not supplied here. The arithmetic
+and atomic-meter harnesses cover only the engine methods and bounds listed below.
 
 ## Engine proof correspondence
 
-FOLD-METER-EXACT: a charge is accepted exactly when the mathematical total
-fits both u64 and the declared limit. A refusal preserves the accepted total
-and is sticky across clones, including local arithmetic-policy clones.
+FOLD-METER-EXACT: within the ordered evaluator's sequential charge stream, a
+charge is accepted exactly when the mathematical total fits both u64 and the
+declared limit. A refusal preserves the accepted total and is sticky across
+clones, including local arithmetic-policy clones. Concurrent calls to the public
+meter are outside this profile and its exact-charge guarantee; callers sharing
+a meter outside the ordered evaluator must serialize those calls.
 
 Kani harnesses under this directory call the production scaled arithmetic and
 Meter methods. They cover i8 numerator/divisor combinations with all four
@@ -223,3 +226,63 @@ rescale against an independent signed-integer reference. Production Kani
 harnesses check all modes for i8 coefficients and scales 0..4, plus invalid u32
 targets and full-width decimal overflow witnesses. Evidence is bounded for Kani
 and sampled for proptest; neither claims arbitrary-precision symbolic execution.
+
+FOLD-AUTHORING: `Norn.orderedFold(step, {items, initial}, policy)` inside a
+plain decision callback compiles to one ordered-fold call with a pinned helper.
+The callback and helper callback never execute during extraction. Policy records
+are closed literal data; item and state schemas derive from the helper's declared
+closed schemas. Existing top-level-const sequencing, dependency pinning, compiler
+budgets, and Rust fold admission still apply. No raw JDM/unsafeZen is required.
+Type mismatches and nonliteral/extra policy inputs refuse compilation; unsupported
+bounds, key kinds or helper contracts refuse Rust admission. This compiler adapter
+adds no independent execution semantics or per-application solver statements.
+
+FOLD-AUTHORING-LINEAGE: typed `array.concat(array)` appends one array without
+flattening its elements, lowering to existing one-level `flatten([left, right])`.
+Both operands must be arrays with compatible item schemas. This permits declared
+allocation lineage to accumulate without a new runtime operator. String/scalar
+concat and additional arguments remain outside this authoring form.
+
+FOLD-AUTHORING-CORRESPONDENCE: Rust conformance consumes compiler-generated
+RuleIR goldens; TypeScript tests compare those goldens with fresh extraction.
+The evaluator tests never spawn a compiler or acquire a process capability.
+
+FOLD-OPERANDS: collection items and initial state must satisfy the helper's
+closed contracts during compilation, including through const aliases. Structural
+extra fields, missing required fields and incompatible nested schemas refuse
+with NORN-FLOW-TYPE. Literal empty arrays receive the declared item schema;
+integer inputs may widen to number, and string enums may narrow. Runtime schema
+checks remain mandatory for actual values and untrusted artifacts.
+
+## CP3 allocation declarations
+
+FOLD-CP3 / JEWEL-SELL / JEWEL-SCRAP / JEWEL-FUND / JEWEL-MELT:
+`tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts` specializes the existing
+stock Holding (core.Resource) and declares normalization, original-cost allocation
+and funded conversion helpers. One pure plan applies them in order: sell,
+normalize the separate scrap exchange, fund WIP from retained and newly received
+holdings, then allocate output, explicit loss and non-fine byproduct. Quantities
+are grams, purity per-mille, values USD; exact scale-6 refuse arithmetic is declared.
+The opening snapshot retains the inherited Resource fields, separate gram unit
+and valuation currency, plus the measured/book fields of the declared subtype.
+Its projection into allocation items is written in the same Norn decision.
+Source IDs and residual allocations remain data. Initial accumulators derive
+from declared zeroes and prior fold results, not caller-supplied partial state.
+
+The compiled TypeScript declarations execute in the generic Rust evaluator:
+20 g sale costs 200 and retains 80/800; 25 g at 800 per-mille contributes 20/180;
+funding is 100 fine g, 105 gross g and 980; output 99.2/972.16 plus loss 0.8/7.84
+and non-fine byproduct 5/0 exhausts all three balances. Reordered output enumeration
+produces the same plan. Loss ratio 0.008 exceeds 0.005; exactly 0.005 does not.
+The ratio is computed inside the declared exact fold profile; an inexact 1/3
+ratio refuses instead of using ordinary unprofiled division. Holding quantities
+are checked against their declared gross mass and purity within that profile.
+
+These are pure allocation fixtures. `complete` and `needs_approval` are derived
+data for the admitted action/law bridge, not authorization or approval evidence.
+Missing loss or invalid purity cannot qualify a complete plan; unit/currency
+mismatches and unsupported exact arithmetic refuse evaluation. There are no fact
+or timer effects. The integrator still owns two independent assays, pinned scope,
+settings/approval versions, complete partition fences, actual reservations,
+balanced economic effects and atomic posting. No full CP3 runtime or application
+proof claim follows from allocation conformance alone.
