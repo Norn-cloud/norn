@@ -22,6 +22,10 @@
       ],
       "lifecycles": [
         {
+          "immutable": [
+            "ready",
+            "approved"
+          ],
           "initial": [
             "building"
           ],
