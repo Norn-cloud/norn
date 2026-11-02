@@ -88,6 +88,12 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     let instances = norn_checker::effective_law_instances(&all, &context(), norn_graph::Budget { max_nodes: 4096, max_edges: 16384, max_steps: 65536 }).expect("B2 law instances");
     let currency: Vec<_> = instances.iter().filter(|i| i.law.artifact_id == "demo.ledger.usd.law").collect();
     assert_eq!(currency.len(), 2); assert!(currency.iter().all(|i| i.subject.artifact_id.starts_with("demo.Usd")));
+    let original_currency = all.iter().find(|a| a.artifact_id == "demo.ledger.usd.law").expect("original law");
+    assert!(currency.iter().all(|i| i.law_digest == pin(original_currency).sha256));
+    let owner = all.iter().find(|a| a.artifact_id == "demo.ledgers.app").expect("instances");
+    let declarations: CompositionPackRoot = payload(owner);
+    let nodes = declarations.instances.expect("two declarations");
+    assert_eq!(nodes.len(), 2); assert_ne!(nodes[0].instance_id, nodes[1].instance_id); assert_eq!(nodes[0].pack, nodes[1].pack);
     assert_eq!(instances.iter().filter(|i| i.law.artifact_id == "demo.ledger.balance.law").count(), 2);
     let (types, interfaces, actions) = definitions(&all);
     let model = Model::from_definitions_with_interfaces(&types, &[], &interfaces).expect("native model");
@@ -180,4 +186,18 @@ norn_testkit::proptest::proptest! {
         let findings = norn_checker::check_artifact_set(&all, &context());
         norn_testkit::proptest::prop_assert!(findings.iter().any(|d| d.code.as_str() == "core.composition.unresolved_pin"));
     }
+}
+
+#[test]
+fn pack_law_substitution_follows_only_the_selected_instance() {
+    let base = artifacts();
+    let mut law = base.iter().find(|a| a.artifact_id == "demo.ledger.balance.law").expect("generic law").clone();
+    law.artifact_id = "demo.ledger.scoped.law".into();
+    let mut root: norn_ir::LawIR = payload(&law);
+    root.id = "demo.ledger.scoped".into(); root.scope.root = norn_ir::LawRoot::Pack("ledger-usd".into());
+    law.payload = ArtifactPayload::from_kind_json(&ArtifactKind::Law, serde_json::from_value(serde_json::to_value(root).expect("typed law")).expect("tree")).expect("payload");
+    let instances = norn_checker::effective_law_instances(&[law], &norn_checker::EntityArtifactSetContext { registry: context().registry, base: &base, tenant: None }, norn_graph::Budget { max_nodes: 4096, max_edges: 16384, max_steps: 65536 }).expect("checked instance scope");
+    let scoped: Vec<_> = instances.iter().filter(|i| i.law.artifact_id == "demo.ledger.scoped.law").collect();
+    assert_eq!(scoped.len(), 1); assert_eq!(scoped[0].subject.artifact_id, "demo.UsdTransfer.entity");
+    assert!(scoped[0].instance_paths.iter().all(|p| p.last().expect("binding path").instance_id == "ledger-usd"));
 }
