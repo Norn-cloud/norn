@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.comparison_cycle",
+  "message": "Question comparisons must be acyclic.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

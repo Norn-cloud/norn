@@ -1,0 +1,7 @@
+{
+  "code": "core.compute.ambiguous_grain",
+  "message": "Query requires an explicit unambiguous identity grain.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

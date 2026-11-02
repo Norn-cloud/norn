@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.invalid_name",
+  "message": "interface name {name} must be dotted lower-case namespace segments and a PascalCase name, such as \"party.Party\"",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

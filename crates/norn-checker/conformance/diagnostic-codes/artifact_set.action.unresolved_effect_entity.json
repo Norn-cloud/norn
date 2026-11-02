@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.unresolved_effect_entity",
+  "message": "the effect pins entity artifact {artifactId} version {version}, which is not an entity artifact of the artifact set or the installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
