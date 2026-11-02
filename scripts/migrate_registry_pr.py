@@ -84,7 +84,7 @@ def rust_projection(root, revision, raw, manifest, expected_helpers):
     literal = r'"(?:[^"\\]|\\.)*"'
     row = re.compile(r'\s*(?://[^\n]*\n\s*)*(entry|introduced|warning|warning_introduced)\(\s*('
                      + literal + r'|[A-Za-z_][\w:]*)\s*,\s*Tier::(T[0-7])\s*,\s*('
-                     + literal + r')\s*,\s*(?:(' + literal + r')\s*,\s*)?\),')
+                     + literal + r')\s*(?:,\s*(' + literal + r')\s*)?,?\s*\),')
     entries, position = [], 0
     while rows[position:].strip():
         match = row.match(rows, position)
