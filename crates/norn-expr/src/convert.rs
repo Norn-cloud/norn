@@ -37,8 +37,8 @@ pub(crate) fn rescale_number(
         input: value.as_str().to_owned(),
         reason,
     };
-    let scale =
-        u32::try_from(scale).map_err(|_| invalid("unsupported exact-site scale".to_owned()))?;
+    let scale = u32::try_from(scale)
+        .map_err(|error| invalid(format!("unsupported exact-site scale: {error}")))?;
     let rounding = match rounding {
         norn_ir::Rounding::Refuse => Rounding::Refuse,
         norn_ir::Rounding::TowardZero => Rounding::TowardZero,

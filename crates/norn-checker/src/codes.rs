@@ -485,7 +485,7 @@ pub static REGISTRY: &[CodeEntry] = &[
     introduced(
         crate::property_codec::INEXACT,
         Tier::T2,
-        "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+        "the exact value or declared rounding site is outside the supported profile",
         "0.2.0",
     ),
     entry(
