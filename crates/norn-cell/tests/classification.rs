@@ -306,7 +306,7 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .len(),
         3
     );
-    let (denied, _) = catalog_access(&[]);
+    let (denied, _) = catalog_access(&["norn.admin"]);
     assert!(
         snapshot
             .read(&query, &limits, &denied, &request, scope)
