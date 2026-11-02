@@ -1776,8 +1776,9 @@ where
 }
 
 pub(crate) fn receipt_commit_error(error: CellError) -> CommitError<CellError> {
-    match error {
-        CellError::ReceiptRefused(reason) => CommitError::ReceiptRefused { reason },
-        other => CommitError::Host(other),
+    if let CellError::ReceiptRefused(reason) = error {
+        CommitError::ReceiptRefused { reason }
+    } else {
+        CommitError::Host(error)
     }
 }
