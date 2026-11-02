@@ -1336,7 +1336,7 @@ impl<'a> Checker<'a, '_> {
                     }
                 };
                 if let Err(findings) =
-                    norn_expr::check_expression(expression, &bound, &norn_expr::Type::Bool)
+                    expression.check_typed(&bound,&norn_expr::Type::Bool)
                 {
                     return (
                         Some(findings.first().map_or_else(
@@ -1374,7 +1374,7 @@ impl<'a> Checker<'a, '_> {
                         );
                     }
                 };
-                if norn_expr::check_expression(expression, &property_only, &norn_expr::Type::Bool)
+                if expression.check_typed(&property_only,&norn_expr::Type::Bool)
                     .is_err()
                 {
                     (

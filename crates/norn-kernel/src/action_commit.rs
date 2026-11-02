@@ -1052,6 +1052,7 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
         &slice.values,
@@ -1266,6 +1267,7 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
         &slice.values,
@@ -2412,6 +2414,7 @@ where
         slice_meter,
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         call.action,
         &preparation.effective_input,
         &action_slice.values,
@@ -3203,6 +3206,7 @@ where
         )?;
         let mut receipt_evidence_bytes = preparation.receipt_evidence_bytes;
         let precondition_outcomes = check_action_preconditions(
+        catalog,
             call.action,
             &generated_input,
             &slice.values,
@@ -3331,6 +3335,7 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     check_action_preconditions(
+        catalog,
         call.action,
         &input,
         &slice.values,
@@ -4570,9 +4575,9 @@ fn prepare_action_input_inner<'a, X>(
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = profile.turn.fuel_units;
 
-    for derivation in &action.derive {
+    for (index,derivation) in action.derive.iter().enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
-            derivation,
+            action, index, derivation,
             &effective_input,
             &mut remaining_fuel,
             receipt_evidence_bytes,
@@ -4608,6 +4613,8 @@ fn prepare_action_input_inner<'a, X>(
 }
 
 fn prepare_action_derivation<X>(
+    action: &ActionRoot,
+    completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
     remaining_fuel: &mut u64,
@@ -4628,7 +4635,12 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+    let env = norn_expr::schema::action_environment(action,None,completed).map_err(|reason| ActionRefusal::DerivationFailed {field:derivation.field.clone(),expression:derivation.expression.as_str().to_owned(),reason})?;
+    let expected_schema = action.input_schema.get("properties").and_then(norn_ir::JsonValue::as_object).and_then(|fields| fields.get(&derivation.field));
+    let declared = env.record(norn_expr::env::INPUT_RECORD).and_then(|record| record.fields.get(&derivation.field)).map(|field| field.ty.clone()).unwrap_or(norn_expr::Type::Json);
+    let explicit_nullable = expected_schema.and_then(|schema| norn_expr::schema::Schema::parse(schema,"target").ok()).is_some_and(|schema| matches!(schema,norn_expr::schema::Schema::Nullable(_)));
+    let expected = match declared { norn_expr::Type::Optional(inner) if !explicit_nullable => *inner, ty => ty };
+    let attempt = expression.evaluate_typed_metered(&context,EvaluationBudget::new(*remaining_fuel),&env,&expected);
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     let evaluated = attempt
         .result
@@ -5498,6 +5510,7 @@ fn authorize_slice_type<X>(
 /// Evaluates every declared action precondition over the derived input and the
 /// authorized slice, carrying forward the derivations' remaining fuel.
 fn check_action_preconditions<X>(
+    catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     input: &JsonObject,
     slice: &JsonObject,
@@ -5514,6 +5527,8 @@ fn check_action_preconditions<X>(
             reason: Some(reason),
         }
     })?;
+    let catalog_env = action.slice.first().map(|entry| catalog.expression_environment(&entry.object_type)).transpose().map_err(|reason| ActionRefusal::PreconditionFailed {precondition:String::new(),reason:Some(reason)})?;
+    let env = norn_expr::schema::action_environment(action,catalog_env.as_ref(),action.derive.len()).map_err(|reason| ActionRefusal::PreconditionFailed {precondition:String::new(),reason:Some(reason)})?;
     let mut outcomes = Vec::with_capacity(action.preconditions.len());
     for precondition in &action.preconditions {
         let source = precondition.as_str();
@@ -5523,7 +5538,7 @@ fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+        let attempt = expression.evaluate_typed_metered(&context,EvaluationBudget::new(*remaining_fuel),&env,&norn_expr::Type::Bool);
         *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
         let evaluated = attempt
             .result
