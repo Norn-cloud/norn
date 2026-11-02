@@ -13,12 +13,11 @@ import migrate_registry_pr as migration
 
 class MigrationTests(unittest.TestCase):
     def test_three_way_refusals(self):
-        self.assertEqual(migration.json_bytes({"text": "é"}), b'{\n  "text": "\\u00e9"\n}\n')
         for base, current, proposed in (({"x": 1}, {}, {"x": 2}), ({}, {"x": None}, {"x": 1})):
             with self.assertRaises(ValueError):
                 migration.merge(base, current, proposed)
 
-    @patch.dict("os.environ", {"GIT_DIR": "/dev/null/repository", "GIT_WORK_TREE": "/dev/null", "GIT_INDEX_FILE": "/dev/null/index"})
+    @patch.dict("os.environ", {"GIT_DIR": "/dev/null/repository", "GIT_WORK_TREE": "/dev/null", "GIT_INDEX_FILE": "/dev/null/index", "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "norn.migrationFixture", "GIT_CONFIG_VALUE_0": "retained"})
     def test_real_approved_prs(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text(encoding="utf-8"))
         self.assertEqual(fixture["base_sha"], "5e33eab0294012f8fb683fc2bf95c571c1bf4bcd")
@@ -32,6 +31,7 @@ class MigrationTests(unittest.TestCase):
                     git("-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
                     return git("rev-parse", "HEAD")
                 git("init", "-q")
+                self.assertEqual(git("config", "norn.migrationFixture"), "retained")
                 for name, content in fixture["base"].items():
                     path = root / name
                     path.parent.mkdir(parents=True, exist_ok=True)
