@@ -1845,3 +1845,33 @@ mod tests {
         assert_eq!(verified.receipt_format(), LEGACY_RECEIPT_FORMAT);
     }
 }
+
+#[cfg(test)]
+mod retained_setting_tests {
+    #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "retained profile correspondence")]
+    use super::*;
+    #[test]
+    fn tagged_historical_settings_recheck_only_with_unchanged_verified_source() {
+        let raw = RuntimeValue::from_json_text(include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json")).expect("immutable original");
+        let sources = ReceiptSources::new(&[raw.clone()], &[]).expect("source");
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        assert_eq!(check_artifact_set_with_receipt(&sources, &context, &limits).expect("current admission").receipt.admitted, crate::artifact_set::CURRENT_SETTING_VERSION == "0.1");
+        let mut old = check_artifact_set_with_profile(&sources.artifacts, &context, &limits, sources.identity.clone(), HISTORICAL_IDENTIFIER_PROFILE, None, true).expect("historical validation").receipt;
+        assert!(old.admitted);
+        old.checker_version = "0.1.0".into();
+        old.expr_profile = "norn-zen/5".into();
+        old.artifact_set = ArtifactSetRef::of_legacy(&sources.artifacts, &[]).expect("original identity");
+        let body = String::from_utf8(old.legacy_canonical_json().expect("historical body")).expect("UTF8");
+        let digest = admission_receipt_sha256(&body).expect("digest");
+        let token = verify_admission_receipt_sources(&body, &digest, &[raw], &[], &limits).expect("verified historical authority");
+        assert!(check_artifact_set_with_verified_receipt(&sources, &context, &limits, &token).expect("recheck").receipt.admitted);
+        let mut changed = sources.artifacts.clone();
+        changed[0].name.push_str(" edited");
+        let changed = changed.iter().map(|a| norn_ir::runtime::encode(a).expect("source")).collect::<Vec<_>>();
+        let changed = ReceiptSources::new(&changed, &[]).expect("edited source");
+        assert!(check_artifact_set_with_verified_receipt(&changed, &context, &limits, &token).is_err());
+        assert_eq!(check_artifact_set_for_install(&changed, &context, &limits, Some(&token)).expect("changed admission").receipt.admitted, crate::artifact_set::CURRENT_SETTING_VERSION == "0.1");
+    }
+}
