@@ -5194,21 +5194,18 @@ fn purity_quality_host(
     norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host")
 }
 
-fn capture_purity(
-    cell: &mut norn_cell::SqliteCell<
-        norn_kernel::ObservationEvent,
-        norn_kernel::cell_host::JsonObject,
-        norn_kernel::cell_host::JsonObject,
-    >,
-    delivery: &str,
-    purity: &str,
-) {
+type MeasurementCell = norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>;
+
+fn capture_purity(cell: &mut MeasurementCell, delivery: &str, purity: &str) {
+    capture_measurement(cell, delivery, measurement_values(purity));
+}
+
+fn capture_measurement(cell: &mut MeasurementCell, delivery: &str, values: BTreeMap<String, Value>) {
     use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
     use norn_kernel::{
         CellHost, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog, World,
         load_slice,
     };
-    let values = measurement_values(purity);
     let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({"source":{"system":"synthetic-erpnext", "record":"Stock Entry Measurement/MEAS-1"}, "mappingVersion":"synthetic.measurements@1", "recordedAt":"2026-11-01T10:01:00Z", "sourceFields":["purity"]})).expect("source provenance");
     let observed = Observed {
         id: ObservationId(delivery.to_owned()),
@@ -6089,4 +6086,30 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
             .expect("fact")
             .is_none()
     );
+}
+
+// DATA-QUALITY-PACK-1: each admitted law recovers independently; quarantine is any open finding.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn pack_laws_redelivery_and_partial_recovery_keep_each_governing_pin(deliveries in 2usize..5) {
+        use norn_testkit::proptest::prelude::*;
+        let directory = tempfile::tempdir().expect("directory");
+        let mut cell = purity_quality_host(&directory.path().join("pack.sqlite"));
+        let mut values = measurement_values("1.20");
+        values.insert("fine_grams".into(), Value::from_json_text("0.5").expect("fine mass"));
+        for delivery in 0..deliveries { capture_measurement(&mut cell, &format!("bad-{delivery}"), values.clone()); }
+        let review = |cell: &MeasurementCell| cell.store().read().observation_findings(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("review");
+        prop_assert_eq!(review(&cell).len(), 2);
+        values.insert("purity".into(), Value::from_json_text("0.8").expect("valid purity"));
+        capture_measurement(&mut cell, "purity-fixed", values);
+        let findings = review(&cell);
+        for finding in &findings {
+            let norn_ir::DataQualityRuleRef::Law { law_id, .. } = &finding.rule_ref else { panic!("admitted pack law") };
+            prop_assert_eq!(finding.status == norn_ir::DataQualityFindingStatus::Resolved, law_id == "demo.erpnext.purity_in_range");
+        }
+        prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("quarantine").is_none());
+        capture_purity(&mut cell, "fine-fixed", "0.8");
+        prop_assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
+        prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "demo.erpnext.StockEntryMeasurement", "MEAS-1").expect("recovery").is_some());
+    }
 }

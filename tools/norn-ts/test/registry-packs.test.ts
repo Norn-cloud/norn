@@ -56,7 +56,7 @@ test("law wording artifacts are generated beside their declaring pack", () => {
     const out = join(core ? join(REPO, "registry/core") : dir, "wordings")
     if (update) mkdirSync(out, { recursive: true })
     for (const artifact of compiled.wordingArtifacts) {
-      if (typeof artifact !== "object" || artifact === null || Array.isArray(artifact) || typeof artifact.artifactId !== "string") throw new Error("missing wording identity")
+      if (typeof artifact !== "object" || artifact === null || !("artifactId" in artifact) || typeof artifact.artifactId !== "string") throw new Error("missing wording identity")
       const file = join(out, `${artifact.artifactId}.json`)
       if (update) writeFileSync(file, `${JSON.stringify(artifact, null, 2)}\n`)
       expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(artifact)
