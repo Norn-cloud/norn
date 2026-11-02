@@ -283,7 +283,8 @@ pub fn evaluate(
                         crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
                             LawEvaluationError::BudgetExceeded
                         }
-                        other => LawEvaluationError::Invalid(format!("{other:?}")),
+                        other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
+| crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => LawEvaluationError::Invalid(format!("{other:?}")),
                     })?;
                     failures
                         .into_iter()
