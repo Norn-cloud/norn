@@ -65,12 +65,20 @@ impl RefusalCategory {
     }
 }
 
+/// Version of the public refusal projection, independent of stored receipt formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, ToSchema)]
+pub enum RefusalFormat {
+    /// Pinned typed reasons and explicit engine retry semantics.
+    #[serde(rename = "norn/refusal@2")]
+    V2,
+}
+
 /// A refused request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Refusal {
     /// Versioned projection; stored checker receipts keep their original bytes.
-    pub format: String,
+    pub format: RefusalFormat,
     /// Engine-defined retryability, false unless explicitly supplied by the engine.
     pub retryable: bool,
     /// Shared declaration pin and typed operands, disclosed together.
@@ -120,7 +128,7 @@ impl Refusal {
         explanation: impl Into<String>,
     ) -> Self {
         Self {
-            format: "norn/refusal@2".to_owned(),
+            format: RefusalFormat::V2,
             retryable: false,
             reason: None,
             status: status.as_u16(),

@@ -110,7 +110,8 @@ fn host_refusal_preserves_status_category_and_conceals_opaque_detail()
 }
 
 #[test]
-fn invariant_refusal_retains_pin_and_typed_reason_through_api() -> Result<(), Box<dyn std::error::Error>> {
+fn invariant_refusal_retains_pin_and_typed_reason_through_api()
+-> Result<(), Box<dyn std::error::Error>> {
     use norn_kernel::{CommitError, FactKey, Refusable};
     let error = CommitError::<std::convert::Infallible>::InvariantViolation {
         key: Box::new(FactKey {

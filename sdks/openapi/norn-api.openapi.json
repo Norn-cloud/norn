@@ -4094,6 +4094,100 @@
           "policy"
         ]
       },
+      "NornIrDataQualityRuleRef": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "OBS-EVIDENCE-1: preserve the governing law identity and exact definition\npin when imported truth produces a finding rather than a refusal.\nA reference alone does not establish evaluation or enforcement.",
+            "required": [
+              "kind",
+              "artifactId",
+              "lawId",
+              "version"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string",
+                "description": "Artifact containing the governing LawIR."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "law"
+                ]
+              },
+              "lawId": {
+                "type": "string",
+                "description": "Stable LawIR identity, independent of its artifact name."
+              },
+              "version": {
+                "type": "string",
+                "description": "Canonical declaration digest, including its scope and predicate."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An EntityIR invariant pinned by artifact version or declaration digest.",
+            "required": [
+              "kind",
+              "owner",
+              "invariantId",
+              "version"
+            ],
+            "properties": {
+              "invariantId": {
+                "type": "string",
+                "description": "The invariant identity within its owner.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invariant"
+                ]
+              },
+              "owner": {
+                "$ref": "#/components/schemas/NornIrInvariantOwner",
+                "description": "The object type or interface that declares this invariant."
+              },
+              "version": {
+                "type": "string",
+                "description": "The pinned declaration version or canonical content digest."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A built-in rule, whose version identifies its predicate semantics.",
+            "required": [
+              "kind",
+              "id",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The globally qualified built-in rule id."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "description": "The built-in rule semantics version."
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "A stable reference to the constraint or rule that produced a finding."
+      },
       "NornIrDatasetKind": {
         "type": "string",
         "description": "What kind of collection a dataset is.",
@@ -6059,6 +6153,49 @@
         "description": "Id of an [`Invariant`], unique within its owner's effective invariant\ncontract. Same grammar as a property id ([`MEMBER_ID_PATTERN`]); invariants\nhave their own name space.",
         "pattern": "^[a-z][a-z0-9_]*$"
       },
+      "NornIrInvariantOwner": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "An object type or one of its supertypes.",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              },
+              "name": {
+                "$ref": "#/components/schemas/NornIrObjectTypeName"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An interface implemented by the object type or one of its supertypes.",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "interface"
+                ]
+              },
+              "name": {
+                "$ref": "#/components/schemas/NornIrInterfaceName"
+              }
+            }
+          }
+        ],
+        "description": "Which declaration owns an invariant."
+      },
       "NornIrIrVersion01": {
         "type": "string",
         "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
@@ -6838,7 +6975,8 @@
             "items": {}
           },
           {
-            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
+            "type": "object",
+            "additionalProperties": {}
           }
         ]
       },
@@ -10183,6 +10321,45 @@
           "Values are replaced by a keyed hash.",
           "No values are kept."
         ]
+      },
+      "NornIrRefusalReason": {
+        "type": "object",
+        "title": "RefusalReason",
+        "description": "Structured refusal evidence shared by checker and transport projections.\nDIAG-REASON-1: declaration pins and operands are disclosed as one unit.",
+        "required": [
+          "law",
+          "subject",
+          "values"
+        ],
+        "properties": {
+          "law": {
+            "type": "string",
+            "description": "Stable governing law or invariant identity."
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrDataQualityRuleRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact governing declaration, absent only in historical unpinned reasons."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the refused change."
+          },
+          "values": {
+            "type": "object",
+            "description": "Typed operands; disclosure authority is required before projection.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrJsonValue"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRelCondition": {
         "type": "object",
@@ -15201,6 +15378,68 @@
             "description": "Pack, artifact digest and stable law member identity."
           }
         }
+      },
+      "Refusal": {
+        "type": "object",
+        "description": "A refused request.",
+        "required": [
+          "format",
+          "retryable",
+          "reason",
+          "code",
+          "category",
+          "message",
+          "explanation"
+        ],
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/RefusalCategory",
+            "description": "What the caller can do about it (the discriminant SDKs switch on)."
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
+          },
+          "explanation": {
+            "type": "string",
+            "description": "Why, and what would make the request admissible."
+          },
+          "format": {
+            "type": "string",
+            "description": "Versioned projection; stored checker receipts keep their original bytes."
+          },
+          "message": {
+            "type": "string",
+            "description": "One-line summary."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRefusalReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+          }
+        }
+      },
+      "RefusalCategory": {
+        "type": "string",
+        "description": "What the caller can do about a refusal: the kernel refusal taxonomy's\nclosed category set (`norn_kernel::RefusalCategory`).",
+        "enum": [
+          "visibility",
+          "permission",
+          "precondition",
+          "conflict",
+          "invalid",
+          "limit",
+          "internal"
+        ]
       }
     }
   }
