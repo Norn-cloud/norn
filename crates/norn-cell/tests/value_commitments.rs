@@ -2034,13 +2034,17 @@ proptest! {
         let mut store=CellStore::open_in_memory(model()).expect("store");
         store.commit(&CommitBatch{logical_time:10,..batch(vec![put("proof.Item","item",&original.to_string())])}).expect("original");
         let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let HistoricalEvidence::Found(initial)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("initial proof") else {return Err(TestCaseError::fail("initial proof lost"))};
+        let initial=serde_json::to_vec(&*initial).expect("initial evidence bytes");
         for (time,correction) in (11u64..).zip(corrections) {
             let recorded=if same_clock {10} else {time};
             store.commit(&CommitBatch{logical_time:recorded,..batch(vec![put("proof.Item","item",&correction.to_string())])}).expect("correction");
             let HistoricalEvidence::Found(old)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("old answer") else {return Err(TestCaseError::fail("old answer lost"))};
+            prop_assert_eq!(serde_json::to_vec(&*old).expect("reproduced evidence bytes"),initial.clone());
             prop_assert_eq!(old.snapshot().version,1);
             prop_assert_eq!(&old.snapshot().values.as_ref().expect("live")["value"],&Value::from(original.to_string()));
             let HistoricalEvidence::Found(new)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(recorded),frontier:time.checked_sub(9).expect("fixture frontier")},&mut DecodeBudget::new(&limits)).expect("new answer") else {return Err(TestCaseError::fail("new answer lost"))};
+            prop_assert_eq!(new.snapshot().version,time.checked_sub(9).expect("fixture version"));
             prop_assert_eq!(&new.snapshot().values.as_ref().expect("live")["value"],&Value::from(correction.to_string()));
         }
     }
