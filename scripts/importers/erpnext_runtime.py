@@ -2,6 +2,7 @@
 """Acquire checksum-pinned interoperability test schemas outside the source tree."""
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -23,23 +24,38 @@ def acquire_interop(output):
 
 
 # Optional digest-checked cache: CI restores it so upstream DNS or host outages
-# do not fail every job. A cached file is used only if its digest matches the pin.
-CACHE = os.path.expanduser(os.environ.get("NORN_INTEROP_CACHE", "")) or None
+# do not fail every job. A cached file is used only if its digest matches the pin,
+# and cache I/O is best-effort: an unreadable or read-only cache is a miss.
+def cache_dir():
+    raw = os.environ.get("NORN_INTEROP_CACHE", "")
+    if not raw:
+        return None
+    path = Path(os.path.expanduser(raw)).resolve()
+    if path == ROOT or ROOT in path.parents:
+        raise ValueError("NORN_INTEROP_CACHE must remain outside the source tree")
+    return path
 
 
 def cached(name, digest):
-    path = Path(CACHE, name) if CACHE else None
-    if path is not None and path.is_file():
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() == digest:
-            return raw
-    return None
+    directory = cache_dir()
+    if directory is None:
+        return None
+    try:
+        raw = (directory / name).read_bytes()
+    except OSError:
+        return None
+    return raw if hashlib.sha256(raw).hexdigest() == digest else None
 
 
 def store(name, raw):
-    if CACHE:
-        Path(CACHE).mkdir(parents=True, exist_ok=True)
-        Path(CACHE, name).write_bytes(raw)
+    directory = cache_dir()
+    if directory is None:
+        return
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes(raw)
+    except OSError:
+        pass
 
 
 def fetch(url, accept, attempts=5):
@@ -50,7 +66,7 @@ def fetch(url, accept, attempts=5):
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 return response.read()
-        except OSError:
+        except (OSError, http.client.HTTPException):
             if attempt == attempts - 1:
                 raise
             time.sleep(2 ** (attempt + 1))
