@@ -17,7 +17,9 @@ permissions:
 # push to main cancels the older main run: each main commit was already gated by
 # its merge group, so only the latest main head needs the health/cache run.
 # Every other event (merge-queue groups, the comment and trusted lanes) gets a
-# group of its own, so concurrency never cancels or holds it back.
+# group of its own, so workflow-level concurrency never cancels or holds it
+# back. The trusted-policy job has a separate per-PR/issue group that can
+# cancel an older trusted-policy run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
