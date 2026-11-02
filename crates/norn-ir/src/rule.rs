@@ -438,10 +438,70 @@ impl SliceDeclaration {
     }
 }
 
+fn parameter_scopes<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Vec<crate::ScopeRef>, D::Error> {
+    let scopes = Vec::<BTreeMap<String, JsonValue>>::deserialize(decoder)?;
+    if scopes.iter().flat_map(|scope| scope.keys()).any(|key| {
+        !matches!(
+            key.as_str(),
+            "orgId" | "tenantId" | "workspaceId" | "environmentId" | "businessUnitId"
+        )
+    }) {
+        return Err(serde::de::Error::custom(
+            "unknown parameter scope dimension",
+        ));
+    }
+    serde_json::from_value(serde_json::to_value(scopes).map_err(serde::de::Error::custom)?)
+        .map_err(serde::de::Error::custom)
+}
+
+fn parameter_scopes_wire<S: serde::Serializer>(
+    scopes: &[crate::ScopeRef],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    scopes
+        .iter()
+        .map(crate::ScopeRefWire)
+        .collect::<Vec<_>>()
+        .serialize(serializer)
+}
+
+fn parameter_scopes_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut scope = crate::ScopeRef::json_schema(generator);
+    scope.insert("additionalProperties".into(), false.into());
+    schemars::json_schema!({"type":"array", "items":scope})
+}
+
 /// Where a [`SliceDeclaration`]'s key comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum SliceKey {
+    /// A unique effective parameter selected from an earlier authorized link list.
+    #[serde(rename_all = "camelCase")]
+    Parameter {
+        /// Earlier list slice containing the candidate setting facts.
+        from: String,
+        /// Stable parameter key.
+        setting_key: String,
+        /// Action input field carrying the declared effective timestamp.
+        effective_at: crate::PropertyId,
+        /// Explicit scope precedence, highest first.
+        #[serde(
+            deserialize_with = "parameter_scopes",
+            serialize_with = "parameter_scopes_wire"
+        )]
+        #[schemars(schema_with = "parameter_scopes_schema")]
+        precedence: Vec<crate::ScopeRef>,
+        /// Earlier single-object slice holding an explicit default setting.
+        #[serde(
+            default,
+            deserialize_with = "crate::members::present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "String")]
+        default_from: Option<String>,
+    },
     /// The object the triggering event names (a `transitioned` or `created`
     /// trigger).
     TriggerObject,

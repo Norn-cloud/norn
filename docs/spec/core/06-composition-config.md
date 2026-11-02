@@ -37,6 +37,12 @@ This cut checks structure only. Generic type/unit substitution, B2 law instantia
 5. Overlays are scoped conjunctions on pinned definitions, independent of declaration order; contradictory guards or impossible progress refuse within the supported analysis profile. New behavior has a new action identity. Restrictiveness is logical implication: effective guard = `base ∧ overlay`, monotone by construction; no numeric order is inferred or declared. The initial analysis profile is specified below.
 6. Plan migration against pinned definitions/data. Keep in-flight instances/pending effects on their original version unless explicitly transformed; preflight keys, links, states, settings, authority and laws. Atomically activate within a cell with conflict checks and projection generation switch. Larger migrations expose governed resumable availability; rollback is a new validated migration. Never reinterpret old event bytes silently.
 
+### Parameter slice contract
+
+`SliceKey::Parameter {from, settingKey, effectiveAt, precedence: Vec<ScopeRef>, defaultFrom?}` projects one numeric setting from an earlier complete authorized link-list slice. `effectiveAt` names the action's input timestamp; `defaultFrom`, when present, names an earlier single-object setting slice. Scope ordering is explicit and closed; no aliases or globals are inferred. Candidate data and link membership stay in the transaction read set.
+
+The initial native numeric-setting fact profile uses `setting_key`, exact numeric `value`, `effective_from`, nullable `effective_to`, `review_state`, and five present nullable scope fields (`org_id`, `tenant_id`, `workspace_id`, `environment_id`, `business_unit_id`) projected to `ScopeRef`. It projects to the existing `SettingRoot`; source facts are changed only by ordinary governed actions. The binding contract alone refuses execution until the runtime projection and receipt pin are qualified; rule bindings remain unsupported.
+
 ### Initial overlay analysis profile
 
 Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/344#issuecomment-6559163104):
