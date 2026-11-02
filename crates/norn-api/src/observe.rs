@@ -54,3 +54,25 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 }
+
+impl<E: SqlEngine> DevHost<E> {
+    /// Run a checked adapter and let the cell capture its pinned mapping evidence.
+    /// Authority is issued only when the cell driver later recomputes that bundle.
+    ///
+    /// # Errors
+    /// Scope, adapter framing/authentication, mapping pins or durable inbox failure.
+    pub fn observe_mapped_submission(
+        &self,
+        scope: &CellScope,
+        input: &norn_cell::mapping_bundle::MappingInput,
+        checked: impl FnOnce() -> Result<Observed<RuntimeValue>, Refusal>,
+    ) -> Result<(String, bool), Refusal> {
+        self.scope()
+            .admit(Some(&scope.org_id), Some(&scope.environment_id))?;
+        let _epoch = self.definition_read()?;
+        let raw = checked()?;
+        self.cell()?
+            .inject_mapping_bundle(&raw, input)
+            .map_err(Refusal::host)
+    }
+}

@@ -1,0 +1,68 @@
+{
+  "artifactId": "demo.erpnext.classifications.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Demo admission classifications",
+  "namespace": "demo",
+  "payload": {
+    "entityVersion": "2.0",
+    "markings": [
+      {
+        "category": "pii.contact",
+        "id": "pii.contact",
+        "label": "Contact",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "pii.identity",
+        "id": "pii.identity",
+        "label": "Identity",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "pii.financial",
+        "id": "pii.financial",
+        "label": "Financial",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "confidential.finance",
+        "id": "confidential.finance",
+        "label": "Confidential finance",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      },
+      {
+        "category": "pii.health",
+        "id": "pii.health",
+        "label": "Health",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "critical"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "registry/packs/demo-erpnext/markings.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_demo"
+  },
+  "version": "0.1.0"
+}

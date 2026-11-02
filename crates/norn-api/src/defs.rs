@@ -98,6 +98,8 @@ impl Admitted {
             )
             .map_err(refused)?,
             model: Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+                .map_err(refused)?
+                .with_governing_laws(&artifacts)
                 .map_err(refused)?,
             canonical_set: String::from_utf8(
                 RuntimeValue::Array(exact)

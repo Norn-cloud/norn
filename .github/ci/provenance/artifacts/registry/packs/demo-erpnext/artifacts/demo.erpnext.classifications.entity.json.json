@@ -1,0 +1,19 @@
+{
+  "sha256": "32297036839e6517aec2e3d3d5f563904ea71357df693fad2b86200dac98c429",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/demo-erpnext/markings.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

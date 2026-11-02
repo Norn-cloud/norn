@@ -46,10 +46,12 @@ receipt pins the definition version for historical re-evaluation; current laws
 cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
 when it resolves to the supported direct-law contract.
 
-For CP2 the trusted public DevHost adapter checks dataplane submissions, delivers
-them only through the Observed inbox, and leaves source mapping to norn-cell;
-there is no norn-cell dependency on norn-dataplane, and the inbox key binds
-trusted connector instance, partition and source event identity as a canonical tuple.
+For CP2 the public `norn-api` DevHost runs the checked dataplane adapter and
+delivers submissions only through the existing Observed inbox; `norn-cell`
+applies admitted source mappings without depending on `norn-dataplane`.
+Ordinary `observe_submission` inbox keys bind trusted connector instance,
+partition and source event identity as a canonical tuple; mapped
+`observe_mapped_submission` inputs use the content-addressed bundle contract below.
 
 Pointwise recovery checks the violated rule under an authenticated retained
 catalog without requiring old outcome values to remain identical. Lifecycle
@@ -83,6 +85,8 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
+Same-ID/different-content conflict findings and full cursor convergence remain
+follow-up cuts for this CP2 bundle bridge.
 
 ## Perform and recovery semantics
 
