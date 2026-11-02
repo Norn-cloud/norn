@@ -6256,19 +6256,22 @@ norn_testkit::proptest::proptest! {
         canonical.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(format!("{prefix}é")));
         let mut decomposed = canonical.clone();
         decomposed.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(format!("{prefix}e\u{301}")));
-        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+        let model = store.model().clone();
         if first_nfc {
-            let (id, _) = cell.store_mut().inject_mapping_bundle(&canonical, &input).expect("first accepted");
+            let (id, _) = store.inject_mapping_bundle(&canonical, &input).expect("first accepted");
+            let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
             cell.process_mapping_bundle(&id).expect("apply first");
+            drop(cell);
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
         }
-        let (guard_id, inserted) = cell.store_mut().inject_mapping_bundle(&decomposed, &input).expect("capture spelling");
+        let (guard_id, inserted) = store.inject_mapping_bundle(&decomposed, &input).expect("capture spelling");
         norn_testkit::proptest::prop_assert!(inserted && guard_id.starts_with("mapping-identity:"));
+        let (canonical_id, _) = store.inject_mapping_bundle(&canonical, &input).expect("candidate retained");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
         norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&guard_id), Err(CellError::UnsupportedMappingProfile)));
-        let (canonical_id, _) = cell.store_mut().inject_mapping_bundle(&canonical, &input).expect("candidate retained");
         if !first_nfc {
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&canonical_id), Err(CellError::UnsupportedMappingProfile)));
         }
-        let model = cell.store().model().clone();
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
