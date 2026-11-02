@@ -1742,9 +1742,7 @@ impl<X> DecisionRefusal<X> {
             ),
             CommitError::LinkRequired { parent: key, link }
             | CommitError::RequiredLinkProof { key, link, .. } => Self::InvalidGraphLink {
-                reason: format!(
-                    "required link `{link}` from {key} has no proven target in the final graph"
-                ),
+                reason: format!("required link `{link}` has no proven target at {key}"),
                 key,
                 link,
             },
