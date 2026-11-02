@@ -1,8 +1,8 @@
-# Authored laws, checked and rendered
+# Drop 2: Authored laws, checked and rendered
 
-Candidate for the first rolling drop; not delivered until its script passes on main.
+Law-drop candidate; publication requires a passing main Boat rehearsal.
 
-Run `bash scripts/demo/drop-01-authored-laws.sh` from a clean checkout contained
+Run `bash scripts/demo/drop-02-authored-laws.sh` from a clean checkout contained
 in freshly fetched `origin/main`, with Rust and Bun installed and a frozen
 `bun install --frozen-lockfile --backend copyfile` in `tools/norn-ts`.
 
