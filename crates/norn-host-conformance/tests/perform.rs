@@ -201,7 +201,11 @@ fn prior_process_rss_peak_refuses_small_forecast() {
     const CHILD: &str = "NORN_RSS_REFUSAL_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", "prior_process_rss_peak_refuses_small_forecast", "--test-threads=1"])
+            .args([
+                "--exact",
+                "prior_process_rss_peak_refuses_small_forecast",
+                "--test-threads=1",
+            ])
             .env(CHILD, "1")
             .status()
             .expect("bounded RSS child");
@@ -216,21 +220,33 @@ fn prior_process_rss_peak_refuses_small_forecast() {
     let digest = norn_metrics::host::implementation_digest().expect("code");
     let admitted = norn_checker::function::admit_function_manifest(
         &norn_metrics::host::manifest().expect("manifest"),
-    ).expect("admit");
+    )
+    .expect("admit");
     assert_eq!(admitted.manifest.bounds.max_memory_bytes, Some(268_435_456));
     let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
         "../../../fixtures/function/invocation.effectful.json"
-    )).expect("invocation");
+    ))
+    .expect("invocation");
     let export = export(&plan, &rows, &digest, 1);
     let (input, blob) = export.input(6_000_000).expect("export");
     invocation.manifest = admitted.digest.clone();
     invocation.retry.max_attempts = 1;
-    invocation.inputs = norn_ir::runtime::encode(&input).expect("input").as_object().expect("object").clone();
+    invocation.inputs = norn_ir::runtime::encode(&input)
+        .expect("input")
+        .as_object()
+        .expect("object")
+        .clone();
     invocation.blobs = [("table".into(), blob)].into();
-    let receipt = perform_forecast(&invocation, &export, "unit-host", 10_000).expect("metered receipt");
+    let receipt =
+        perform_forecast(&invocation, &export, "unit-host", 10_000).expect("metered receipt");
     assert!(receipt.resources.peak_memory_bytes > 268_435_456);
-    assert!(matches!(receipt.outcome, FunctionOutcome::ResourceExhausted {
-        resource: norn_ir::function::ExhaustedResource::Memory
-    }));
-    assert!(norn_checker::function::check_function_receipt(&receipt, &invocation, &admitted).is_empty());
+    assert!(matches!(
+        receipt.outcome,
+        FunctionOutcome::ResourceExhausted {
+            resource: norn_ir::function::ExhaustedResource::Memory
+        }
+    ));
+    assert!(
+        norn_checker::function::check_function_receipt(&receipt, &invocation, &admitted).is_empty()
+    );
 }

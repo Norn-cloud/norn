@@ -953,7 +953,8 @@ pub trait CellHost {
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
         _manifest: &norn_ir::function::Digest,
-    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, CommitError<Self::Error>> {
+    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, CommitError<Self::Error>>
+    {
         Ok(None)
     }
 

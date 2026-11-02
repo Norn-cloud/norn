@@ -1610,7 +1610,8 @@ where
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
         CommitError<CellError>,
     > {
-        self.bind_function_receipt(reference, manifest).map_err(receipt_commit_error)
+        self.bind_function_receipt(reference, manifest)
+            .map_err(receipt_commit_error)
     }
 
     fn commit_accepted_receipt(
