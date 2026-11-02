@@ -1209,34 +1209,34 @@ fn join(a: &T, b: &T) -> Option<T> {
 }
 
 /// Lowers a declared type at link depth `depth`. `None`: opaque (`json`).
-fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>) -> Option<T> {
+fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bool) -> Option<T> {
     Some(match ty {
         Type::Bool => T::Bool,
         Type::Text { .. } | Type::Duration => T::Str(None),
         Type::Timestamp { .. } => T::Timestamp,
         Type::Date => T::Date,
         Type::Integer => T::Number(Operand::Dimensionless),
-        Type::Number => T::Number(Operand::Legacy),
+        Type::Number => T::Number(if exact { Operand::Legacy } else { Operand::Dimensionless }),
         Type::Decimal {
             unit,
             currency_source,
             per_unit,
             ..
-        } => T::Number(units::declared(
+        } => T::Number(if exact { units::declared(
             env,
             owner,
             unit.as_ref(),
             currency_source.as_ref(),
             per_unit.as_ref(),
-        )),
+        ) } else { Operand::Dimensionless }),
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
         Type::Record(name) => T::Record(Rec::Env {
             name: name.clone(),
             depth,
         }),
-        Type::List(item) => T::List(Box::new(lower(item, depth, env, owner)?)),
-        Type::Optional(item) => optional(lower(item, depth, env, owner)?),
+        Type::List(item) => T::List(Box::new(lower(item, depth, env, owner, exact)?)),
+        Type::Optional(item) => optional(lower(item, depth, env, owner, exact)?),
     })
 }
 
@@ -1347,7 +1347,7 @@ impl<'a> Checker<'a> {
 
     /// The checker type a site's expected type implies (`None` for `json`).
     fn expectation(&self, expected: &Type) -> Option<T> {
-        lower(expected, self.env.options().max_link_depth, self.env, None)
+        lower(expected, self.env.options().max_link_depth, self.env, None, self.exact_math)
     }
 
     /// A value that must not be null.
@@ -1466,7 +1466,7 @@ impl<'a> Checker<'a> {
                             } else {
                                 *links
                             };
-                            lower(&field.ty, next, self.env, Some(name))
+                            lower(&field.ty, next, self.env, Some(name), self.exact_math)
                                 .map(|ty| (field_name.clone(), ty))
                         })
                         .collect();
@@ -1484,7 +1484,7 @@ impl<'a> Checker<'a> {
                         if let Some(expected) = record
                             .fields
                             .get(field_name)
-                            .and_then(|field| lower(&field.ty, *links, self.env, Some(name)))
+                            .and_then(|field| lower(&field.ty, *links, self.env, Some(name), self.exact_math))
                         {
                             self.check_destination_at(
                                 node,
@@ -1905,7 +1905,7 @@ impl<'a> Checker<'a> {
                     .env
                     .record(record)
                     .and_then(|r| r.fields.get(*name))
-                    .and_then(|field| lower(&field.ty, *depth, self.env, Some(record))),
+                    .and_then(|field| lower(&field.ty, *depth, self.env, Some(record), self.exact_math)),
                 _ => None,
             };
             match self.infer(value, field_expected.as_ref()) {
@@ -1943,7 +1943,7 @@ impl<'a> Checker<'a> {
             _ => self.env.variables().get(name),
         };
         self.exact |= declared.is_some_and(exact_type);
-        match declared.map(|ty| lower(ty, depth, self.env, None)) {
+        match declared.map(|ty| lower(ty, depth, self.env, None, self.exact_math)) {
             Some(Some(ty)) => Some(ty),
             Some(None) => self.report(node, codes::OPAQUE_READ, format!("`{name}` is opaque")),
             None => self.report(
@@ -2011,7 +2011,7 @@ impl<'a> Checker<'a> {
                     FieldSource::Property { .. } | FieldSource::Builtin => depth,
                 };
                 self.exact |= exact_type(&field.ty);
-                match lower(&field.ty, depth, self.env, Some(&name)) {
+                match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
                     Some(ty) => Some(ty),
                     None => self.report(
                         node,
@@ -2703,7 +2703,7 @@ impl<'a> Checker<'a> {
                         }
                         FieldSource::Property { .. } | FieldSource::Builtin => *depth,
                     };
-                    let Some(lowered) = lower(&field.ty, field_depth, self.env, Some(name)) else {
+                    let Some(lowered) = lower(&field.ty, field_depth, self.env, Some(name), self.exact_math) else {
                         self.diagnostics.push(Diagnostic {
                             code: codes::OPAQUE_READ,
                             message: format!("the result includes the opaque field `{field_name}`"),
