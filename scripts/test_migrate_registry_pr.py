@@ -12,6 +12,7 @@ import migrate_registry_pr as migration
 
 class MigrationTests(unittest.TestCase):
     def test_three_way_refusals(self):
+        self.assertEqual(migration.json_bytes({"text": "é"}), b'{\n  "text": "\\u00e9"\n}\n')
         for base, current, proposed in (({"x": 1}, {}, {"x": 2}), ({}, {"x": None}, {"x": 1})):
             with self.assertRaises(ValueError):
                 migration.merge(base, current, proposed)
