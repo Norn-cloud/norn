@@ -610,12 +610,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     .iter()
                     .zip(plans)
                     .map(|(request, plan)| {
-                        crate::quantity::apply(
-                            self.conn,
-                            self.batch,
-                            request,
-                            plan,
-                        )
+                        crate::quantity::apply(self.conn, self.batch, request, plan)
                     })
                     .collect::<Result<Vec<_>, _>>()
                     .map(crate::store::QuantityBatch)
@@ -2096,26 +2091,32 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             scope: match &record {
                 Some(record) => record.scope.clone(),
                 None if row.version == 1 => self.batch.scope.clone(),
-                None => self.retained_fact_scope(
-                    &root,
-                    &row.key,
-                    row.version.saturating_sub(1),
-                )?,
+                None => self.retained_fact_scope(&root, &row.key, row.version.saturating_sub(1))?,
             },
             version: row.version,
             values: record.map(|record| record.values),
         };
         let hash = hash_json(&snapshot)?;
         self.conn.execute(&format!("INSERT INTO \"{}\" (\"world\", \"root_type\", \"object_type\", \"id\", \"version\", \"commit_seq\", \"snapshot\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", crate::system::FACT_VALUES), params![self.world, root, row.object_type, row.key, to_i64(row.version, "fact version")?, self.commit_seq_sql()?, canonical_json(&snapshot)?, hash])?;
-        self.pending_snapshot_scopes.insert((root, row.key.clone(), row.version), snapshot.scope);
+        self.pending_snapshot_scopes
+            .insert((root, row.key.clone(), row.version), snapshot.scope);
         Ok(hash)
     }
 
-    fn retained_fact_scope(&self, root: &str, key: &str, version: u64) -> Result<String, CellError> {
-        if let Some(scope) = self.pending_snapshot_scopes.get(&(root.to_owned(), key.to_owned(), version)) {
+    fn retained_fact_scope(
+        &self,
+        root: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<String, CellError> {
+        if let Some(scope) =
+            self.pending_snapshot_scopes
+                .get(&(root.to_owned(), key.to_owned(), version))
+        {
             return Ok(scope.clone());
         }
-        self.reader().retained_fact_scope(self.world, root, key, version)
+        self.reader()
+            .retained_fact_scope(self.world, root, key, version)
     }
 
     #[allow(

@@ -35,7 +35,6 @@ pub mod error;
 pub mod export;
 mod export_journal;
 mod history;
-mod receipt_commitment;
 pub mod host;
 mod migration;
 pub mod model;
@@ -44,6 +43,7 @@ pub mod quantity;
 pub mod reactive;
 mod reactive_read;
 pub mod read;
+mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod store;
