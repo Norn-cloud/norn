@@ -254,7 +254,7 @@ fn registry_generation_refuses_invalid_entries() {
             let text = if change == "duplicate-key" {
                 format!(
                     "{{\"code\":\"toy.validation.invalid\",{}",
-                    &value.to_string()[1..]
+                    value.to_string().strip_prefix('{').expect("object prefix")
                 )
             } else {
                 value.to_string()
