@@ -1000,4 +1000,15 @@ fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
             .expect("no partial write")
             .exists()
     );
+    invocation.idempotency_key = "missing-rate".into();
+    invocation.input.insert(
+        "effective_at".into(),
+        norn_ir::RuntimeValue::from("2025-01-01T00:00:00Z"),
+    );
+    assert_eq!(
+        commit_action(&mut cell, &catalog, &invocation, &Allow)
+            .expect_err("absent optional default")
+            .code(),
+        "core.composition.parameter_missing"
+    );
 }
