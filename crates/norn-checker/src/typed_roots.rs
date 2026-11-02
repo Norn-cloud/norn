@@ -1757,7 +1757,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, or Relation artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, or `DefinedConcept` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1842,6 +1842,16 @@ pub(crate) fn check_typed_root(
         ),
         ArtifactPayload::SourceSchema(_) | ArtifactPayload::Mapping(_) => {
             check_document_root(payload, &object, diagnostics, artifact_id);
+        }
+        ArtifactPayload::DefinedConcept(_) => {
+            if let Err(error) = crate::defined_concepts::decode(payload) {
+                diagnostics.push(invalid_diagnostic(
+                    "defined_concept.validation.invalid_payload",
+                    error,
+                    "payload",
+                    artifact_id,
+                ));
+            }
         }
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }

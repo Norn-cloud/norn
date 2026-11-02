@@ -1028,3 +1028,21 @@ fn val_env_action_json_leaf_and_exact_refinement_share_the_action_dialect() {
     );
     env.reference().expect("env/2 pin");
 }
+
+/// DIAG-HISTORY-1: transport projections cannot rehash historical receipt diagnostics.
+#[test]
+fn pre_diagnostic_v2_receipt_still_verifies() {
+    let stored = compact_value(&json_of(include_str!("golden/check-receipt.retail.json")));
+    assert_eq!(
+        admission_receipt_sha256(&stored).expect("historical receipt hash"),
+        RETAIL_RECEIPT_SHA256
+    );
+    norn_checker::receipt::verify_admission_receipt(
+        &stored,
+        RETAIL_RECEIPT_SHA256,
+        &envelopes(&registry_layer()),
+        &[],
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .expect("pre-change receipt remains valid without rewriting diagnostic bytes");
+}
