@@ -338,19 +338,11 @@ fn val_round_declarations_fail_closed_until_exact_site_binding() {
         if let Some(mode) = mode {
             ty["rounding"] = mode.into();
         }
-        let defs: Vec<PropertyTypeDef> =
-            serde_json::from_value(serde_json::json!([{"name":"a.amount","type":ty}]))
-                .expect("typed declaration");
-        let findings = check_property_type_defs(&defs, &BTreeSet::new());
+        let result = findings(&serde_json::json!([{"name":"a.amount","type":ty}]));
         if matches!(mode, None | Some("refuse")) {
-            assert!(findings.is_empty());
+            assert!(result.is_empty());
         } else {
-            assert!(findings.iter().any(|d| {
-                d.code == "core.values.inexact"
-                    && d.span
-                        .as_ref()
-                        .is_some_and(|s| s.pointer == "/0/type/rounding")
-            }));
+            assert_eq!(result, vec![("core.values.inexact".into(), "/0/type/rounding".into())]);
         }
     }
 }

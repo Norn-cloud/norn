@@ -191,9 +191,21 @@ fn derived_exact_scales_and_overflow_refuse() {
     let (a, b): (u32, u32) = kani::any();
     let multiply: bool = kani::any();
     let op = if multiply { "Multiply" } else { "Add" };
-    let expected = if multiply { u64::from(a) + u64::from(b) } else { u64::from(a.max(b)) };
-    assert_eq!(ScaledArithmetic::exact_result_scale(op, a, b).ok().map(u64::from), (expected <= 18).then_some(expected));
-    assert_eq!(ScaledArithmetic::exact_result_scale("Add", a, b), ScaledArithmetic::exact_result_scale("Subtract", a, b));
+    let expected = if multiply {
+        u64::from(a) + u64::from(b)
+    } else {
+        u64::from(a.max(b))
+    };
+    assert_eq!(
+        ScaledArithmetic::exact_result_scale(op, a, b)
+            .ok()
+            .map(u64::from),
+        (expected <= 18).then_some(expected)
+    );
+    assert_eq!(
+        ScaledArithmetic::exact_result_scale("Add", a, b),
+        ScaledArithmetic::exact_result_scale("Subtract", a, b)
+    );
     assert!(ScaledArithmetic::exact_binary("Add", Decimal::MAX, Decimal::ONE).is_err());
     assert!(ScaledArithmetic::exact_binary("Subtract", Decimal::MIN, Decimal::ONE).is_err());
     assert!(ScaledArithmetic::exact_binary("Multiply", Decimal::MAX, Decimal::MAX).is_err());
