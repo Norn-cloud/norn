@@ -42,6 +42,8 @@ fn linear_profile_refuses_calls_nonlinearity_and_dynamic_or_opaque_operands() {
     for expression in [
         "input.x * input.y > 0",
         "input.x / input.y > 0",
+        "input.x / 3 * 3 == 1",
+        "input.x / 10 > 0",
         "abs(input.x) > 0",
         "input['x' + 'y'] == 0",
         "input == input",
@@ -62,5 +64,34 @@ proptest::proptest! {
         let split = vec![a.clone(), b.clone()];
         let joined = vec![format!("{a}.{b}")];
         proptest::prop_assert_ne!(linear_symbol(&split), linear_symbol(&joined));
+    }
+}
+
+#[test]
+fn linear_profile_keeps_type_diagnostics() {
+    let error = linear_guard("input.missing == 1", &env()).expect_err("unknown field");
+    assert!(error.to_string().contains("missing"));
+}
+
+#[test]
+fn decimal_binding_requires_a_concrete_implementor_type() {
+    for (ty, admitted) in [
+        (
+            Type::DecimalBinding {
+                group: "mass".into(),
+            },
+            false,
+        ),
+        (
+            Type::Decimal {
+                scale: 3,
+                unit: None,
+            },
+            true,
+        ),
+    ] {
+        let env = ZenTypeEnv::input_only(BTreeMap::from([("x".into(), ty)]), EnvOptions::default())
+            .expect("typed input");
+        assert_eq!(linear_guard("input.x == input.x", &env).is_ok(), admitted);
     }
 }
