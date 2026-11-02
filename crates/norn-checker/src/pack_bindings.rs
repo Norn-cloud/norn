@@ -165,7 +165,7 @@ pub(crate) fn parameters(
         });
         let interface: EntityInterfaceRootV2 = sources
             .next()
-            .and_then(payload)
+            .and_then(interface)
             .ok_or("core.composition.unresolved_pin")?;
         if sources.next().is_some() || interface.interface.name.as_str() != type_name {
             return Err("core.composition.mapping_gap");
