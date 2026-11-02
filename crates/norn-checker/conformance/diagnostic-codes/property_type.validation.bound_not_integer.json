@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.bound_not_integer",
+  "message": "{member} {bound} must be a signed 64-bit integer without a fraction",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

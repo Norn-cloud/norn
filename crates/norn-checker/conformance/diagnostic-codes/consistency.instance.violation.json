@@ -1,0 +1,7 @@
+{
+  "code": "consistency.instance.violation",
+  "message": "the data breaks {rule}: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

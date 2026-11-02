@@ -1,0 +1,7 @@
+{
+  "code": "ledger.ontology.empty_artifact_version",
+  "message": "ontology artifactVersion must be non-empty and canonical",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

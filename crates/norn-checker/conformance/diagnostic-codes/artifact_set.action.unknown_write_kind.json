@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.unknown_write_kind",
+  "message": "the write set names {entityKind}, which is not an object type of the artifact set or the installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

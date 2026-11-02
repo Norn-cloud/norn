@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_invariant_id",
+  "message": "invariant id {invariant} must match [a-z][a-z0-9_]*",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
