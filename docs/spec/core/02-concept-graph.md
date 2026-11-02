@@ -13,6 +13,11 @@ Reuse `ObjectTypeDef {name, extends, implements, properties, links, owned_collec
 | Happening instance | ordinary object ID, `definition: member identity`, typed participant/resource links, state properties, `activation_ids`, `event_at: UtcTimestamp` (source occurrence instant), `recorded_at: Revision` (local committed position, per 01); lifecycle authority is the ordinary transaction path. |
 | Meta-ontology row | `definition_pin`, `kind`, `member_id`, `owner`, typed edges to members, source span, law origins; generated read-only from admitted IR. |
 
+GRAPH-LINK-1 counts cardinality by the declaring relation identity, including inherited
+overrides. Unrelated declarations with the same role name do not share cardinality.
+GRAPH-DRAFT conformance covers atomic creation, missing/invalid participants,
+cardinality refusal with no facts/events/enqueues, and atomic required-link replacement.
+
 Props that look like references lower to `Link` or `OwnedChildCollection`; no second ID-valued property relation semantics. Required links and owned drafts are checked at final commit, allowing atomic creation of the entire graph. Item catalog metadata is separate from resource/holding identity.
 
 ## Declared role contract

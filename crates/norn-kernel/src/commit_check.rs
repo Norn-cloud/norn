@@ -1875,6 +1875,7 @@ fn check_required_links<E, C, T, V: CommitView + ?Sized>(
     Ok(())
 }
 
+/// GRAPH-LINK-1: cardinality counts the final edges of one declaring relation.
 fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
@@ -1888,9 +1889,10 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
         let key = model.canonical_link(&write.key);
         // The source's concrete type's declaration (endpoints passed, so the
         // source exists once the commit applies).
-        let Some(declared) = concrete_after(commit, model, view, &key.source)?
-            .and_then(|source| model.link(&source, &write.key.link))
-        else {
+        let Some(source) = concrete_after(commit, model, view, &key.source)? else {
+            continue;
+        };
+        let Some(declared) = model.link(&source, &write.key.link) else {
             continue;
         };
         for (multiplicity, outgoing) in [
@@ -1901,18 +1903,26 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
                 continue;
             }
             let endpoint = if outgoing { &key.source } else { &key.target };
-            let count = links.get(endpoint).map_or(0, |live| {
-                live.iter()
-                    .filter(|link| {
-                        link.link == key.link
-                            && if outgoing {
-                                link.source == *endpoint
-                            } else {
-                                link.target == *endpoint
-                            }
-                    })
-                    .count()
-            });
+            let owner = model.link_owner(&source, &key.link);
+            let mut count = 0;
+            for link in links.get(endpoint).into_iter().flatten() {
+                if link.link != key.link
+                    || if outgoing {
+                        link.source != *endpoint
+                    } else {
+                        link.target != *endpoint
+                    }
+                {
+                    continue;
+                }
+                let same_relation = if outgoing {
+                    true
+                } else {
+                    concrete_after(commit, model, view, &link.source)?
+                        .is_some_and(|source| model.link_owner(&source, &link.link) == owner)
+                };
+                count += usize::from(same_relation);
+            }
             if count > 1 {
                 return Err(CommitError::LinkCardinality {
                     key: Box::new(write.key.clone()),

@@ -291,6 +291,7 @@
     "crates/norn-kernel/tests/action_series_context.rs",
     "crates/norn-kernel/tests/authz_action.rs",
     "crates/norn-kernel/tests/cell_host.rs",
+    "crates/norn-kernel/tests/graph_links.rs",
     "crates/norn-kernel/tests/decider.rs",
     "crates/norn-kernel/tests/decision_commit.rs",
     "crates/norn-kernel/tests/fact_event.rs",
