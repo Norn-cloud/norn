@@ -847,13 +847,27 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
     }
     assert_eq!(model.env().canonical_json().unwrap(), default);
     assert_eq!(model.env().content_sha256().unwrap(), RETAIL_ENV_SHA256);
-    let fields = |ty| ZenTypeEnv::input_only(BTreeMap::from([("amount".to_owned(), ty)]), EnvOptions::default()).unwrap();
-    let decimal = |rounding| Type::Decimal { scale: 2, unit: None, rounding };
-    let bytes = fields(decimal(norn_ir::Rounding::Refuse)).canonical_json().unwrap();
+    let fields = |ty| {
+        ZenTypeEnv::input_only(
+            BTreeMap::from([("amount".to_owned(), ty)]),
+            EnvOptions::default(),
+        )
+        .unwrap()
+    };
+    let decimal = |rounding| Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding,
+    };
+    let bytes = fields(decimal(norn_ir::Rounding::Refuse))
+        .canonical_json()
+        .unwrap();
     let canonical: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     // Locate the canonical decimal shape without depending on record ordering.
     fn find_decimal(value: &serde_json::Value) -> Option<&serde_json::Value> {
-        if value.get("kind").and_then(serde_json::Value::as_str) == Some("decimal") { return Some(value); }
+        if value.get("kind").and_then(serde_json::Value::as_str) == Some("decimal") {
+            return Some(value);
+        }
         match value {
             serde_json::Value::Object(fields) => fields.values().find_map(find_decimal),
             serde_json::Value::Array(items) => items.iter().find_map(find_decimal),
@@ -862,12 +876,22 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
     }
     let old = find_decimal(&canonical).unwrap();
     let decoded: LegacyDecimal = serde_json::from_value(old.clone()).unwrap();
-    assert_eq!((decoded.kind.as_str(), decoded.scale, decoded.unit), ("decimal", 2, None));
-    for mode in [norn_ir::Rounding::TowardZero, norn_ir::Rounding::HalfEven, norn_ir::Rounding::HalfAwayFromZero] {
+    assert_eq!(
+        (decoded.kind.as_str(), decoded.scale, decoded.unit),
+        ("decimal", 2, None)
+    );
+    for mode in [
+        norn_ir::Rounding::TowardZero,
+        norn_ir::Rounding::HalfEven,
+        norn_ir::Rounding::HalfAwayFromZero,
+    ] {
         let env = fields(decimal(mode));
         assert_ne!(env.canonical_json().unwrap(), bytes);
-        let value: serde_json::Value = serde_json::from_slice(&env.canonical_json().unwrap()).unwrap();
-        let error = serde_json::from_value::<LegacyDecimal>(find_decimal(&value).unwrap().clone()).err().unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&env.canonical_json().unwrap()).unwrap();
+        let error = serde_json::from_value::<LegacyDecimal>(find_decimal(&value).unwrap().clone())
+            .err()
+            .unwrap();
         assert!(error.to_string().contains("unknown field `rounding`"));
     }
 }

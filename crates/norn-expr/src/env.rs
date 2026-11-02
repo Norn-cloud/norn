@@ -175,13 +175,20 @@ impl Type {
                 Some(format) => kind("text", [("format", string(text_format(*format)))]),
             },
             Self::Integer => kind("integer", []),
-            Self::Decimal { scale, unit, rounding } => {
+            Self::Decimal {
+                scale,
+                unit,
+                rounding,
+            } => {
                 let mut fields = vec![("scale", number(*scale))];
                 if let Some(unit) = unit {
-                    fields.push(("unit", object([
-                        ("system", string(unit_system(unit.system))),
-                        ("code", string(&unit.code)),
-                    ])));
+                    fields.push((
+                        "unit",
+                        object([
+                            ("system", string(unit_system(unit.system))),
+                            ("code", string(&unit.code)),
+                        ]),
+                    ));
                 }
                 if let Some(mode) = rounding.canonical_field() {
                     fields.push(("rounding", string(mode)));
@@ -1528,7 +1535,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
             let ty = match current {
                 PropertyType::Text { format } => Type::Text { format: *format },
                 PropertyType::Integer {} => Type::Integer,
-                PropertyType::Decimal { scale, unit, rounding, .. } => Type::Decimal {
+                PropertyType::Decimal {
+                    scale,
+                    unit,
+                    rounding,
+                    ..
+                } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
                     rounding: Rounding::effective(*rounding),
