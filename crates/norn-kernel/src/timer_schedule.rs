@@ -28,11 +28,11 @@ pub const fn deadline(sample: u64, floor: u64, after_millis: u64) -> Option<u64>
 /// Selection neither consumes the timer nor grants authority. The caller must
 /// fence its incarnation and consume it atomically with the governed action.
 #[must_use]
-pub fn next_due<'a>(
-    timers: &'a [TimerDeadline<'a>],
+pub fn next_due<'a, 'id>(
+    timers: &'a [TimerDeadline<'id>],
     sample: u64,
     floor: u64,
-) -> Option<&'a TimerDeadline<'a>> {
+) -> Option<&'a TimerDeadline<'id>> {
     let now = effective_now(sample, floor);
     timers
         .iter()
