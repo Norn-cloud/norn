@@ -461,6 +461,12 @@
     "scripts/demo/drop-02-exact-values-units.sh",
     "scripts/migrate_registry_pr.py",
     "scripts/test_migrate_registry_pr.py",
-    "scripts/demo/drop-common.sh"
+    "scripts/demo/drop-common.sh",
+    "tools/norn-ts/fixtures/stock-parity/scenarios.ts",
+    "tools/norn-ts/src/parity/stock-trace.ts",
+    "tools/norn-ts/test/stock-trace.test.ts",
+    "crates/norn-checker/src/metric/compute/arithmetic.rs",
+    "crates/norn-checker/src/metric/compute/contribution.rs",
+    "verification/query-compute-v1/arithmetic_kani.rs"
   ]
 }
