@@ -19,6 +19,7 @@ use norn_kernel::{
     prepare_action_input, prepare_action_input_for_call,
 };
 use norn_testkit::cell_host::MemoryCell;
+use norn_testkit::proptest;
 use serde_json::json;
 
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
