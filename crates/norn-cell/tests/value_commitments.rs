@@ -1971,15 +1971,17 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
         read(20, &mut DecodeBudget::new(&tiny)).expect("bounded"),
         HistoricalEvidence::Exhausted
     ));
-    let mut bounded=limits;
-    let partial_refuses=(1..16_384).step_by(32).any(|bytes| {
-        bounded.max_candidate_bytes_per_commit=bytes;
-        let mut budget=DecodeBudget::new(&bounded);
-        matches!(read(20,&mut budget),Ok(HistoricalEvidence::Exhausted))
+    let mut bounded = limits;
+    let partial_refuses = (1..16_384).step_by(32).any(|bytes| {
+        bounded.max_candidate_bytes_per_commit = bytes;
+        let mut budget = DecodeBudget::new(&bounded);
+        matches!(read(20, &mut budget), Ok(HistoricalEvidence::Exhausted))
             && budget.remaining_rows() <= limits.max_scan.saturating_sub(7)
     });
-    assert!(partial_refuses,"exhaustion after the first candidate never returns a partial answer");
-
+    assert!(
+        partial_refuses,
+        "exhaustion after the first candidate never returns a partial answer"
+    );
 }
 #[test]
 fn historical_revision_reproduces_real_prefixes_and_refuses_future_or_unbudgeted_receipts() {

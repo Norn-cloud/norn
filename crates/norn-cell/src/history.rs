@@ -135,8 +135,8 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
             &format!("SELECT snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4"),
             params![world,root,key,to_i64(version,"fact version")?],|row|Ok((row.get(0)?,row.get(1)?)),
         )?;
-        let (encoded,hash)=row.ok_or_else(unproven_snapshot)?;
-        let snapshot=decode_snapshot(world,root,key,version,&encoded,&hash)?;
+        let (encoded, hash) = row.ok_or_else(unproven_snapshot)?;
+        let snapshot = decode_snapshot(world, root, key, version, &encoded, &hash)?;
         let snapshot_sha256 = hash_json(&snapshot)?;
         let Some(receipt) = self.receipt(to_u64(commit, "fact commit")?, budget)? else {
             return Ok(None);
@@ -379,16 +379,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
-        let mut history=self.history_read();
-        if known_as_of.frontier>0 && history.receipt(known_as_of.frontier,budget)?.is_none() {return Ok(HistoricalEvidence::Exhausted)}
-        history.known_at(world,object_type,key,known_as_of,budget)
+        let mut history = self.history_read();
+        if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
+            return Ok(HistoricalEvidence::Exhausted);
+        }
+        history.known_at(world, object_type, key, known_as_of, budget)
     }
-    pub(crate) fn history_read(&self)->HistoryRead<'_, '_, E> {HistoryRead{reader:self,receipts:BTreeMap::new()}}
+    pub(crate) fn history_read(&self) -> HistoryRead<'_, '_, E> {
+        HistoryRead {
+            reader: self,
+            receipts: BTreeMap::new(),
+        }
+    }
     fn select_evidence_known_at_with_budget(
-        &self,world:&str,object_type:&str,key:&str,known_as_of:KnowledgeCutoff,
-        budget:&mut crate::reactive::DecodeBudget,
-        mut resolve:impl FnMut(&str,u64,&mut crate::reactive::DecodeBudget)->Result<Option<FactVersionEvidence>,CellError>,
-    )->Result<HistoricalEvidence,CellError> {
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        known_as_of: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+        mut resolve: impl FnMut(
+            &str,
+            u64,
+            &mut crate::reactive::DecodeBudget,
+        ) -> Result<Option<FactVersionEvidence>, CellError>,
+    ) -> Result<HistoricalEvidence, CellError> {
         let capacity = budget.remaining_rows() / 3;
         let limit = to_i64(
             u64::try_from(capacity.saturating_add(1)).map_err(|_bound| unproven_snapshot())?,
@@ -421,9 +436,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let row = SqlRow(row);
             let root: String = row.get(0)?;
             let version = to_u64(row.get(1)?, "fact version")?;
-            let Some(candidate) =
-                resolve(&root,version,budget)?
-            else {
+            let Some(candidate) = resolve(&root, version, budget)? else {
                 return Ok(HistoricalEvidence::Exhausted);
             };
             let selected = roots.get(&root).map(|proof| proof.snapshot().version);
