@@ -159,4 +159,8 @@ fn legacy_history_stays_local_and_cannot_adopt_an_identity() {
     let store = CellStore::open(&path, model(), StoreOptions::default()).expect("legacy reopen");
     assert_eq!(store.read().receipt_at(1).expect("receipt"), Some(receipt));
     assert_eq!(store.cell_id().expect("unqualified"), None);
+    assert!(matches!(
+        store.export_record(1),
+        Err(CellError::BindingMismatch { .. })
+    ));
 }

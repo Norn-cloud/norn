@@ -85,3 +85,23 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 }
+
+#[cfg(feature = "native")]
+impl CellStore<crate::engine::NativeEngine> {
+    /// Open or create a file under an explicitly supplied logical identity.
+    ///
+    /// # Errors
+    /// Store admission failure or a different persisted identity.
+    pub fn open_bound(
+        path: &std::path::Path,
+        model: crate::Model,
+        options: crate::StoreOptions,
+        expected: &CellId,
+    ) -> Result<Self, CellError> {
+        Self::from_engine_bound(
+            crate::engine::NativeEngine::open(path, options)?,
+            model,
+            expected,
+        )
+    }
+}

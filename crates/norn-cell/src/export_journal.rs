@@ -264,6 +264,18 @@ impl<E: SqlEngine> CellStore<E> {
         let Some(record) = read_record(&self.conn, commit_seq)? else {
             return Ok(None);
         };
+        if record
+            .bindings
+            .get(crate::cell_identity::KEY)
+            .and_then(|value| norn_ir::cell_id::CellId::try_from(value.clone()).ok())
+            .is_none()
+        {
+            return Err(CellError::BindingMismatch {
+                key: crate::cell_identity::KEY.to_owned(),
+                expected: "a qualified cell export".to_owned(),
+                found: String::new(),
+            });
+        }
         for entry in &record.entries {
             self.read()
                 .verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
