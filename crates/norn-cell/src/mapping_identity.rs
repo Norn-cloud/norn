@@ -133,6 +133,15 @@ pub(crate) fn capture<E: SqlEngine>(
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// OBS-EVIDENCE-1: governed reads cannot consume disputed source subjects.
+    pub(crate) fn refuse_disputed_subject(&self, key: &norn_kernel::FactKey) -> Result<(), CellError> {
+        if !self.source_conflict_findings(key.object_type.as_str(), &key.key)?.is_empty()
+            || !self.identity_findings(key.object_type.as_str(), &key.key)?.is_empty() {
+            return Err(CellError::QualityEvaluation("core.boundary.import_finding: disputed source identity".into()));
+        }
+        Ok(())
+    }
+
     fn identity_evidence(&self) -> Result<Vec<IdentityEvidence>, CellError> {
         let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
         let mut evidence = Vec::new();

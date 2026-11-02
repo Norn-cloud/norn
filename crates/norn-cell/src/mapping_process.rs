@@ -4,7 +4,7 @@ use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
-    Observed, TypeCatalog, World, load_slice,
+    Observed, TypeCatalog, World,
 };
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -78,7 +78,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = load_slice(self, [key.clone()])?;
+            // Admitted evidence revalidation needs the preserved raw version, even in quarantine.
+            let reader = self.store().read();
+            let state = norn_kernel::FactState {
+                version: norn_kernel::FactVersion(reader.version(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?),
+                values: reader.object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?.map(|r| r.values),
+            };
+            let slice = norn_kernel::FactSlice::from([(key.clone(), state)]);
             let mut values = record
                 .invocations
                 .into_iter()

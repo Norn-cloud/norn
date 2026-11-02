@@ -1464,6 +1464,7 @@ where
 
     fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(key)?;
         let version = version_of(&reader, key)?;
         let values = reader
             .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
@@ -1481,6 +1482,7 @@ where
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(key)?;
         let mut limits =
             ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
         limits.max_candidate_bytes_per_commit = max_bytes;
@@ -1513,6 +1515,7 @@ where
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(key)?;
         let profile = norn_ir::ResourceLimitProfile::norn_limits_v1();
         let mut limits = ReactiveLimits::from_profile(&profile);
         limits.max_candidate_bytes_per_commit = max_bytes;
@@ -1545,6 +1548,8 @@ where
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
+        self.store.read().refuse_disputed_subject(&key.source)?;
+        self.store.read().refuse_disputed_subject(&key.target)?;
         link_state(&self.store.read(), key)
     }
 
@@ -1556,6 +1561,7 @@ where
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(source)?;
         let targets = reader.link_targets_with_versions(
             MAIN_WORLD,
             source.object_type.as_str(),
@@ -1573,6 +1579,7 @@ where
         let mut reads = Vec::with_capacity(targets.len());
         for (target, target_type, version) in targets {
             let key = LinkKey::new(source.clone(), link, FactKey::new(target_type, target));
+            reader.refuse_disputed_subject(&key.target)?;
             reads.push(LinkReadTarget {
                 version: FactVersion(version),
                 key,

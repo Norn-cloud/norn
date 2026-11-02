@@ -6162,6 +6162,8 @@ norn_testkit::proptest::proptest! {
             }
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
+            let governed = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+            norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &governed).is_err());
             let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
@@ -6293,6 +6295,10 @@ norn_testkit::proptest::proptest! {
         if !first_nfc {
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&canonical_id), Err(CellError::UnsupportedMappingProfile)));
         }
+        let key = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &key).is_err());
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_bounded(&cell, &key, 4096).is_err());
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_reference(&cell, &key, 4096).is_err());
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
