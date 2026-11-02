@@ -187,10 +187,7 @@ fn contracts(
     let mut fields = BTreeSet::new();
     let interfaces: BTreeMap<_, _> = pool
         .iter()
-        .filter_map(|a| {
-            interface(a)
-                .map(|root| (root.interface.name.clone(), root.interface))
-        })
+        .filter_map(|a| interface(a).map(|root| (root.interface.name.clone(), root.interface)))
         .collect();
     while let Some(interface) = pending.pop() {
         if !seen.insert(interface.name.clone()) {

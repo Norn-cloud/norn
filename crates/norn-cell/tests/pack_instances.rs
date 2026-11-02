@@ -33,8 +33,18 @@ impl ActionAuthorizer for Policy {
     fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         Ok(())
     }
-    fn authorize_read(&self, _: &norn_kernel::ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> { Ok(()) }
-    fn authorize_read_type(&self, _: &norn_kernel::ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> { Ok(()) }
+    fn authorize_read(
+        &self,
+        _: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        Ok(())
+    }
 }
 fn pin(a: &ArtifactEnvelope) -> InterpretationEndpoint {
     InterpretationEndpoint {
@@ -232,11 +242,13 @@ fn values(text: &str) -> JsonObject {
         .expect("object")
         .clone()
 }
-fn call<'a>(a: &'a ActionRoot, id: &str, input: JsonObject) -> ActionCall<'a> {
+fn call<'a>(a: &'a ActionRoot, all: &'a [ArtifactEnvelope], id: &str, input: JsonObject) -> ActionCall<'a> {
+    let source = all.iter().filter(|item| item.kind() == ArtifactKind::Action)
+        .find(|item| payload::<ActionRoot>(item).action_id == a.action_id).expect("exact action source");
     ActionCall {
         action: a,
-        action_artifact_id: &a.action_id,
-        action_version: "1.0.0",
+        action_artifact_id: &source.artifact_id,
+        action_version: &source.version,
         scope: BTreeMap::from([
             ("orgId".into(), "org_demo".into()),
             ("environmentId".into(), "dev".into()),
@@ -345,8 +357,12 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             "org_demo/dev",
         )
         .expect("atomic definition installation");
-    let mut cell: Cell =
-        SqliteCell::new(store, "org_demo/dev", |command: &norn_kernel::Command<JsonObject>| command.payload.clone()).expect("host");
+    let mut cell: Cell = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
+    )
+    .expect("host");
     for (action_id, id, input) in [
         (
             "demo.ledger.open_usd",
@@ -376,7 +392,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
         commit_action(
             &mut cell,
             &catalog,
-            &call(action, id, values(input)),
+            &call(action, &all, id, values(input)),
             &Policy,
         )
         .expect("governed account creation");
@@ -402,7 +418,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
         let ActionOutcome::Committed { receipt, record } = commit_action(
             &mut cell,
             &catalog,
-            &call(action, id, values(input)),
+            &call(action, &all, id, values(input)),
             &Policy,
         )
         .expect("ordinary evaluator and atomic commit") else {
@@ -441,15 +457,28 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             r#"{"id":"wrong-instance","ledger_id":"ledger-fine","from_account":"cash","to_account":"sales","currency":"USD","debit":25,"credit":25}"#,
         ),
     ] {
-        let before = cell.store().read().dump().expect("before");
+        let mut before = cell.store().read().dump().expect("before");
         assert!(
-            commit_action(&mut cell, &catalog, &call(usd, key, values(input)), &Policy).is_err()
+            commit_action(&mut cell, &catalog, &call(usd, &all, key, values(input)), &Policy).is_err()
         );
-        assert_eq!(before, cell.store().read().dump().expect("atomic refusal"));
+        let mut after = cell.store().read().dump().expect("atomic refusal");
+        for event in after["_norn_ledger"].iter().skip(before["_norn_ledger"].len()) {
+            let row: Vec<serde_json::Value> = serde_json::from_str(event).expect("ledger row");
+            let event: serde_json::Value = serde_json::from_str(row[3].as_str().expect("event text")).expect("audit event");
+            assert_eq!(event["op"], "invariant_refused");
+        }
+        for audit in ["_norn_clock", "_norn_ledger", "_norn_receipt", "_norn_export_journal", "_norn_export_payload"] {
+            before.remove(audit); after.remove(audit);
+        }
+        assert!(before == after, "refused {key} changed business state or effects");
     }
     drop(cell);
-    let mut cell: Cell =
-        SqliteCell::new(open(), "org_demo/dev", |command: &norn_kernel::Command<JsonObject>| command.payload.clone()).expect("reopen");
+    let mut cell: Cell = SqliteCell::new(
+        open(),
+        "org_demo/dev",
+        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
+    )
+    .expect("reopen");
     assert_eq!(
         cell.store()
             .read()
@@ -472,7 +501,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
             .find(|a| a.action_id == action_id)
             .expect("action");
         assert!(
-            matches!(commit_action(&mut cell, &catalog, &call(action, id, values(input)), &Policy).expect("replay"), ActionOutcome::Replayed { record } if record == original)
+            matches!(commit_action(&mut cell, &catalog, &call(action, &all, id, values(input)), &Policy).expect("replay"), ActionOutcome::Replayed { record } if record == original)
         );
     }
 }
