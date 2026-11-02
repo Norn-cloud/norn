@@ -816,6 +816,16 @@ impl ActionEffectProgram {
 }
 
 impl JsonValue {
+    /// Decode definition metadata with this value's existing strict deserializer.
+    /// Runtime numeric data uses [`runtime::decode`] and [`RuntimeValue`].
+    ///
+    /// # Errors
+    /// Returns the target type's decoding error, including unknown fields.
+    pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T, String> {
+        T::deserialize(serde::de::IntoDeserializer::into_deserializer(self.clone()))
+            .map_err(|error: serde::de::value::Error| error.to_string())
+    }
+
     /// Return `Some(&str)` if this is a `JsonValue::String`, else `None`.
     pub fn as_string(&self) -> Option<&str> {
         match self {

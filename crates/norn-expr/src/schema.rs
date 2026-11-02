@@ -437,8 +437,9 @@ pub fn decimal_refinement(
     if schema.get("type").and_then(JsonValue::as_string) != Some("number") {
         return Err(Violation::new(path, "nornType requires type:number"));
     }
-    let site: norn_ir::PropertyType =
-        norn_ir::runtime::decode(annotation).map_err(|reason| Violation::new(path, reason))?;
+    let site: norn_ir::PropertyType = annotation
+        .decode()
+        .map_err(|reason| Violation::new(path, reason))?;
     let norn_ir::PropertyType::Decimal {
         scale,
         unit,
