@@ -3089,9 +3089,12 @@ fn property_rule_pin_observations_are_classifiable_and_native_writes_refuse() {
         .unwrap()
         .events
         .iter()
-        .filter_map(|event| match event {
-            ObservationEvent::DataQualityFinding { fact } => Some(fact),
-            _ => None,
+        .filter_map(|event| {
+            if let ObservationEvent::DataQualityFinding { fact } = event {
+                Some(fact)
+            } else {
+                None
+            }
         })
         .collect();
     assert_eq!(findings.len(), 2);
@@ -3120,6 +3123,9 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Builtin);
         let (_,_,changed_types) = property_domain_fixture(changed,"1");
         let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_types);
+        norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
+        let (_,_,changed_bounds) = property_domain_fixture(scale,"1");
+        let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_bounds);
         norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
         let mut changed_interface = interface.clone();
         changed_interface.properties[0].constraints.max = Some(norn_ir::DecimalLiteral("9".into()));
