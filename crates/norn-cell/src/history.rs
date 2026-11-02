@@ -143,9 +143,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         let commit = to_u64(commit, "snapshot commit")?;
         if let Some((pending_commit, digests)) = self.pending_digests
-            && pending_commit == commit {
-            let expected = digests.get(&(snapshot.root_type.clone(), snapshot.key.clone(), snapshot.version));
-            return if crate::receipt_commitment::receipt_digest_matches(expected.map(String::as_str), &hash) { Ok(snapshot) } else { Err(unproven_snapshot()) };
+            && pending_commit == commit
+        {
+            let expected = digests.get(&(
+                snapshot.root_type.clone(),
+                snapshot.key.clone(),
+                snapshot.version,
+            ));
+            return if crate::receipt_commitment::receipt_digest_matches(
+                expected.map(String::as_str),
+                &hash,
+            ) {
+                Ok(snapshot)
+            } else {
+                Err(unproven_snapshot())
+            };
         }
         let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
         if hash_json(&receipt.body)? != receipt.hash
