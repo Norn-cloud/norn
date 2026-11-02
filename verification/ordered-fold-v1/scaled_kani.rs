@@ -183,3 +183,85 @@ fn rescale_invalid_scales_and_full_width_boundaries_refuse() {
     assert!(profile.rescale(Decimal::MAX).is_err());
     assert!(profile.rescale(Decimal::MIN).is_err());
 }
+
+/// VAL-EXACT-1: all u32 scale derivations and fixed full-width overflow witnesses.
+#[kani::proof]
+#[kani::unwind(40)]
+fn derived_exact_scales_and_overflow_refuse() {
+    let (a, b): (u32, u32) = kani::any();
+    let multiply: bool = kani::any();
+    let op = if multiply { "Multiply" } else { "Add" };
+    let expected = if multiply {
+        u64::from(a) + u64::from(b)
+    } else {
+        u64::from(a.max(b))
+    };
+    assert_eq!(
+        ScaledArithmetic::exact_result_scale(op, a, b)
+            .ok()
+            .map(u64::from),
+        (expected <= 18).then_some(expected)
+    );
+    assert_eq!(
+        ScaledArithmetic::exact_result_scale("Add", a, b),
+        ScaledArithmetic::exact_result_scale("Subtract", a, b)
+    );
+    assert!(ScaledArithmetic::exact_binary("Add", Decimal::MAX, Decimal::ONE).is_err());
+    assert!(ScaledArithmetic::exact_binary("Subtract", Decimal::MIN, Decimal::ONE).is_err());
+    assert!(ScaledArithmetic::exact_binary("Multiply", Decimal::MAX, Decimal::MAX).is_err());
+}
+
+/// VAL-ROUND: checked division uses the declared site, including signed truncation.
+#[kani::proof]
+#[kani::unwind(40)]
+fn exact_division_signed_halves_and_refusals() {
+    let a = i16::from(kani::any::<i8>());
+    let site = ScaledArithmetic {
+        scale: 0,
+        rounding: Rounding::TowardZero,
+    };
+    let result = site.divide(Decimal::from(a), Decimal::from(2)).unwrap();
+    assert_eq!(result.mantissa(), i128::from(a / 2));
+    assert_eq!(result.scale(), 0);
+    assert!(site.divide(Decimal::ONE, Decimal::ZERO).is_err());
+    assert!(ScaledArithmetic { scale: 19, ..site }
+        .divide(Decimal::ZERO, Decimal::ONE)
+        .is_err());
+}
+
+/// VAL-ROUND: all u32 scales, finite mode choices and inherited/explicit precedence.
+#[kani::proof]
+fn explicit_round_site_requires_a_mode_and_bounds_scale() {
+    fn mode(choice: u8) -> Option<super::Rounding> {
+        match choice % 5 {
+            0 => None,
+            1 => Some(super::Rounding::Refuse),
+            2 => Some(super::Rounding::TowardZero),
+            3 => Some(super::Rounding::HalfEven),
+            _ => Some(super::Rounding::HalfAwayFromZero),
+        }
+    }
+    let scale: u32 = kani::any();
+    let declared = mode(kani::any());
+    let inherited =
+        mode(kani::any()).map(|rounding| super::ScaledArithmetic { scale: 2, rounding });
+    let exact: bool = kani::any();
+    let result = super::ScaledArithmetic::rounding_site(scale, declared, inherited, exact);
+    if let Some(site) = result.as_ref().ok().and_then(|site| *site) {
+        assert!(scale <= 18);
+        assert_eq!(site.scale, scale);
+        assert_eq!(
+            Some(site.rounding),
+            declared.or_else(|| inherited.map(|site| site.rounding))
+        );
+    }
+    assert_eq!(
+        matches!(result, Ok(None)),
+        declared.is_none() && inherited.is_none() && !exact
+    );
+    assert_eq!(
+        result.is_err(),
+        (declared.is_none() && inherited.is_none() && exact)
+            || (scale > 18 && (declared.is_some() || inherited.is_some() || exact))
+    );
+}

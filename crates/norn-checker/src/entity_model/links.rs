@@ -1335,9 +1335,7 @@ impl<'a> Checker<'a, '_> {
                         return (Some(format!("`self` could not be bound: {error}")), false);
                     }
                 };
-                if let Err(findings) =
-                    norn_expr::check_expression(expression, &bound, &norn_expr::Type::Bool)
-                {
+                if let Err(findings) = expression.check_typed(&bound, &norn_expr::Type::Bool) {
                     return (
                         Some(findings.first().map_or_else(
                             || "expression failed type checking".to_owned(),
@@ -1374,7 +1372,8 @@ impl<'a> Checker<'a, '_> {
                         );
                     }
                 };
-                if norn_expr::check_expression(expression, &property_only, &norn_expr::Type::Bool)
+                if expression
+                    .check_typed(&property_only, &norn_expr::Type::Bool)
                     .is_err()
                 {
                     (

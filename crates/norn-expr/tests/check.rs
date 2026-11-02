@@ -70,7 +70,13 @@ fn rejects(self_type: &str, source: &str, expected: &Type, code: &str) {
 }
 
 fn decimal(scale: u64) -> Type {
-    Type::Decimal { scale, unit: None }
+    Type::Decimal {
+        scale,
+        unit: None,
+        rounding: norn_ir::Rounding::Refuse,
+        currency_source: None,
+        per_unit: None,
+    }
 }
 
 fn temporal_input_env() -> ZenTypeEnv {
@@ -1612,4 +1618,393 @@ fn generated_accepted_unary_tests_are_total() {
     assert!(missing.is_empty(), "not admitted: {missing:?}");
     assert!(accepted > 200, "only {accepted} accepted");
     assert!(rejected > 1_000, "only {rejected} rejected");
+}
+
+#[test]
+fn val_exact_typed_sites_bind_admission_and_execution() {
+    let env =
+        ZenTypeEnv::input_only(fields([("amount", decimal(3))]), EnvOptions::default()).unwrap();
+    let context = Value::object([(
+        "input",
+        Value::object([("amount", Value::Number("1.005".parse().unwrap()))]),
+    )]);
+    let run = |source: &str, expected: &Type| {
+        Expression::compile(source).unwrap().evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            expected,
+        )
+    };
+    assert_eq!(
+        run("input.amount * 0.1 > 0", &Type::Bool)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Bool(true)
+    );
+    let refused = run("input.amount / 3 > 0", &Type::Bool);
+    assert!(refused.result.is_err());
+    assert_eq!(refused.units_used, 0, "refuse before VM execution");
+    assert!(
+        Expression::compile("input.amount / 3 > 0")
+            .unwrap()
+            .check_typed(&env, &Type::Bool)
+            .unwrap_err()
+            .iter()
+            .any(|d| d.code == "core.values.inexact")
+    );
+    assert!(
+        run("round(input.amount, 2) > 0", &Type::Bool)
+            .result
+            .is_err()
+    );
+    let destination = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfAwayFromZero,
+        currency_source: None,
+        per_unit: None,
+    };
+    assert_eq!(
+        run("input.amount", &destination)
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    assert_eq!(
+        run("null", &decimal(2).optional())
+            .result
+            .unwrap()
+            .into_value(),
+        Value::Null
+    );
+    assert!(run("null", &decimal(2)).result.is_err());
+    for source in ["{amount: 1 / 3}", "{amount: 1.0005}"] {
+        let expected = env.variables().get("input").unwrap();
+        Expression::compile(source)
+            .unwrap()
+            .check_typed(&env, expected)
+            .unwrap();
+        let attempt = run(source, expected);
+        assert!(attempt.result.is_err());
+        assert!(
+            attempt.units_used > 0,
+            "declared Refuse is enforced at the result site"
+        );
+    }
+    let plain =
+        ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("input.amount / 3 > 0").unwrap();
+    assert!(
+        !check_expression_with(
+            &expression,
+            &plain,
+            &Type::Bool,
+            &ResourceLimitProfile::norn_limits_v1()
+        )
+        .unwrap()
+        .uses_exact_arithmetic()
+    );
+    assert!(
+        expression
+            .evaluate_typed_metered(&context, EvaluationBudget::default(), &plain, &Type::Bool)
+            .result
+            .is_ok()
+    );
+}
+
+#[test]
+fn val_exact_declared_division_refuses_zero_instead_of_producing_null() {
+    let env = ZenTypeEnv::input_only(
+        fields([("a", decimal(2)), ("b", decimal(2))]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("input.a / input.b").unwrap();
+    assert!(expression.check_typed(&env, &decimal(2)).is_ok());
+    for (denominator, success) in [("2", true), ("3", false), ("0", false)] {
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(denominator.parse().unwrap())),
+            ]),
+        )]);
+        assert_eq!(
+            expression
+                .evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &decimal(2))
+                .result
+                .is_ok(),
+            success
+        );
+    }
+}
+
+#[test]
+fn val_round_explicit_site_scopes_division_and_rescale() {
+    let env = ZenTypeEnv::input_only(fields([("x", Type::Number)]), EnvOptions::default()).unwrap();
+    let run = |source: &str, expected: &Type| {
+        Expression::compile(source)
+            .unwrap()
+            .evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, expected)
+            .result
+            .map(|e| e.into_value())
+    };
+    for (mode, expected) in [
+        ("half_even", "1"),
+        ("half_away_from_zero", "1.01"),
+        ("toward_zero", "1"),
+    ] {
+        assert_eq!(
+            run(&format!("round(1.005, 2, '{mode}')"), &Type::Number).unwrap(),
+            Value::Number(expected.parse().unwrap())
+        );
+    }
+    assert_eq!(
+        run("round(1 / 3, 2, 'half_even') == 0.33", &Type::Bool).unwrap(),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "round(round(1 / 3, 3, 'half_even'), 2, 'toward_zero') == 0.33",
+            &Type::Bool
+        )
+        .unwrap(),
+        Value::Bool(true)
+    );
+    for source in [
+        "round(1 / 3, 2, 'refuse')",
+        "round(1 / 0, 2, 'half_even')",
+        "round(1 / 3, 2, 'half_even') + 1 / 3",
+        "round((1 / 3) * 3, 2, 'half_even')",
+    ] {
+        assert!(run(source, &Type::Number).is_err(), "{source}");
+    }
+    let destination = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfAwayFromZero,
+        currency_source: None,
+        per_unit: None,
+    };
+    assert_eq!(
+        run("round(1.005, 2)", &destination).unwrap(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    let oversized = Expression::compile("round(1, 19)").unwrap();
+    assert!(oversized.check_typed(&env, &destination).is_err());
+    assert!(oversized.check_typed(&env, &Type::Number).is_ok());
+    // Legacy two-argument round stays on the existing function and retains its fuel.
+    let old = Expression::compile("round(1.005, 2)")
+        .unwrap()
+        .evaluate_metered(&Value::Null, EvaluationBudget::default());
+    assert_eq!(old.units_used, 6, "preserve legacy round fuel");
+    assert_eq!(
+        old.result.unwrap().into_value(),
+        Value::Number("1.01".parse().unwrap())
+    );
+    for source in ["round(1, 2, 'unknown')", "round(1, 19, 'half_even')"] {
+        assert!(Expression::compile(source).is_err());
+    }
+}
+
+#[test]
+fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
+    let env = ZenTypeEnv::input_only(
+        fields([("a", decimal(2)), ("b", decimal(2))]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("round(input.a / input.b, 2, 'half_even')").unwrap();
+    let checked = expression.check_typed(&env, &Type::Number).unwrap();
+    for (b, success) in [("3", true), ("0", false)] {
+        let context = Value::object([(
+            "input",
+            Value::object([
+                ("a", Value::Number("1".parse().unwrap())),
+                ("b", Value::Number(b.parse().unwrap())),
+            ]),
+        )]);
+        let attempt = expression.evaluate_typed_metered(
+            &context,
+            EvaluationBudget::default(),
+            &env,
+            &Type::Number,
+        );
+        assert_eq!(attempt.result.is_ok(), success);
+        assert!(attempt.units_used <= checked.cost().units());
+    }
+}
+
+fn rate_environment(currency: &str, denominator: &str) -> (ZenTypeEnv, Type) {
+    let unit = |code: &str| norn_ir::UnitRef {
+        system: norn_ir::UnitSystem::Ucum,
+        code: code.into(),
+    };
+    let decimal = |unit, currency_source, per_unit| Type::Decimal {
+        scale: 3,
+        unit,
+        currency_source,
+        per_unit,
+        rounding: norn_ir::Rounding::Refuse,
+    };
+    let currency_source = Some(norn_ir::metric::DimensionPath {
+        links: Vec::new(),
+        property: norn_ir::PropertyId("currency".into()),
+    });
+    let fields = std::collections::BTreeMap::from([
+        ("currency".into(), Type::enumeration([currency])),
+        (
+            "rate".into(),
+            decimal(None, currency_source.clone(), Some(unit(denominator))),
+        ),
+        ("grams".into(), decimal(Some(unit("g")), None, None)),
+        ("scalar".into(), Type::Number),
+    ]);
+    let env = ZenTypeEnv::input_only(fields, norn_expr::EnvOptions::default())
+        .expect("fixed currency rate environment");
+    let money = Type::Decimal {
+        scale: 2,
+        unit: None,
+        currency_source,
+        per_unit: None,
+        rounding: norn_ir::Rounding::Refuse,
+    };
+    (env, money)
+}
+
+#[test]
+fn val_rate_usd_per_gram_times_grams_uses_destination_and_literal_unit_note() {
+    let (env, money) = rate_environment("USD", "g");
+    let source = Expression::compile("input.rate * input.grams").unwrap();
+    let checked = source
+        .check_typed(&env, &money)
+        .expect("bounded rate product");
+    assert!(checked.uses_exact_arithmetic());
+    assert!(checked.runtime_source().contains("round(("));
+    let context = Value::object([(
+        "input",
+        Value::object([
+            ("currency", Value::String("USD".into())),
+            ("rate", Value::Number("15".parse().unwrap())),
+            ("grams", Value::Number("20".parse().unwrap())),
+            ("scalar", Value::Number("2".parse().unwrap())),
+        ]),
+    )]);
+    let result = source
+        .evaluate_typed_metered(
+            &context,
+            norn_expr::EvaluationBudget::default(),
+            &env,
+            &money,
+        )
+        .result
+        .unwrap();
+    assert_eq!(
+        result.value(),
+        &norn_expr::Value::Number("300".parse().unwrap())
+    );
+    let checked = Expression::compile("input.grams > 0")
+        .unwrap()
+        .check_typed(&env, &Type::Bool)
+        .unwrap();
+    assert!(
+        checked
+            .notes()
+            .iter()
+            .any(|note| note.code == "core.values.literal_unit" && note.message.contains('g'))
+    );
+}
+
+#[test]
+fn val_rate_refuses_mismatched_units_compounds_erased_scalars_and_wrong_destinations() {
+    let (env, money) = rate_environment("USD", "mg");
+    assert!(
+        Expression::compile("input.rate * input.grams")
+            .unwrap()
+            .check_typed(&env, &money)
+            .is_err()
+    );
+    let (env, money) = rate_environment("USD", "g");
+    for source in [
+        "input.rate * input.rate",
+        "input.grams + input.scalar",
+        "input.scalar * input.grams",
+    ] {
+        assert!(
+            Expression::compile(source)
+                .unwrap()
+                .check_typed(&env, &money)
+                .is_err(),
+            "{source}"
+        );
+    }
+    assert!(
+        Expression::compile("input.rate * input.grams")
+            .unwrap()
+            .check_typed(&env, &Type::Number)
+            .is_err()
+    );
+}
+
+#[test]
+fn val_exact_admitted_legacy_inputs_keep_generated_presence_and_actual_fuel() {
+    let env = ZenTypeEnv::input_only(
+        fields([("name", Type::text().optional())]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let context = Value::object([(
+        "input",
+        Value::object([("name", Value::String("a".repeat(30_000)))]),
+    )]);
+    let expression = Expression::compile("len(lower(upper(input.name))) > 0").unwrap();
+    assert!(expression.check_typed(&env, &Type::Bool).is_err());
+    let attempt = expression.evaluate_admitted_metered(
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert_eq!(attempt.result.unwrap().into_value(), Value::Bool(true));
+    assert!(attempt.units_used > 0);
+    let (env, money) = rate_environment("USD", "g");
+    let invalid = Expression::compile("input.scalar * input.grams").unwrap();
+    assert!(
+        invalid
+            .evaluate_admitted_metered(&Value::Null, EvaluationBudget::default(), &env, &money)
+            .result
+            .is_err()
+    );
+}
+
+#[test]
+fn val_rate_dynamic_currency_is_outside_the_bounded_exact_profile() {
+    let source = Some(norn_ir::metric::DimensionPath {
+        links: Vec::new(),
+        property: norn_ir::PropertyId("currency".into()),
+    });
+    let env = ZenTypeEnv::input_only(
+        fields([
+            ("currency", Type::enumeration(["USD", "EUR"])),
+            (
+                "amount",
+                Type::Decimal {
+                    scale: 2,
+                    unit: None,
+                    currency_source: source,
+                    per_unit: None,
+                    rounding: norn_ir::Rounding::Refuse,
+                },
+            ),
+        ]),
+        EnvOptions::default(),
+    )
+    .unwrap();
+    let expression = Expression::compile("input.amount == input.amount").unwrap();
+    assert!(expression.check_typed(&env, &Type::Bool).is_err());
+    check_expression_with(&expression, &env, &Type::Bool, &roomy_limits())
+        .expect("legacy profile remains available");
 }

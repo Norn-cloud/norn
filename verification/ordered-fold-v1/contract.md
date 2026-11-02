@@ -172,9 +172,11 @@ FOLD-PROPERTY: generated exact integer operands and scales 0..18 compare aligned
 add/subtract with an independent signed-integer reference. Generated fuel limits
 and charges check shared policy-clone accounting and sticky exhaustion.
 These sampled properties supplement the named boundary scenarios; no exhaustive
-proof is claimed. The serialized graph evaluator uses heap-backed dynamic values
-and host graph loading, so a bounded Kani model of that path is not supplied;
-the arithmetic and meter harnesses below cover only the scoped engine methods.
+proof is claimed. Production fold execution and scaled arithmetic are covered
+by these sampled properties and the separately scoped engine harnesses below.
+The serialized graph evaluator uses heap-backed dynamic values and host graph
+loading, so a bounded Kani model of that path is not supplied here. The arithmetic
+and atomic-meter harnesses cover only the engine methods and bounds listed below.
 
 ## Engine proof correspondence
 

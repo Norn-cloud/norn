@@ -373,10 +373,12 @@ pub fn check_artifact_set(
             .chain(resolution)
             .collect(),
     };
+    let unit_findings = crate::unit_admission::check(&normalized_artifacts, &normalized_base);
     dedupe_findings(
         findings
             .into_iter()
             .chain(layout_findings)
+            .chain(unit_findings)
             .chain(crate::defined_concepts::check_cycles(
                 &normalized_artifacts,
                 &normalized_base,

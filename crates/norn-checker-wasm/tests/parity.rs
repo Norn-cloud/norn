@@ -270,7 +270,7 @@ fn check_matches_the_checker_called_directly() {
 }
 
 #[test]
-fn clean_set_issues_the_pinned_receipt() {
+fn clean_set_emits_v2_and_preserves_the_historical_receipt_pin() {
     let output = json_of(&output_of("retail-registry-clean"));
     assert_eq!(output["format"], "norn-checker-abi/check@1");
     assert_eq!(output["admitted"], true);
@@ -280,7 +280,19 @@ fn clean_set_issues_the_pinned_receipt() {
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
     assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
-    assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
+    assert_eq!(output["receipt"]["typeEnv"]["version"], 2);
+    assert_ne!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
+    let historical: Value = serde_json::from_str(include_str!(
+        "../../norn-checker/tests/golden/check-receipt.retail.json"
+    ))
+    .expect("historical receipt");
+    let mut projected = output["receipt"].clone();
+    projected["typeEnv"] = historical["typeEnv"].clone();
+    assert_eq!(
+        norn_checker::receipt::admission_receipt_sha256(&projected.to_string())
+            .expect("historical projection hash"),
+        RETAIL_RECEIPT_SHA256
+    );
 }
 
 #[test]

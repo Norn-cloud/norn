@@ -77,7 +77,144 @@ impl Expression {
     /// remaining units are spent.
     #[must_use]
     pub fn evaluate_metered(&self, context: &Value, budget: EvaluationBudget) -> EvaluationAttempt {
+        self.evaluate_with_meter(context, &Meter::new(budget.units()))
+    }
+
+    /// VAL-ROUND: check the shared type grammar and the declared exact-site profile.
+    ///
+    /// # Errors
+    /// Returns structural/type findings or refusals from the exact arithmetic profile.
+    pub fn check_typed(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+        crate::check::check_typed_expression(self, env, expected)
+    }
+
+    /// VAL-EXACT-1: execute an admitted consumer while retaining legacy non-exact behavior.
+    /// Admission owns static type/cost checks; every runtime path retains the same meter.
+    /// Exact reads, destinations and explicit round sites still use the strict typed binding.
+    #[must_use]
+    pub fn evaluate_admitted_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        if crate::check::requires_exact_profile(self, env, expected) {
+            self.evaluate_typed_metered(context, budget, env, expected)
+        } else {
+            self.evaluate_metered(context, budget)
+        }
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: bind admission and execution to the same source
+    /// and declared environment; plain Number retains its existing evaluator.
+    #[must_use]
+    pub fn evaluate_typed_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        let checked = match self.check_typed(env, expected) {
+            Ok(checked) => checked,
+            Err(found) => {
+                return EvaluationAttempt {
+                    result: Err(ExprError::Compile {
+                        message: found
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    }),
+                    units_used: 0,
+                };
+            }
+        };
+        if checked.uses_exact_arithmetic() {
+            let lowered = match Self::compile(checked.runtime_source()) {
+                Ok(lowered) => lowered,
+                Err(error) => {
+                    return EvaluationAttempt {
+                        result: Err(error),
+                        units_used: 0,
+                    };
+                }
+            };
+            let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
+            if let Ok(evaluation) = &mut attempt.result
+                && let Err(error) = materialize(expected, env, &mut evaluation.value)
+            {
+                attempt.result = Err(error);
+            }
+            attempt
+        } else {
+            self.evaluate_metered(context, budget)
+        }
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: use exact intermediates and an optional destination.
+    /// A destination supplies its declared mode, defaulting to exact/refuse.
+    #[must_use]
+    pub fn evaluate_exact_metered(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+    ) -> EvaluationAttempt {
+        self.evaluate_exact_site(context, budget, site, false)
+    }
+
+    fn evaluate_exact_site(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+        nullable: bool,
+    ) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
+        let result = (|| {
+            let profile = match site {
+                Some(norn_ir::PropertyType::Decimal {
+                    scale, rounding, ..
+                }) => Some(crate::convert::scaled_site(
+                    scale.0,
+                    rounding.unwrap_or(norn_ir::Rounding::Refuse),
+                )?),
+                None => None,
+                Some(_) => {
+                    return Err(ExprError::Evaluation {
+                        message: "exact site must be a declared Decimal".to_owned(),
+                    });
+                }
+            };
+            let evaluated =
+                self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
+            let mut evaluated = evaluated.result?;
+            if nullable && evaluated.value == Value::Null {
+                return Ok(evaluated);
+            }
+            if let Some(site) = site {
+                let Value::Number(number) = &evaluated.value else {
+                    return Err(ExprError::Evaluation {
+                        message: "Decimal site requires a numeric result".to_owned(),
+                    });
+                };
+                evaluated.value = Value::Number(crate::rescale_decimal(site, number)?);
+            }
+            Ok(evaluated)
+        })();
+        EvaluationAttempt {
+            result,
+            units_used: meter.used().min(meter.limit()),
+        }
+    }
+
+    fn evaluate_with_meter(&self, context: &Value, meter: &Meter) -> EvaluationAttempt {
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
         let result = (|| {
@@ -110,7 +247,7 @@ impl Expression {
         })();
         EvaluationAttempt {
             result,
-            units_used: meter.used().min(budget.units()),
+            units_used: meter.used().min(meter.limit()),
         }
     }
 }
@@ -401,6 +538,43 @@ fn map_isolate_error(err: IsolateError) -> ExprError {
         | IsolateError::MissingContextReference => ExprError::Evaluation {
             message: err.to_string(),
         },
+    }
+}
+
+fn materialize(
+    ty: &crate::Type,
+    env: &crate::ZenTypeEnv,
+    value: &mut Value,
+) -> Result<(), ExprError> {
+    match (ty, value) {
+        (crate::Type::Optional(_), Value::Null) => Ok(()),
+        (crate::Type::Optional(inner), value) => materialize(inner, env, value),
+        (crate::Type::Decimal { .. }, Value::Number(number)) => {
+            *number = crate::rescale_decimal(
+                &crate::check::decimal_destination(ty).ok_or_else(|| ExprError::Evaluation {
+                    message: "invalid Decimal site".into(),
+                })?,
+                number,
+            )?;
+            Ok(())
+        }
+        (crate::Type::Record(name), Value::Object(fields)) => {
+            if let Some(record) = env.record(name) {
+                for (key, value) in fields {
+                    if let Some(field) = record.fields.get(key) {
+                        materialize(&field.ty, env, value)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        (crate::Type::List(item), Value::Array(items)) => {
+            for value in items {
+                materialize(item, env, value)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
