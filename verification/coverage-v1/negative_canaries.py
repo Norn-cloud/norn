@@ -561,8 +561,8 @@ def core_physics_closure_canaries() -> None:
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
-    full_plan = {"mode": "full", "shard": ["rest-1"], "phase": ["clippy"]}
-    affected = {"mode": "affected", "shard": ["rest-1"], "phase": []}
+    full_plan = {"mode": "full", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["clippy"]}
+    affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
     passed = dict.fromkeys(("CORE", "PLANNED", "TEST", "PHASE"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, {**passed, "PHASE": "skipped"}, True))
@@ -571,12 +571,75 @@ def workflow_verdict_canaries(source: str) -> None:
     cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
                  for key in passed for result in ("failure", "cancelled", "skipped"))
     cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
+    # Affected merge groups pass only while the always-run phases stay in the plan.
+    merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
+    cases.append(("merge_group", merge_affected, passed, True))
+    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance"]}, passed, False))
+    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance", "clippy-extra"]}, passed, False))
+    cases.append(("pull_request", full_plan, {**passed, "DRAFT": "true"}, False))
+    cases.append(("pull_request", full_plan, passed, True))
+    for plan in ({}, None, [], {**affected, "mode": "unknown"},
+                 {**affected, "shard": "rest-1"}, {**affected, "phase": None},
+                 {**affected, "shard": ["rest-1", "rest-1"]},
+                 {**affected, "base_sha": "old-base"}, {**affected, "head_sha": "old-head"}):
+        cases.append(("pull_request", plan, passed, False))
+    cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
-        environment = {**os.environ, **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        environment = {**os.environ, "DRAFT": "false", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
                                 capture_output=True, text=True, timeout=10, check=False)
         if (result.returncode == 0) != accepted:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
+
+
+def workflow_cleanup_canaries(source: str) -> None:
+    command = yaml.safe_load(source)["jobs"]["core"]["steps"][0]["run"]
+    # Substitute commands rather than touching any runner SDK directory.
+    with tempfile.TemporaryDirectory() as directory:
+        for initial, after, success, reclaimed in ((12582912, 12582912, True, False),
+                                                    (12582911, 12582912, True, True),
+                                                    (1, 12582911, False, True)):
+            marker = Path(directory) / "reclaimed"
+            marker.unlink(missing_ok=True)
+            preamble = f"""df() {{
+  if [ "$1" = -Pk ]; then
+    if [ -f '{marker}' ]; then free={after}; else free={initial}; fi
+    printf 'Filesystem blocks Used Available Capacity Mounted\\nroot 99999999 0 %s 0 /\\n' "$free"
+  fi
+}}
+sudo() {{
+  [ "$*" = 'rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL' ] || return 99
+  touch '{marker}'
+}}
+"""
+            result = subprocess.run(["bash", "-c", preamble + command], capture_output=True, timeout=10)
+            if (result.returncode == 0) != success or marker.exists() != reclaimed:
+                raise AssertionError(f"cleanup preflight drift: {initial}/{after}: {result.stderr!r}")
+
+
+def workflow_cache_canaries() -> None:
+    from unittest.mock import patch
+    importer = load_module("workflow_interop_cache_canary", ROOT / "scripts/importers/erpnext_runtime.py")
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        cache = directory / "cache"
+        cache.mkdir()
+        source = directory / "source"
+        source.mkdir()
+        protected = source / "protected.py"
+        protected.write_bytes(b"preserved source")
+        entry = cache / "schema.json"
+        entry.symlink_to(protected)
+        with patch.object(importer, "ROOT", source), patch.dict(os.environ, NORN_INTEROP_CACHE=str(cache)):
+            if importer.cached("schema.json", "wrong digest") is not None:
+                raise AssertionError("cache accepted a digest mismatch")
+            importer.store("schema.json", b"verified schema")
+            if protected.read_bytes() != b"preserved source" or entry.is_symlink() or entry.read_bytes() != b"verified schema":
+                raise AssertionError("cache replacement followed a symlink")
+            with patch.object(Path, "replace", side_effect=OSError("replacement failed")):
+                importer.store("schema.json", b"replacement")
+            if list(cache.iterdir()) != [entry] or entry.read_bytes() != b"verified schema":
+                raise AssertionError("failed cache replacement left temporary data")
 
 
 def workflow_context_canaries(source: str) -> None:
@@ -596,6 +659,61 @@ def workflow_context_canaries(source: str) -> None:
             except validator.InvalidCoverage:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
+
+        for name in ("core", "plan", "full"):
+            expression = workflow["jobs"][name]["if"]
+            for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
+                for draft in (False, True):
+                    for action in ("opened", "synchronize", "reopened", "ready_for_review"):
+                        if event == "pull_request" and action not in workflow["on"]["pull_request"]["types"]:
+                            raise AssertionError(f"missing PR activity: {action}")
+                        candidate_expression = expression.replace("github.event_name", repr(event)).replace(
+                            "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
+                            "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
+                        candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
+                        expected = event not in ("pull_request_target", "issue_comment") and not (
+                            name == "plan" and event == "pull_request" and draft)
+                        if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
+                            raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+        for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
+            for draft in (False, True):
+                expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
+                    "github.event.pull_request.draft", str(draft)).replace(
+                    "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
+                expression = re.sub(r"!(?!=)", " not ", expression)
+                if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
+                    raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
+        document = copy.deepcopy(workflow)
+        document["run-name"] = "${{ github.event.pull_request.title }}"
+        rejected("forged READY attribution", document)
+        for trigger in workflow["on"]:
+            document = copy.deepcopy(workflow)
+            del document["on"][trigger]
+            rejected(f"removed trigger {trigger}", document)
+        for name in ("core", "plan", "test", "phase", "full"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
+            rejected(f"{name} shell override", document)
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST", "PHASE"):
+            document = copy.deepcopy(workflow)
+            document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
+            rejected(f"forged verdict input {key}", document)
+        for name in ("plan", "full"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["if"] = "!cancelled()"
+            rejected(f"{name} cancellation/admission mutation", document)
+        document = copy.deepcopy(workflow)
+        document["on"]["pull_request"]["types"].remove("ready_for_review")
+        rejected("missing READY activity", document)
+        for name in ("core", "test", "phase"):
+            for before, after in (("12 * 1024 * 1024", "1 * 1024 * 1024"),
+                                  ('if [ "$(available)" -lt "$minimum" ]; then', "if true; then"),
+                                  ('[ "$(available)" -ge "$minimum" ]', "true"),
+                                  ("df -h /", "sudo docker image prune -af")):
+                document = copy.deepcopy(workflow)
+                step = document["jobs"][name]["steps"][0]
+                step["run"] = step["run"].replace(before, after)
+                rejected(f"{name} cleanup mutation {before}", document)
 
         def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
             return next(step for step in document["jobs"][job]["steps"]
@@ -683,6 +801,8 @@ def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
+    workflow_cleanup_canaries(source)
+    workflow_cache_canaries()
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
@@ -692,14 +812,14 @@ def workflow_canaries() -> None:
         ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
         ("disabled planned tests", "if: fromJSON(needs.plan.outputs.plan).shard[0] != null", "if: false"),
         ("disabled planned phases", "if: fromJSON(needs.plan.outputs.plan).phase[0] != null", "if: false"),
-        ("wrong affected base", "github.event.pull_request.base.sha || ''", "github.sha || ''"),
+        ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
-        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request')", "!cancelled()"),
+        ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.98.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
@@ -1365,8 +1485,16 @@ def evidence_inventory_canaries() -> None:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--workflow-contract"]:
+        source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+        workflow_verdict_canaries(source)
+        workflow_context_canaries(source)
+        workflow_cleanup_canaries(source)
+        workflow_cache_canaries()
+        print("workflow contract: admission, verdict and context canaries passed")
+        return 0
     if len(sys.argv) != 1:
-        raise SystemExit("usage: negative_canaries.py")
+        raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
     manifest_canaries()
     coverage_layout_canaries()
     central_obligation_closure_canaries()

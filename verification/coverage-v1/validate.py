@@ -408,6 +408,18 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
+    require(workflow.get("on", workflow.get(True)) == {
+        "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
+        "pull_request_target": None,
+        "issue_comment": {"types": ["created", "edited", "deleted"]},
+        "push": {"branches": ["main"]}, "merge_group": None, "workflow_dispatch": None,
+    }, "workflow must preserve every trigger and admit ready_for_review")
+    require(workflow.get("concurrency") == {
+        "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
+    }, "workflow must cancel only superseded PR and main runs")
+    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
+            "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
@@ -417,7 +429,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             admitted.add(merge_runner)
         require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}
+    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
         "plan": {},
@@ -435,6 +448,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"''',
         "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
@@ -453,21 +467,31 @@ echo "$plan"''',
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.bun/install/cache",
-                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
+                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}"}},
+        # Digest-pinned interop schemas: erpnext_runtime.py re-verifies every cached file.
+        {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+         "with": {"path": "~/.cache/norn-interop",
+                  "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
     cleanup = {"name": "Reclaim runner disk space",
                "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
-               "run": """df -h
-sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-sudo docker image prune -af
-df -h
+               "run": """set -euo pipefail
+minimum=$((12 * 1024 * 1024))
+available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+df -h /
+if [ "$(available)" -lt "$minimum" ]; then
+  sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+fi
+df -h /
+[ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
 """}
     nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
-        condition = (candidate_condition if name in {"core", "plan"}
+        admission = candidate_condition + " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)"
+        condition = (candidate_condition if name == "core" else admission if name == "plan"
                      else f"fromJSON(needs.plan.outputs.plan).{('shard' if name == 'test' else 'phase')}[0] != null")
         require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
@@ -520,19 +544,31 @@ df -h
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
-            + " && !(cancelled() && github.event_name == 'pull_request')"
+            + " && !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)"
             and not full.get("continue-on-error"),
             "full: verdict must run and fail closed")
     verdict = '''set -euo pipefail
+[ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
+  type == "object" and (.mode == "full" or .mode == "affected") and
+  .base_sha == $base and .head_sha == $head and
+  (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
+  (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length))
+' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 # A job may be skipped only when the plan gave it nothing to run.
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
 [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+# An affected merge-group plan must keep the always-run phases (core.sh plan).
+[ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
 ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
+        "DRAFT": "${{ github.event.pull_request.draft || false }}",
+        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+        "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
         "CORE": "${{ needs.core.result }}", "PLANNED": "${{ needs.plan.result }}",
         "TEST": "${{ needs.test.result }}", "PHASE": "${{ needs.phase.result }}",

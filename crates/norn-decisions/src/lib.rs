@@ -66,7 +66,9 @@ mod admit;
 mod convert;
 mod error;
 mod evaluate;
+mod fold;
 mod schema;
+mod step;
 
 pub use admit::{
     AdmittedDecision, DecisionBinding, ENGINE_TAG, MAX_SUB_DECISION_CLOSURE, MAX_SUB_DECISION_DEPTH,
