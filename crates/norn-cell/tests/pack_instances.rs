@@ -342,7 +342,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
         )
         .expect("atomic definition installation");
     let mut cell: Cell =
-        SqliteCell::new(store, "org_demo/dev", |command| command.payload.clone()).expect("host");
+        SqliteCell::new(store, "org_demo/dev", |command: &norn_kernel::Command<JsonObject>| command.payload.clone()).expect("host");
     for (action_id, id, input) in [
         (
             "demo.ledger.open_usd",
@@ -445,7 +445,7 @@ fn complete_units_two_pinned_instances_commit_and_reopen_without_currency_leakag
     }
     drop(cell);
     let mut cell: Cell =
-        SqliteCell::new(open(), "org_demo/dev", |command| command.payload.clone()).expect("reopen");
+        SqliteCell::new(open(), "org_demo/dev", |command: &norn_kernel::Command<JsonObject>| command.payload.clone()).expect("reopen");
     assert_eq!(
         cell.store()
             .read()
