@@ -105,18 +105,18 @@ impl SynchronousRule {
         let slice = self
             .decision
             .validate_slice(values)
-            .map_err(|error| refused(error.to_string()))?;
+            .map_err(ActionRefusal::from)?;
         let event = self
             .decision
             .type_event(event)
-            .map_err(|error| refused(error.to_string()))?;
+            .map_err(ActionRefusal::from)?;
         let evaluated = norn_decisions::evaluate(
             &self.decision,
             &slice,
             &event,
             norn_expr::EvaluationBudget::new(*fuel),
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(ActionRefusal::from)?;
         *fuel = fuel
             .checked_sub(evaluated.units_used)
             .ok_or_else(|| refused("the rule exceeded the action fuel"))?;
@@ -126,6 +126,16 @@ impl SynchronousRule {
             ));
         }
         Ok(evaluated.output)
+    }
+}
+
+// TXN-RULE-1: evaluator fuel exhaustion retains the shared action limit code.
+impl<X> From<norn_decisions::DecisionError> for ActionRefusal<X> {
+    fn from(error: norn_decisions::DecisionError) -> Self {
+        match error {
+            norn_decisions::DecisionError::BudgetExhausted { limit, .. } => Self::ExpressionBudgetExceeded { limit },
+            error => refused(error.to_string()),
+        }
     }
 }
 

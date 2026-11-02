@@ -4113,3 +4113,12 @@ norn_testkit::proptest::proptest! {
         assert!(norn_kernel::ActionCallRecord::from_values(&values).is_none());
     }
 }
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_rule_fuel_errors_keep_the_limit_category(limit in norn_testkit::proptest::prelude::any::<u64>(), used in norn_testkit::proptest::prelude::any::<u64>()) {
+        let refusal: ActionRefusal<()> = norn_decisions::DecisionError::BudgetExhausted { limit, used }.into();
+        norn_testkit::proptest::prop_assert_eq!(refusal.code(), "action.expression_budget_exceeded");
+        norn_testkit::proptest::prop_assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
+    }
+}
