@@ -1904,7 +1904,7 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
             }
             let endpoint = if outgoing { &key.source } else { &key.target };
             let owner = model.link_owner(&source, &key.link);
-            let mut count = 0;
+            let mut count = 0usize;
             for link in links.get(endpoint).into_iter().flatten() {
                 if link.link != key.link
                     || if outgoing {
@@ -1921,7 +1921,7 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
                     concrete_after(commit, model, view, &link.source)?
                         .is_some_and(|source| model.link_owner(&source, &link.link) == owner)
                 };
-                count += usize::from(same_relation);
+                count = count.saturating_add(usize::from(same_relation));
             }
             if count > 1 {
                 return Err(CommitError::LinkCardinality {
