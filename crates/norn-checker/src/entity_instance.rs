@@ -815,7 +815,12 @@ impl EffectiveProperty {
                 crate::property_codec::INEXACT
             ))
         };
-        let number = value.as_decimal().ok_or(InstanceError::TypeMismatch("decimal"))?.canonical().parse::<norn_expr::Number>().map_err(|reason| inexact(reason.to_string()))?;
+        let number = value
+            .as_decimal()
+            .ok_or(InstanceError::TypeMismatch("decimal"))?
+            .canonical()
+            .parse::<norn_expr::Number>()
+            .map_err(|reason| inexact(reason.to_string()))?;
         let rounded = norn_expr::rescale_decimal(site, &number)
             .map_err(|reason| inexact(reason.to_string()))?;
         let decimal = rounded
