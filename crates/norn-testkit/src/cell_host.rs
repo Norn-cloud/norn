@@ -2001,12 +2001,8 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             message,
             outcome,
         },
-        InvariantBudgetExceeded { key, limit } => {
-            InvariantBudgetExceeded { key, limit }
-        }
-        InvariantModel { key, interface } => {
-            InvariantModel { key, interface }
-        }
+        InvariantBudgetExceeded { key, limit } => InvariantBudgetExceeded { key, limit },
+        InvariantModel { key, interface } => InvariantModel { key, interface },
         CommitError::ObservationAuthorization => CommitError::ObservationAuthorization,
         CommitError::EventLimitExceeded { limit, actual } => {
             CommitError::EventLimitExceeded { limit, actual }

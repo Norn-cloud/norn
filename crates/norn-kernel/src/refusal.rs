@@ -469,7 +469,9 @@ fn lifecycle_guard(
 }
 
 impl<X> DecisionRefusal<X> {
-    fn lifecycle_guard_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
+    fn lifecycle_guard_reason_parts(
+        &self,
+    ) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
         let (key, transition, guard, error, diagnostic) = if let Self::GuardFalse {
             key,
             transition,
