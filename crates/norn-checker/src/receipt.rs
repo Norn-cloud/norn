@@ -502,6 +502,10 @@ pub fn check_artifact_set_for_install_with_flow_source_map(
     check_artifact_set_with_flow_source_map(artifacts, context, limits, flow_source_map)
 }
 
+/// PARAM-WIRE-2: new receipts use the current value profile; verified retained
+/// receipts preserve the profile tag and original source identity.
+const CURRENT_SETTING_VERSION: &str = "0.1";
+
 fn check_artifact_set_with_profile(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
@@ -512,7 +516,16 @@ fn check_artifact_set_with_profile(
     retained: bool,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let limit_profile = limits.reference()?;
-    let mut diagnostics = crate::artifact_set::check_artifact_set_profile(artifacts, context, retained);
+    let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    if !retained {
+        for artifact in artifacts {
+            if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into()))) {
+                diagnostics.push(Diagnostic { code: DiagnosticCode::new("setting.validation.invalid_payload"), severity: DiagnosticSeverity::Error,
+                    message: format!("new setting admissions require settingVersion {CURRENT_SETTING_VERSION}; retained value profiles require their verified receipt"),
+                    span: None, artifact_id: Some(artifact.artifact_id.clone()), remediation: Some(DiagnosticRemediation::FixDefinition) });
+            }
+        }
+    }
     if let Some(flow_source_map) = flow_source_map {
         diagnostics.extend(crate::validate_flow_source_map(
             flow_source_map,
@@ -1857,7 +1870,7 @@ mod retained_setting_tests {
         let registry = BTreeSet::new();
         let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
         let limits = ResourceLimitProfile::norn_limits_v1();
-        assert_eq!(check_artifact_set_with_receipt(&sources, &context, &limits).expect("current admission").receipt.admitted, crate::artifact_set::CURRENT_SETTING_VERSION == "0.1");
+        assert_eq!(check_artifact_set_with_receipt(&sources, &context, &limits).expect("current admission").receipt.admitted, CURRENT_SETTING_VERSION == "0.1");
         let mut old = check_artifact_set_with_profile(&sources.artifacts, &context, &limits, sources.identity.clone(), HISTORICAL_IDENTIFIER_PROFILE, None, true).expect("historical validation").receipt;
         assert!(old.admitted);
         old.checker_version = "0.1.0".into();
@@ -1872,6 +1885,6 @@ mod retained_setting_tests {
         let changed = changed.iter().map(|a| norn_ir::runtime::encode(a).expect("source")).collect::<Vec<_>>();
         let changed = ReceiptSources::new(&changed, &[]).expect("edited source");
         assert!(check_artifact_set_with_verified_receipt(&changed, &context, &limits, &token).is_err());
-        assert_eq!(check_artifact_set_for_install(&changed, &context, &limits, Some(&token)).expect("changed admission").receipt.admitted, crate::artifact_set::CURRENT_SETTING_VERSION == "0.1");
+        assert_eq!(check_artifact_set_for_install(&changed, &context, &limits, Some(&token)).expect("changed admission").receipt.admitted, CURRENT_SETTING_VERSION == "0.1");
     }
 }
