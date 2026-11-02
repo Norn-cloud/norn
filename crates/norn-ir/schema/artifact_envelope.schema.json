@@ -1510,6 +1510,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "typeParameters": {
+          "description": "PACK-BIND-1: named interface slots supplied by every concrete instance.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/MemberRef"
+          }
         }
       },
       "additionalProperties": false,
@@ -7953,6 +7960,13 @@
             }
           },
           "additionalProperties": false
+        },
+        "typeUnitBindings": {
+          "description": "Compile-time substitutions, independent of governed runtime settings.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PackTypeUnitBinding"
+          }
         }
       },
       "additionalProperties": false,
@@ -7979,6 +7993,31 @@
       "required": [
         "instanceId",
         "pack"
+      ]
+    },
+    "PackTypeUnitBinding": {
+      "description": "A concrete type and every same-group Decimal contract, independently pinned.",
+      "type": "object",
+      "properties": {
+        "decimals": {
+          "description": "Each source Decimal-binding property names its exact concrete contract.\nCurrencySource stays separate from UnitRef.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PropertyType"
+          }
+        },
+        "target": {
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "typeName": {
+          "$ref": "#/$defs/ObjectTypeName"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "typeName",
+        "decimals"
       ]
     },
     "PolicyObligation": {

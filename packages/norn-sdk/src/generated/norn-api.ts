@@ -884,10 +884,15 @@ export interface components {
             packVersion: string;
             /** @description Capabilities the pack provides. */
             provides?: string[];
+            typeParameters?: components["schemas"]["NornIrCompositionPackRootPropertyTypeParameters"];
         };
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
         NornIrCompositionPackRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description PACK-BIND-1: named interface slots supplied by every concrete instance. */
+        NornIrCompositionPackRootPropertyTypeParameters: {
+            [key: string]: components["schemas"]["NornIrMemberRef"];
         };
         /** @description How the connector authenticates to its source. Secrets are references only. */
         NornIrConnectorAuth: components["schemas"]["NornIrConnectorAuthOneOf0"] | components["schemas"]["NornIrConnectorAuthOneOf1"] | components["schemas"]["NornIrConnectorAuthOneOf2"];
@@ -3984,6 +3989,7 @@ export interface components {
             instances: components["schemas"]["NornIrPackInstanceRef"][];
             pack: components["schemas"]["NornIrInterpretationEndpoint"];
             scope: components["schemas"]["NornIrPackInstancePropertyScope"];
+            typeUnitBindings?: components["schemas"]["NornIrPackInstancePropertyTypeUnitBindings"];
         };
         NornIrPackInstancePropertyImports: {
             [key: string]: components["schemas"]["NornIrPackInstanceRef"];
@@ -3995,10 +4001,27 @@ export interface components {
             tenantId?: string | null;
             workspaceId?: string | null;
         };
+        /** @description Compile-time substitutions, independent of governed runtime settings. */
+        NornIrPackInstancePropertyTypeUnitBindings: {
+            [key: string]: components["schemas"]["NornIrPackTypeUnitBinding"];
+        };
         /** @description PACK-PIN-1: an opaque instance identity, pinned separately from its release. */
         NornIrPackInstanceRef: {
             instanceId: string;
             pack: components["schemas"]["NornIrInterpretationEndpoint"];
+        };
+        /** @description A concrete type and every same-group Decimal contract, independently pinned. */
+        NornIrPackTypeUnitBinding: {
+            decimals: components["schemas"]["NornIrPackTypeUnitBindingPropertyDecimals"];
+            target: components["schemas"]["NornIrInterpretationEndpoint"];
+            typeName: components["schemas"]["NornIrObjectTypeName"];
+        };
+        /**
+         * @description Each source Decimal-binding property names its exact concrete contract.
+         *     CurrencySource stays separate from UnitRef.
+         */
+        NornIrPackTypeUnitBindingPropertyDecimals: {
+            [key: string]: components["schemas"]["NornIrPropertyType"];
         };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {

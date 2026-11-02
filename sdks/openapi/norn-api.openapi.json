@@ -2260,6 +2260,9 @@
               "type": "string"
             },
             "description": "Capabilities the pack provides."
+          },
+          "typeParameters": {
+            "$ref": "#/components/schemas/NornIrCompositionPackRootPropertyTypeParameters"
           }
         },
         "additionalProperties": false
@@ -2269,6 +2272,13 @@
         "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrCompositionPackRootPropertyTypeParameters": {
+        "type": "object",
+        "description": "PACK-BIND-1: named interface slots supplied by every concrete instance.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrMemberRef"
         }
       },
       "NornIrConnectorAuth": {
@@ -10099,6 +10109,9 @@
           },
           "scope": {
             "$ref": "#/components/schemas/NornIrPackInstancePropertyScope"
+          },
+          "typeUnitBindings": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyTypeUnitBindings"
           }
         },
         "additionalProperties": false
@@ -10145,6 +10158,13 @@
         },
         "additionalProperties": false
       },
+      "NornIrPackInstancePropertyTypeUnitBindings": {
+        "type": "object",
+        "description": "Compile-time substitutions, independent of governed runtime settings.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPackTypeUnitBinding"
+        }
+      },
       "NornIrPackInstanceRef": {
         "type": "object",
         "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
@@ -10161,6 +10181,34 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrPackTypeUnitBinding": {
+        "type": "object",
+        "description": "A concrete type and every same-group Decimal contract, independently pinned.",
+        "required": [
+          "target",
+          "typeName",
+          "decimals"
+        ],
+        "properties": {
+          "decimals": {
+            "$ref": "#/components/schemas/NornIrPackTypeUnitBindingPropertyDecimals"
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          },
+          "typeName": {
+            "$ref": "#/components/schemas/NornIrObjectTypeName"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackTypeUnitBindingPropertyDecimals": {
+        "type": "object",
+        "description": "Each source Decimal-binding property names its exact concrete contract.\nCurrencySource stays separate from UnitRef.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPropertyType"
+        }
       },
       "NornIrPolicyObligation": {
         "type": "object",
