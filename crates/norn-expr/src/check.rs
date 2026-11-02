@@ -722,11 +722,25 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     }
+    let cost = lowered_cost(source, &runtime_source, cost, limits, span)?;
+    Ok((
+        CheckedExpression {
+            inferred,
+            cost,
+            exact,
+            notes,
+            runtime_source,
+        },
+        construction,
+    ))
+}
+
+fn lowered_cost(source: &str, runtime_source: &str, cost: u64, limits: &ResourceLimitProfile, span: (u32,u32)) -> Result<u64,Vec<Diagnostic>> {
     let quantizers = runtime_source
         .matches("round((")
         .count()
         .saturating_sub(source.matches("round((").count());
-    let cost = within_budget(
+    within_budget(
         cost.saturating_mul(if runtime_source.contains("== null ? null : round") {
             2
         } else {
@@ -739,17 +753,7 @@ fn check_expression_with_sources_and_root_bounds(
         ),
         limits,
         span,
-    )?;
-    Ok((
-        CheckedExpression {
-            inferred,
-            cost,
-            exact,
-            notes,
-            runtime_source,
-        },
-        construction,
-    ))
+    )
 }
 
 fn validate_lowered_source(source: &str, span: (u32, u32)) -> Vec<Diagnostic> {
@@ -2827,6 +2831,8 @@ pub(crate) fn exact_admission<'n>(
         } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
         {
             Some("function requires an explicit supported exact site")
+        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18)))) {
+            Some("round exceeds the exact arithmetic scale bound")
         } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
             Some("numeric literal exceeds the exact arithmetic scale bound")
         } else {

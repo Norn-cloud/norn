@@ -1795,6 +1795,9 @@ fn val_round_explicit_site_scopes_division_and_rescale() {
         run("round(1.005, 2)", &destination).unwrap(),
         Value::Number("1.01".parse().unwrap())
     );
+    let oversized = Expression::compile("round(1, 19)").unwrap();
+    assert!(oversized.check_typed(&env, &destination).is_err());
+    assert!(oversized.check_typed(&env, &Type::Number).is_ok());
     // Legacy two-argument round stays on the existing function and retains its fuel.
     let old = Expression::compile("round(1.005, 2)")
         .unwrap()
