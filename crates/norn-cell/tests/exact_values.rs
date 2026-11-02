@@ -254,7 +254,7 @@ fn val_round_store_defaults_sets_and_record_members_use_the_declared_site() {
     };
     check(&store, "1.01");
     let set: FactChange = serde_json::from_str(
-        r#"{"op":"set","objectType":"value.Sample","key":"one","values":{"amount":-1.005}}"#,
+        r#"{"op":"set","objectType":"value.Sample","key":"one","property":"amount","value":-1.005}"#,
     )
     .expect("set");
     commit(&mut store, set).expect("set rounding");
