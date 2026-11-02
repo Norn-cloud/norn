@@ -2266,6 +2266,9 @@ proptest! {
         if let Err(error) = result {
             prop_assert_eq!(error.code(), norn_checker::lifecycles::codes::PUBLICATION_GUARD);
             let reason = norn_kernel::Refusable::refusal(&error).reason.unwrap();
+            prop_assert_eq!(reason.pin.as_ref(), Some(&norn_ir::DataQualityRuleRef::Builtin {
+                id: "lifecycle.guard".into(), version: "1".into(),
+            }));
             prop_assert_eq!(&reason.values["underlyingCode"], &JsonValue::from("decision.guard_false"));
             prop_assert_eq!(&reason.values["guard"], &JsonValue::from("self.amount > 0"));
         }

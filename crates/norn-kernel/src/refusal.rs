@@ -488,11 +488,11 @@ impl<X> DecisionRefusal<X> {
         } else {
             ("lifecycle.guard", "decision.guard_false")
         };
-        Some(RefusalReason {
-            law: law.to_owned(),
-            subject: key.to_string(),
-            values: lifecycle_guard(transition, guard, error, diagnostic.map(|_| underlying)),
-        })
+        Some(builtin_reason(
+            law,
+            key,
+            lifecycle_guard(transition, guard, error, diagnostic.map(|_| underlying)),
+        ))
     }
 
     fn lifecycle_reason(&self) -> Option<RefusalReason> {
