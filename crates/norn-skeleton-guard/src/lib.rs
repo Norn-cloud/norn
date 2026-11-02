@@ -920,6 +920,14 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
             ));
             continue;
         };
+        // HOST-CONFORMANCE-1: this boundary cannot acquire a shipped target.
+        if name == "norn-host-conformance"
+            && (pkg.publish.as_ref().is_none_or(|registries| !registries.is_empty())
+                || pkg.targets.iter().any(|target| target.kind != [cargo_metadata::TargetKind::Test])
+                || pkg.dependencies.iter().any(|dep| dep.kind != DependencyKind::Development))
+        {
+            out.push(violation("host-conformance-test-only", "host conformance requires publish=false, test targets, and development dependencies only".into()));
+        }
         if name == "norn-cell" {
             check_norn_cell_native_feature(pkg, &mut out);
         }
