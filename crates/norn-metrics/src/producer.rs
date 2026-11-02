@@ -223,7 +223,7 @@ fn report_value(report: &impl serde::Serialize) -> Result<norn_ir::RuntimeValue,
             }
             serde_json::Value::Array(items) => { for item in items { tag(item); } }
             serde_json::Value::Object(fields) => { for item in fields.values_mut() { tag(item); } }
-            _ => {}
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
         }
     }
     let mut value = serde_json::to_value(report).map_err(failure)?;
