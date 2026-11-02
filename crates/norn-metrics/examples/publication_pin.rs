@@ -1,4 +1,5 @@
 //! Emit the exact configured host manifest pin for typed publication authoring.
+#[allow(clippy::print_stdout, reason = "generated authoring pin on stdout")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admitted = norn_checker::function::admit_function_manifest(&norn_metrics::host::manifest()?)
         .map_err(|errors| format!("{errors:?}"))?;
