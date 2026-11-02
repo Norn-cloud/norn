@@ -32,13 +32,13 @@ pub(crate) fn rescale_number(
     scale: u64,
     rounding: norn_ir::Rounding,
 ) -> Result<Number, ExprError> {
+    use zen_expression::scaled::{Rounding, ScaledArithmetic};
     let invalid = |reason: String| ExprError::InvalidNumber {
         input: value.as_str().to_owned(),
         reason,
     };
     let scale =
         u32::try_from(scale).map_err(|_| invalid("unsupported exact-site scale".to_owned()))?;
-    use zen_expression::scaled::{Rounding, ScaledArithmetic};
     let rounding = match rounding {
         norn_ir::Rounding::Refuse => Rounding::Refuse,
         norn_ir::Rounding::TowardZero => Rounding::TowardZero,
