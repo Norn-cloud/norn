@@ -27,7 +27,7 @@ use std::path::Path;
 
 use norn_ir::{
     ActionRoot, DataQualityOutcome, InvariantId, InvariantOwner, ObjectTypeDef, ObjectTypeName,
-    posting::AccountingError,
+    RuntimeValue, posting::AccountingError,
 };
 use norn_kernel::action::{
     ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionAuthorityState, ActionCommandRejection,
