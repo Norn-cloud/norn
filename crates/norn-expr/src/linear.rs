@@ -1,6 +1,6 @@
 //! OVERLAY-LINEAR-1: bounded typed ZEN projection for the Core 06 SMT fragment.
 use crate::{ExprError, Expression, Type, ZenTypeEnv, check_expression};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write};
 use zen_expression::{intellisense::IntelliSense, parser::Node};
 
 /// A typed, source-derived SMT predicate. This is a goal, never solver evidence.
@@ -27,9 +27,9 @@ impl LinearGuard {
 pub fn linear_symbol(path: &[String]) -> String {
     let mut out = String::from("v");
     for member in path {
-        out.push_str(&format!("_{}_", member.len()));
+        let _infallible = write!(out, "_{}_", member.len());
         for byte in member.bytes() {
-            out.push_str(&format!("{byte:02x}"));
+            let _infallible = write!(out, "{byte:02x}");
         }
     }
     out
@@ -128,7 +128,7 @@ impl Compiler<'_> {
             Node::String(value) => {
                 let mut text = String::from("\"");
                 for ch in value.chars() {
-                    text.push_str(&format!("\\u{{{:x}}}", u32::from(ch)));
+                    let _infallible = write!(text, "\\u{{{:x}}}", u32::from(ch));
                 }
                 text.push('"');
                 (text, true, Kind::Text)
