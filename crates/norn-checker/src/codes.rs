@@ -2470,6 +2470,18 @@ pub static REGISTRY: &[CodeEntry] = &[
         Tier::T2,
         "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
     ),
+    introduced(
+        "rule.validation.ordered_fold_invalid",
+        Tier::T2,
+        "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+        "0.2.0",
+    ),
+    introduced(
+        "rule.validation.ordered_fold_unsupported",
+        Tier::T2,
+        "ordered-fold execution is unavailable in this semantics profile",
+        "0.2.0",
+    ),
     entry(
         "sealing.extension_point.capability_missing",
         Tier::T3,
