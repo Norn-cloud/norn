@@ -314,9 +314,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 selected = next;
             }
         }
-        Ok(evidence.filter(|proof| proof.snapshot().lineage.iter().any(|name| name == object_type)).map_or(HistoricalEvidence::Missing, |proof| {
-            HistoricalEvidence::Found(Box::new(proof))
-        }))
+        Ok(evidence
+            .filter(|proof| {
+                proof
+                    .snapshot()
+                    .lineage
+                    .iter()
+                    .any(|name| name == object_type)
+            })
+            .map_or(HistoricalEvidence::Missing, |proof| {
+                HistoricalEvidence::Found(Box::new(proof))
+            }))
     }
 
     pub(crate) fn retained_fact_scope(
