@@ -167,7 +167,11 @@ pub const CRATES: &[CrateRule] = &[
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
     rule("norn-metrics", Ring::One, &["norn-ir", "norn-checker"]),
-    r0("norn-api", &["norn-ir"], &["serde", "serde_json", "utoipa"]),
+    r0(
+        "norn-api",
+        &["norn-ir"],
+        &["http", "serde", "serde_json", "utoipa"],
+    ),
     rule(
         "norn-cli",
         Ring::One,
@@ -185,6 +189,21 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
     ),
     rule("norn-skeleton-guard", Ring::Tooling, &[]),
+    CrateRule {
+        name: "norn-host-conformance",
+        ring: Ring::Tooling,
+        allowed_norn: &[],
+        dev_only_norn: &[
+            "norn-metrics",
+            "norn-cell",
+            "norn-kernel",
+            "norn-authz",
+            "norn-projections",
+            "norn-ir",
+            "norn-checker",
+        ],
+        third_party: &[],
+    },
     CrateRule {
         name: "norn-testkit",
         ring: Ring::TestSupport,
@@ -914,6 +933,23 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
             ));
             continue;
         };
+        // HOST-CONFORMANCE-1: this boundary cannot acquire a shipped target.
+        if name == "norn-host-conformance"
+            && (pkg
+                .publish
+                .as_ref()
+                .is_none_or(|registries| !registries.is_empty())
+                || pkg
+                    .targets
+                    .iter()
+                    .any(|target| target.kind != [cargo_metadata::TargetKind::Test])
+                || pkg
+                    .dependencies
+                    .iter()
+                    .any(|dep| dep.kind != DependencyKind::Development))
+        {
+            out.push(violation("host-conformance-test-only", "host conformance requires publish=false, test targets, and development dependencies only".into()));
+        }
         if name == "norn-cell" {
             check_norn_cell_native_feature(pkg, &mut out);
         }

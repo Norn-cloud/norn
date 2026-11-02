@@ -1527,6 +1527,7 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "http",
  "norn-ir",
  "serde",
  "serde_json",
@@ -1667,6 +1668,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "norn-host-conformance"
+version = "0.1.0"
+
+[[package]]
 name = "norn-ir"
 version = "0.1.0"
 dependencies = [
@@ -1698,19 +1703,13 @@ dependencies = [
 name = "norn-metrics"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "nix",
- "norn-authz",
- "norn-cell",
  "norn-checker",
  "norn-ir",
- "norn-kernel",
- "norn-projections",
  "proptest",
  "schemars 1.2.3",
  "serde",
  "serde_json",
- "sha2",
  "statrs",
  "thiserror 2.0.20",
 ]
@@ -1732,6 +1731,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "hex",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

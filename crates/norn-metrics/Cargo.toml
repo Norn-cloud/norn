@@ -16,12 +16,6 @@ thiserror = "2.0.20"
 statrs = { version = "=0.18.0", default-features = false }
 
 [dev-dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
-sha2 = "0.10.9"
-norn-authz = { path = "../norn-authz" }
-norn-projections = { path = "../norn-projections" }
-norn-cell = { path = "../norn-cell" }
-norn-kernel = { path = "../norn-kernel" }
 proptest = "1.11.0"
 
 [lints]

@@ -1,0 +1,15 @@
+{
+  "name": "norn-host-conformance",
+  "ring": "Tooling",
+  "allowed_norn": [],
+  "dev_only_norn": [
+    "norn-metrics",
+    "norn-cell",
+    "norn-kernel",
+    "norn-authz",
+    "norn-projections",
+    "norn-ir",
+    "norn-checker"
+  ],
+  "third_party": []
+}
