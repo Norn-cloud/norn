@@ -728,7 +728,7 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
         artifact_set: ArtifactSetRef::of_legacy(&candidate_envelopes, &base_envelopes)
             .expect("artifact set hash"),
         limit_profile: limits
-            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .reference()
             .expect("limit hash"),
         expr_profile: "norn-zen/4".to_owned(),
         identifier_profile: "norn-identifiers/legacy".to_owned(),
