@@ -378,6 +378,9 @@ pub struct ActionCallRecord {
     /// written before effect attribution and interpreted as `fire_transition`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_kind: Option<String>,
+    /// TXN-RULE-1: exact writer closure, action, scope and world identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_binding: Option<String>,
     /// The target object.
     pub object: FactKey,
     /// The call's input.
@@ -419,6 +422,7 @@ impl ActionCallRecord {
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("fire_transition".to_owned()),
+            rule_binding: None,
             object: target.clone(),
             input: call.input.clone(),
             effective_input: (!action.derive.is_empty())
@@ -522,6 +526,9 @@ impl ActionCallRecord {
         if let Some(action_version) = &self.action_version {
             values.insert("actionVersion".to_owned(), string(action_version));
         }
+        if let Some(binding) = &self.rule_binding {
+            values.insert("ruleBinding".to_owned(), string(binding));
+        }
         if let Some(effect_kind) = &self.effect_kind {
             values.insert("effectKind".to_owned(), string(effect_kind));
         }
@@ -584,6 +591,11 @@ impl ActionCallRecord {
             action_artifact_id,
             action_version,
             effect_kind,
+            rule_binding: match values.get("ruleBinding") {
+                Some(JsonValue::String(value)) => Some(value.clone()),
+                None | Some(JsonValue::Null) => None,
+                _ => return None,
+            },
             object: FactKey::new(object_type.clone(), key.clone()),
             input: input.clone(),
             effective_input,
@@ -1229,6 +1241,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some("upsert_input_object".to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
@@ -2337,6 +2350,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some(ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS.to_owned()),
+        rule_binding: None,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: (!call.action.derive.is_empty())
@@ -3221,6 +3235,7 @@ where
             action_artifact_id: Some(call.action_artifact_id.to_owned()),
             action_version: Some(call.action_version.to_owned()),
             effect_kind: Some("upsert_input_object".to_owned()),
+            rule_binding: None,
             row_operations: Vec::new(),
             object: target.clone(),
             input: call.input.clone(),
