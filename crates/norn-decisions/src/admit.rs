@@ -774,6 +774,7 @@ fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
             | Schema::String(_)
             | Schema::Integer
             | Schema::Number
+            | Schema::Decimal(_)
             | Schema::Boolean
             | Schema::Null
             | Schema::Json
@@ -977,6 +978,7 @@ fn fold_policies(
     }
     Ok(Arc::new(crate::step::StepContracts {
         schemas: contracts.schemas.clone(),
+        expressions: contracts.expressions.clone(),
         folds,
     }))
 }

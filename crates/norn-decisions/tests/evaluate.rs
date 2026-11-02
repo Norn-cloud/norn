@@ -1783,3 +1783,38 @@ proptest::proptest! {
         if let (Ok(actual), Ok(expected)) = (result, expected) { proptest::prop_assert_eq!(actual.into_value(), Value::Number(expected)); }
     }
 }
+
+fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
+    use norn_ir::{PropertyType,Rounding,WholeNumber,UnitRef,UnitSystem,PropertyId,metric::DimensionPath};
+    let unit = |code: &str| UnitRef {system:UnitSystem::Ucum,code:code.into()};
+    let currency = Some(DimensionPath {links:Vec::new(),property:PropertyId("currency".into())});
+    let site = |scale,unit,currency_source,per_unit| json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()});
+    let slice = closed(&json!({"currency":{"type":"string","enum":["USD"]},"rate":site(6,None,currency.clone(),Some(unit(denominator))),"grams":site(3,Some(unit("g")),None,None)}));
+    let mut root = commands_rule("demo.rate_pricing",&slice,"[{actionId:'quote',currency:'USD',value:slice.rate * slice.grams}]");
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(&json!({"actionId":{"type":"string"},"currency":{"type":"string","enum":[output_currency]},"value":site(2,None,currency,None)}));
+    root
+}
+
+#[test]
+fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
+    let decision = admit_inline(&bounded_rate_rule("g","USD"));
+    let slice = Value::object([("currency",Value::String("USD".into())),("rate",num("15")),("grams",num("20"))]);
+    let evaluated = run(&decision,slice.clone(),event(),EvaluationBudget::default()).unwrap();
+    assert_eq!(evaluated.output.commands[0].payload.get("value"),Some(&norn_ir::RuntimeValue::from_json_text("300").unwrap()));
+    for (unit,currency) in [("mg","USD"),("g","EUR")] {
+        assert!(AdmittedDecision::admit(&rule(&bounded_rate_rule(unit,currency)),&BTreeMap::new(),binding()).is_err());
+    }
+    let inexact = Value::object([("currency",Value::String("USD".into())),("rate",num("1.005")),("grams",num("1"))]);
+    assert!(run(&decision,inexact,event(),EvaluationBudget::default()).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_rate_generated_exact_products_never_round(rate in -1000_i32..1000, grams in 0_i32..1000) {
+        let decision = admit_inline(&bounded_rate_rule("g","USD"));
+        let slice = Value::object([("currency",Value::String("USD".into())),("rate",num(&rate.to_string())),("grams",num(&grams.to_string()))]);
+        let evaluated = run(&decision,slice,event(),EvaluationBudget::default()).unwrap();
+        let expected = norn_ir::RuntimeValue::from_json_text(&(rate*grams).to_string()).unwrap();
+        proptest::prop_assert_eq!(evaluated.output.commands[0].payload.get("value"),Some(&expected));
+    }
+}

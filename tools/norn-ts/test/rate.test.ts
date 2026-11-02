@@ -19,3 +19,14 @@ test("VAL-RATE refuses an unbounded scale or a nonliteral currency binding", () 
  expect(compileModule(source("19"), {orgId: "org_demo", environmentId: "dev"}).ok).toBe(false)
  expect(compileModule(source("6", "missing"), {orgId: "org_demo", environmentId: "dev"}).ok).toBe(false)
 })
+
+test("VAL-RATE closed numeric schemas retain exact declarations in a direct callback", () => {
+ const result = compileModule(`import { Schema } from "effect"
+ import { Norn } from "@norn/authoring"
+ export const Pricing = Norn.decision({id:"demo.rule.pricing",title:"Pricing",version:"1.0.0",contract:"decide",scopeRequired:[],
+ input:Schema.Struct({slice:Schema.Struct({currency:Schema.Literal("USD"),rate:Norn.rate(6,{currency:"currency",perUnit:{system:"ucum",code:"g"}}),grams:Norn.decimal(3,{unit:{system:"ucum",code:"g"}})}),event:Schema.Struct({})}),
+ output:Schema.Struct({facts:Schema.Array(Schema.Struct({id:Schema.String})),commands:Schema.Array(Schema.Struct({actionId:Schema.String,currency:Schema.Literal("USD"),amount:Norn.decimal(2,{currency:"currency",rounding:"half_even"})})),timers:Schema.Array(Schema.Struct({id:Schema.String}))})
+ }, input => ({facts:[],commands:[{actionId:"quote",currency:"USD",amount:input.slice.rate*input.slice.grams}],timers:[]}))`,{orgId:"org_demo",environmentId:"dev"})
+ if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
+ expect(result.artifacts[0]).toMatchObject({payload:{inputSchema:{properties:{slice:{properties:{rate:{type:"number",nornType:E.rate(6,"currency",{system:"ucum",code:"g"})}}}}},graph:{nodes:expect.arrayContaining([{id:"decision",name:"decision",type:"expressionNode",content:{expressions:expect.any(Array)}}])}}})
+})

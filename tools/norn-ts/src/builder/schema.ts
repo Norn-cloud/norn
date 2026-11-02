@@ -138,3 +138,10 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
 
 /** The closed record with no members. */
 export const emptyRecord: ObjectSchema = record({})
+
+/** Retain the exact declaration when choosing the bounded expression profile. */
+export function hasExact(schema: ValueSchema): boolean {
+  if ("nornType" in schema && schema.nornType !== undefined) return true
+  if ("properties" in schema) return Object.values(schema.properties).some(hasExact)
+  return "items" in schema && hasExact(schema.items)
+}

@@ -733,13 +733,16 @@ class DefinitionCompiler {
       })
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
-      const outputs = Object.keys(schema("output").properties)
+      const outputSchema = schema("output")
+      const exact = S.hasExact(inputSchema) || S.hasExact(outputSchema)
+      if (exact && calls.length > 0) throw new CompileError("NORN-FLOW-EXPRESSION", "exact numeric schemas currently require a direct callback without sub-decisions", body)
+      const outputs = Object.keys(outputSchema.properties)
       const artifactId = members.get("artifactId") ? this.string(members.get("artifactId")!) : this.string(need("id")) + ".rule"
       const locate = (expr: X.Expr, pointer: string): void => {
         const node = syntax.expressionSources.get(expr) ?? body
         this.sourceMap.push({ artifactId, pointer, at: this.at(node) })
       }
-      const rules = rows.map((row, i): Json => {
+      const rules = rows.map((row, i): Record<string, Json> => {
         const project = (value: X.Expr, field: string): X.Expr | undefined => {
           if (value._tag === "Record") return value.fields.find(([key]) => key === field)?.[1]
           if (value._tag === "Ref") return X.ref(value.name, ...value.path, field)
@@ -751,12 +754,12 @@ class DefinitionCompiler {
         }
         try {
           if (row.condition && X.typeOf(row.condition, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "expected a boolean row condition")
-          if (row.condition) locate(row.condition, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/condition`)
+          if (row.condition && !exact) locate(row.condition, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/condition`)
           const cells: Record<string, Json> = { _id: `row_${i}`, condition: row.condition ? X.render(row.condition, scope) : "" }
           for (const field of outputs) {
             const value = project(row.value, field)
             if (!value) throw new X.ExprError("NORN-FLOW-RESULT", `expected output field ${field}; return every declared output`)
-            locate(value, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/out_${field.replace(/~/g, "~0").replace(/\//g, "~1")}`)
+            if (!exact) locate(value, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/out_${field.replace(/~/g, "~0").replace(/\//g, "~1")}`)
             cells[`out_${field}`] = X.render(value, scope)
           }
           return cells
@@ -771,6 +774,24 @@ class DefinitionCompiler {
         { id: "decision", name: "decision", type: "decisionTableNode", content: { hitPolicy: "first", inputs: [{ id: "condition", name: "condition", type: "expression" }], outputs: outputs.map((field) => ({ id: `out_${field}`, name: field, field })), rules } },
         { id: "out", name: "output", type: "outputNode" },
       ], edges: ["in", ...calls.map((c) => (c as { id: string }).id), "decision", "out"].slice(1).map((targetId, index) => ({ id: `edge_${index}`, sourceId: ["in", ...calls.map((c) => (c as { id: string }).id), "decision"][index]!, targetId, type: "edge" })) }
+      if (exact) {
+        const expressions = outputs.map((key, index) => {
+          let value = String(rules[rules.length - 1]?.[`out_${key}`] ?? "null")
+          for (let row = rules.length - 2; row >= 0; row--) {
+            const cells = rules[row]
+            if (cells === null || typeof cells !== "object" || Array.isArray(cells)) throw new CompileError("NORN-FLOW-RESULT", "invalid decision row", body)
+            value = cells.condition === "" ? String(cells[`out_${key}`]) : `(${String(cells.condition)}) ? (${String(cells[`out_${key}`])}) : (${value})`
+          }
+          this.sourceMap.push({ artifactId, pointer: `/payload/graph/nodes/1/content/expressions/${index}/value`, at: this.at(body) })
+          return { id: `out_${key}`, key, value }
+        })
+        graph = { contentType: R.JDM_CONTENT_TYPE, nodes: [
+          { id: "in", name: "input", type: "inputNode" },
+          { id: "decision", name: "decision", type: "expressionNode", content: { expressions } },
+          { id: "out", name: "output", type: "outputNode" },
+        ], edges: [{ id: "edge_0", sourceId: "in", targetId: "decision" }, { id: "edge_1", sourceId: "decision", targetId: "out" }] }
+      }
+
     } else graph = this.json(need("graph"))
     if (graph === null || typeof graph !== "object" || Array.isArray(graph)) throw new CompileError("NORN-FLOW-LITERAL", "a decision graph is a JDM object { nodes, edges }", need("graph"))
     return R.decision({
