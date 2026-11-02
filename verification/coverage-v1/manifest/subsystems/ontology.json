@@ -265,6 +265,8 @@
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.mapping.json",
     "registry/packs/demo-erpnext/artifacts/demo.erpnext.measurements.source.json",
     "registry/packs/demo-erpnext/measurements.ts",
+    "crates/norn-checker/src/definition_catalog.rs",
+    "crates/norn-checker/tests/definition_catalog.rs",
     "registry/packs/demo-commerce/artifacts/demo.commerce.CatalogEntry.entity.json",
     "registry/packs/demo-commerce/artifacts/demo.commerce.Shipment.entity.json",
     "registry/packs/demo-commerce/artifacts/demo.commerce.SourceIdentity.interface.json",
