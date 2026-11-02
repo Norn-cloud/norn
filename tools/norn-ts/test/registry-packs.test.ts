@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { join, relative } from "node:path"
 import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
+import { compilePack } from "../src/pack.ts"
 import { checker } from "./checker.ts"
 
 /** `registry/packs/<pack>/*.ts` compile to `registry/packs/<pack>/artifacts/<artifactId>.json`; NORN_PACKS_UPDATE=1 regenerates them. */
@@ -39,9 +40,26 @@ test("registry packs are generated from their typed sources", () => {
 test.skipIf(!checker)("the Rust checker admits every registry pack and link", () => {
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
-  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
+  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim", "Conversion"]
   const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
+}, 60_000)
+
+test("law wording artifacts are generated beside their declaring pack", () => {
+  for (const dir of [...packs, join(REPO, "registry/core/src")]) {
+    const core = dir.endsWith("registry/core/src")
+    const compiled = compilePack(dir, { scope: {}, registry: core ? "registry/core" : relative(REPO, dir), root: REPO })
+    if (!compiled.ok) throw new Error(JSON.stringify(compiled.failures))
+    if (compiled.wordingArtifacts.length === 0) continue
+    const out = join(core ? join(REPO, "registry/core") : dir, "wordings")
+    if (update) mkdirSync(out, { recursive: true })
+    for (const artifact of compiled.wordingArtifacts) {
+      if (typeof artifact !== "object" || artifact === null || Array.isArray(artifact) || typeof artifact.artifactId !== "string") throw new Error("missing wording identity")
+      const file = join(out, `${artifact.artifactId}.json`)
+      if (update) writeFileSync(file, `${JSON.stringify(artifact, null, 2)}\n`)
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(artifact)
+    }
+  }
 }, 60_000)
