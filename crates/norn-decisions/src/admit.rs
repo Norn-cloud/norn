@@ -177,7 +177,11 @@ impl AdmittedDecision {
         }
 
         if !sub_decisions.is_empty() && !contracts.expressions.is_empty() {
-            return Err(invalid_schema(&root.rule_id,"nornType","exact schema profiles currently require a direct graph without sub-decision closures"));
+            return Err(invalid_schema(
+                &root.rule_id,
+                "nornType",
+                "exact schema profiles currently require a direct graph without sub-decision closures",
+            ));
         }
         let content = graph_content(&root.rule_id, root_graph)?;
         let loader = Arc::new(loader);
