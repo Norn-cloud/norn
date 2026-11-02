@@ -815,14 +815,7 @@ impl EffectiveProperty {
                 crate::property_codec::INEXACT
             ))
         };
-        let decoded = crate::property_codec::stored_value(norn_ir::PropertyKind::Decimal, value)
-            .map_err(|reason| inexact(format!("{reason:?}")))?;
-        let number = decoded
-            .as_decimal()
-            .ok_or(InstanceError::TypeMismatch("decimal"))?
-            .canonical()
-            .parse::<norn_expr::Number>()
-            .map_err(|reason| inexact(reason.to_string()))?;
+        let number = value.as_decimal().ok_or(InstanceError::TypeMismatch("decimal"))?.canonical().parse::<norn_expr::Number>().map_err(|reason| inexact(reason.to_string()))?;
         let rounded = norn_expr::rescale_decimal(site, &number)
             .map_err(|reason| inexact(reason.to_string()))?;
         let decimal = rounded
@@ -2284,7 +2277,7 @@ mod declared_rounding_tests {
     proptest::proptest! {
         #[test]
         fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in -10000_i32..10000) {
-            let property: Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+            let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
             let effective = EffectiveProperty::from_declared_property(&property,&[]);
             let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);
             let original = RuntimeValue::from_json_text(&number).expect("number");
@@ -2296,7 +2289,7 @@ mod declared_rounding_tests {
 
     #[test]
     fn val_round_checks_quantized_bounds_and_preserves_invalid_evidence() {
-        let property: Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+        let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
         let effective = EffectiveProperty::from_declared_property(&property, &[]);
         let input = RuntimeValue::from_json_text("1.005").expect("decimal");
         assert!(
