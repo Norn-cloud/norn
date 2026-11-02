@@ -1,0 +1,21 @@
+{
+  "order": 2,
+  "value": {
+    "id": "INV-ONT-RELATION-AUTHORITY",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The canonical versioned authority path has retained InMemory tests for exact Relation artifact identity, exact active Relation/Entity pins, endpoint object kinds, existing and same-commit cardinality conflicts, superseded versions, atomic rejection, and immutable-id payload updates; its Turso/reopen variants were removed in #2764 (not currently covered). Quint checks a two-relation abstraction across all four declared cardinalities, exact accepted-version binding, exact endpoint-kind admission, and rejected no-ops; Lean proves compact pairwise reference lemmas. Neither artifact is Rust refinement evidence, a future parallel writer topology must add relation-kind/index-level serialization, and the legacy unversioned migration path remains non-authoritative until disabled. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry22d0d2c6e6ab8e82be7216e83b49da96814660b3f07810527f856cede30b1419.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry22d0d2c6e6ab8e82be7216e83b49da96814660b3f07810527f856cede30b1419.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry22d0d2c6e6ab8e82be7216e83b49da96814660b3f07810527f856cede30b1419.evidence.proof"
+      }
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "quint verify verification/kernel-v2/models/commit-admission.qnt --backend apalache --invariants invariant --max-steps 8"
+}
