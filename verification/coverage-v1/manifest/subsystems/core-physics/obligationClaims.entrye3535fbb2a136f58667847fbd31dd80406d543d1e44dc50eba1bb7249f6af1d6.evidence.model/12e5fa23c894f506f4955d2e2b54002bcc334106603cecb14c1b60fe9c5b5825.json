@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/core-physics-v1/models/core-value-ledger.qnt",
+    "command": "quint verify verification/core-physics-v1/models/core-value-ledger.qnt --backend apalache --invariants typeOk allPostedBalanced postedImmutable reversalLinkedExact reversedAtMostOnce --max-steps 4",
+    "selectors": {
+      "$entries": "obligationClaims.entrye3535fbb2a136f58667847fbd31dd80406d543d1e44dc50eba1bb7249f6af1d6.evidence.model.entry12e5fa23c894f506f4955d2e2b54002bcc334106603cecb14c1b60fe9c5b5825.selectors"
+    }
+  }
+}

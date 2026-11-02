@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "An inferred-ontology-to-transition negative integration test remains open; the authoritative field validator is intentionally limited to type/required plus exact finite string enums, and direct RelationIR does not yet implement association-object/through semantics."
+}
