@@ -1731,7 +1731,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, or Relation artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, or `DefinedConcept` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1816,6 +1816,16 @@ pub(crate) fn check_typed_root(
         ),
         ArtifactPayload::SourceSchema(_) | ArtifactPayload::Mapping(_) => {
             check_document_root(payload, &object, diagnostics, artifact_id);
+        }
+        ArtifactPayload::DefinedConcept(_) => {
+            if let Err(error) = crate::defined_concepts::decode(payload) {
+                diagnostics.push(invalid_diagnostic(
+                    "defined_concept.validation.invalid_payload",
+                    error,
+                    "payload",
+                    artifact_id,
+                ));
+            }
         }
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
@@ -3637,6 +3647,65 @@ mod tests {
         ]);
         assert_eq!(findings(rule.clone()), []);
         rule
+    }
+
+    #[test]
+    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+        let mut rule = rule_with_sub_decision();
+        let fold = json!({
+            "semanticsVersion": "1.0",
+            "order": [{"property": "position", "kind": "integer"},
+                      {"property": "id", "kind": "string"}],
+            "identity": "id",
+            "itemSchema": {"type": "object", "additionalProperties": false,
+                "properties": {"position": {"type": "integer"}, "id": {"type": "string"}},
+                "required": ["position", "id"]},
+            "accumulatorSchema": {"type": "object", "additionalProperties": false,
+                "properties": {"remaining": {"type": "integer"}}, "required": ["remaining"]},
+            "initial": "{remaining: 7}", "maxItems": 16, "maxAccumulatorBytes": 1024,
+            "arithmetic": {"scale": 0, "rounding": "refuse"}
+        });
+        rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        let actual = findings(rule.clone());
+        assert!(
+            has(
+                &actual,
+                "rule.validation.ordered_fold_unsupported",
+                "payload.graph.nodes[4].content.orderedFold"
+            ),
+            "{actual:?}"
+        );
+        for (member, invalid) in [
+            ("maxItems", json!(0)),
+            ("maxAccumulatorBytes", json!(0)),
+            ("identity", json!("position")),
+            ("semanticsVersion", json!("2.0")),
+            ("order", json!([])),
+        ] {
+            let mut bad = rule.clone();
+            bad["payload"]["graph"]["nodes"][4]["content"]["orderedFold"][member] = invalid;
+            assert!(
+                has(
+                    &findings(bad),
+                    "rule.validation.ordered_fold_invalid",
+                    "payload.graph.nodes[4].content.orderedFold"
+                ),
+                "{member}"
+            );
+        }
+        let mut looped = rule.clone();
+        looped["payload"]["graph"]["nodes"][4]["content"]["executionMode"] = json!("loop");
+        assert!(has(
+            &findings(looped),
+            "rule.validation.ordered_fold_invalid",
+            "payload.graph.nodes[4].content.orderedFold"
+        ));
+        let encoded = serde_json::to_string(&rule["payload"]).expect("payload serializes");
+        let decoded: norn_ir::RuleRoot = serde_json::from_str(&encoded).expect("typed fold");
+        let round_trip: norn_ir::RuleRoot =
+            serde_json::from_value(serde_json::to_value(&decoded).expect("round trip"))
+                .expect("typed round trip");
+        assert_eq!(round_trip, decoded);
     }
 
     /// Members the pinned zen model lets you omit but rejects as `null`

@@ -154,6 +154,7 @@ declare module "@norn/authoring" {
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
     interface InterfaceMeta<S extends Schema.Top> {
+      readonly role?: "thing" | "happening"
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
       /** Canonical property markings, keyed by a declared property. */
@@ -240,6 +241,12 @@ declare module "@norn/authoring" {
           readonly objectIdField: keyof I & string
           readonly lifecycle: string
           readonly transition: string
+          readonly acceptReceipt?: {
+            readonly referenceField: keyof I & string
+            readonly manifestDigest: string
+            readonly digestProperty: string
+            readonly resultBindings: Readonly<Record<string, string>>
+          }
         }
       | {
           readonly kind: "upsert_input_object"

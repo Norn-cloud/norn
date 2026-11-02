@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+    "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OntologyAuthority.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry22d0d2c6e6ab8e82be7216e83b49da96814660b3f07810527f856cede30b1419.evidence.proof.entry45d0694b8cb27d48f02fe471e34e7766e9d18a587ba875503fd7d8546d290d86.selectors"
+    }
+  }
+}

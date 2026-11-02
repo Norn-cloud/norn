@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.unknown_replacement",
+  "message": "replacedBy {name} must name another definition of the same kind",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

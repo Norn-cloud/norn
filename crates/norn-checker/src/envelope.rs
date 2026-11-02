@@ -342,7 +342,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         // and `crate::mapping` (run per document and over the artifact set).
         ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::DefinedConcept(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -420,6 +421,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema.validation.invalid_document",
         ArtifactKind::Mapping => "mapping.validation.invalid_document",
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
+        ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
     }
 }
 
@@ -1889,6 +1891,7 @@ fn validate_action_effect_program(
         TARGET_MEMBERS
             .into_iter()
             .chain(TRANSITION_MEMBERS)
+            .chain(["acceptReceipt"])
             .collect()
     } else if mutates_rows {
         TARGET_MEMBERS.into_iter().chain(ROW_MEMBERS).collect()
@@ -1935,6 +1938,17 @@ fn validate_action_effect_program(
                     CODE,
                 ));
             }
+        }
+        if program.contains_key("acceptReceipt")
+            && let Err(error) =
+                serde_json::to_value(value).and_then(serde_json::from_value::<ActionEffectProgram>)
+        {
+            diagnostics.push(invalid_diagnostic(
+                CODE,
+                format!("invalid acceptReceipt declaration: {error}"),
+                "payload.effectProgram.acceptReceipt",
+                artifact_id,
+            ));
         }
     } else if mutates_rows {
         for member in ["parentValuesField", "rowOpsField", "parentVersionField"]
@@ -5421,6 +5435,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::DefinedConcept => "defined_concept",
     }
 }
 

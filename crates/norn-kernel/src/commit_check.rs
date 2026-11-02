@@ -471,12 +471,14 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         InvariantAdmissionError::Violation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
         } => CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
@@ -956,6 +958,7 @@ enum InvariantAdmissionError {
     Violation {
         key: Box<FactKey>,
         owner: InvariantOwner,
+        version: String,
         id: InvariantId,
         message: String,
         outcome: Box<DataQualityOutcome>,
@@ -1028,6 +1031,16 @@ fn check_invariants<E, C, T>(
         {
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
+                version: catalog
+                    .invariant_owner_version(&failure.owner)
+                    .map_err(|error| InvariantAdmissionError::EffectiveValues {
+                        key: write.key.clone(),
+                        reason: error.to_string(),
+                    })?
+                    .ok_or_else(|| InvariantAdmissionError::EffectiveValues {
+                        key: write.key.clone(),
+                        reason: "invariant owner is unavailable".to_owned(),
+                    })?,
                 owner: failure.owner,
                 id: failure.id,
                 message: failure.message,

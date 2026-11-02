@@ -41,7 +41,9 @@ pub mod connector;
 pub mod customization;
 pub mod data_quality;
 pub mod decision_output;
+pub mod defined_concept;
 pub mod definition_catalog;
+pub use defined_concept::DefinedConceptRoot;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
@@ -67,6 +69,7 @@ pub mod osi;
 pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
+pub mod requirement_display;
 pub mod rule;
 pub mod runtime;
 pub mod sealing;
@@ -124,6 +127,7 @@ pub use entity::{
     EntityMutationAuthority, EntityRoot, EntityRootV1, EntityRootV2, MarkingCatalogRootV2,
     PropertyTypeCatalogRootV2, RelationCardinalityV1, RelationRoot,
 };
+pub use entity_v2::concept_role::{ConceptRole, RoleConflict};
 pub use entity_v2::extension::{
     EXTENSION_MEMBER_SEPARATOR, EXTENSION_NAMESPACE_PATTERN, ExtensionNamespace,
     ObjectTypeExtension,
@@ -279,6 +283,8 @@ pub enum ArtifactKind {
     Mapping,
     /// Scoped temporal laws over ZEN predicates.
     Law,
+    /// Pure classification over existing base identities.
+    DefinedConcept,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -319,6 +325,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Derived
             | ArtifactKind::Mapping
             | ArtifactKind::Law
+            | ArtifactKind::DefinedConcept
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -642,6 +649,14 @@ pub enum ActionEffectProgram {
         entity_artifact_version: String,
         lifecycle: PropertyId,
         transition: TransitionId,
+        /// Bind a host-authenticated Function result before firing the transition.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::members::present_non_null"
+        )]
+        #[schemars(with = "ReceiptAcceptance")]
+        accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
     /// Membership and order are checked against the host's protected
@@ -664,6 +679,21 @@ pub enum ActionEffectProgram {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         collections: Vec<OwnedCollectionAction>,
     },
+}
+
+/// RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReceiptAcceptance {
+    /// Required string input member naming the immutable receipt digest.
+    pub reference_field: String,
+    /// Exact admitted Function manifest the host must authenticate.
+    pub manifest_digest: function::Digest,
+    /// Writable text property receiving the checked receipt digest.
+    pub digest_property: PropertyId,
+    /// Writable target property to accepted result member. Target property
+    /// types govern decoding; action input supplies none of these values.
+    pub result_bindings: BTreeMap<PropertyId, PropertyId>,
 }
 
 /// Trusted row-level conditions and derivations for one owned collection.
@@ -1397,6 +1427,22 @@ define_payload_root!(
     }
 );
 
+define_payload_root!(
+    /// Pack-owned classification; never a writable object store.
+    #[schemars(with = "DefinedConceptRoot")]
+    DefinedConceptPayload {
+        required {
+            id => "id" as String,
+            version => "version" as String,
+            base => "base" as definition_catalog::MemberRef,
+            predicate => "predicate" as ZenExpression,
+            dependencies => "dependencies" as Vec<definition_catalog::MemberRef>,
+            bounds => "bounds" as ResourceLimitProfile
+        }
+        optional {}
+    }
+);
+
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1436,6 +1482,7 @@ pub enum ArtifactPayload {
     SourceSchema(SourceSchemaPayload),
     Mapping(MappingPayload),
     Law(LawPayload),
+    DefinedConcept(DefinedConceptPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1486,6 +1533,9 @@ impl ArtifactPayload {
             }
             ArtifactKind::Mapping => Self::Mapping(MappingPayload::from_json_object(object)),
             ArtifactKind::Law => Self::Law(LawPayload::from_json_object(object)),
+            ArtifactKind::DefinedConcept => {
+                Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
+            }
         }
     }
 
@@ -1507,6 +1557,7 @@ impl ArtifactPayload {
             Self::SourceSchema(_) => ArtifactKind::SourceSchema,
             Self::Mapping(_) => ArtifactKind::Mapping,
             Self::Law(_) => ArtifactKind::Law,
+            Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
         }
     }
 
@@ -1528,6 +1579,7 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.to_json_value(),
             Self::Mapping(payload) => payload.to_json_value(),
             Self::Law(payload) => payload.to_json_value(),
+            Self::DefinedConcept(payload) => payload.to_json_value(),
         }
     }
 
@@ -1549,6 +1601,7 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.unknown_fields(),
             Self::Mapping(payload) => payload.unknown_fields(),
             Self::Law(payload) => payload.unknown_fields(),
+            Self::DefinedConcept(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1570,6 +1623,7 @@ impl ArtifactPayload {
             Self::SourceSchema(payload) => payload.has_invalid_extensions(),
             Self::Mapping(payload) => payload.has_invalid_extensions(),
             Self::Law(payload) => payload.has_invalid_extensions(),
+            Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -1892,6 +1946,27 @@ pub enum DiagnosticRemediation {
     Internal,
 }
 
+/// Structured refusal evidence shared by checker and transport projections.
+/// DIAG-REASON-1: declaration pins and operands are disclosed as one unit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalReason {
+    /// Stable governing law or invariant identity.
+    pub law: String,
+    /// Subject of the refused change.
+    pub subject: String,
+    /// Typed operands; disclosure authority is required before projection.
+    pub values: BTreeMap<String, RuntimeValue>,
+    /// Exact governing declaration, absent only in historical unpinned reasons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<DataQualityRuleRef>,
+}
+
+/// Schema for the shared refusal reason; transports do not redefine it.
+pub fn refusal_reason_schema() -> Schema {
+    schema_for!(RefusalReason)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
@@ -2052,6 +2127,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::SourceSchema => schema_for!(SourceSchemaPayload),
         ArtifactKind::Mapping => schema_for!(MappingPayload),
         ArtifactKind::Law => schema_for!(LawPayload),
+        ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
     }
 }
 

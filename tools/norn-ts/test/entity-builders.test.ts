@@ -402,3 +402,19 @@ test("parameter slices and typed context expressions retain their shared contrac
   expect(compiled.artifacts).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ preconditions: ["input.value == slice.selected.value"], slice: expect.arrayContaining([expect.objectContaining({ key: { parameter: { from: "settings", settingKey: "example.rate", effectiveAt: "effective_at", precedence: [{ orgId: "org_demo", environmentId: "dev" }, { orgId: "org_demo" }, {}] } } })]) }) }))
   if (checker) expect(checker.checkArtifactSet(compiled.artifacts).admitted).toBe(false)
 }, 30_000)
+
+test("GRAPH-ROLE-1 preserves declared roles and omission in canonical entities", () => {
+  for (const role of [undefined, "thing", "happening"] satisfies ReadonlyArray<"thing" | "happening" | undefined>) {
+    const definition = E.interfaceType({ name: "test.Role", title: "Role", version: "1.0.0", properties: [], ...(role === undefined ? {} : { role }) })
+    const built = E.lowerEntity(definition, { scope, sourcePath: "roles.ts" })
+    if (!built.ok) throw new Error(JSON.stringify(built.diagnostics))
+    if (role === undefined) expect(built.artifact).not.toHaveProperty("payload.interface.role")
+    else expect(built.artifact).toMatchObject({ payload: { interface: { role } } })
+  }
+})
+
+test("acceptReceipt syntax lowers reference and result bindings", () => {
+  const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/accept-receipt.source.ts"), { scope, sourcePath: "tools/norn-ts/fixtures/definitions/accept-receipt.source.ts" })
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
+})

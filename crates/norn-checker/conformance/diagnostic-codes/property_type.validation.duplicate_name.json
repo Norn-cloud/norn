@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.duplicate_name",
+  "message": "property type {name} is already defined at index {index}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

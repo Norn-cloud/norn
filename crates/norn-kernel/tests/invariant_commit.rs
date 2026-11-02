@@ -39,6 +39,22 @@ use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
 const ITEM: &str = "invariant.Item";
+
+#[test]
+fn obs_evidence_unbound_law_pin_cannot_claim_verified_classification() {
+    let catalog = TypeCatalog::new(&[]);
+    let pin = DataQualityRuleRef::Law {
+        artifact_id: "demo.purity.law".into(),
+        law_id: "purity_in_range".into(),
+        version: "sha256:definition-v1".into(),
+    };
+    assert_eq!(
+        catalog
+            .classify_data_quality_rule(&pin)
+            .expect("classification"),
+        norn_kernel::DataQualityRuleClassification::Unverified,
+    );
+}
 const SUBTYPE: &str = "invariant.SpecialItem";
 const INTERFACE: &str = "invariant.Named";
 const FUEL_ITEM: &str = "invariant.FuelItem";
@@ -549,6 +565,23 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
         })
         .unwrap_err();
     assert_eq!(error.code(), "commit.invariant_violation");
+    let reason = norn_kernel::Refusable::refusal(&error)
+        .reason
+        .expect("invariant reason");
+    let (types, interfaces) = definitions();
+    let owner = InvariantOwner::Object(ObjectTypeName(ITEM.to_owned()));
+    let expected_version = catalog(&types, &interfaces)
+        .invariant_owner_version(&owner)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reason.pin,
+        Some(DataQualityRuleRef::Invariant {
+            owner,
+            invariant_id: InvariantId("positive_amount".into()),
+            version: expected_version,
+        })
+    );
     assert!(matches!(
         error,
         CommitError::InvariantViolation {
@@ -2805,7 +2838,7 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
         invariant_id: InvariantId("named_item".to_owned()),
         version: match &fact.rule_ref {
             DataQualityRuleRef::Invariant { version, .. } => version.clone(),
-            DataQualityRuleRef::Builtin { .. } => unreachable!(),
+            DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } => unreachable!(),
         },
     };
     assert_eq!(
@@ -2821,7 +2854,8 @@ fn observed_snapshot_commits_versioned_finding_with_deterministic_provenance() {
                 invariant_id: InvariantId("other_invariant".to_owned()),
                 version: match &fact.rule_ref {
                     DataQualityRuleRef::Invariant { version, .. } => version.clone(),
-                    DataQualityRuleRef::Builtin { .. } => unreachable!(),
+                    DataQualityRuleRef::Builtin { .. } | DataQualityRuleRef::Law { .. } =>
+                        unreachable!(),
                 },
             })
             .expect("wrong invariant id resolves as unverified"),
