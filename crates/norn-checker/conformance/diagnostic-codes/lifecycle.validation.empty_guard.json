@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.empty_guard",
+  "message": "a guard of transition {id} is blank",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

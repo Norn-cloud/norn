@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.create_link",
+  "message": "the action's create-only link effect or its authorized target slice is invalid",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -93,8 +93,9 @@ pub use business_pack::{
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
     OntologyLinkRoot, OntologyMapping, OntologyPackKind, OntologyPackRoot, OntologyShape,
     OntologyShapeField, OntologySource, OntologySourceFile, OntologyTerm, OntologyTermKind,
-    OntologyTermStatus, PackArtifactKind, PackArtifactRef, ResidualReason, SemanticAuthority,
-    ShapeValueType, SourceImportMode, SourceImporter, SourceRedistribution, TermCorrespondence,
+    OntologyTermStatus, PackArtifactKind, PackArtifactRef, PackInstance, PackInstanceRef,
+    ResidualReason, SemanticAuthority, ShapeValueType, SourceImportMode, SourceImporter,
+    SourceRedistribution, TermCorrespondence,
 };
 pub use connector::{
     ApiKeyFormat, ConnectorAuth, ConnectorChildMergeProfile, ConnectorCommand,
@@ -647,6 +648,14 @@ pub enum ActionEffectProgram {
         entity_artifact_version: String,
         lifecycle: PropertyId,
         transition: TransitionId,
+        /// Bind a host-authenticated Function result before firing the transition.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::members::present_non_null"
+        )]
+        #[schemars(with = "ReceiptAcceptance")]
+        accept_receipt: Option<ReceiptAcceptance>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
     /// Membership and order are checked against the host's protected
@@ -669,6 +678,21 @@ pub enum ActionEffectProgram {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         collections: Vec<OwnedCollectionAction>,
     },
+}
+
+/// RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReceiptAcceptance {
+    /// Required string input member naming the immutable receipt digest.
+    pub reference_field: String,
+    /// Exact admitted Function manifest the host must authenticate.
+    pub manifest_digest: function::Digest,
+    /// Writable text property receiving the checked receipt digest.
+    pub digest_property: PropertyId,
+    /// Writable target property to accepted result member. Target property
+    /// types govern decoding; action input supplies none of these values.
+    pub result_bindings: BTreeMap<PropertyId, PropertyId>,
 }
 
 /// Trusted row-level conditions and derivations for one owned collection.
@@ -1301,6 +1325,7 @@ define_payload_root!(
         pack_kind => "packKind" as BusinessPackKind,
         provides => "provides" as Vec<String>,
         artifacts => "artifacts" as Vec<PackArtifactRef>,
+        instances => "instances" as Vec<PackInstance>,
         sources => "sources" as Vec<OntologySource>,
         terms => "terms" as Vec<OntologyTerm>,
         mappings => "mappings" as Vec<OntologyMapping>,

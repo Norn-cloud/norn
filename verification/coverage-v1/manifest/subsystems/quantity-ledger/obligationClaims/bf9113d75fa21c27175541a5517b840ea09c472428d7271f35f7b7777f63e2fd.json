@@ -1,0 +1,21 @@
+{
+  "order": 4,
+  "value": {
+    "id": "INV-QL-BATCH-ATOMIC",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "The unused engine multi-posting batch protocol was deleted by owner direction in quantity v2. Current multi-leg templates and ordinary effects are atomic in one cell transaction, but do not implement that protocol's ordered child transaction identities. Legacy Quint/Lean batch models remain reference mathematics; no current batch runtime claim or v2 refinement is credited.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entrybf9113d75fa21c27175541a5517b840ea09c472428d7271f35f7b7777f63e2fd.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entrybf9113d75fa21c27175541a5517b840ea09c472428d7271f35f7b7777f63e2fd.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entrybf9113d75fa21c27175541a5517b840ea09c472428d7271f35f7b7777f63e2fd.evidence.proof"
+      }
+    }
+  }
+}

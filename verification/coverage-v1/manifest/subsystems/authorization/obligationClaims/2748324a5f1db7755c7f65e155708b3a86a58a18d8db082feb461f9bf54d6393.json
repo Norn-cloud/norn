@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-AUTH-SCOPE-CLOSED",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The retained authorization checker and engine store require explicit scope and reject missing, wildcard, or cross-organization bindings. Optional dimensions, including agent session, require exact presence or absence; blank/wildcard values are rejected. ScopeKey constructors and retained store boundaries revalidate components, and authorization evidence binds exact actor kind. No HTTP, UPE mutation, or legacy fixture/migration path is retained. Lean proves compact exact option semantics and Quint exhausts None/Some(A)/Some(B) combinations for five optional dimensions. The Aeneas lane starts at the concrete interned Rust grant-vector decision and proves its traversal, exact tuple comparisons, and capability membership. Its generated vector loops use `partial_fixpoint`, so the theorem dependency closure is restricted to Lean core `propext`, `Classical.choice`, and `Quot.sound`, never `sorryAx` or a custom axiom. It does not prove String-to-u64 interning, deserialization/validation, commit-evidence construction, or every call-site route. The broad production obligation still needs a whole-store scoped-key audit, authentication/provisioning proof, a general storage-key injectivity proof, read-path lifecycle enforcement, and full implementation correspondence. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry2748324a5f1db7755c7f65e155708b3a86a58a18d8db082feb461f9bf54d6393.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry2748324a5f1db7755c7f65e155708b3a86a58a18d8db082feb461f9bf54d6393.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry2748324a5f1db7755c7f65e155708b3a86a58a18d8db082feb461f9bf54d6393.evidence.proof"
+      }
+    }
+  }
+}

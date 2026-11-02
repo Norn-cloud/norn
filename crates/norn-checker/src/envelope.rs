@@ -1891,6 +1891,7 @@ fn validate_action_effect_program(
         TARGET_MEMBERS
             .into_iter()
             .chain(TRANSITION_MEMBERS)
+            .chain(["acceptReceipt"])
             .collect()
     } else if mutates_rows {
         TARGET_MEMBERS.into_iter().chain(ROW_MEMBERS).collect()
@@ -1937,6 +1938,17 @@ fn validate_action_effect_program(
                     CODE,
                 ));
             }
+        }
+        if program.contains_key("acceptReceipt")
+            && let Err(error) =
+                serde_json::to_value(value).and_then(serde_json::from_value::<ActionEffectProgram>)
+        {
+            diagnostics.push(invalid_diagnostic(
+                CODE,
+                format!("invalid acceptReceipt declaration: {error}"),
+                "payload.effectProgram.acceptReceipt",
+                artifact_id,
+            ));
         }
     } else if mutates_rows {
         for member in ["parentValuesField", "rowOpsField", "parentVersionField"]
@@ -3064,7 +3076,14 @@ fn validate_business_pack_payload(
         Some("composition") => {
             reject_unknown_object_fields(
                 payload,
-                &["packId", "packVersion", "packKind", "provides", "artifacts"],
+                &[
+                    "packId",
+                    "packVersion",
+                    "packKind",
+                    "provides",
+                    "artifacts",
+                    "instances",
+                ],
                 "payload",
                 diagnostics,
                 artifact_id,

@@ -1414,6 +1414,10 @@
           "transition"
         ],
         "properties": {
+          "acceptReceipt": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptance",
+            "description": "Bind a host-authenticated Function result before firing the transition."
+          },
           "entityArtifactId": {
             "type": "string"
           },
@@ -2266,6 +2270,13 @@
           },
           "extensions": {
             "$ref": "#/components/schemas/NornIrCompositionPackRootPropertyExtensions"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstance"
+            },
+            "description": "Declarations in the retained scoped graph; omitted when there are none."
           },
           "packId": {
             "type": "string"
@@ -4378,6 +4389,11 @@
           "info"
         ]
       },
+      "NornIrDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
       "NornIrDimensionPath": {
         "type": "object",
         "description": "A property reached by zero or more declared directional link roles.",
@@ -5779,6 +5795,59 @@
           "A named result composition."
         ]
       },
+      "NornIrFoldArithmetic": {
+        "type": "object",
+        "description": "Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN\ndivision and implicit rounding do not implement this contract.",
+        "required": [
+          "scale",
+          "rounding"
+        ],
+        "properties": {
+          "rounding": {
+            "$ref": "#/components/schemas/NornIrFoldRounding"
+          },
+          "scale": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrFoldOrderKey": {
+        "type": "object",
+        "description": "One required scalar property of a fold item. All keys ascend; the final\nidentity breaks every tie without consulting input enumeration order.",
+        "required": [
+          "property",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/NornIrFoldOrderKind"
+          },
+          "property": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrFoldOrderKind": {
+        "type": "string",
+        "enum": [
+          "string",
+          "integer"
+        ]
+      },
+      "NornIrFoldRounding": {
+        "type": "string",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
+      },
       "NornIrGapReason": {
         "type": "string",
         "description": "Why a target member is not mapped.",
@@ -6127,6 +6196,30 @@
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",
             "description": "The widest type an implementing property may have."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrInterpretationEndpoint": {
+        "type": "object",
+        "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+        "required": [
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Retained artifact, resolved without namespace inference."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Receipt-profile semantic content digest."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version."
           }
         },
         "additionalProperties": false
@@ -6791,6 +6884,10 @@
           "key": {
             "type": "string",
             "description": "Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2\nrule that the envelope declares as a required `rule` dependency. The\nchecker resolves it and bounds the sub-decision closure (T3-DEC-1)."
+          },
+          "orderedFold": {
+            "$ref": "#/components/schemas/NornIrOrderedFold",
+            "description": "Bounded ordered application of this existing sub-decision. Execution\nremains refused until the ordered-fold semantics profile is supported."
           },
           "outputPath": {
             "type": [
@@ -9559,6 +9656,76 @@
           "superseded"
         ]
       },
+      "NornIrOrderedFold": {
+        "type": "object",
+        "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
+        "required": [
+          "semanticsVersion",
+          "order",
+          "identity",
+          "itemSchema",
+          "accumulatorSchema",
+          "initial",
+          "maxItems",
+          "maxAccumulatorBytes",
+          "arithmetic"
+        ],
+        "properties": {
+          "accumulatorSchema": {
+            "$ref": "#/components/schemas/NornIrOrderedFoldPropertyAccumulatorSchema"
+          },
+          "arithmetic": {
+            "$ref": "#/components/schemas/NornIrFoldArithmetic"
+          },
+          "identity": {
+            "type": "string",
+            "description": "The last order key; must be a unique, stable string identity."
+          },
+          "initial": {
+            "type": "string",
+            "description": "Exact expression evaluated once against the node input."
+          },
+          "itemSchema": {
+            "$ref": "#/components/schemas/NornIrOrderedFoldPropertyItemSchema"
+          },
+          "maxAccumulatorBytes": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Canonical encoded byte bound, checked initially and after every step.",
+            "minimum": 0
+          },
+          "maxItems": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrFoldOrderKey"
+            },
+            "description": "Required, non-null item properties in lexicographic ascending order."
+          },
+          "semanticsVersion": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrOrderedFoldPropertyAccumulatorSchema": {
+        "type": "object",
+        "description": "Closed schema of the initial and every subsequent accumulator.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrOrderedFoldPropertyItemSchema": {
+        "type": "object",
+        "description": "Closed schema of one input item.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
       "NornIrOrigin": {
         "type": "string",
         "description": "Who asserted a fact about the source.",
@@ -9719,6 +9886,97 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrPackInstance": {
+        "type": "object",
+        "description": "A scoped declaration; imports and contained instances reference this same model.\nIdentity survives release upgrades. Structural admission grants no execution authority.",
+        "required": [
+          "instanceId",
+          "scope",
+          "pack",
+          "imports",
+          "instances"
+        ],
+        "properties": {
+          "imports": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyImports"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPackInstanceRef"
+            }
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrPackInstancePropertyScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstancePropertyImports": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPackInstanceRef"
+        }
+      },
+      "NornIrPackInstancePropertyScope": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPackInstanceRef": {
+        "type": "object",
+        "description": "PACK-PIN-1: an opaque instance identity, pinned separately from its release.",
+        "required": [
+          "instanceId",
+          "pack"
+        ],
+        "properties": {
+          "instanceId": {
+            "type": "string"
+          },
+          "pack": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrPolicyObligation": {
         "type": "object",
@@ -10320,6 +10578,47 @@
           "import",
           "system"
         ]
+      },
+      "NornIrReceiptAcceptance": {
+        "type": "object",
+        "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+        "required": [
+          "referenceField",
+          "manifestDigest",
+          "digestProperty",
+          "resultBindings"
+        ],
+        "properties": {
+          "digestProperty": {
+            "type": "string",
+            "description": "Writable text property receiving the checked receipt digest.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "manifestDigest": {
+            "type": "string",
+            "description": "Exact admitted Function manifest the host must authenticate.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "referenceField": {
+            "type": "string",
+            "description": "Required string input member naming the immutable receipt digest."
+          },
+          "resultBindings": {
+            "$ref": "#/components/schemas/NornIrReceiptAcceptancePropertyResultBindings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrReceiptAcceptancePropertyResultBindings": {
+        "type": "object",
+        "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrPropertyId"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrRecordMember": {
         "type": "object",

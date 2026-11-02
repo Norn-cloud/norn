@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.unresolved_stored_property_contract",
+  "message": "the decision writes {objectType}, whose effective stored-property contracts cannot be resolved: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

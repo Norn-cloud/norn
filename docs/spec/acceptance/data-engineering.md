@@ -1,3 +1,75 @@
+# Demo beat 6: Scrap-yield acceptance
+
+[Owner] Data scientists and engineers are a primary audience. The ontology is the semantic layer; declarations derive pipelines. This required [sixth beat](jewelry-demo.md) follows the [approved Lane D design](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558867021) and [coordinator ruling](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558874617). The weekly scrap-yield fixture governs CP2/CP3. Inventory-by-region is post-demo; its original contract is preserved verbatim in the appendix.
+
+All numbers are **synthetic qualification targets**, not reported runtime results. Replay signed ERPNext/Shopify-shaped envelopes through real adapters; label this **synthetic feed replay**, not production CDC. No SQL, authored pipeline DAG, domain kernel opcode or standalone publication authority.
+
+## Pinned scrap-yield fixture
+
+One fictional organization, USD only, UTC, exact fine/gross grams at scale 3 and purity as an exact fraction in `[0,1]`. The transaction demo uses per-mille purity; the source mapping explicitly converts the fraction, never guesses the unit. Keep money/mass accounting exact; statistical calculations are explicitly approximate binary64.
+
+Freeze 16 ISO weeks, July 6–October 25, 2026: four gold melts plus one silver melt per week (80 melts, 64 gold). Each Conversion links input/output/loss lots, accountable agents, source documents/child rows and event/recorded times. Catalog Item/Variant is distinct from Holding/Lot. Declare synthetic ERPNext measurement fields and gross/purity/fine consistency; they are not standard vendor fields.
+
+The showcase week ends October 25 at effective cutoff **T = October 26 00:00 UTC, exclusive**:
+
+| Gold batch | Input fine g | Recovered fine g | Recorded loss fine g |
+| --- | --- | --- | --- |
+| G1 | 60.000 | 58.800 | 1.200 |
+| G2 | 75.000 | 73.500 | 1.500 |
+| G3 | 80.000 | 78.400 | 1.600 |
+| G4 | 85.000 | 83.300 | 1.700 |
+| Total | 300.000 | 294.000 | 6.000 |
+
+The declared question is **Scrap yield by week — gold**: `sum(recovered fine g) / sum(input fine g)`, at Conversion ID grain and ISO-week boundaries, partitioned by metal. The showcase result is **98%**, not an average of batch percentages. [Default] The canonical dimensionless ratio has decimal scale 6 and explicit midpoint-away-from-zero rounding; retain the exact numerator/denominator beside it. Zero input is unavailable, never infinity or an invented zero. Other weeks use the exact mass recipe below, with nonzero predictor variance and nonzero residuals. No favorable RMSE or slope is promised.
+
+### Reproducible forecast population (TARGET fixture, not a runtime result)
+
+[Default] Reuse the mass recipe in [D1a's mapping conformance](https://github.com/Norn-cloud/norn/blob/d77c4f55048b6309b71238cc5704ff038471ead2/crates/norn-checker/tests/demo_measurements.rs), not a second random generator. For week `w=0..15` and batch `b=0..4`, integer milligrams are:
+
+```text
+input = [60000,75000,80000,85000,50000][b]                     if w=15
+        50000 + 7000*b + (193*w + 71*b) mod 997                otherwise
+loss  = floor(input/50)                                      if w=15
+        floor(input/50) + (17*w + 13*b) mod 103                otherwise
+recovered = input - loss
+metal = silver if b=4, gold otherwise
+conversion_id = SYN-MELT-{w as two decimal digits}-{b}
+```
+
+All gross/fine measurements in this numerical fixture have purity `1.000000`; grams are milligrams divided by 1000 exactly. The bad purity and K2 correction are separate appended variants, excluded from this K1 population. Week Monday is July 6 00:00 UTC plus `7*w` days. Per batch, feature knowledge is Monday 09:00 plus `b` minutes, effective conversion is Friday 12:00 plus `b` minutes, and outcome knowledge is Friday 12:01 plus `b` minutes. Historical receipts in the declared synthetic execution world must authenticate those knowledge times; declarations cannot backdate real knowledge. In particular D1a's bulk mapping test records everything on October 26 and **cannot qualify training knowledge**; H #346 must supply the eligible temporal-export fixture or reject it.
+
+The committed Rust-readable table is [`fixtures/demo/scrap-yield-k1.csv`](../../../fixtures/demo/scrap-yield-k1.csv); `include_str!` can consume it without a generator dependency. Its mass columns are canonical integer-milligram interchange; qualified direct gram columns must retain exact correspondence to the mapped measurements, not become computed columns passed to the temporal admission profile.
+
+Canonical table bytes: UTF-8, LF, final LF, no quoting/spaces; header `week,batch,conversion_id,metal,input_mg,recovered_mg,loss_mg,feature_known_at,effective_at,outcome_known_at`; 80 rows ordered by `(w,b)`; integers use unpadded decimal except the two-digit week in the ID; timestamps use `YYYY-MM-DDTHH:MM:SSZ`. SHA-256: **`22cee20298906d6f1ecb8bd3eabc3d405409d7c3091c275cbfe0a8932694c28d`**. This pins the proposed table values, not authenticated receipt evidence. The qualified forecast identity must additionally bind its actual table/source versions, K1 and receipts; unresolved or later-learned incarnations still refuse. Filter `metal=gold` after validating the full table; training is `w<12`, holdout `w>=12`.
+
+ERPNext owns mass/cost observations; Shopify supplies linked catalog/order/fulfillment evidence, with missing cost/book authority declared. An explicit shipment cross-reference attaches both systems' evidence to one economic event; never double-deplete stock or fuzzy-match identities. Each result binds question/definitions/mappings, authorized population/epoch, world, ledger head, effective/knowledge coordinates and a per-source consumed frontier vector. Source heartbeat, consumed frontier, coverage and completed materialization are distinct.
+
+Knowledge **K1** precedes a correction recorded October 27. At **K2**, accepted linked restatement changes G2 recovered mass **73.500 → 72.000 g** and loss **1.500 → 3.000 g**, input unchanged. The later result is **292.500 / 300.000 = 97.5%**. K1 is immutable. An authenticated bad candidate with purity **1.20** is retained as observation/finding and excluded, rather than becoming a valid holding or refusing capture.
+
+## CP2/CP3 scenarios (given / when / then)
+
+1. **DATA-INGEST:** Given the pinned gold/silver records and Shopify references, when signed capture/mapping commits, then ordinary REA objects retain source documents/cursors and the showcase accepted population has four gold Conversions, 300.000 input g and 294.000 recovered g (98%). Replay, duplicate or reversed arrivals converge without extra rows/value; shared shipment evidence has one consequence. CP2 needs one mapped ERPNext feed; both feeds are required at CP3. Missing/ambiguous identities and mapping coverage remain explicit.
+2. **DATA-FRESH:** Given complete accepted contributions and required-source heartbeats/frontiers, when replay advances, then show consumed cursors, coverage, materialization, per-source observed lag and quarantine count with the declared **live ≤5 s** policy. Pause a dependency beyond that bound: show stale/catching-up; exact governed-law use refuses. Resume and catch up. Shopify pause does not stale an ERPNext-only yield question. Fresh heartbeat plus quarantine/gaps is still incomplete; render time is not freshness.
+3. **DATA-LINEAGE:** Given 98%, when drilling through, then show numerator 294.000 g and denominator 300.000 g, four Conversion/lot versions, transforms, ERPNext document/child row, observation, mapping version/receipt and relevant Shopify cross-reference. Silver and catalog enrichment add no numeric contribution. Membership pages retain the result pins or restart; masking/revocation applies to every object/document/subscription emission.
+4. **DATA-INCREMENTAL:** Given G1–G3 at 210.700/215.000 g, when valid G4 arrives, then measured IVM adds 83.300/85.000 g to reach 294.000/300.000. At every accepted frontier, compare exact in-cell and maintained results with full recomputation from the identical authorized snapshot: numerator/denominator, ratio/rounding, membership, exclusions/findings and temporal pins. Include insert, update, duplicate, reversed order, tombstone and restart/replay; each adds no unintended delta. A batch refresh is not incremental. DuckDB/WellDB OLAP correspondence is a labelled CP3 stretch, not a CP2 prerequisite or a shipped engine claim.
+5. **DATA-QUARANTINE:** Given the authenticated purity-1.20 candidate against `[0,1]`, when capture/law evaluation runs, then advance the source cursor and persist raw observation plus `core.boundary.import_finding`, exact offending path/value, law/version, mapping, source document and evidence digest. Quarantine/exclude it; accepted result stays 294.000/300.000 with one exclusion and **“caught up; 1 quarantined; incomplete”**. Replay produces no duplicate active finding. A bad newer version cannot leave an older record labelled fresh/complete. Valid correction appends evidence and resolves under the declared lifecycle. Native invalid writes separately refuse atomically; ingress authentication failures still reject.
+6. **DATA-ASOF:** Given T/K1 and the G2 correction learned at K2, when a governed approved restatement activates, then T/K1 remains 294.000/300.000 = 98%; T/K2 is 292.500/300.000 = 97.5%. Display both time coordinates and the correcting source version/reason/approval. Append reconciling movements with counterparts; never overwrite posted history. A ledger cursor alone is not a bitemporal API; an analytical restatement is not automatically reconciled books.
+7. **DATA-RESTATEMENT-DELTA:** Given the K1 generation, when the linked correction activates at K2, then recovered numerator retracts 1.500 g, loss adds 1.500 g and input denominator stays 300.000 g. IVM retraction/replacement equals full recomputation at each bitemporal slice, including late correction, quarantine/recovery and restart. Retain old results and source versions. Interrupted rebuild leaves the old complete generation visible with truthful stale status; switch all outputs atomically at the declared frontier.
+8. **DATA-FORECAST:** Given the same 64 gold melts, when the pinned direct numeric temporal table is admitted, then train on the first 12 weeks (**48 batches**, before September 28 00:00 UTC) and hold out the last four (**16 batches**). [Default] CP3 uses the immutable **K1** population/table version, with that knowledge coordinate, source versions and table digest bound to the forecast identity; K2 can only produce a new analysis version. Input fine g is known before each melt/prediction; recovered fine g is its later outcome. Freeze the split, code/method/population/parameters/assumptions and receipts before looking at holdout outcomes. [Default] Fit unweighted one-predictor OLS **with an intercept on the 48 training batches only**; compute its residual/QQ/influence diagnostics on that same training population. Score the 16 fixed holdout outcomes without refitting or diagnostic tuning. Show `forecast()` held-out predictions, RMSE in grams and the training-mean baseline without promising a win; show OLS slope in recovered-g/input-g plus residual/QQ/influence plots and diagnostic identities. Independence/confounding remain visible attestations. No money/computed columns are smuggled into a direct numeric-only profile; no causal/future-confidence claim.
+9. **DATA-PUBLISH-GUARD:** Given registered method/population/split/assumptions/remedy and a typed Function result/receipt, when an authorized reviewer invokes the declared publication happening, then server checks the exact identities, temporal knowledge, completeness/freshness and diagnostic policy. A failed diagnostic withholds inference or uses a preregistered descriptive-only remedy; a training label learned after the split rejects the analysis population (`core.projection.publication_guard` with temporal detail). Raw imported evidence remains available. Changed/stale/tampered populations or receipts cannot publish under an old identity. Reanalysis is a new pinned version retaining the old report; statistical output cannot post stock/GL.
+
+## Checkpoints and evidence
+
+**CP2, November 2 stop/go:** one mapped feed replay; replay-stable quarantine; one real delta updating an admitted question with exact in-cell/IVM/recompute equality; authenticated temporal export rejecting a late training label. Definition admission or pure statistical arithmetic alone does not satisfy these links.
+
+**CP3, November 3 rehearsal:** both feeds, authorized result-to-document traversal, 98%/97.5% as-of answers, 48/16 forecast/OLS and actual server-governed publication denial in the same app. OLAP correspondence is a separately labelled stretch. Missing links remain explicit; reduced replay/read-only segments are labelled accordingly. November 4 is fixes/polish, not new scope.
+
+Use Core [03](../core/03-query-compute.md), [05](https://github.com/Norn-cloud/norn/blob/6ac89f34c9040241c1ff381d1c9c204df8a4b344/docs/spec/core/05-laws-authority.md), [07](https://github.com/Norn-cloud/norn/blob/7076bfcf8d985a21fe989bfe3434bf1ac4a8b18e/docs/spec/core/07-world-boundary.md) and [08](https://github.com/Norn-cloud/norn/blob/7076bfcf8d985a21fe989bfe3434bf1ac4a8b18e/docs/spec/core/08-worlds-projections.md). The latter three links pin the published specification PRs until their main paths land. The nine identities above remain stable through this fixture change. Every case needs real evaluator/cell/surface correspondence and exact-head repository CI/Boat gates. Separate admission/runtime, bounded correspondence, sampled ERPNext parity and proof evidence; no skip passes and no universal IVM or production-ML claim.
+
+## Post-demo fixture
+
+The following inventory-by-region contract is retained **verbatim** from the earlier acceptance baseline. Its “required”/three-engine language applies to post-demo qualification, not CP2/CP3. It adds no current demo commitment and does not replace the scrap-yield cases above.
+
 # Demo beat 6: Data engineering acceptance
 
 [Owner] Data scientists and engineers are a primary audience. Norn's ontology is the semantic layer; declarations derive pipelines. This beat is required alongside the [five original beats](jewelry-demo.md), using one question across exact in-cell, IVM and DuckDB/Iceberg (WellDB) execution. The numbers below are **[Default] synthetic qualification fixtures**, not measured results.
