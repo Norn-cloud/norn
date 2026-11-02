@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.complexity_limit",
+  "message": "Metric dependencies and link paths are bounded to 64 levels.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.invalid_location",
+  "message": "source location requires a file and one-based line and column numbers",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

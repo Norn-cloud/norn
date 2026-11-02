@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_key",
+  "message": "mapping id {artifactId} contains '@' or version {version} is not SemVer, so the key {key} is ambiguous",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

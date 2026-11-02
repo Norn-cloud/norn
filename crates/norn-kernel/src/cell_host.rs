@@ -935,6 +935,21 @@ pub trait CellHost {
         Ok(None)
     }
 
+    /// Resolve and authenticate an unconsumed receipt within this cell's scope,
+    /// world and pinned Function manifest. Action JSON supplies only a reference.
+    /// RECEIPT-EFFECT-1: unsupported hosts return no evidence; acceptance alone
+    /// does not commit effects or consume the receipt.
+    ///
+    /// # Errors
+    /// Host storage, authentication or manifest-binding failure.
+    fn resolve_accepted_receipt(
+        &self,
+        _reference: &crate::receipt_binding::ReceiptReference,
+        _manifest: &norn_ir::function::Digest,
+    ) -> Result<Option<crate::receipt_binding::ReceiptBinding<JsonObject>>, Self::Error> {
+        Ok(None)
+    }
+
     /// Reads the committed state of one link (not an effect verb).
     /// Temporal properties follow the same read contract as [`Self::load`].
     ///

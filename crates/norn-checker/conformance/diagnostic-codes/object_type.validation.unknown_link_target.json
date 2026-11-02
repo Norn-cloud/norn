@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.unknown_link_target",
+  "message": "link target {target} names no object type or interface",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
