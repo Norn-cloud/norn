@@ -18,7 +18,7 @@ fn compiled() -> CompiledMapping {
     compile("demo-erpnext", "demo.erpnext.measurements.mapping")
 }
 
-fn pack_artifacts(pack: &str) -> Vec<ArtifactEnvelope> {
+fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut artifacts: Vec<ArtifactEnvelope> = [
         root.join("registry/core/artifacts"),
@@ -45,16 +45,9 @@ fn pack_artifacts(pack: &str) -> Vec<ArtifactEnvelope> {
                 "core.Hold.interface",
                 "core.LedgerEffect.interface",
                 "core.Claim.interface",
-                "core.Conversion.interface",
-                "core.law.conversion_conservation.law",
             ]
             .contains(&a.artifact_id.as_str())
     });
-    artifacts
-}
-
-fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
-    let artifacts = pack_artifacts(pack);
     let mapping = artifacts
         .iter()
         .find(|a| a.artifact_id == mapping_id)
@@ -347,107 +340,4 @@ fn d3_purity_law_governs_the_concrete_measurement_type() {
     assert_eq!(law.severity, norn_ir::LawSeverity::Error);
     assert!(matches!(law.modality, norn_ir::LawModality::Always {}));
     compiled();
-}
-
-#[test]
-fn data_quality_pack_wordings_bind_and_conversion_retains_its_core_origin() {
-    use norn_checker::law_wording::{LawWordingArtifact, WordingBinding, admit_wording};
-    use norn_ir::requirement_display::RequirementLocale;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let artifacts = pack_artifacts("demo-erpnext");
-    let context = norn_checker::EntityArtifactSetContext {
-        registry: &std::collections::BTreeSet::new(),
-        base: &[],
-        tenant: None,
-    };
-    let diagnostics = norn_checker::check_artifact_set(&artifacts, &context);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    let env = norn_checker::receipt::derive_type_env(
-        &artifacts,
-        &[],
-        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-    )
-    .expect("admitted environment");
-    let mut mismatches = Vec::new();
-    for (directory, id) in [
-        (
-            "registry/packs/demo-erpnext",
-            "demo.erpnext.purity_in_range",
-        ),
-        (
-            "registry/packs/demo-erpnext",
-            "demo.erpnext.fine_mass_definition",
-        ),
-        ("registry/core", "core.law.conversion_conservation"),
-    ] {
-        let wording = LawWordingArtifact::parse(
-            &fs::read_to_string(root.join(format!("{directory}/wordings/{id}.wording.json")))
-                .expect("generated wording"),
-        )
-        .expect("closed wording");
-        assert_eq!(wording.requirement.norm.law.id, id);
-        let law = artifacts
-            .iter()
-            .find(|a| a.artifact_id == wording.law_artifact_id)
-            .expect("original law");
-        let pin = ArtifactRef::of(law).expect("law digest");
-        if pin.sha256 != wording.law_sha256 {
-            mismatches.push((id, pin.sha256));
-            continue;
-        }
-        let subject = &wording.requirement.norm.law.subject;
-        let env = if subject == "core.Conversion" {
-            env.clone()
-                .bind_interface_self(&norn_ir::InterfaceName(subject.clone()))
-        } else {
-            env.clone()
-                .bind_self(&norn_ir::ObjectTypeName(subject.clone()))
-        }
-        .expect("exact subject");
-        let mut ids = Vec::new();
-        for locale in [RequirementLocale::En, RequirementLocale::Ar] {
-            let view = admit_wording(&wording, law, &env, locale).expect("structured admission");
-            assert_eq!(view.binding, WordingBinding::Bound);
-            ids.push(
-                view.view
-                    .slots()
-                    .expect("shared renderer")
-                    .iter()
-                    .map(|s| s.id.clone())
-                    .collect::<Vec<_>>(),
-            );
-        }
-        assert_eq!(ids[0], ids[1]);
-    }
-    assert!(mismatches.is_empty(), "law digest pins: {mismatches:?}");
-    let instances = norn_checker::verification::effective_law_instances(
-        &artifacts,
-        &context,
-        norn_graph::Budget {
-            max_nodes: 128,
-            max_edges: 1024,
-            max_steps: 4096,
-        },
-    )
-    .expect("effective laws");
-    let conservation: Vec<_> = instances
-        .iter()
-        .filter(|i| i.subject.artifact_id == "demo.erpnext.ScrapMelt.entity")
-        .collect();
-    assert_eq!(conservation.len(), 1);
-    assert_eq!(
-        conservation[0].law.artifact_id,
-        "core.law.conversion_conservation.law"
-    );
-    assert_eq!(
-        conservation[0].origin.artifact_id,
-        "core.Conversion.interface"
-    );
-    assert_eq!(
-        conservation[0].paths,
-        vec![vec![
-            conservation[0].origin.clone(),
-            conservation[0].subject.clone()
-        ]]
-    );
 }

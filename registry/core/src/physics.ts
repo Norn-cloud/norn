@@ -50,15 +50,6 @@ export const quantityConservation = Norn.law({
     subject: "core.Conversion", modality: { kind: "always" },
     response: { kind: "invariant", objectType: "core.Conversion", invariantId: "conversion_conservation" },
   },
-  wordings: { "core.law.conversion_conservation": {
-    lawDigest: "46d00e0929579e17dcb29e8a5b65a5db7c8740012171e290f1528352e66d4623",
-    slots: {
-      scope: { en: "Each core conversion", ar: "كل عملية تحويل" },
-      activation: { en: "At every committed state", ar: "في كل حالة معتمدة" },
-      component: { en: "Its quantities in one bound unit and scale", ar: "كمياتها بوحدة ومقياس عشري محددين ومتطابقين" },
-      response: { en: "Nonnegative input equals nonnegative output plus recorded nonnegative loss", ar: "الكمية الداخلة غير السالبة تساوي الكمية الخارجة غير السالبة مع الفاقد المسجّل غير السالب" },
-    },
-  } },
   dependencies: [{ artifactId: "core.Conversion.interface", kind: "entity", version: "0.1.0", required: true }],
 })
 

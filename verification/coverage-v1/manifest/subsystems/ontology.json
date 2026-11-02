@@ -283,8 +283,6 @@
     "verification/ontology/scripts/validate_semantics.py",
     "crates/norn-checker/tests/demo_measurements.rs",
     "crates/norn-checker/src/definition_catalog.rs",
-    "crates/norn-checker/tests/definition_catalog.rs",
-    "registry/packs/demo-erpnext/artifacts/demo.erpnext.fine_mass_definition.law.json",
-    "registry/packs/demo-erpnext/artifacts/demo.erpnext.ScrapMelt.entity.json"
+    "crates/norn-checker/tests/definition_catalog.rs"
   ]
 }

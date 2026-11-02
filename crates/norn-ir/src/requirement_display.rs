@@ -92,7 +92,6 @@ impl RequirementView {
             LawRoot::App(id) => format!("{} {}", self.word("application", "تطبيق"), isolate(id)),
             LawRoot::Cell(id) => format!("{} {}", self.word("cell", "خلية"), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", self.word("entity", "كيان"), isolate(id)),
-            LawRoot::Pack(_) => return Err("law.model.unknown_binding"),
         };
         let mut scope = vec![format!(
             "{}; {root}; {}",
