@@ -2,7 +2,7 @@
   "artifactId": "demo.erpnext.fine_mass_definition.wording",
   "format": "norn.law_wording/1",
   "lawArtifactId": "demo.erpnext.fine_mass_definition.law",
-  "lawSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "lawSha256": "195ace9eb8fd04495af8fa8609378cfcbd330279a83e5f758829d7ab1113e91c",
   "requirement": {
     "norm": {
       "authorityId": "demo.erpnext.controls",

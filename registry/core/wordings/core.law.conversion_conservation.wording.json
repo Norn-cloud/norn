@@ -2,7 +2,7 @@
   "artifactId": "core.law.conversion_conservation.wording",
   "format": "norn.law_wording/1",
   "lawArtifactId": "core.law.conversion_conservation.law",
-  "lawSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "lawSha256": "46d00e0929579e17dcb29e8a5b65a5db7c8740012171e290f1528352e66d4623",
   "requirement": {
     "norm": {
       "authorityId": "norn.core",

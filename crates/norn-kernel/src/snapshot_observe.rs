@@ -1001,7 +1001,10 @@ impl ObservationAuthorization {
     }
 }
 
-fn property_finding_rule(catalog: &TypeCatalog<'_>, failure: &InvariantFailure) -> Result<DataQualityRuleRef, ObservationRefusal> {
+fn property_finding_rule(
+    catalog: &TypeCatalog<'_>,
+    failure: &InvariantFailure,
+) -> Result<DataQualityRuleRef, ObservationRefusal> {
     let norn_ir::InvariantOwner::Object(owner) = &failure.owner else {
         return Err(ObservationRefusal::Encoding(
             "property owner must be an object".to_owned(),
@@ -1017,11 +1020,7 @@ fn property_finding_rule(catalog: &TypeCatalog<'_>, failure: &InvariantFailure) 
     catalog
         .property_domain_rule_ref(owner, &property)
         .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
-        .ok_or_else(|| {
-            ObservationRefusal::Encoding(
-                "property domain is not retained".to_owned(),
-            )
-        })
+        .ok_or_else(|| ObservationRefusal::Encoding("property domain is not retained".to_owned()))
 }
 
 fn findings_for(
@@ -1078,7 +1077,8 @@ fn findings_for(
                     )));
                 }
                 None if failure.id.as_str().starts_with("$property.") => (
-                    property_finding_rule(catalog, failure)?, failure.outcome.clone(),
+                    property_finding_rule(catalog, failure)?,
+                    failure.outcome.clone(),
                 ),
                 None => {
                     let version = catalog
