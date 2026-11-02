@@ -240,11 +240,14 @@ fn admitted_text_nfc_closes_semantic_identity_gap() {
         if literal == "é" {
             assert!(checked.expect("NFC receipt").receipt.admitted);
         } else {
+            let refused = checked.expect("structured non-NFC refusal");
+            assert!(!refused.receipt.admitted);
+            assert!(refused.receipt.type_env.is_none());
             assert!(
-                checked
-                    .expect_err("non-NFC refused")
-                    .to_string()
-                    .contains("definition.text.not_nfc")
+                refused
+                    .diagnostics
+                    .iter()
+                    .any(|finding| finding.code.as_str() == "definition.text.not_nfc")
             );
         }
         results.push(
