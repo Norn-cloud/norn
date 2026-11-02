@@ -480,7 +480,7 @@ impl ZenTypeEnv {
         self.bind_parsed_exact_schema(name, &schema)
     }
 
-    /// VAL-ENV: retain the ActionIR input dialect when pinning exact refinements.
+    /// VAL-ENV: retain the `ActionIR` input dialect when pinning exact refinements.
     ///
     /// # Errors
     /// Refuses malformed action inputs or colliding schema record identities.
