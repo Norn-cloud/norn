@@ -125,8 +125,8 @@ fn foreign_inbox_deduplication_uses_cell_and_world() {
     );
 }
 
-#[test]
-fn legacy_replay_never_mints_portable_receipts_or_rehashes_original_evidence() {
+#[tokio::test]
+async fn legacy_replay_never_mints_portable_receipts_or_rehashes_original_evidence() {
     let mut source = store(1);
     source.commit(&CommitBatch::default()).expect("commit");
     let mut old = source.export_record(1).expect("record").expect("present");
@@ -153,6 +153,38 @@ fn legacy_replay_never_mints_portable_receipts_or_rehashes_original_evidence() {
     rebuilt.commit(&CommitBatch::default()).expect("new commit");
     assert!(rebuilt.portable_receipt(2).is_ok());
     assert!(rebuilt.portable_receipt(1).is_err());
+    let first = rebuilt.export_record(1).expect("first").expect("present");
+    let second = rebuilt.export_record(2).expect("second").expect("present");
+    let dir = tempfile::tempdir().expect("directory");
+    let mut exporter =
+        norn_cell::export::Exporter::local(&dir.path().join("export")).expect("exporter");
+    exporter.append(&first).await.expect("old record");
+    exporter.append(&second).await.expect("new record");
+    let target = dir.path().join("restored.sqlite");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        Model::from_definitions(&[], &[]).expect("model"),
+        "",
+        &first.bindings,
+        norn_cell::StoreOptions::default(),
+    )
+    .await
+    .expect("mixed history restore");
+    let restored = CellStore::open_bound(
+        &target,
+        Model::from_definitions(&[], &[]).expect("model"),
+        norn_cell::StoreOptions::default(),
+        &id(1),
+    )
+    .expect("reopen");
+    assert_eq!(restored.export_record(1).expect("first"), Some(first));
+    assert_eq!(restored.export_record(2).expect("second"), Some(second));
+    assert!(restored.portable_receipt(1).is_err());
+    assert_eq!(
+        restored.portable_receipt(2).expect("new receipt"),
+        rebuilt.portable_receipt(2).expect("original new receipt")
+    );
 }
 
 #[test]

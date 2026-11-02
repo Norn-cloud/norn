@@ -41,7 +41,12 @@ impl QualifiedCommit {
     /// Whether authenticated host context permits using this origin locally.
     #[must_use]
     pub fn belongs_to(&self, cell: &CellId, world: &str) -> bool {
-        crate::boundary_context::same_origin(cell.as_str(), world, self.cell.as_str(), &self.world)
+        crate::boundary_context::same_origin(
+            cell.as_str().as_bytes(),
+            world.as_bytes(),
+            self.cell.as_str().as_bytes(),
+            self.world.as_bytes(),
+        )
     }
 }
 
@@ -131,6 +136,11 @@ impl CellReference {
     /// Whether this reference belongs to the authenticated local context.
     #[must_use]
     pub fn belongs_to(&self, cell: &CellId, world: &str) -> bool {
-        crate::boundary_context::same_origin(cell.as_str(), world, self.cell.as_str(), &self.world)
+        crate::boundary_context::same_origin(
+            cell.as_str().as_bytes(),
+            world.as_bytes(),
+            self.cell.as_str().as_bytes(),
+            self.world.as_bytes(),
+        )
     }
 }

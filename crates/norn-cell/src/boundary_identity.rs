@@ -109,6 +109,11 @@ impl<E: SqlEngine> CellStore<E> {
                 "foreign delivery requires an inbox reference".to_owned(),
             ));
         }
+        if self.cell_id()?.is_none() {
+            return Err(CellError::Encoding(
+                "foreign delivery requires a bound target cell".to_owned(),
+            ));
+        }
         self.inject(reference.content_digest()?.as_str(), observed)
     }
 }
