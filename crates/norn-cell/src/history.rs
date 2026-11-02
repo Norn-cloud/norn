@@ -278,8 +278,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
                 return Ok(HistoricalEvidence::Exhausted);
             }
-            let receipt=self.receipt_at(known_as_of.frontier)?.ok_or_else(unproven_snapshot)?;
-            if hash_json(&receipt.body)? != receipt.hash { return Err(unproven_snapshot()); }
+            let receipt = self
+                .receipt_at(known_as_of.frontier)?
+                .ok_or_else(unproven_snapshot)?;
+            if hash_json(&receipt.body)? != receipt.hash {
+                return Err(unproven_snapshot());
+            }
         }
         let root = self.root_type(object_type).unwrap_or(object_type);
         let capacity = budget.remaining_rows() / 2;

@@ -162,16 +162,24 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("cell.sqlite");
     let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
-    let original=store
+    let original = store
         .commit(&CommitBatch {
             logical_time: 300,
             ..batch(vec![put("proof.Item", "item", "late")])
         })
         .expect("seed");
-    store.commit(&CommitBatch{logical_time:301,..batch(vec![])}).expect("frontier");
+    store
+        .commit(&CommitBatch {
+            logical_time: 301,
+            ..batch(vec![])
+        })
+        .expect("frontier");
     let connection = rusqlite::Connection::open(path).expect("corruption fixture");
     connection
-        .execute("UPDATE _norn_receipt SET receipt = '{}' WHERE commit_seq=1", [])
+        .execute(
+            "UPDATE _norn_receipt SET receipt = '{}' WHERE commit_seq=1",
+            [],
+        )
         .expect("corrupt receipt");
     let fact = FactKey::new("proof.Item", "item");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
@@ -216,10 +224,33 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
             );
         }
     }
-    connection.execute("UPDATE _norn_receipt SET receipt=?1 WHERE commit_seq=1",[serde_json::to_string(&original.receipt.body).expect("original body")]).expect("restore fact receipt");
-    connection.execute("UPDATE _norn_receipt SET receipt_hash='incorrect' WHERE commit_seq=2",[]).expect("corrupt parseable frontier");
-    assert!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:LogicalTime::from_millis(301),frontier:2},&mut DecodeBudget::new(&limits)).is_err());
-
+    connection
+        .execute(
+            "UPDATE _norn_receipt SET receipt=?1 WHERE commit_seq=1",
+            [serde_json::to_string(&original.receipt().body).expect("original body")],
+        )
+        .expect("restore fact receipt");
+    connection
+        .execute(
+            "UPDATE _norn_receipt SET receipt_hash='incorrect' WHERE commit_seq=2",
+            [],
+        )
+        .expect("corrupt parseable frontier");
+    assert!(
+        store
+            .read()
+            .fact_evidence_known_at_with_budget(
+                MAIN_WORLD,
+                "proof.Item",
+                "item",
+                norn_cell::KnowledgeCutoff {
+                    recorded_at: LogicalTime::from_millis(301),
+                    frontier: 2
+                },
+                &mut DecodeBudget::new(&limits)
+            )
+            .is_err()
+    );
 }
 
 proptest! {
@@ -328,11 +359,11 @@ fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
 fn historical_selection_respects_the_incarnations_concrete_type_lineage() {
     use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
     use norn_kernel::LogicalTime;
-    let mut store=CellStore::open_in_memory(model()).expect("store");
+    let mut store = CellStore::open_in_memory(model()).expect("store");
     store
         .commit(&CommitBatch {
             logical_time: 10,
-            ..batch(vec![put("proof.Child", "item","value")])
+            ..batch(vec![put("proof.Child", "item", "value")])
         })
         .expect("child");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
