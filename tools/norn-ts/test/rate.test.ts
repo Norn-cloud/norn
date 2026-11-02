@@ -30,3 +30,22 @@ test("VAL-RATE closed numeric schemas retain exact declarations in a direct call
  if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
  expect(result.artifacts[0]).toMatchObject({dependencies:[{artifactId:"core.units",version:"1.0.0",kind:"entity",required:true}],payload:{inputSchema:{properties:{slice:{properties:{rate:{type:"number",nornType:E.rate(6,"currency",{system:"ucum",code:"g"})}}}}},graph:{nodes:expect.arrayContaining([{id:"decision",name:"decision",type:"expressionNode",content:{expressions:expect.any(Array)}}])}}})
 })
+
+test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bounds", () => {
+ const branchSource = (count: number, label = "ok") => `
+ import { Schema } from "effect"
+ import { Norn } from "@norn/authoring"
+ export const Branches = Norn.decision({id:"demo.branches",title:"Branches",version:"1.0.0",contract:"sub_decision",scopeRequired:[],
+ input:Schema.Struct({amount:Norn.decimal(2)}),output:Schema.Struct({amount:Norn.decimal(2),label:Schema.String})}, input => {
+ ${Array.from({length:count}, (_,i) => `if (input.amount > ${i}) return {amount:input.amount,label:${JSON.stringify(label)}}`).join("\n")}
+ return {amount:input.amount,label:"fallback"}
+ })`
+ const scope = {orgId:"org_demo",environmentId:"dev"}
+ expect(compileModule(branchSource(2), scope).ok).toBe(true)
+ for (const source of [branchSource(160), branchSource(1, "🪙".repeat(5000))]) {
+  const result = compileModule(source, scope)
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("oversized exact callback compiled")
+  expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({code:"NORN-FLOW-UNBOUNDED",message:expect.stringContaining("norn-expr/4 source bounds")})]))
+ }
+})
