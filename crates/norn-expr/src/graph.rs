@@ -39,9 +39,6 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
         .map_err(|e| e.reason)?;
     let output = Schema::parse(&JsonValue::Object(root.output_schema.clone()), "output")
         .map_err(|e| e.reason)?;
-    if !input.has_exact() && !output.has_exact() {
-        return Ok(Vec::new());
-    }
     let graph = root.graph.as_ref().ok_or("exact schemas require a graph")?;
     if graph.nodes.len() != 3 || graph.edges.len() != 2 {
         return Err(
