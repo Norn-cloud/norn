@@ -571,6 +571,11 @@ def workflow_verdict_canaries(source: str) -> None:
     cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
                  for key in passed for result in ("failure", "cancelled", "skipped"))
     cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
+    # Affected merge groups pass only while the always-run phases stay in the plan.
+    merge_affected = {"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
+    cases.append(("merge_group", merge_affected, passed, True))
+    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance"]}, passed, False))
+    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance", "clippy-extra"]}, passed, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
         environment = {**os.environ, **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
