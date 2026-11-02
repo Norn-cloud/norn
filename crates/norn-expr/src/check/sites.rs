@@ -31,14 +31,14 @@ fn visit(node: &Node<'_>, expected: &Type, env: &ZenTypeEnv, metadata: &AstMetad
         Node::Object(fields) => {
             let Type::Record(name) = expected else { return Ok(()); };
             let record = env.record(name).ok_or("unknown destination record")?;
-            for (key,value) in fields {
+            for (key,value) in fields.iter() {
                 let Node::String(key) = key else { return Err("exact destination needs literal fields".into()); };
                 if let Some(field) = record.fields.get(*key) { visit(value,&field.ty,env,metadata,edits)?; }
             }
             Ok(())
         }
         Node::Array(items) => {
-            if let Type::List(item) = expected { for value in items { visit(value,item,env,metadata,edits)?; } }
+            if let Type::List(item) = expected { for value in items.iter() { visit(value,item,env,metadata,edits)?; } }
             Ok(())
         }
         _ => Ok(()),

@@ -841,7 +841,9 @@ pub fn derive_type_env(
     };
     let mut env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
     for artifact in base.iter().chain(artifacts) {
-        if let norn_ir::ArtifactPayload::Rule(payload) | norn_ir::ArtifactPayload::Action(payload) = &artifact.payload {
+        if matches!(&artifact.payload,norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)) {
+            let payload_value = artifact.payload.to_json_value();
+            let Some(payload) = payload_value.as_object() else {continue;};
             for member in ["inputSchema","outputSchema"] {
                 if let Some(schema) = payload.get(member) {
                     let name = format!("exact.{}.{}.{}",artifact.artifact_id,artifact.version,member);

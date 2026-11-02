@@ -155,7 +155,7 @@ pub mod codes {
     pub const COST_EXCEEDS_BUDGET: &str = "expr.cost.exceeds_budget";
 
     /// Mixed, unresolved or unsupported numeric dimensions.
-    pub const UNIT: &str = "core.values.unit";
+    pub const UNIT: &str = "core.values.unit_mismatch";
     /// Informational diagnostic naming the unit inherited by a literal.
     pub const LITERAL_UNIT: &str = "core.values.literal_unit";
 
@@ -641,7 +641,8 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     }
-    let cost = within_budget(cost, limits, span)?;
+    let quantizers = runtime_source.matches("round((").count().saturating_sub(source.matches("round((").count());
+    let cost = within_budget(CostEstimate(cost.units().saturating_add((quantizers as u64).saturating_mul(8))), limits, span)?;
     Ok((
         CheckedExpression {
             inferred,
@@ -1637,10 +1638,7 @@ impl<'a> Checker<'a> {
         // erases semantic date/timestamp kinds. Infer non-empty string lists
         // from their elements, then let the final structural assignability
         // check project typed temporal values to JSON strings.
-        let mut element: Option<T> = element_expected
-            .as_ref()
-            .filter(|item| !matches!(item, T::Str(None)))
-            .cloned();
+        let mut element: Option<T> = None;
         let mut failed = false;
         for item in items {
             let Some(ty) = self.value(item, element.as_ref()) else {
@@ -1680,6 +1678,7 @@ impl<'a> Checker<'a> {
             };
             let field_expected = match expected {
                 Some(T::Record(Rec::Literal(fields))) => fields.get(*name).cloned(),
+                Some(T::Record(Rec::Env {name:record,depth})) => self.env.record(record).and_then(|r| r.fields.get(*name)).and_then(|field| lower(&field.ty,*depth,self.env,Some(record))),
                 _ => None,
             };
             match self.infer(value, field_expected.as_ref()) {
@@ -1937,7 +1936,7 @@ impl<'a> Checker<'a> {
     fn plus(&mut self, left: &Node<'_>, right: &Node<'_>) -> Option<T> {
         match self.value(left, None) {
             Some(T::Str(_)) => self.string(right).map(|()| T::Str(None)),
-            Some(T::Number(_)) => self.numeric_binary(left, right, Operation::Add),
+            Some(T::Number(a)) => {let b = self.numeric(right)?; self.numeric_operation(left,Operation::Add,&a,&b).map(T::Number)},
             Some(ty) => {
                 self.value(right, None);
                 self.report(
