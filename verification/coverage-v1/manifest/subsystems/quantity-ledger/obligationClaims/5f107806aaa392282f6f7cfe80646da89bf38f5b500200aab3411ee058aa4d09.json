@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-QL-CONSERVATION",
+    "runtime": "tested",
+    "model": "partial",
+    "proof": "partial",
+    "residual": "The Rust checker targets the full admitted linear-template contract, but the Quint model constructs one balanced debit/credit pair and the Lean/Kani artifacts prove narrower independent algebraic references; no theorem covers every admitted template valuation or production correspondence.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry5f107806aaa392282f6f7cfe80646da89bf38f5b500200aab3411ee058aa4d09.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry5f107806aaa392282f6f7cfe80646da89bf38f5b500200aab3411ee058aa4d09.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry5f107806aaa392282f6f7cfe80646da89bf38f5b500200aab3411ee058aa4d09.evidence.proof"
+      }
+    }
+  }
+}

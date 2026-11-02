@@ -154,10 +154,10 @@ def coverage_layout_canaries() -> None:
 
     def edit(name: str, change: Callable[[dict[str, Any]], object]) -> Callable[[Path], object]:
         def arrange(candidate: Path) -> None:
-            path = candidate / "subsystems" / f"{name}.json"
-            body = json.loads(path.read_text(encoding="utf-8"))
+            coverage = coverage_manifest.load(candidate)
+            body = next(item for item in coverage["subsystems"] if item["id"] == name)
             change(body)
-            path.write_text(json.dumps(body), encoding="utf-8")
+            coverage_manifest.write(coverage, candidate)
         return arrange
 
     def wrong_status(body: dict[str, Any]) -> None:
@@ -167,24 +167,25 @@ def coverage_layout_canaries() -> None:
             edit("ontology", lambda body: body["sourceFiles"].pop()))
     rejects("claim status outside the vocabulary", "implementation_proven", edit("ontology", wrong_status))
     rejects("unknown subsystem", "mandatory subsystem mismatch",
-            lambda c: (c / "subsystems/ontology.json").rename(c / "subsystems/analytics-projection.json"))
+            lambda c: (c / "subsystems/ontology").rename(c / "subsystems/analytics-projection"))
     def drop_cala_boundary(candidate: Path) -> None:
         # Keep its sources enrolled elsewhere so the mandatory-set check is what fires.
-        dropped = candidate / "subsystems/cala-boundary.json"
-        sources = json.loads(dropped.read_text(encoding="utf-8"))["sourceFiles"]
-        edit("ontology", lambda body: body["sourceFiles"].extend(sources))(candidate)
-        dropped.unlink()
+        coverage = coverage_manifest.load(candidate)
+        dropped = next(item for item in coverage["subsystems"] if item["id"] == "cala-boundary")
+        next(item for item in coverage["subsystems"] if item["id"] == "ontology")["sourceFiles"].extend(dropped["sourceFiles"])
+        coverage["subsystems"].remove(dropped)
+        coverage_manifest.write(coverage, candidate)
 
     rejects("missing mandatory subsystem", "mandatory subsystem mismatch", drop_cala_boundary)
     rejects("subsystem file claims an id", "drop the id field",
-            edit("ontology", lambda body: body.update(id="ontology")))
+            lambda c: (c / "subsystems/ontology/index.json").write_text(json.dumps({**json.loads((c / "subsystems/ontology/index.json").read_text()), "id": "ontology"})))
     rejects("index lists subsystems", "must not list subsystems",
             lambda c: (c / "index.json").write_text(json.dumps({**json.loads((c / "index.json").read_text()), "subsystems": []})))
     rejects("stray coverage file", "unknown coverage entries", lambda c: (c / "notes.json").write_text("{}"))
     rejects("misnamed subsystem file", "unknown subsystem files", lambda c: (c / "subsystems/Ontology.json").write_text("{}"))
-    rejects("symlinked subsystem file", "not a regular file", lambda c: (
-        (c / "subsystems/ontology.json").rename(c.parent / "ontology.real"),
-        (c / "subsystems/ontology.json").symlink_to(c.parent / "ontology.real"),
+    rejects("symlinked subsystem file", "not a regular directory", lambda c: (
+        (c / "subsystems/ontology").rename(c.parent / "ontology.real"),
+        (c / "subsystems/ontology").symlink_to(c.parent / "ontology.real"),
     ))
 
 
