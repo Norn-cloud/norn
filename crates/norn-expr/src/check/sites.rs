@@ -15,8 +15,8 @@ pub(super) fn lower(
     let mut output = String::new();
     let mut cursor = 0;
     for (start, end, scale, mode, nullable) in edits {
-        let start = usize::try_from(start).map_err(|_| "exact site offset overflow")?;
-        let end = usize::try_from(end).map_err(|_| "exact site offset overflow")?;
+        let start = usize::try_from(start).map_err(|error|format!("exact site offset overflow: {error}"))?;
+        let end = usize::try_from(end).map_err(|error|format!("exact site offset overflow: {error}"))?;
         if start < cursor || end > source.len() || start >= end {
             return Err("exact site has no faithful source span".into());
         }
@@ -74,51 +74,13 @@ fn visit(
             | Node::MethodCall { .. }
             | Node::Error { .. } => {}
         }
-        if let Type::Decimal {
-            scale, rounding, ..
-        } = inner.as_ref()
-        {
-            if *scale > 18 {
-                return Err("exact destination scale exceeds 18".into());
-            }
-            let (start, end) = metadata
-                .get(&address(node))
-                .ok_or("missing exact site span")?
-                .span;
-            edits.push((
-                start,
-                end,
-                *scale,
-                rounding.canonical_field().unwrap_or("refuse"),
-                true,
-            ));
-            return Ok(());
-        }
+        if matches!(inner.as_ref(),Type::Decimal {..}) {return add_site(node,inner,metadata,edits,true);}
         return visit(node, inner, env, metadata, edits);
     }
     if matches!(node, Node::Null) {
         return Ok(());
     }
-    if let Type::Decimal {
-        scale, rounding, ..
-    } = expected
-    {
-        if *scale > 18 {
-            return Err("exact destination scale exceeds 18".into());
-        }
-        let (start, end) = metadata
-            .get(&address(node))
-            .ok_or("missing exact site span")?
-            .span;
-        edits.push((
-            start,
-            end,
-            *scale,
-            rounding.canonical_field().unwrap_or("refuse"),
-            false,
-        ));
-        return Ok(());
-    }
+    if matches!(expected,Type::Decimal {..}) {return add_site(node,expected,metadata,edits,false);}
     match node {
         Node::Parenthesized(inner) => visit(inner, expected, env, metadata, edits),
         Node::Conditional {
@@ -169,4 +131,12 @@ fn visit(
         | Node::MethodCall { .. }
         | Node::Error { .. } => Ok(()),
     }
+}
+
+fn add_site(node:&Node<'_>, expected:&Type, metadata:&AstMetadata, edits:&mut Vec<(u32,u32,u64,&'static str,bool)>, nullable:bool) -> Result<(),String> {
+    let Type::Decimal {scale,rounding,..} = expected else {return Err("rounding site requires Decimal".into());};
+    if *scale > 18 {return Err("exact destination scale exceeds 18".into());}
+    let (start,end)=metadata.get(&address(node)).ok_or("missing exact site span")?.span;
+    edits.push((start,end,*scale,rounding.canonical_field().unwrap_or("refuse"),nullable));
+    Ok(())
 }

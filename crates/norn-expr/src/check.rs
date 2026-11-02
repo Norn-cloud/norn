@@ -705,22 +705,7 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]
     })?;
-    if exact_enabled && exact {
-        let mut exact_parser = IntelliSense::new();
-        diagnostics.extend(
-            exact_parser
-                .with_ast(&runtime_source, false, |ast, metadata| {
-                    exact_admission(ast, metadata, false)
-                })
-                .unwrap_or_else(|| {
-                    vec![Diagnostic {
-                        code: codes::SYNTAX,
-                        message: "lowered exact sites do not parse".into(),
-                        span,
-                    }]
-                }),
-        );
-    }
+    if exact_enabled && exact {diagnostics.extend(validate_lowered_source(&runtime_source,span));}
     // Cross-check: zen's strict analysis must not report an error either.
     let root = ZenEnv::new(env).root(None);
     let analysis = intellisense.analyze(source, &root);
@@ -763,6 +748,11 @@ fn check_expression_with_sources_and_root_bounds(
         },
         construction,
     ))
+}
+
+fn validate_lowered_source(source:&str,span:(u32,u32)) -> Vec<Diagnostic> {
+    let mut parser=IntelliSense::new();
+    parser.with_ast(source,false,|ast,metadata|exact_admission(ast,metadata,false)).unwrap_or_else(||vec![Diagnostic {code:codes::SYNTAX,message:"lowered exact sites do not parse".into(),span}])
 }
 
 fn construction_source(
