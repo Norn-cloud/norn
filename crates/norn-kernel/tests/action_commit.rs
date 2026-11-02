@@ -4037,3 +4037,21 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
             .exists()
     );
 }
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn rule_receipts_preserve_optional_binding_metadata(binding in "[a-f0-9]{64}") {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let action = approve();
+        let ActionOutcome::Committed { mut record, .. } = commit_action(&mut cell, &catalog, &call(&action, "SO-1", "receipt"), &Allow).unwrap() else { unreachable!() };
+        assert!(record.rule_binding.is_none());
+        record.rule_binding = Some(binding);
+        let mut values: JsonObject = serde_json::from_value(serde_json::to_value(&record).unwrap()).unwrap();
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values), Some(record));
+        values.insert("ruleBinding".into(), JsonValue::Bool(true));
+        assert!(norn_kernel::ActionCallRecord::from_values(&values).is_none());
+    }
+}
