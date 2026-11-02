@@ -138,9 +138,17 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
             .get(http::header::ACCEPT)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| {
-                value
-                    .split(',')
-                    .any(|part| part.trim().split(';').next() == Some("text/html"))
+                value.split(',').any(|part| {
+                    let mut media = part.trim().split(';');
+                    media.next() == Some("text/html")
+                        && media
+                            .find_map(|parameter| parameter.trim().strip_prefix("q="))
+                            .is_none_or(|quality| {
+                                quality
+                                    .parse::<f32>()
+                                    .is_ok_and(|quality| quality > 0.0 && quality <= 1.0)
+                            })
+                })
             });
         let result = match query {
             Ok(Query(query)) => tokio::task::spawn_blocking(move || {

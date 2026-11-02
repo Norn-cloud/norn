@@ -413,7 +413,7 @@
     "fixtures/law-ir/laws.source.ts",
     "packages/norn-sdk/src/generated/norn-api.ts",
     "packages/norn-sdk/src/index.ts",
-    "packages/norn-surface-acceptance/browser.mjs",
+    "packages/norn-surface-acceptance/transport.mjs",
     "packages/norn-surface-acceptance/package.json",
     "scripts/demo/equivalent-surfaces.sh",
     "tools/norn-ts/corpus/accept/aliased-imports.ts",

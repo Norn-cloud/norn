@@ -22,7 +22,12 @@ export const ConservedFineMass = Norn.interfaceType({
 export const MeltMeasurement = Norn.type({
   name: "demo.MeltMeasurement", title: "Melt measurement", version: "0.1.0",
   implements: [ConservedFineMass], immutable: true,
-  properties: Schema.Struct({ id: Schema.String }),
+  properties: Schema.Struct({
+    id: Schema.String,
+    input_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    output_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    loss_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+  }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 

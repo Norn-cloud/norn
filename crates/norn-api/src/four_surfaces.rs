@@ -70,6 +70,7 @@ async fn action_document_is_authorized_before_rendering() {
     for (actor, accept, status, content_type) in [
         ("demo", "text/html", 200, "text/html"),
         ("demo", "application/json", 200, "application/json"),
+        ("demo", "text/html;q=0", 200, "application/json"),
         ("forbidden", "text/html", 403, "application/json"),
     ] {
         let response = app
@@ -134,14 +135,7 @@ async fn process(program: String, args: Vec<String>, input: Value) -> (Value, bo
     .expect("process worker")
 }
 
-async fn invoke(
-    app: &axum::Router,
-    surface: &str,
-    url: &str,
-    actor: &str,
-    input: Value,
-    key: &str,
-) -> (Value, bool) {
+async fn invoke(surface: &str, url: &str, actor: &str, input: Value, key: &str) -> (Value, bool) {
     let request =
         json!({"actionId":"demo.melt.record", "version":1, "input":input, "idempotencyKey":key});
     if surface == "cli" {
@@ -166,50 +160,21 @@ async fn invoke(
             process(std::env::var("NORN_CLI").expect("NORN_CLI"), args, request).await;
         return (reply["result"]["structuredContent"].clone(), failed);
     }
-    if surface == "ui" {
-        let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages/norn-surface-acceptance/browser.mjs");
-        let (reply, failed) = process(std::env::var("NORN_NODE").expect("NORN_NODE"), vec![driver.display().to_string()],
-            json!({"url":url,"actor":actor,"actionId":"demo.melt.record","input":input,"idempotencyKey":key})).await;
-        assert!(!failed, "browser process failed");
-        let refused = reply["status"].as_u64().expect("HTTP status") >= 400;
-        return (reply["body"].clone(), refused);
-    }
-    let body = if surface == "http" {
-        request
-    } else {
-        json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_action","arguments":request,"_meta":{"norn/idempotencyKey":key}}})
-    };
-    let response = app
-        .clone()
-        .oneshot(
-            http::Request::builder()
-                .method("POST")
-                .uri(if surface == "http" {
-                    "/v1/actions"
-                } else {
-                    "/mcp"
-                })
-                .header("x-norn-org-id", "org_surfaces")
-                .header("x-norn-environment-id", "dev")
-                .header("x-norn-actor", actor)
-                .body(axum::body::Body::from(body.to_string()))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    let failed = !response.status().is_success();
-    let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
-        .await
-        .expect("response bytes");
-    let reply: Value = serde_json::from_slice(&bytes).expect("reply");
-    if surface == "http" || failed {
-        (reply, failed)
-    } else {
+    let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/norn-surface-acceptance/transport.mjs");
+    let (reply, failed) = process(
+        std::env::var("NORN_NODE").expect("NORN_NODE"), vec![driver.display().to_string()],
+        json!({"surface":surface,"url":url,"actor":actor,"actionId":"demo.melt.record","input":input,"idempotencyKey":key}),
+    ).await;
+    assert!(!failed, "transport driver process failed");
+    let failed = reply["status"].as_u64().expect("HTTP status") >= 400;
+    if surface == "mcp" && !failed {
         (
-            reply["result"]["structuredContent"].clone(),
-            reply["result"]["isError"] == true,
+            reply["body"]["result"]["structuredContent"].clone(),
+            reply["body"]["result"]["isError"] == true,
         )
+    } else {
+        (reply["body"].clone(), failed)
     }
 }
 
@@ -245,18 +210,17 @@ async fn equivalent_governed_surfaces() {
         let server =
             tokio::spawn(async move { axum::serve(listener, server_app).await.expect("serve") });
         let input = json!({"id":"melt-1","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.800"});
-        let (accepted, failed) = invoke(&app, surface, &url, "demo", input.clone(), "melt").await;
+        let (accepted, failed) = invoke(surface, &url, "demo", input.clone(), "melt").await;
         assert!(!failed, "{surface}: {accepted}");
         assert_eq!(accepted["replayed"], false);
         let before = dump(&host);
         let retry_surface = if surface == "http" { "mcp" } else { "http" };
-        let (replayed, failed) =
-            invoke(&app, retry_surface, &url, "demo", input.clone(), "melt").await;
+        let (replayed, failed) = invoke(retry_surface, &url, "demo", input.clone(), "melt").await;
         assert!(!failed);
         assert_eq!(replayed["replayed"], true);
         assert_eq!(replayed["record"], accepted["record"]);
         assert_eq!(dump(&host), before, "retry commits nothing");
-        let (denied, failed) = invoke(&app, surface, &url, "forbidden", input, "denied").await;
+        let (denied, failed) = invoke(surface, &url, "forbidden", input, "denied").await;
         assert!(failed, "{surface}: {denied}");
         assert_eq!(denied["code"], "authz.denied");
         assert_eq!(denied["category"], "permission");
@@ -268,7 +232,7 @@ async fn equivalent_governed_surfaces() {
             .read()
             .ledger(0)
             .expect("ledger");
-        let (law, failed) = invoke(&app, surface, &url, "demo",
+        let (law, failed) = invoke( surface, &url, "demo",
             json!({"id":"melt-bad","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.000"}), "omitted-loss").await;
         assert!(failed, "{surface}: {law}");
         assert_eq!(law["code"], "decision.invariant_violation");

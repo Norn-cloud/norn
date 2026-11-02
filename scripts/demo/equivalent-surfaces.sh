@@ -11,6 +11,11 @@ bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/melt-surfaces --org 
 (cd packages/norn-surface-acceptance && bun install --frozen-lockfile --backend copyfile)
 cargo build --locked -p norn-cli
 export NORN_CLI="$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/debug/norn"
+printf '%s\n' '{}' > "$scratch/context.json"
+if ! "$NORN_CLI" check --artifacts "$scratch/melt.json" --context "$scratch/context.json" > "$scratch/check.json"; then
+  cat "$scratch/check.json"
+  exit 1
+fi
 export NORN_SURFACE_DEFINITIONS="$scratch/melt.json"
 export NORN_NODE=${NORN_NODE:-node}
 cargo test --locked -p norn-api equivalent_governed_surfaces -- --ignored --nocapture
