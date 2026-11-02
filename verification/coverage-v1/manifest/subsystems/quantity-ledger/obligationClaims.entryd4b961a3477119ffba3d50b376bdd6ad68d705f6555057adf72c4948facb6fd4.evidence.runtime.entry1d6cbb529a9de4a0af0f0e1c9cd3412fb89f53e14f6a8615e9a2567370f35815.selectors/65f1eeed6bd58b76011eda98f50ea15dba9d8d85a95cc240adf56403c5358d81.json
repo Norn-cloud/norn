@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "test:balanced_symbolic_expression_with_unsafe_bounds_is_rejected_by_both_checkers"
+}

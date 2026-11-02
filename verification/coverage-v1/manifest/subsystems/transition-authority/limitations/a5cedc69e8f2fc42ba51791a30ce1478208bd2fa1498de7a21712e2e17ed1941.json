@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "The closed-action model bounds artifact versions to 1..3 and validation outcomes to Boolean predicates; it does not model arbitrary JSON schema or ontology semantics."
+}

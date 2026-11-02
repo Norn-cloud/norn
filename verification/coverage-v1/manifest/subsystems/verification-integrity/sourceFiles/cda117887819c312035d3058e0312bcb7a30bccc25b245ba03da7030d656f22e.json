@@ -1,0 +1,4 @@
+{
+  "order": 30,
+  "value": "crates/norn-checker-wasm/tests/fixtures/purchase-order.entity.json"
+}

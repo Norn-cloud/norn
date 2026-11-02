@@ -1,0 +1,21 @@
+{
+  "order": 3,
+  "value": {
+    "id": "INV-QL-PENDING-RESOLUTION",
+    "runtime": "tested",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "Quantity v2 admits any conserving signed subset and funds the remaining vector under explicit policies. Runtime timer expiry and cell clock use the shared commit path. The full-only reference models are not refinement evidence for partial resolution, balance CAS or host scheduling (#3303).",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry66fcc0fba4e26fae354f31143712a611643290b3d48db24686ae65fbb8968fae.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry66fcc0fba4e26fae354f31143712a611643290b3d48db24686ae65fbb8968fae.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry66fcc0fba4e26fae354f31143712a611643290b3d48db24686ae65fbb8968fae.evidence.proof"
+      }
+    }
+  }
+}

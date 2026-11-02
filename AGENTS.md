@@ -68,10 +68,11 @@ are refused.
 ## Verification coverage
 
 Coverage lives in `verification/coverage-v1/manifest/`: `index.json` holds the
-status vocabulary and evidence roots, and `subsystems/<id>.json` holds one
-subsystem's obligations, claims and `sourceFiles`. The id is the file name, so
-it is not a field. A new executable source joins exactly one subsystem's
-`sourceFiles`; edit only that subsystem's file and its provenance record.
+status vocabulary and evidence roots, and `subsystems/<id>/index.json` holds metadata. Each array member lives in
+`<field>/<identity-hash>.json` with an `order` and `value`; the loader computes
+identities with `entry_id`. A new executable source adds one entry under its
+subsystem's `sourceFiles` directory and its own provenance records. Do not
+rewrite other entries. The subsystem id is its directory name.
 `scripts/coverage_manifest.py` is the only reader and writer.
 
 ## Changes and merging
