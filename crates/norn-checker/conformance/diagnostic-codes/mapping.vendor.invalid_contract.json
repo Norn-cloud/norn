@@ -1,0 +1,7 @@
+{
+  "code": "mapping.vendor.invalid_contract",
+  "message": "vendor-qualified mapping has an invalid sparse source contract: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -68,17 +68,18 @@ are refused.
 ## Verification coverage
 
 Coverage lives in `verification/coverage-v1/manifest/`: `index.json` holds the
-status vocabulary and evidence roots, and `subsystems/<id>.json` holds one
-subsystem's obligations, claims and `sourceFiles`. The id is the file name, so
-it is not a field. A new executable source joins exactly one subsystem's
-`sourceFiles`; edit only that subsystem's file and its provenance record.
+status vocabulary and evidence roots, and `subsystems/<id>/index.json` holds metadata. Each array member lives in
+`<field>/<identity-hash>.json` with an `order` and `value`; the loader computes
+identities with `entry_id`. A new executable source adds one entry under its
+subsystem's `sourceFiles` directory and its own provenance records. Do not
+rewrite other entries. The subsystem id is its directory name.
 `scripts/coverage_manifest.py` is the only reader and writer.
 
 ## Changes and merging
 
-- **Small PRs.** One reviewable unit per PR, about 400 changed lines of
-  non-generated code at most, open for hours rather than days. Split larger
-  work into units that each merge on their own.
+- **Coherent PRs.** One coherent feature or fix per PR, with no line cap,
+  open for hours rather than days. Don't split work into stacked PRs just to
+  keep them small; stack only when a layer has to merge first.
 - **Merge bar.** Every required check is green on the exact head being merged,
   review is approved and no findings are open. Never bypass branch protection,
   skip or weaken a gate, or grow an allowlist to get green.
