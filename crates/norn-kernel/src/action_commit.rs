@@ -4528,15 +4528,7 @@ fn prepare_action_input_inner<'a, X>(
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
-    check_action_identity_input::<X>(raw_input, actor, max_input_bytes)?;
-    if has_action_preparation_features(action)
-        || matches!(
-            action.effect_program,
-            Some(ActionEffectProgram::MutateParentWithRows { .. })
-        )
-    {
-        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
-    }
+    check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
     if !has_action_preparation_features(action) {
         validate_action_input(action, raw_input)?;
         return Ok(ActionInputPreparation {
@@ -4633,10 +4625,19 @@ fn prepare_action_input_inner<'a, X>(
 
 /// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
 fn check_action_identity_input<X>(
+    action: &ActionRoot,
     raw_input: &JsonObject,
     actor: Option<&str>,
     max_bytes: usize,
 ) -> Result<(), ActionRefusal<X>> {
+    if has_action_preparation_features(action)
+        || matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::MutateParentWithRows { .. })
+        )
+    {
+        check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
+    }
     let mut objects = vec![raw_input];
     let mut values = Vec::new();
     while let Some(object) = objects.pop() {
