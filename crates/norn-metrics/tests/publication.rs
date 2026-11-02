@@ -84,7 +84,7 @@ fn publish_timed_world_and_refuse_bulk_without_partial_effects() {
         let performed=cell.perform().expect("perform").expect("result");let receipt:FunctionReceipt=norn_ir::runtime::decode(&Value::Object(performed.input)).expect("receipt");
         let command_id=CommandId(invocation.command_id.clone());
         let reference=cell.retain_function_receipt(&dispatched,&Completion {receipt:&receipt,command:&command_id,generation:Generation(1),authenticated_executor:Some("synthetic-native-host")},&ResultChecks {authorizer:&checks,validator:&checks}).expect("authenticate and retain actual receipt");
-        let catalog=TypeCatalog::new(model.object_types());
+        let catalog=TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let request=ActionCall {action:&action,action_artifact_id:"core.analytics.publish.action",action_version:"0.1.0",scope:BTreeMap::from([("orgId".into(),"org_demo".into()),("environmentId".into(),"dev".into())]),actor:"reviewer".into(),input:norn_ir::runtime_object!{"id"=>"forecast","receipt"=>reference.0.clone()}.as_object().expect("reference input").clone(),idempotency_key:"publish".into(),object_type:None,turn:DecisionTurn{id:"publish".into(),now:LogicalTime::from_millis(now),world:World::Main,consumes:None}};
         let before=cell.store().verified_head().expect("head");
         assert!(commit_action(&mut cell,&catalog,&request,&reviewer(&action,&model,false)).is_err(),"reviewer role is mandatory");
