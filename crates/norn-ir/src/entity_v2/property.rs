@@ -2,7 +2,7 @@
 //! v2 (ruling 2026-09-09 §5: "value types with units, formats, enums, and
 //! constraints").
 //!
-//! A [`PropertyType`] is one of eleven kinds. A [`PropertyTypeDef`] gives a type
+//! A [`PropertyType`] is one of twelve kinds. A [`PropertyTypeDef`] gives a type
 //! and its [`PropertyConstraints`] a [`PropertyTypeName`], so object types
 //! (T1-ONT-1b..d) reuse it by name through the `ref` kind instead of
 //! restating it.
