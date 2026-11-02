@@ -172,6 +172,11 @@ fn flow_source_map(
     }
 }
 
+fn historical_env(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope], limits: &ResourceLimitProfile) -> norn_expr::TypeEnvRef {
+    derive_type_env(artifacts, base, limits).expect("historical definitions")
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1).expect("historical environment")
+}
+
 fn as_legacy_receipt(receipt: &CheckReceipt) -> (String, String) {
     let mut value: Value = serde_json::from_str(&compact(receipt)).expect("receipt JSON");
     value["format"] = json!("norn-checker/receipt@1");
@@ -623,6 +628,7 @@ fn stored_receipts_verify_integrity_bindings_and_known_profiles() {
 
     for profile in ["norn-zen/3", "norn-zen/4", "norn-zen/5"] {
         let mut historical = current.clone();
+        historical.type_env = Some(historical_env(&stored_envelopes, &[], &limits));
         historical.checker_version = "0.1.0".to_owned();
         historical.expr_profile = profile.to_owned();
         historical.diagnostics = empty_diagnostics_for("0.1.0");
@@ -708,14 +714,14 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // reinterpret that historical attestation.
     let type_env = derive_type_env(&candidate_envelopes, &base_envelopes, &limits)
         .expect("the entity base still supplies its type environment")
-        .reference()
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
         .expect("environment hash");
     let historical = CheckReceipt {
         checker: CHECKER_NAME.to_owned(),
         checker_version: "0.1.0".to_owned(),
         artifact_set: ArtifactSetRef::of_legacy(&candidate_envelopes, &base_envelopes)
             .expect("artifact set hash"),
-        limit_profile: limits.reference().expect("limit hash"),
+        limit_profile: limits.reference_at_version(norn_expr::env::TypeEnvVersion::V1).expect("limit hash"),
         expr_profile: "norn-zen/4".to_owned(),
         identifier_profile: "norn-identifiers/legacy".to_owned(),
         type_env: Some(type_env),
@@ -769,6 +775,7 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
         .expect("v1 deprecation is a registered advisory finding");
 
     let mut historical = checked.receipt;
+    historical.type_env = Some(historical_env(&artifacts, &base, &limits));
     historical.checker_version = "0.1.0".to_owned();
     historical.expr_profile = "norn-zen/4".to_owned();
     historical.diagnostics =
@@ -934,6 +941,7 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
         }
         assert!(checked.receipt.law_enrollment.is_empty());
         let mut historical = checked.receipt;
+        historical.type_env = Some(historical_env(&[], &envelopes(&base), &limits));
         historical.checker_version = "0.1.0".to_owned();
         historical.expr_profile = "norn-zen/4".to_owned();
         historical.diagnostics = empty_diagnostics_for("0.1.0");
