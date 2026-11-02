@@ -1,0 +1,29 @@
+{
+  "artifactId": "demo.commerce.SourceIdentity.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Explicit synthetic source identity",
+  "namespace": "demo.commerce",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "demo.commerce.SourceIdentity",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.commerce.SourceIdentity.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
