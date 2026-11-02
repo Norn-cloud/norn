@@ -11,7 +11,7 @@ use norn_cell::{
 use norn_checker::{EntityArtifactSetContext, receipt::check_artifact_set_with_receipt};
 use norn_ir::access::{AccessIr, AccessRule, AccessScope, ScopeDimension};
 use norn_ir::{
-    ArtifactEnvelope, ArtifactKind, EntityRootV2, IrVersion01, ResourceLimitProfile, RuntimeValue,
+    ArtifactEnvelope, ArtifactKind, EntityRoot, IrVersion01, ResourceLimitProfile, RuntimeValue,
 };
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
@@ -35,15 +35,25 @@ fn install(artifacts: &[ArtifactEnvelope]) -> DemoResult<CellStore> {
         return Err(format!("definition admission refused: {:?}", checked.diagnostics).into());
     }
     let mut objects = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut properties = Vec::new();
     for artifact in artifacts
         .iter()
         .filter(|a| a.kind() == ArtifactKind::Entity)
     {
-        let root: EntityRootV2 =
+        let root: EntityRoot =
             serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
-        objects.push(root.object_type);
+        match root {
+            EntityRoot::V2(root) => objects.push(root.object_type),
+            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+            EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
+            EntityRoot::V2Markings(_) => {}
+            EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+                return Err("catalog demo needs v2 objects/interfaces without extensions".into());
+            }
+        }
     }
-    let model = Model::from_definitions(&objects, &[])?;
+    let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)?;
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
             RuntimeValue::from_json(serde_json::to_value(artifacts)?)?.canonical_json()?,
