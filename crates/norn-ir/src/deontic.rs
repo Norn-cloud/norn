@@ -402,16 +402,24 @@ mod locale_properties {
 
     proptest! {
         #[test]
-        fn locale_parser_agrees_with_bcp47_oracle(tag in "[a-zA-Z0-9_-]{0,60}") {
-            prop_assert_eq!(valid_locale_tag(&tag), language_tags::LanguageTag::parse(&tag).is_ok());
+        fn accepted_locale_tags_have_bcp47_syntax(tag in "[a-zA-Z0-9_-]{0,60}") {
+            if valid_locale_tag(&tag) {
+                prop_assert!(language_tags::LanguageTag::parse(&tag).is_ok());
+            }
         }
 
         #[test]
-        fn generated_language_tags_are_case_insensitive(language in "[a-z]{2,3}", script in "[A-Z][a-z]{3}", region in "[A-Z]{2}", private in "[a-z0-9]{1,8}") {
-            let tag = format!("{language}-{script}-{region}-x-{private}");
+        fn generated_language_tags_are_case_insensitive(language in "[a-z]{2,3}", extlang in "[a-z]{3}", script in "[A-Z][a-z]{3}", region in "[A-Z]{2}", variant in "[a-z]{5,8}", extension in "[a-z0-9]{2,8}", private in "[a-z0-9]{1,8}") {
+            let base = format!("{language}-{extlang}-{script}-{region}-{variant}");
+            let tag = format!("{base}-a-{extension}-x-{private}");
             prop_assert!(valid_locale_tag(&tag));
             prop_assert!(valid_locale_tag(&tag.to_ascii_uppercase()));
             prop_assert!(language_tags::LanguageTag::parse(&tag).is_ok());
+            // The oracle's parse checks syntax; Norn additionally rejects duplicates.
+            for duplicate in [format!("{base}-{variant}"), format!("{base}-a-{extension}-a-{extension}")] {
+                prop_assert!(language_tags::LanguageTag::parse(&duplicate).is_ok());
+                prop_assert!(!valid_locale_tag(&duplicate));
+            }
         }
     }
 }
