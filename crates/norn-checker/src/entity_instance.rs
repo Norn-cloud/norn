@@ -793,14 +793,42 @@ impl EffectiveProperty {
     }
 
     /// VAL-ROUND: materialize explicit Decimal rounding before checking stored bounds.
-    fn round_runtime_value<'v>(&self, value: &'v RuntimeValue) -> Result<std::borrow::Cow<'v, RuntimeValue>, InstanceError> {
-        let EffectiveKind::Base(site @ PropertyType::Decimal { rounding: Some(mode), .. }) = &self.kind else { return Ok(std::borrow::Cow::Borrowed(value)); };
-        if *mode == norn_ir::Rounding::Refuse || value.is_null() { return Ok(std::borrow::Cow::Borrowed(value)); }
-        let inexact = |reason: String| InstanceError::ConstraintViolation(format!("{}: {reason}", crate::property_codec::INEXACT));
-        let decoded = crate::property_codec::stored_value(norn_ir::PropertyKind::Decimal, value).map_err(|reason| inexact(format!("{reason:?}")))?;
-        let number = decoded.as_decimal().ok_or(InstanceError::TypeMismatch("decimal"))?.canonical().parse::<norn_expr::Number>().map_err(|reason| inexact(reason.to_string()))?;
-        let rounded = norn_expr::rescale_decimal(site, &number).map_err(|reason| inexact(reason.to_string()))?;
-        let decimal = rounded.as_str().parse().map_err(|reason| inexact(format!("{reason}")))?;
+    fn round_runtime_value<'v>(
+        &self,
+        value: &'v RuntimeValue,
+    ) -> Result<std::borrow::Cow<'v, RuntimeValue>, InstanceError> {
+        let EffectiveKind::Base(
+            site @ PropertyType::Decimal {
+                rounding: Some(mode),
+                ..
+            },
+        ) = &self.kind
+        else {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        };
+        if *mode == norn_ir::Rounding::Refuse || value.is_null() {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        }
+        let inexact = |reason: String| {
+            InstanceError::ConstraintViolation(format!(
+                "{}: {reason}",
+                crate::property_codec::INEXACT
+            ))
+        };
+        let decoded = crate::property_codec::stored_value(norn_ir::PropertyKind::Decimal, value)
+            .map_err(|reason| inexact(format!("{reason:?}")))?;
+        let number = decoded
+            .as_decimal()
+            .ok_or(InstanceError::TypeMismatch("decimal"))?
+            .canonical()
+            .parse::<norn_expr::Number>()
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let rounded = norn_expr::rescale_decimal(site, &number)
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let decimal = rounded
+            .as_str()
+            .parse()
+            .map_err(|reason| inexact(format!("{reason}")))?;
         Ok(std::borrow::Cow::Owned(RuntimeValue::Number(decimal)))
     }
 
@@ -810,7 +838,9 @@ impl EffectiveProperty {
     #[must_use]
     pub fn canonical_runtime_value(&self, value: &RuntimeValue) -> RuntimeValue {
         if matches!(self.kind, EffectiveKind::Base(PropertyType::Decimal { .. })) {
-            return self.round_runtime_value(value).map_or_else(|_| value.clone(), std::borrow::Cow::into_owned);
+            return self
+                .round_runtime_value(value)
+                .map_or_else(|_| value.clone(), std::borrow::Cow::into_owned);
         }
         if matches!(self.kind, EffectiveKind::Base(PropertyType::Record { .. })) {
             let RuntimeValue::Object(values) = value else {
@@ -2267,12 +2297,18 @@ mod declared_rounding_tests {
     #[test]
     fn val_round_checks_quantized_bounds_and_preserves_invalid_evidence() {
         let property: Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
-        let effective = EffectiveProperty::from_declared_property(&property,&[]);
+        let effective = EffectiveProperty::from_declared_property(&property, &[]);
         let input = RuntimeValue::from_json_text("1.005").expect("decimal");
-        assert!(effective.check_runtime_value(&input).is_err(), "1.01 exceeds the stored bound");
-        assert_eq!(effective.canonical_runtime_value(&input),RuntimeValue::from_json_text("1.01").expect("rounded"));
+        assert!(
+            effective.check_runtime_value(&input).is_err(),
+            "1.01 exceeds the stored bound"
+        );
+        assert_eq!(
+            effective.canonical_runtime_value(&input),
+            RuntimeValue::from_json_text("1.01").expect("rounded")
+        );
         let invalid = RuntimeValue::String("not a decimal".into());
         assert!(effective.check_runtime_value(&invalid).is_err());
-        assert_eq!(effective.canonical_runtime_value(&invalid),invalid);
+        assert_eq!(effective.canonical_runtime_value(&invalid), invalid);
     }
 }
