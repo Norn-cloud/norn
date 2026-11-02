@@ -172,7 +172,7 @@ fn main() -> DemoResult<()> {
         limit: 1,
         binding: None,
     };
-    let (denied, _) = access(&scope, vec![])?;
+    let (denied, _) = access(&scope, vec!["norn.admin".into()])?;
     if !snapshot
         .read(&query, &limits, &denied, &request, &scope)?
         .items
@@ -194,6 +194,7 @@ fn main() -> DemoResult<()> {
     let result = store.commit(&CommitBatch {
         world: MAIN_WORLD.into(),
         scope: "org_demo/dev".into(),
+        logical_time: 2,
         writes: vec![FactWriteRow::Put {
             object_type: row.object_type,
             key: row.key,

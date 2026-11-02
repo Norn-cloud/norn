@@ -22,3 +22,7 @@ with no cell-head change. It creates no production principal or deployment.
 This is a bounded read of a small admitted definition set. It is not analytical
 QuestionIR, UI browsing, subscriptions or a classification demonstration.
 Lane G owns analytical evaluation. No membership effects are introduced.
+
+The stacked seam branch predates #359/#366/#399. The main-only script also
+requires those existing demo files; candidate qualification feeds Norn output
+from a separately pinned main fixture. No candidate run is a delivered drop.
