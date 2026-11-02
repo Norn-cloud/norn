@@ -122,6 +122,25 @@ fn nanos(value: f64) -> Result<i64, ForecastFailure> {
     format!("{scaled:.0}").parse().map_err(failure)
 }
 
+/// Pin fixed alpha, chronological split, ontology columns/units and freshness before fitting.
+/// # Errors
+/// Parameters cannot be represented canonically.
+pub fn parameter_digest(plan: &TemporalPlan, boundary: i64) -> Result<Digest, ForecastFailure> {
+    let parameters = norn_ir::canonical::canonical_json_of(&(
+        "0.05",
+        boundary,
+        plan.object_type(),
+        plan.max_age_micros(),
+        plan.features()
+            .iter()
+            .map(|p| (&p.property, &p.unit))
+            .collect::<Vec<_>>(),
+        (&plan.outcome().property, &plan.outcome().unit),
+    ))
+    .map_err(failure)?;
+    Digest::of_json_document(parameters).map_err(failure)
+}
+
 fn assessment(
     export: &ForecastExport<'_>,
     input: &ForecastInput,
@@ -155,20 +174,6 @@ fn assessment(
         .max()
         .ok_or_else(|| failure("empty training partition"))?;
     let latest_ms = latest.div_euclid(1000);
-    let parameters = norn_ir::canonical::canonical_json_of(&(
-        "0.05",
-        input.split_boundary,
-        export.plan.object_type(),
-        export.plan.max_age_micros(),
-        export
-            .plan
-            .features()
-            .iter()
-            .map(|p| (&p.property, &p.unit))
-            .collect::<Vec<_>>(),
-        (&export.plan.outcome().property, &export.plan.outcome().unit),
-    ))
-    .map_err(failure)?;
     let error_unit = match export.plan.outcome().unit.as_ref() {
         None => "1".into(),
         Some(unit) if unit.system == norn_ir::UnitSystem::Ucum => unit.code.clone(),
@@ -191,7 +196,7 @@ fn assessment(
         complete: export.complete,
         quarantine_count: export.quarantine_count,
         fresh: export.fresh,
-        parameters_digest: Digest::of_json_document(parameters).map_err(failure)?,
+        parameters_digest: parameter_digest(export.plan, input.split_boundary)?,
         assumptions_digest: export.assumptions_digest.clone(),
         remedy_digest: export.remedy_digest.clone(),
         split_at_ms: input.split_boundary.div_euclid(1000),
@@ -212,6 +217,35 @@ fn assessment(
         baseline_rmse_nanos: None,
         report: None,
     })
+}
+
+// Statistical binary64 outputs are approximate evidence, not exact business decimals.
+fn report_value(report: &impl serde::Serialize) -> Result<norn_ir::RuntimeValue, ForecastFailure> {
+    fn tag(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Number(number) if number.is_f64() => {
+                *value = serde_json::json!({ "encoding": "ieee754-binary64", "value": number.to_string() });
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    tag(item);
+                }
+            }
+            serde_json::Value::Object(fields) => {
+                for item in fields.values_mut() {
+                    tag(item);
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+    let mut value = serde_json::to_value(report).map_err(failure)?;
+    tag(&mut value);
+    norn_ir::RuntimeValue::from_json_text(serde_json::to_string(&value).map_err(failure)?)
+        .map_err(failure)
 }
 
 /// Bind exact export pins and prepare actual library evidence behind the host Function.
@@ -251,7 +285,7 @@ pub fn prepare_forecast(
         summary.rmse_nanos = Some(nanos(report.rmse)?);
         summary.baseline_rmse_nanos = Some(nanos(report.baseline_rmse)?);
         summary.diagnostics_passed = report.fit.diagnostics.iter().all(|d| d.passed);
-        summary.report = Some(norn_ir::runtime::encode(&report).map_err(failure)?);
+        summary.report = Some(report_value(&report)?);
     }
     Ok(summary)
 }
@@ -348,6 +382,14 @@ pub(crate) mod tests {
     }
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn approximate_evidence_preserves_binary64_bits(bits in any::<u64>()) {
+            let value = f64::from_bits(bits);
+            prop_assume!(value.is_finite());
+            let encoded = report_value(&value).expect("approximate evidence");
+            let decoded = encoded.as_object().and_then(|fields| fields.get("value")).and_then(norn_ir::RuntimeValue::as_str).expect("tagged binary64").parse::<f64>().expect("roundtrip float");
+            prop_assert_eq!(decoded.to_bits(),value.to_bits());
+        }
         #[test]
         fn representable_report_units_round_trip(n in 0i32..1_000_000_000) {
             prop_assert_eq!(nanos(f64::from(n) / 1_000_000_000.0).expect("nanos"), i64::from(n));
