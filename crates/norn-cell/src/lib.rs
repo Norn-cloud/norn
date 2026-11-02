@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod classification;
 mod codec;
 pub mod engine;
 pub mod error;

@@ -44,7 +44,9 @@ Per-artifact checking validates transport shape; cross-artifact admission checks
 GRAPH-CLASS-1 uses an admitted pure classifier over complete, schema-checked base rows.
 It returns original base IDs and refuses missing read paths, duplicate IDs, partial
 snapshots, and aggregate record/byte/fuel exhaustion without publishing partial membership.
-The host must bind the authorized snapshot to the pinned definitions and capture its reads.
+The cell adapter binds the active installed definition hashes and model to the classifier,
+captures base-range/object/authorization dependencies, and refuses any concurrent commit.
+Known stored nulls remain distinct from missing inputs; hidden rows retain invalidation reads.
 No classifier stores membership or emits effects; admission creates no writable membership.
 GRAPH-DAG-1 checks classification dependencies over exact artifact/version identities,
 including retained declarations. A cycle containing a candidate refuses `core.graph.cycle`;
