@@ -66,18 +66,41 @@ fn knowledge_cutoff_admits_one_authenticated_proof_exactly_once() {
     use norn_kernel::{FactKey, LogicalTime};
 
     let mut store = CellStore::open_in_memory(model()).expect("store");
-    store.commit(&batch(vec![put("proof.Item", "item", "known")])).expect("seed");
+    store
+        .commit(&batch(vec![put("proof.Item", "item", "known")]))
+        .expect("seed");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
     let mut budget = DecodeBudget::new(&limits);
-    store.read().fact_version_evidence_with_budget(MAIN_WORLD, "proof.Item", "item", 1, &mut budget).expect("proof").expect("admitted");
+    store
+        .read()
+        .fact_version_evidence_with_budget(MAIN_WORLD, "proof.Item", "item", 1, &mut budget)
+        .expect("proof")
+        .expect("admitted");
     let exact = ReactiveLimits {
-        max_candidate_bytes_per_commit: limits.max_candidate_bytes_per_commit.checked_sub(budget.remaining_bytes()).expect("charged bytes"),
-        max_scan: limits.max_scan.checked_sub(budget.remaining_rows()).expect("charged rows"),
+        max_candidate_bytes_per_commit: limits
+            .max_candidate_bytes_per_commit
+            .checked_sub(budget.remaining_bytes())
+            .expect("charged bytes"),
+        max_scan: limits
+            .max_scan
+            .checked_sub(budget.remaining_rows())
+            .expect("charged rows"),
         ..limits
     };
     let mut budget = DecodeBudget::new(&exact);
-    let result = store.read().object_at_version_known_at_with_budget(MAIN_WORLD, &FactKey::new("proof.Item", "item"), 1, LogicalTime::from_millis(0), &mut budget).expect("known proof");
-    let BudgetedRead::Found(record) = result else { panic!("one proof fits"); };
+    let result = store
+        .read()
+        .object_at_version_known_at_with_budget(
+            MAIN_WORLD,
+            &FactKey::new("proof.Item", "item"),
+            1,
+            LogicalTime::from_millis(0),
+            &mut budget,
+        )
+        .expect("known proof");
+    let BudgetedRead::Found(record) = result else {
+        panic!("one proof fits");
+    };
     assert_eq!(record.values["value"], Value::from("known"));
     assert_eq!(budget.remaining_bytes(), 0);
     assert_eq!(budget.remaining_rows(), 0);
