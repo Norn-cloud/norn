@@ -582,8 +582,25 @@ impl<'a> TypeCatalog<'a> {
         }
         let mut property_types: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
         property_types.sort_by_key(|declaration| &declaration.name);
-        let mut extensions = self.extensions.clone();
-        extensions.sort_by_key(|declaration| (&declaration.target, &declaration.namespace));
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|declaration| {
+                Ok((
+                    (
+                        &declaration.target,
+                        &declaration.namespace,
+                        norn_ir::canonical::canonical_json_of(declaration)?,
+                    ),
+                    *declaration,
+                ))
+            })
+            .collect::<Result<Vec<_>, norn_ir::canonical::CanonicalJsonError>>()?;
+        extensions.sort_by(|left, right| left.0.cmp(&right.0));
+        let extensions: Vec<_> = extensions
+            .into_iter()
+            .map(|(_, declaration)| declaration)
+            .collect();
         let declarations = (
             PROPERTY_DOMAIN_RULE_ID,
             1_u16,
