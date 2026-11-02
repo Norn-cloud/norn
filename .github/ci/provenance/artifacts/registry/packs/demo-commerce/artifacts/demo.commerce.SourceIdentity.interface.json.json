@@ -1,11 +1,13 @@
 {
-  "sha256": "5d153f5414fd9c6bd3580116164a4c1cb8c96435082c9146b0287084a333455b",
-  "origin": "authored",
-  "category": "code",
+  "sha256": "81ffde9ac9fe30290d4525e22cd8e643f9033e6683b8a775cc9d85194f881419",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/packs/demo-commerce/identities.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
