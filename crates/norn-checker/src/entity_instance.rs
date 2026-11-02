@@ -2251,6 +2251,19 @@ mod tests {
 #[cfg(test)]
 mod declared_rounding_tests {
     use super::*;
+    proptest::proptest! {
+        #[test]
+        fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in -10000_i32..10000) {
+            let property: Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+            let effective = EffectiveProperty::from_declared_property(&property,&[]);
+            let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);
+            let original = RuntimeValue::from_json_text(&number).expect("number");
+            let stored = effective.canonical_runtime_value(&original);
+            proptest::prop_assert_eq!(effective.canonical_runtime_value(&stored), stored.clone());
+            proptest::prop_assert_eq!(effective.check_runtime_value(&original), effective.check_runtime_value(&stored));
+        }
+    }
+
     #[test]
     fn val_round_checks_quantized_bounds_and_preserves_invalid_evidence() {
         let property: Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");

@@ -233,7 +233,7 @@ fn val_round_store_defaults_sets_and_record_members_use_the_declared_site() {
     let path = dir.path().join("round.sqlite");
     let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
     let commit = |store: &mut CellStore, fact| store.commit(&CommitBatch { world:MAIN_WORLD.into(), scope:"round/proof".into(), facts:vec![fact], ..CommitBatch::default() });
-    let create: FactChange = serde_json::from_value(json!({"op":"create","objectType":"value.Sample","key":"one","values":{"detail":{"amount":1.005}}})).expect("create");
+    let create: FactChange = serde_json::from_str(r#"{"op":"create","objectType":"value.Sample","key":"one","values":{"detail":{"amount":1.005}}}"#).expect("create");
     commit(&mut store,create).expect("default and nested rounding");
     let check = |store: &CellStore, amount: &str| {
         let row = store.read().object(MAIN_WORLD,"value.Sample","one").expect("read").expect("row");
@@ -241,7 +241,7 @@ fn val_round_store_defaults_sets_and_record_members_use_the_declared_site() {
         assert_eq!(row.values["detail"],exact(r#"{"amount":1}"#));
     };
     check(&store,"1.01");
-    let set: FactChange = serde_json::from_value(json!({"op":"set","objectType":"value.Sample","key":"one","values":{"amount":-1.005}})).expect("set");
+    let set: FactChange = serde_json::from_str(r#"{"op":"set","objectType":"value.Sample","key":"one","values":{"amount":-1.005}}"#).expect("set");
     commit(&mut store,set).expect("set rounding");
     check(&store,"-1.01");
     store.read().verify_ledger().expect("ledger");
