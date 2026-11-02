@@ -513,6 +513,16 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     entry(
+        "core.values.unit_binding_required",
+        Tier::T2,
+        "an interface Decimal requires an explicit implementing unit and scale",
+    ),
+    entry(
+        "core.values.unit_mismatch",
+        Tier::T3,
+        "interface Decimal group requires the same unit and scale",
+    ),
+    entry(
         "customization.validation.invalid_payload",
         Tier::T2,
         "CustomizationIR payload is invalid at {path}: {detail}",

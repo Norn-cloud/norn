@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "interface": {
-      "description": "A measured conversion in one unit, at three decimal places. These are accepted measurements, not a certificate of the associated stock or value effects.",
+      "description": "A measured conversion whose quantities share the implementor's explicit unit and scale. These are accepted measurements, not a certificate of associated stock or value effects.",
       "invariants": [
         {
           "expression": "(((self.input_quantity >= 0) and (self.output_quantity >= 0)) and (self.loss_quantity >= 0)) and (self.input_quantity == (self.output_quantity + self.loss_quantity))",
@@ -22,29 +22,22 @@
         {
           "id": "input_quantity",
           "type": {
-            "kind": "decimal",
-            "scale": 3
+            "group": "conversion",
+            "kind": "decimal-binding"
           }
         },
         {
           "id": "output_quantity",
           "type": {
-            "kind": "decimal",
-            "scale": 3
+            "group": "conversion",
+            "kind": "decimal-binding"
           }
         },
         {
           "id": "loss_quantity",
           "type": {
-            "kind": "decimal",
-            "scale": 3
-          }
-        },
-        {
-          "id": "quantity_unit",
-          "type": {
-            "kind": "ref",
-            "name": "ucum.unit_code"
+            "group": "conversion",
+            "kind": "decimal-binding"
           }
         }
       ]

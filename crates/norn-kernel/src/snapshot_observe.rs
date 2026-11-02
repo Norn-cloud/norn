@@ -1036,6 +1036,29 @@ fn findings_for(
                         "unsupported built-in invariant finding outcome: {outcome:?}"
                     )));
                 }
+                None if failure.id.as_str().starts_with("$property.") => {
+                    let norn_ir::InvariantOwner::Object(owner) = &failure.owner else {
+                        return Err(ObservationRefusal::Encoding(
+                            "property owner must be an object".to_owned(),
+                        ));
+                    };
+                    let property = norn_ir::PropertyId(
+                        failure
+                            .id
+                            .as_str()
+                            .trim_start_matches("$property.")
+                            .to_owned(),
+                    );
+                    let rule = catalog
+                        .property_domain_rule_ref(owner, &property)
+                        .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+                        .ok_or_else(|| {
+                            ObservationRefusal::Encoding(
+                                "property domain is not retained".to_owned(),
+                            )
+                        })?;
+                    (rule, failure.outcome.clone())
+                }
                 None => {
                     let version = catalog
                         .invariant_owner_version(&failure.owner)
