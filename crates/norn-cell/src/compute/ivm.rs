@@ -99,7 +99,7 @@ impl IncrementalQuestion {
     /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
     pub fn advance_known_at<E:SqlEngine>(&mut self,store:&CellStore<E>,context:QueryContext,cutoff:crate::KnowledgeCutoff,mut visible:impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<&QueryResult,CellError> {
         let prior=self.knowledge.ok_or_else(||refused("core.world.invalid_restatement"))?;
-        if cutoff.frontier<prior.frontier || cutoff.recorded_at<prior.recorded_at {return Err(refused("core.world.invalid_restatement"))}
+        if !crate::history_selection::next_known_slice(prior.frontier,prior.recorded_at.as_millis(),cutoff.frontier,cutoff.recorded_at.as_millis()) {return Err(refused("core.world.invalid_restatement"))}
         let mut staged=self.clone();staged.knowledge=Some(cutoff);
         store.conn.transaction(||staged.apply(store,context,&mut visible))?;
         *self=staged;Ok(&self.result)

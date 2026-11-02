@@ -21,3 +21,9 @@ fn receipt_prefix_including_empty_commits_matches_wide_arithmetic() {
     let expected=u128::from(first).checked_sub(1).and_then(|n|n.checked_add(u128::from(count))).and_then(|n|<u64 as core::convert::TryFrom<u128>>::try_from(n).ok());
     assert_eq!(selection::receipt_last_sequence(first,count),expected);
 }
+
+#[kani::proof]
+fn history_steps_never_rewind_or_skip_receipts() {
+    let a:u64=kani::any();let ka:u64=kani::any();let b:u64=kani::any();let kb:u64=kani::any();
+    assert_eq!(selection::next_known_slice(a,ka,b,kb),b>=a && u128::from(b)<=u128::from(a)+1 && kb>=ka);
+}

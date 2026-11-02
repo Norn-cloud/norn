@@ -24,11 +24,23 @@ pub(crate) const fn receipt_last_sequence(first: u64, count: u64) -> Option<u64>
     }
 }
 
+/// RESTATE-HISTORY-1: a private generation advances at most one source receipt.
+pub(crate) const fn next_known_slice(old_frontier:u64,old_clock:u64,new_frontier:u64,new_clock:u64)->bool {
+    match new_frontier.checked_sub(old_frontier) {
+        Some(delta)=>delta<=1 && new_clock>=old_clock,
+        None=>false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{select_known_version,receipt_last_sequence};
+    use super::{select_known_version,receipt_last_sequence,next_known_slice};
     use norn_testkit::proptest::prelude::*;
     proptest! {
+        #[test]
+        fn next_slice_matches_a_wide_no_rewind_no_gap_model(a in any::<u64>(),ka in any::<u64>(),b in any::<u64>(),kb in any::<u64>()) {
+            prop_assert_eq!(next_known_slice(a,ka,b,kb),b>=a && u128::from(b)<=u128::from(a)+1 && kb>=ka);
+        }
         #[test]
         fn receipt_prefix_matches_wide_arithmetic(first in any::<u64>(), count in any::<u64>()) {
             let expected=u128::from(first).checked_sub(1).and_then(|n|n.checked_add(u128::from(count))).and_then(|n|u64::try_from(n).ok());

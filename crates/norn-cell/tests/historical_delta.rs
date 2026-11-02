@@ -17,15 +17,17 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn restatement_delta_equals_rebuild_and_old_answers_reproduce(
-        corrections in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY),1..6)
+        corrections in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY,proptest::bool::ANY),1..6)
     ) {
-        let (mut store,plan,original)=fixture();load(&mut store);
+        let (base,plan,original)=fixture();let model=base.model().clone();drop(base);
+        let directory=tempfile::tempdir().expect("restart fixture");let path=directory.path().join("cell.sqlite");
+        let mut store=norn_cell::CellStore::open(&path,model.clone(),norn_cell::StoreOptions::default()).expect("store");load(&mut store);
         let first=coordinate(&store,&original);
         let old=store.evaluate_question_known_at(&plan,original.clone(),first,|_|Ok(true)).expect("old slice");
         let old_bytes=serde_json::to_vec(&old).expect("old answer");
         let mut context=original.clone();
         let mut view=IncrementalQuestion::rebuild_known_at(&store,&plan,context.clone(),first,|_|Ok(true)).expect("historical rebuild");
-        for (index,(amount,day,excluded)) in corrections.into_iter().enumerate() {
+        for (index,(amount,day,excluded,restart)) in corrections.into_iter().enumerate() {
             let at=CLOCK.checked_add(u64::try_from(index).expect("index").checked_add(1).expect("bounded")).expect("clock");
             store.commit(&CommitBatch{world:WORLD.into(),scope:"synthetic".into(),logical_time:at,writes:vec![put("SYN-MELT-15-1",75_000,amount,&format!("2026-10-{day:02}T12:01:00Z"),"gold")],..CommitBatch::default()}).expect("source correction");
             let cutoff=KnowledgeCutoff{recorded_at:LogicalTime::from_millis(at),frontier:store.verified_head().expect("head").commits};
@@ -38,6 +40,12 @@ proptest::proptest! {
             proptest::prop_assert!(!view.was_rebuilt());
             let again=store.evaluate_question_known_at(&plan,original.clone(),first,|_|Ok(true)).expect("old answer after correction");
             proptest::prop_assert_eq!(serde_json::to_vec(&again).expect("old answer"),old_bytes.clone());
+            if restart {
+                drop(view);drop(store);
+                store=norn_cell::CellStore::open(&path,model.clone(),norn_cell::StoreOptions::default()).expect("reopen");
+                view=IncrementalQuestion::rebuild_known_at(&store,&plan,context.clone(),cutoff,|_|Ok(true)).expect("restart at the same slice");
+                proptest::prop_assert!(view.was_rebuilt());proptest::prop_assert_eq!(view.result(),&rebuilt);
+            }
         }
     }
 }
