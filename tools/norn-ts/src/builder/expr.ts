@@ -124,7 +124,7 @@ export function zenJson(value: Json): string {
   return `{${Object.entries(value).map(([k, v]) => `${zenKey(k)}: ${zenJson(v as Json)}`).join(", ")}}`
 }
 
-/** FOLD-STEP-TYPE: declared record paths and constant array indexes retain their item schema. */
+/** FOLD-STEP-TYPE: record paths and bounded inline list indexes retain their declared schema. */
 function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { readonly zen: string; readonly schema: ValueSchema } {
   const binding = scope.get(name)
   if (!binding) {
@@ -134,6 +134,9 @@ function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { rea
   let zenPath = "zen" in binding ? binding.zen : ""
   for (const segment of path) {
     const arrayIndex = schema.type === "array" && /^(0|[1-9][0-9]*)$/.test(segment) && Number.isSafeInteger(Number(segment))
+    if (arrayIndex && "zen" in binding) {
+      throw new ExprError("NORN-FLOW-SLICE", "runtime array indexes are outside the admitted expression profile")
+    }
     const member = schema.type === "array" && arrayIndex ? schema.items : schema.type === "object" ? schema.properties[segment] : undefined
     if (!member) {
       throw new ExprError("NORN-FLOW-SLICE", `expected a declared field, got ${segment} on ${name}; did you mean ${schema.type === "object" ? Object.keys(schema.properties).join(", ") : "a record field"}?`)

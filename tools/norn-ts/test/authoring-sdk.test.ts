@@ -174,12 +174,16 @@ test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
 })
 
 
-test("declared array element paths retain item typing and reject malformed indexes", () => {
-  const scope = new Map([["input", {zen: "", schema: S.record({rows: S.array(S.record({value: S.number}))})}]])
+test("declared array indexes refuse while bounded inline lists retain item typing", () => {
+  const schema = S.record({rows: S.array(S.record({value: S.number}))})
+  const scope = new Map([["input", {zen: "", schema}]])
   for (let index = 0; index < 32; index++) {
     const expression = E.ref("input", "rows", String(index), "value")
-    expect(E.render(expression, scope)).toBe(`rows[${index}].value`)
-    expect(E.typeOf(expression, scope)).toEqual(S.number)
+    expect(() => E.render(expression, scope)).toThrow("runtime array indexes")
+    expect(() => E.typeOf(expression, scope)).toThrow("runtime array indexes")
   }
-  for (const index of ["-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), scope)).toThrow()
+  const inline = new Map([["input", {inline: E.record({rows: E.list(E.record({value: E.lit(7)}))}), scope: new Map(), schema}]])
+  expect(E.render(E.ref("input", "rows", "0", "value"), inline)).toBe("7")
+  expect(E.typeOf(E.ref("input", "rows", "0", "value"), inline)).toEqual(S.number)
+  for (const index of ["1", "-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), inline)).toThrow()
 })

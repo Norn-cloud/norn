@@ -232,7 +232,8 @@ fn atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry() {
     assert_eq!(cell.store().read().dump().unwrap(), dump);
     let mut changed = call(&action);
     changed.actor = "different-principal".into();
-    assert!(commit_action(&mut cell, &catalog, &changed, &Allow).is_err());
+    let refusal = commit_action(&mut cell, &catalog, &changed, &Allow).unwrap_err();
+    assert_eq!(refusal.code(), "action.idempotency_conflict");
     assert_eq!(cell.store().read().dump().unwrap(), dump);
 }
 #[test]
