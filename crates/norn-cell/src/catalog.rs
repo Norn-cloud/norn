@@ -202,8 +202,8 @@ mod tests {
         #[test]
         fn exact_member_identity_is_preserved(id in "test.[a-z]{1,12}", version in "[1-9]\\.[0-9]\\.[0-9]", name in "[A-Z][a-z]{0,8}") {
             let at = MemberRef { artifact_id:id, version, member:Member::Type {type_name:format!("test.{name}")} };
-            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "role":"thing"})), serde_json::json!(at.clone()));
-            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at.clone(), "subject":at.clone()})), serde_json::json!({"at":at.clone(), "subject":at.clone()}));
+            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at, "role":"thing"})), serde_json::json!(at));
+            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at, "subject":at})), serde_json::json!({"at":at, "subject":at}));
             let mut catalog = norn_checker::definition_catalog::project(&[], &[], &BTreeSet::new()).map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
             catalog.facets = [norn_ir::definition_catalog::ConceptFacet::Props, norn_ir::definition_catalog::ConceptFacet::Access].into_iter().map(|facet| norn_ir::definition_catalog::ConceptFacetRow { concept:at.clone(), facet, member:at.clone() }).collect();
             let indexed = index(&catalog, 0).map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
