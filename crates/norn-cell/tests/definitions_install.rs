@@ -6593,11 +6593,11 @@ fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering(
     }
     drop(store);
     let counter = WriteCounter::default();
-    let counted = CountedEngine {
+    let engine = CountedEngine {
         inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
         counter: counter.clone(),
     };
-    let store = CellStore::from_engine(counted, model).expect("counted store");
+    let store = CellStore::from_engine(engine, model).expect("counted store");
     let cell: norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine> =
         norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host");
     let clean = norn_kernel::FactKey::new("quality.Measurement", "unrelated");
