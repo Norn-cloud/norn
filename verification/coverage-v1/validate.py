@@ -408,7 +408,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     # Bind commands to executable steps and the matrices that cover the plan;
     # comments, environment values and a cheap-only invocation earn no credit.
     workflow = yaml.load(source, Loader=WorkflowLoader)
-    require(workflow.get("on") == {
+    require(workflow.get("on", workflow.get(True)) == {
         "pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
         "pull_request_target": None,
         "issue_comment": {"types": ["created", "edited", "deleted"]},
