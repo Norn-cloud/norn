@@ -183,3 +183,45 @@ proptest! {
         prop_assert_eq!(result.is_ok(), quanta.is_multiple_of(10));
     }
 }
+
+#[test]
+fn decimal_scale_record_members_refuse_the_whole_commit() {
+    let definition: ObjectTypeDef = serde_json::from_value(json!({"name":"toy.Reading","properties":[
+        {"id":"reading","type":{"kind":"record","members":[{"id":"amount","type":{"kind":"decimal","scale":3}}]}}
+    ]})).expect("record type");
+    let write = |id: &str, amount: &str| FactWrite {
+        key: FactKey::new("toy.Reading", id),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: serde_json::from_str(&format!(r#"{{"reading":{{"amount":{amount}}}}}"#))
+                .expect("exact record"),
+        },
+    };
+    for (amount, allowed) in [("1.234", true), ("1.2345", false)] {
+        let mut cell: Cell =
+            MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
+                .with_types(vec![definition.clone()]);
+        let result = cell.commit(CellCommit {
+            writes: vec![write("balanced", "1.234"), write("candidate", amount)],
+            events: vec!["reading".into()],
+            effects: vec![notification()],
+            ..CellCommit::empty()
+        });
+        assert_eq!(result.is_ok(), allowed);
+        if !allowed {
+            assert!(
+                matches!(result, Err(norn_kernel::cell_host::CommitError::InvariantViolation { ref id, .. }) if id.as_str() == "$property.reading")
+            );
+            for id in ["balanced", "candidate"] {
+                assert!(
+                    !cell
+                        .load(&FactKey::new("toy.Reading", id))
+                        .expect("read")
+                        .exists()
+                );
+            }
+            assert!(cell.ledger().is_empty());
+            assert!(cell.outbox().is_empty());
+        }
+    }
+}

@@ -864,7 +864,7 @@ fn evaluate_invariants_for_class(
     Ok(failures)
 }
 
-/// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check before commit.
+/// VAL-DECIMAL-SCALE-1: apply the shared runtime decimal domain check, including Record members, before commit.
 fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -883,6 +883,7 @@ fn evaluate_typed_properties(
                         PropertyType::Date {}
                             | PropertyType::Timestamp { .. }
                             | PropertyType::Decimal { .. }
+                            | PropertyType::Record { .. }
                     )
                 )
         })
@@ -903,6 +904,10 @@ fn evaluate_typed_properties(
                         "decimal",
                         "must satisfy its declared decimal scale and bounds",
                     ),
+                    EffectiveKind::Base(PropertyType::Record { .. }) => (
+                        "record",
+                        "must satisfy its declared member types and bounds",
+                    ),
                     EffectiveKind::Base(PropertyType::Date {}) => {
                         ("date", "must be a valid calendar date in YYYY-MM-DD form")
                     }
@@ -921,7 +926,9 @@ fn evaluate_typed_properties(
                     classification: ConstraintClass::Integrity,
                     finding_outcome: (!matches!(
                         &property.kind,
-                        EffectiveKind::Base(PropertyType::Decimal { .. })
+                        EffectiveKind::Base(
+                            PropertyType::Decimal { .. } | PropertyType::Record { .. }
+                        )
                     ))
                     .then(|| DataQualityOutcome::InvalidTemporalObservation {
                         property: property.id.clone(),
