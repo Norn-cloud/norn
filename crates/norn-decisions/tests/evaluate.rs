@@ -1633,21 +1633,53 @@ proptest::proptest! {
 
 #[test]
 fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
-    use norn_ir::{PropertyType, Rounding, WholeNumber};
     use norn_expr::Expression;
-    let site = |rounding| PropertyType::Decimal { scale: WholeNumber(2), rounding, unit: None, currency_source: None };
-    let run = |source: &str, site: Option<&PropertyType>| Expression::compile(source).unwrap().evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), site).result.map(|v| v.into_value());
+    use norn_ir::{PropertyType, Rounding, WholeNumber};
+    let site = |rounding| PropertyType::Decimal {
+        scale: WholeNumber(2),
+        rounding,
+        unit: None,
+        currency_source: None,
+    };
+    let run = |source: &str, site: Option<&PropertyType>| {
+        Expression::compile(source)
+            .unwrap()
+            .evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), site)
+            .result
+            .map(|v| v.into_value())
+    };
     assert_eq!(run("1.25 * 0.1 > 0", None).unwrap(), Value::Bool(true));
     assert_eq!(run("1.25 == 1.20 + 0.05", None).unwrap(), Value::Bool(true));
-    assert_eq!(run("(1.25 * 0.1) * 100", Some(&site(Some(Rounding::HalfEven)))).unwrap(), Value::Number("12.5".parse().unwrap()));
+    assert_eq!(
+        run("(1.25 * 0.1) * 100", Some(&site(Some(Rounding::HalfEven)))).unwrap(),
+        Value::Number("12.5".parse().unwrap())
+    );
     for (source, expected) in [("1.005 / 1", "1.01"), ("-1.005 / 1", "-1.01")] {
-        assert_eq!(run(source, Some(&site(Some(Rounding::HalfAwayFromZero)))).unwrap(), Value::Number(expected.parse().unwrap()));
+        assert_eq!(
+            run(source, Some(&site(Some(Rounding::HalfAwayFromZero)))).unwrap(),
+            Value::Number(expected.parse().unwrap())
+        );
     }
-    for source in ["1 / 3", "1 / 0", "round(1.005, 2)", "1e-18 * 0.1", "79228162514264337593543950335 + 1"] { assert!(run(source, None).is_err(), "{source}"); }
-    assert!(run("1 / 2", Some(&site(None))).is_err());
+    for source in [
+        "1 / 3",
+        "1 / 0",
+        "round(1.005, 2)",
+        "1e-18 * 0.1",
+        "79228162514264337593543950335 + 1",
+    ] {
+        assert!(run(source, None).is_err(), "{source}");
+    }
+    assert_eq!(run("1 / 2", Some(&site(None))).unwrap(), Value::Number("0.5".parse().unwrap()));
+    assert!(run("1 / 3", Some(&site(None))).is_err());
     assert!(run("1.005", Some(&site(None))).is_err());
+    assert!(run("(1 / 3) * 3", Some(&site(Some(Rounding::HalfEven)))).is_err());
+    assert_eq!(run("'a' + 'b' == 'ab' && 1.25 * 0.1 > 0", None).unwrap(), Value::Bool(true));
     let expression = Expression::compile("1 / 3").unwrap();
-    assert!(expression.evaluate(&Value::Null, EvaluationBudget::default()).is_ok());
+    assert!(
+        expression
+            .evaluate(&Value::Null, EvaluationBudget::default())
+            .is_ok()
+    );
     let failed = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), None);
     assert!(failed.result.is_err() && failed.units_used > 0);
 }

@@ -216,10 +216,15 @@ fn derived_exact_scales_and_overflow_refuse() {
 #[kani::unwind(40)]
 fn exact_division_signed_halves_and_refusals() {
     let a = i16::from(kani::any::<i8>());
-    let site = ScaledArithmetic { scale: 0, rounding: Rounding::TowardZero };
+    let site = ScaledArithmetic {
+        scale: 0,
+        rounding: Rounding::TowardZero,
+    };
     let result = site.divide(Decimal::from(a), Decimal::from(2)).unwrap();
     assert_eq!(result.mantissa(), i128::from(a / 2));
     assert_eq!(result.scale(), 0);
     assert!(site.divide(Decimal::ONE, Decimal::ZERO).is_err());
-    assert!(ScaledArithmetic { scale: 19, ..site }.divide(Decimal::ZERO, Decimal::ONE).is_err());
+    assert!(ScaledArithmetic { scale: 19, ..site }
+        .divide(Decimal::ZERO, Decimal::ONE)
+        .is_err());
 }

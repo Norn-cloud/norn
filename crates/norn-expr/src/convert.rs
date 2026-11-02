@@ -42,18 +42,26 @@ pub fn rescale_decimal(site: &norn_ir::PropertyType, value: &Number) -> Result<N
             message: "exact site must be a declared Decimal".to_owned(),
         });
     };
-    let invalid = |reason: String| ExprError::InvalidNumber { input: value.as_str().to_owned(), reason };
-    let profile = scaled_site(scale.0, rounding.unwrap_or(norn_ir::Rounding::Refuse)).map_err(|error| invalid(error.to_string()))?;
+    let invalid = |reason: String| ExprError::InvalidNumber {
+        input: value.as_str().to_owned(),
+        reason,
+    };
+    let profile = scaled_site(scale.0, rounding.unwrap_or(norn_ir::Rounding::Refuse))
+        .map_err(|error| invalid(error.to_string()))?;
     let parsed = value
         .as_str()
         .parse()
         .map_err(|error| invalid(format!("{error}")))?;
-    let result = profile.rescale(parsed)
+    let result = profile
+        .rescale(parsed)
         .map_err(|reason| invalid(reason.to_owned()))?;
     Ok(Number::from_canonical(result.normalize().to_string()))
 }
 
-pub(crate) fn scaled_site(scale: u64, rounding: norn_ir::Rounding) -> Result<zen_expression::scaled::ScaledArithmetic, ExprError> {
+pub(crate) fn scaled_site(
+    scale: u64,
+    rounding: norn_ir::Rounding,
+) -> Result<zen_expression::scaled::ScaledArithmetic, ExprError> {
     use zen_expression::scaled::{Rounding, ScaledArithmetic};
     let invalid = |reason: String| ExprError::Evaluation { message: reason };
     let scale = u32::try_from(scale)
