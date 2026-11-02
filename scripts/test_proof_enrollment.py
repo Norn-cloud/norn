@@ -155,7 +155,7 @@ class CoverageLayoutTests(unittest.TestCase):
             self.assertTrue(coverage_manifest.digest(target))
 
     def test_migration_preserves_duplicates_and_rolls_back_failures(self):
-        for failure in (None, "conversion", "commit"):
+        for failure in (None, "conversion", "commit", "inventory", "index"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 directory = root / "verification/coverage-v1/manifest"
@@ -167,6 +167,10 @@ class CoverageLayoutTests(unittest.TestCase):
                                     (record_root / "index.json.json", {}), (record_root / "subsystems/toy.json.json", {})):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(value))
+                if failure == "inventory":
+                    (directory / "subsystems/already-new").mkdir()
+                if failure == "index":
+                    (directory / "index.json").write_text('{"subsystems": []}')
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
                 rename = Path.rename
                 def commit(path, target):
