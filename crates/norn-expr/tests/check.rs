@@ -1790,11 +1790,25 @@ fn val_round_explicit_site_scopes_division_and_rescale() {
     let old = Expression::compile("round(1.005, 2)")
         .unwrap()
         .evaluate_metered(&Value::Null, EvaluationBudget::default());
+    assert_eq!(old.units_used, 6, "preserve legacy round fuel");
     assert_eq!(
         old.result.unwrap().into_value(),
         Value::Number("1.01".parse().unwrap())
     );
     for source in ["round(1, 2, 'unknown')", "round(1, 19, 'half_even')"] {
         assert!(Expression::compile(source).is_err());
+    }
+}
+
+#[test]
+fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
+    let env = ZenTypeEnv::input_only(fields([("a", Type::Number), ("b", Type::Number)]), EnvOptions::default()).unwrap();
+    let expression = Expression::compile("round(input.a / input.b, 2, 'half_even')").unwrap();
+    let checked = expression.check_typed(&env, &Type::Number).unwrap();
+    for (b, success) in [("3", true), ("0", false)] {
+        let context = Value::object([("input",Value::object([("a",Value::Number("1".parse().unwrap())),("b",Value::Number(b.parse().unwrap()))]))]);
+        let attempt = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &Type::Number);
+        assert_eq!(attempt.result.is_ok(), success);
+        assert!(attempt.units_used <= checked.cost().units());
     }
 }
