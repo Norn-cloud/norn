@@ -20,3 +20,26 @@ export const Melt = Norn.type({
     { id: "post", from: ["approved"], to: "posted" },
   ] }],
 })
+
+export const FineMassConservation = Norn.law({
+  id: "demo.fine_mass_conservation.law",
+  title: "Input fine mass equals output plus recorded loss.",
+  version: "0.1.0",
+  law: {
+    lawVersion: "0.1",
+    id: "demo.fine_mass_conservation",
+    owner: "demo.jewelry",
+    severity: "error",
+    rationale: "Input fine mass equals output plus explicitly recorded loss.",
+    provenance: { source: "authoring_sdk", sourcePath: "scripts/demo/jewelry.source.ts" },
+    scope: { root: { kind: "app", id: "demo.jewelry" }, objectTypes: ["demo.Melt"] },
+    subject: "demo.Melt",
+    condition: "self.status == 'posted'",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.input_fine_g == self.output_fine_g + self.loss_fine_g",
+    },
+  },
+  dependencies: [{ artifactId: "demo.Melt.entity", kind: "entity", version: "0.1.0", required: true }],
+})
