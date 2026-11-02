@@ -152,18 +152,7 @@ pub fn call_action_in_epoch<E: SqlEngine>(
 }
 
 fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
-    use crate::refusal::RefusalCategory as A;
-    use norn_kernel::RefusalCategory as K;
-    let (status, category) = match safe.category {
-        K::Visibility => (http::StatusCode::NOT_FOUND, A::Visibility),
-        K::Permission => (http::StatusCode::FORBIDDEN, A::Permission),
-        K::Precondition => (http::StatusCode::UNPROCESSABLE_ENTITY, A::Precondition),
-        K::Conflict => (http::StatusCode::CONFLICT, A::Conflict),
-        K::Invalid => (http::StatusCode::BAD_REQUEST, A::Invalid),
-        K::Limit => (http::StatusCode::TOO_MANY_REQUESTS, A::Limit),
-        K::Internal => (http::StatusCode::INTERNAL_SERVER_ERROR, A::Internal),
-    };
-    Refusal::new(status, &safe.code, safe.message.clone(), safe.message).with_category(category)
+    Refusal::from_kernel(safe, false)
 }
 
 #[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]

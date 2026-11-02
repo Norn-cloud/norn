@@ -4152,14 +4152,15 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, id, message, outcome) = match error {
+    let (key, owner, version, id, message, outcome) = match error {
         CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
-        } => (key, owner, id, message, outcome),
+        } => (key, owner, version, id, message, outcome),
         error @ (CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
@@ -4191,6 +4192,7 @@ where
     let refusal = DecisionRefusal::InvariantViolation {
         key: key.clone(),
         owner: owner.clone(),
+        version,
         id: id.clone(),
         message: message.clone(),
         outcome: outcome.clone(),

@@ -37,7 +37,6 @@
     "tools/norn-ts/src/compiler/index.ts",
     "tools/norn-ts/src/compiler/schema.ts",
     "tools/norn-ts/src/compiler/types.ts",
-    "tools/norn-ts/src/deploy.ts",
     "tools/norn-ts/src/flow-limits.ts",
     "tools/norn-ts/src/flow-source-map.ts",
     "tools/norn-ts/src/law-statement.ts",

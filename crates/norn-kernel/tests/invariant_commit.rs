@@ -565,6 +565,23 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
         })
         .unwrap_err();
     assert_eq!(error.code(), "commit.invariant_violation");
+    let reason = norn_kernel::Refusable::refusal(&error)
+        .reason
+        .expect("invariant reason");
+    let (types, interfaces) = definitions();
+    let owner = InvariantOwner::Object(ObjectTypeName(ITEM.to_owned()));
+    let expected_version = catalog(&types, &interfaces)
+        .invariant_owner_version(&owner)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reason.pin,
+        Some(DataQualityRuleRef::Invariant {
+            owner,
+            invariant_id: InvariantId("positive_amount".into()),
+            version: expected_version,
+        })
+    );
     assert!(matches!(
         error,
         CommitError::InvariantViolation {

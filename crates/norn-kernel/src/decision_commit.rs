@@ -1581,6 +1581,8 @@ pub enum DecisionRefusal<X> {
         key: Box<FactKey>,
         /// The declaration that owns the invariant identity.
         owner: InvariantOwner,
+        /// Canonical digest of the owning declaration at evaluation.
+        version: String,
         /// The invariant id within `owner`.
         id: InvariantId,
         /// The invariant's message.
@@ -1761,10 +1763,11 @@ impl<X> DecisionRefusal<X> {
             CommitError::InvariantViolation {
                 key,
                 owner,
+                version,
                 id,
                 message,
                 outcome,
-            } => Self::commit_invariant_refusal(key, owner, id, message, outcome),
+            } => Self::commit_invariant_refusal(key, owner, version, id, message, outcome),
             CommitError::InvariantBudgetExceeded { key, limit } => {
                 Self::InvariantBudgetExceeded { key, limit }
             }
@@ -1816,6 +1819,7 @@ impl<X> DecisionRefusal<X> {
     fn commit_invariant_refusal(
         key: Box<FactKey>,
         owner: InvariantOwner,
+        version: String,
         id: InvariantId,
         message: String,
         outcome: Box<DataQualityOutcome>,
@@ -1823,6 +1827,7 @@ impl<X> DecisionRefusal<X> {
         Self::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
@@ -2247,6 +2252,7 @@ where
         Err(CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
@@ -2254,6 +2260,7 @@ where
             let refusal = DecisionRefusal::InvariantViolation {
                 key: key.clone(),
                 owner: owner.clone(),
+                version,
                 id: id.clone(),
                 message: message.clone(),
                 outcome: outcome.clone(),

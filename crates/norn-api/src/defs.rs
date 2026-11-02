@@ -160,6 +160,7 @@ fn action_system_types() -> Vec<norn_ir::ObjectTypeDef> {
         ),
     ] {
         types.push(ObjectTypeDef {
+            role: None,
             name: ObjectTypeName(name.into()),
             description: None,
             status: norn_ir::ResourceStatus::default(),
