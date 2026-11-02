@@ -1,0 +1,121 @@
+{
+  "artifactId": "demo.erpnext.identity.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic ERPNext identity cross-references",
+  "namespace": "demo",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "Item",
+        "fields": [
+          "name"
+        ],
+        "id": "item_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Delivery Note",
+        "fields": [
+          "name"
+        ],
+        "id": "delivery_id",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Item",
+        "kind": "document",
+        "nativeName": "Synthetic Item"
+      },
+      {
+        "id": "Delivery Note",
+        "kind": "document",
+        "nativeName": "Synthetic Delivery Note"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Item",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "custom_catalog_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "item_code",
+        "nativeType": "Data",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note",
+        "name": "custom_shipment_ref",
+        "nativeType": "Data",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-25T23:59:59Z",
+    "rawMetadata": {
+      "sha256": "cf43670ecea4c65bd77bc6860a5644d4858e878a0d80ff9db0508d71f6fcfd7d",
+      "uri": "evidence://demo-commerce/identity-v1"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-erpnext",
+      "version": "16-custom-identity-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.erpnext.identity.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

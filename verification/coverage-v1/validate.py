@@ -21,8 +21,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from verification_attestation import selector_is_declared  # noqa: E402
 from proof_enrollment import validate as validate_enrollment  # noqa: E402
+import coverage_manifest  # noqa: E402
 
-COVERAGE = ROOT / "verification/coverage-v1/coverage.json"
 CENTRAL_OBLIGATIONS = (
     ROOT / "verification/stripmine-2026-08-22/obligations.json"
 )
@@ -410,6 +410,13 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     workflow = yaml.load(source, Loader=WorkflowLoader)
     jobs = workflow["jobs"]
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
+    merge_runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
+    for name, job in jobs.items():
+        admitted = {"ubuntu-24.04"}
+        if name in {"core", "plan", "test", "phase", "full"}:
+            admitted.add(merge_runner)
+        require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
+                f"{name}: runner must preserve merge-only opt-in, run binding and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}
     job_env = {
         "core": cache_env,
@@ -427,7 +434,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                    for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
-        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"''',
         "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
@@ -448,6 +455,13 @@ echo "$plan"''',
          "with": {"path": "~/.bun/install/cache",
                   "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}"}},
     ]
+    cleanup = {"name": "Reclaim runner disk space",
+               "if": "${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+               "run": """df -h
+sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+sudo docker image prune -af
+df -h
+"""}
     nextest = {"uses": "taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32",
                "with": {"tool": "nextest@0.9.150"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
@@ -466,6 +480,8 @@ echo "$plan"''',
             preparation.append(nextest)
         if name == "phase":
             preparation[4]["with"]["shared-key"] = "cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}"
+        if name != "plan":
+            preparation.insert(0, cleanup)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -475,7 +491,7 @@ echo "$plan"''',
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == 1,
+        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 2),
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -491,8 +507,9 @@ echo "$plan"''',
             require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
                     "plan: gate plan output must bind the producer step")
             require(steps[0].get("env") == {"BASE":
-                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}"},
-                    "plan: affected selection must bind the pull request base")
+                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+                    "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"},
+                    "plan: affected selection must bind the event base and head")
     for name, axis in (("test", "shard"), ("phase", "phase")):
         job = jobs[name]
         require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
@@ -511,7 +528,7 @@ echo "$plan"''',
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
-[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+[ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
@@ -722,7 +739,7 @@ def validate_claim_evidence_shape(
 
 def validate(
     *,
-    coverage_path: Path = COVERAGE,
+    coverage_path: Path = coverage_manifest.COVERAGE,
     gate_manifest_source: Path | None = None,
     central_obligations_path: Path = CENTRAL_OBLIGATIONS,
     core_physics_obligations_path: Path = CORE_PHYSICS_OBLIGATIONS,
@@ -735,7 +752,10 @@ def validate(
     from silently selecting a different security registry or claim manifest.
     """
 
-    coverage = load(coverage_path)
+    try:
+        coverage = coverage_manifest.load(coverage_path)
+    except coverage_manifest.InvalidCoverageLayout as error:
+        raise InvalidCoverage(f"coverage manifest: {error}") from error
     require(coverage.get("schemaVersion") == "norn.verification.coverage.v1", "wrong schemaVersion")
     gate_manifest_path = coverage.get("promotedGateManifest")
     require(

@@ -20,7 +20,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 GATES = Path(__file__).with_name("promoted-gates.json")
-COVERAGE = Path(__file__).with_name("coverage.json")
+COVERAGE = Path(__file__).with_name("manifest")
 VALIDATOR = Path(__file__).with_name("validate.py")
 WRITER = ROOT / "scripts/write-verification-result.py"
 RESULT_VALIDATOR = Path(__file__).with_name("validate_result.py")
@@ -47,6 +47,7 @@ VERIFICATION_TOOL_ROOT = Path(
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import coverage_manifest  # noqa: E402
 import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
 
 
@@ -128,15 +129,63 @@ def expect_manifest_rejection(label: str, mutate: Callable[[dict[str, Any]], Non
 
 
 def expect_coverage_rejection(label: str, mutate: Callable[[dict[str, Any]], None]) -> None:
-    document = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    document = coverage_manifest.load(COVERAGE)
     mutate(document)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as candidate:
-        json.dump(document, candidate)
-        candidate.flush()
-        expect_coverage_validator_rejection(
-            label,
-            coverage_path=Path(candidate.name),
-        )
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "manifest"
+        coverage_manifest.write(document, candidate)
+        expect_coverage_validator_rejection(label, coverage_path=candidate)
+
+
+def coverage_layout_canaries() -> None:
+    """Each refusal fires through the per-subsystem files a pull request edits."""
+    document = coverage_manifest.load(COVERAGE)
+
+    def rejects(label: str, expected: str, arrange: Callable[[Path], object]) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "manifest"
+            coverage_manifest.write(document, candidate)
+            arrange(candidate)
+            error = expect_coverage_validator_rejection(label, coverage_path=candidate)
+        if expected not in error:
+            raise AssertionError(f"{label} failed for an unexpected reason: {error}")
+        print(f"coverage layout canary refused {label}: {error[:160]}")
+
+    def edit(name: str, change: Callable[[dict[str, Any]], object]) -> Callable[[Path], object]:
+        def arrange(candidate: Path) -> None:
+            coverage = coverage_manifest.load(candidate)
+            body = next(item for item in coverage["subsystems"] if item["id"] == name)
+            change(body)
+            coverage_manifest.write(coverage, candidate)
+        return arrange
+
+    def wrong_status(body: dict[str, Any]) -> None:
+        body["obligationClaims"][0]["runtime"] = "implementation_proven"
+
+    rejects("missing source enrollment", "exact source enrollment mismatch",
+            edit("ontology", lambda body: body["sourceFiles"].pop()))
+    rejects("claim status outside the vocabulary", "implementation_proven", edit("ontology", wrong_status))
+    rejects("unknown subsystem", "mandatory subsystem mismatch",
+            lambda c: (c / "subsystems/ontology").rename(c / "subsystems/analytics-projection"))
+    def drop_cala_boundary(candidate: Path) -> None:
+        # Keep its sources enrolled elsewhere so the mandatory-set check is what fires.
+        coverage = coverage_manifest.load(candidate)
+        dropped = next(item for item in coverage["subsystems"] if item["id"] == "cala-boundary")
+        next(item for item in coverage["subsystems"] if item["id"] == "ontology")["sourceFiles"].extend(dropped["sourceFiles"])
+        coverage["subsystems"].remove(dropped)
+        coverage_manifest.write(coverage, candidate)
+
+    rejects("missing mandatory subsystem", "mandatory subsystem mismatch", drop_cala_boundary)
+    rejects("subsystem file claims an id", "drop the id field",
+            lambda c: (c / "subsystems/ontology/index.json").write_text(json.dumps({**json.loads((c / "subsystems/ontology/index.json").read_text()), "id": "ontology"})))
+    rejects("index lists subsystems", "must not list subsystems",
+            lambda c: (c / "index.json").write_text(json.dumps({**json.loads((c / "index.json").read_text()), "subsystems": []})))
+    rejects("stray coverage file", "unknown coverage entries", lambda c: (c / "notes.json").write_text("{}"))
+    rejects("misnamed subsystem file", "unknown subsystem files", lambda c: (c / "subsystems/Ontology.json").write_text("{}"))
+    rejects("symlinked subsystem file", "not a regular directory", lambda c: (
+        (c / "subsystems/ontology").rename(c.parent / "ontology.real"),
+        (c / "subsystems/ontology").symlink_to(c.parent / "ontology.real"),
+    ))
 
 
 def manifest_canaries() -> None:
@@ -176,14 +225,14 @@ def manifest_canaries() -> None:
         gate = next(item for item in document["gates"] if item["command"].startswith("cargo "))
         original_command = gate["command"]
         gate["command"] = original_command.replace(" --locked", "", 1) + suffix
-        coverage = COVERAGE.read_text(encoding="utf-8").replace(
+        coverage = json.loads(json.dumps(coverage_manifest.load(COVERAGE)).replace(
             json.dumps(original_command), json.dumps(gate["command"])
-        )
+        ))
         with tempfile.TemporaryDirectory() as directory:
             gate_path = Path(directory) / "gates.json"
-            coverage_path = Path(directory) / "coverage.json"
+            coverage_path = Path(directory) / "manifest"
             gate_path.write_text(json.dumps(document), encoding="utf-8")
-            coverage_path.write_text(coverage, encoding="utf-8")
+            coverage_manifest.write(coverage, coverage_path)
             diagnostic = expect_coverage_validator_rejection(
                 label, gate_manifest_source=gate_path, coverage_path=coverage_path
             )
@@ -313,7 +362,7 @@ def central_obligation_closure_canaries() -> None:
         "norn_central_obligation_closure_canary", VALIDATOR
     )
     obligations = json.loads(CENTRAL_OBLIGATIONS.read_text(encoding="utf-8"))
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(COVERAGE)
     gates = json.loads(GATES.read_text(encoding="utf-8"))
     registry_ids = frozenset(item["id"] for item in obligations["obligations"])
     if registry_ids != CANONICAL_CENTRAL_OBLIGATION_IDS:
@@ -335,12 +384,12 @@ def central_obligation_closure_canaries() -> None:
         with tempfile.TemporaryDirectory() as directory:
             candidate_root = Path(directory)
             obligation_path = candidate_root / "obligations.json"
-            coverage_path = candidate_root / "coverage.json"
+            coverage_path = candidate_root / "manifest"
             gate_path = candidate_root / "promoted-gates.json"
             obligation_path.write_text(
                 json.dumps(mutated_obligations), encoding="utf-8"
             )
-            coverage_path.write_text(json.dumps(mutated_coverage), encoding="utf-8")
+            coverage_manifest.write(mutated_coverage, coverage_path)
             gate_path.write_text(json.dumps(mutated_gates), encoding="utf-8")
             validators = [
                 (
@@ -422,10 +471,10 @@ def central_obligation_closure_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         candidate_root = Path(directory)
         demoted_path = candidate_root / "demoted-central.json"
-        coverage_path = candidate_root / "coverage.json"
+        coverage_path = candidate_root / "manifest"
         gate_path = candidate_root / "promoted-gates.json"
         demoted_path.write_text(json.dumps(demoted_registry), encoding="utf-8")
-        coverage_path.write_text(json.dumps(demoted_coverage), encoding="utf-8")
+        coverage_manifest.write(demoted_coverage, coverage_path)
         gate_path.write_text(json.dumps(demoted_gates), encoding="utf-8")
         previous = os.environ.get("NORN_VERIFICATION_CENTRAL_OBLIGATIONS")
         os.environ["NORN_VERIFICATION_CENTRAL_OBLIGATIONS"] = str(demoted_path)
@@ -470,7 +519,7 @@ def core_physics_closure_canaries() -> None:
     removed = "INV-CORE-COMMITMENT-COMPLETION"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     registry["obligations"] = [item for item in registry["obligations"] if item["id"] != removed]
-    coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
+    coverage = coverage_manifest.load(COVERAGE)
     for subsystem in coverage["subsystems"]:
         if subsystem["id"] == "core-physics":
             subsystem["obligations"].remove(removed)
@@ -479,9 +528,9 @@ def core_physics_closure_canaries() -> None:
             ]
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "coordinated core-physics law deletion",
             coverage_path=candidate_coverage,
@@ -497,9 +546,9 @@ def core_physics_closure_canaries() -> None:
             item["priority"] = "P1"
     with tempfile.TemporaryDirectory() as directory:
         candidate_registry = Path(directory) / "obligations.json"
-        candidate_coverage = Path(directory) / "coverage.json"
+        candidate_coverage = Path(directory) / "manifest"
         candidate_registry.write_text(json.dumps(registry), encoding="utf-8")
-        candidate_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+        coverage_manifest.write(coverage, candidate_coverage)
         message = expect_coverage_validator_rejection(
             "core-physics law demotion and coverage removal",
             coverage_path=candidate_coverage,
@@ -548,6 +597,32 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
+        def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
+            return next(step for step in document["jobs"][job]["steps"]
+                        if step.get("uses", "").startswith(action + "@"))
+
+        runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
+        for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
+            unsafe = ["self-hosted", ["self-hosted", "norn-merge"],
+                      "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                      runner.replace("github.event_name == 'merge_group' && ", ""),
+                      runner.replace("vars.NORN_MERGE_RUNNER == 'self-hosted' && ", ""),
+                      runner.replace("norn-run-{0}", "norn-run-123"),
+                      runner.replace("github.run_id", "github.event.pull_request.number"),
+                      runner.replace("|| 'ubuntu-24.04'", "|| 'self-hosted'")]
+            for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+                unsafe.append(runner.replace("'merge_group'", repr(event)))
+            if name == "trusted-policy":
+                unsafe.append(runner)
+            for value in unsafe:
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["runs-on"] = value
+                rejected(f"{name} unsafe runner routing", document)
+        document = copy.deepcopy(workflow)
+        for name in ("core", "plan", "test", "phase", "full"):
+            document["jobs"][name]["runs-on"] = runner
+        candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        validator.validate_workflow_integrity([], formal_path=candidate)
         for name in ("core", "plan", "test", "phase"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
@@ -559,14 +634,14 @@ def workflow_context_canaries(source: str) -> None:
                                ("path", "other-checkout"), ("persist-credentials", True),
                                ("persist-credentials", 0), ("fetch-depth", False)):
                 document = copy.deepcopy(workflow)
-                document["jobs"][name]["steps"][0]["with"][key] = value
+                action_step(document, name, "actions/checkout")["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
             for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["steps"][2]["with"]["bun-version"] = "latest"
+        action_step(document, "test", "oven-sh/setup-bun")["with"]["bun-version"] = "latest"
         rejected("altered preparation action inputs", document)
         for location in ("workflow", "job", "step"):
             document = copy.deepcopy(workflow)
@@ -584,7 +659,9 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["test"]["steps"].insert(-1, {"run": "echo NORN_CI_PACKAGES=norn-canonical >> $GITHUB_ENV"})
         rejected("test preparation can override plan inputs", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["core"]["steps"].append(document["jobs"]["core"]["steps"].pop(0))
+        checkout = action_step(document, "core", "actions/checkout")
+        document["jobs"]["core"]["steps"].remove(checkout)
+        document["jobs"]["core"]["steps"].append(checkout)
         rejected("candidate checkout after the gate", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
@@ -748,6 +825,7 @@ if plan.get("server_lines"):
     time.sleep(0.5)
 if out is not None and plan.get("out_json") is not None:
     out.write_text(json.dumps(plan["out_json"]))
+time.sleep(plan.get("sleep", 0))
 print(plan.get("output", ""), flush=True)
 sys.exit(plan.get("exit", 0))
 """
@@ -768,6 +846,11 @@ def quint_apalache_retry_canaries() -> None:
         "exit": 0,
     }
     cases = (
+        (
+            "timeout after the checker started is unknown and never retried",
+            [{"server_lines": ["PASS #0: SanyParser"], "sleep": 30}, success],
+            False,
+        ),
         (
             "transport error after a server-logged Error outcome",
             [
@@ -852,7 +935,7 @@ def quint_apalache_retry_canaries() -> None:
                     [str(fake_quint), "verify", "model.qnt", "--out", str(root / "result.json")],
                     cwd=root,
                     environment=environment,
-                    timeout_seconds=30,
+                    timeout_seconds=5.0 if label.startswith("timeout after") else 30,
                     quint_home=root / "quint-home",
                     label=label,
                     emit=lambda _line: None,
@@ -860,7 +943,12 @@ def quint_apalache_retry_canaries() -> None:
             except quint_apalache.HarnessError as error:
                 raise AssertionError(f"retry canary could not run: {label}: {error}") from error
         classes = [attempt.classification for attempt in run.attempts]
-        if should_pass:
+        if label.startswith("timeout after"):
+            if run.returncode != 124 or classes != ["timeout"] or "[unknown]" not in run.output:
+                raise AssertionError(f"timeout was retried or accepted as evidence: {classes}")
+            if not run.attempts[0].check_started:
+                raise AssertionError("timeout canary did not reach PASS #0")
+        elif should_pass:
             if run.returncode != 0 or len(run.attempts) != 2:
                 raise AssertionError(f"retry control did not recover once: {label}: {classes}")
             if counterexampled(run):
@@ -1237,8 +1325,8 @@ def workspace_identity_canaries() -> None:
 
 def evidence_inventory_canaries() -> None:
     writer = load_module("norn_write_verification_result_evidence_canary", WRITER)
-    coverage_path = ROOT / "verification/coverage-v1/coverage.json"
-    coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+    coverage_path = coverage_manifest.COVERAGE
+    coverage = coverage_manifest.load(coverage_path)
     paths = set(writer.evidence_paths(coverage, coverage_path, []))
     selector_binder = "scripts/validate-executed-test-selectors.py"
     if selector_binder not in paths:
@@ -1248,6 +1336,8 @@ def evidence_inventory_canaries() -> None:
     helper = "scripts/verification_attestation.py"
     if helper not in paths:
         raise AssertionError("shared attestation helper is absent from content-addressed evidence")
+    if "scripts/coverage_manifest.py" not in paths:
+        raise AssertionError("coverage manifest loader is absent from content-addressed evidence")
 
     result_validator = load_module("norn_validate_result_inventory_canary", RESULT_VALIDATOR)
     result_validator.reconcile_evidence_paths(paths, set(paths))
@@ -1270,6 +1360,7 @@ def main() -> int:
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py")
     manifest_canaries()
+    coverage_layout_canaries()
     central_obligation_closure_canaries()
     core_physics_closure_canaries()
     workflow_canaries()

@@ -673,6 +673,9 @@ pub fn admission_receipt_sha256(stored: &str) -> Result<String, ReceiptError> {
 /// [`ReceiptError`] if the body is malformed or tampered with, names an
 /// unknown checker/profile pair, is not an admitted receipt, or is bound to
 /// different artifacts, limits, or type environment.
+/// Validate historical typed receipts without granting recheck authority.
+/// # Errors
+/// Refuses invalid receipts or mismatched definitions.
 pub fn verify_admission_receipt(
     stored: &str,
     expected_sha256: &str,

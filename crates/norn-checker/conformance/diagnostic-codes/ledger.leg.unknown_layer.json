@@ -1,0 +1,7 @@
+{
+  "code": "ledger.leg.unknown_layer",
+  "message": "unknown layer `{layer}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

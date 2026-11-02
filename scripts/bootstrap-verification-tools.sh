@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
+tool_root="$(realpath -m "$tool_root")"
 download_root="$tool_root/downloads"
 bin_root="$tool_root/bin"
 
@@ -24,10 +25,38 @@ download_verified() {
 
 ELAN_VERSION="4.2.3"
 LEAN_VERSION="4.33.1"
+LEAN_COMPAT_VERSION="4.31.0"
 QUINT_VERSION="0.32.0"
 KANI_VERSION="0.67.0"
 Z3_VERSION="5.1.0"
 JRE_VERSION="21.0.12.1_1"
+
+export ELAN_HOME="$tool_root/elan"
+receipt="$tool_root/verification-install.sha256"
+installation_digest() {
+  sha256sum < "${BASH_SOURCE[0]}"
+  find -L "$ELAN_HOME/settings.toml" "$ELAN_HOME/bin" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_VERSION" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v4.34.1" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_COMPAT_VERSION" \
+    "$tool_root/quint-$QUINT_VERSION" "$tool_root/kani-home/kani-$KANI_VERSION" \
+    "$tool_root/kani-wrapper/bin" "$tool_root/z3-$Z3_VERSION" \
+    "$tool_root/temurin-jre-$JRE_VERSION" \
+    "$tool_root/quint-home/apalache-dist-0.56.1" \
+    "$bin_root/elan" "$bin_root/lean" "$bin_root/lake" "$bin_root/leanc" \
+    "$bin_root/leanmake" "$bin_root/quint" "$bin_root/kani" \
+    "$bin_root/cargo-kani" "$bin_root/z3" "$bin_root/java" \
+    -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
+}
+if [[ -f "$receipt" ]]; then
+  installed_digest="$(installation_digest | sha256sum)"
+  if [[ "$installed_digest" != "$(cat "$receipt")" ]]; then
+    echo "Pinned verification installation changed; rebuild the snapshot without $receipt" >&2
+    exit 1
+  fi
+  echo "Exact pinned verification installation verified: $installed_digest"
+  exit 0
+fi
 
 elan_archive="$download_root/elan-$ELAN_VERSION-x86_64-unknown-linux-gnu.tar.gz"
 download_verified \
@@ -42,27 +71,29 @@ if [[ ! -x "$elan_unpack/elan-init" ]]; then
 fi
 
 export ELAN_HOME="$tool_root/elan"
-if [[ ! -x "$ELAN_HOME/bin/lean" ]]; then
+if [[ ! -x "$ELAN_HOME/bin/elan" ]]; then
   "$elan_unpack/elan-init" -y --no-modify-path --default-toolchain "leanprover/lean4:v$LEAN_VERSION"
-elif ! "$ELAN_HOME/bin/elan" toolchain list | grep -Fxq "leanprover/lean4:v$LEAN_VERSION"; then
-  "$ELAN_HOME/bin/elan" toolchain install "leanprover/lean4:v$LEAN_VERSION"
 fi
+for version in "$LEAN_VERSION" 4.34.1 "$LEAN_COMPAT_VERSION"; do
+  if ! "$ELAN_HOME/bin/elan" run "leanprover/lean4:v$version" lean --version; then
+    "$ELAN_HOME/bin/elan" toolchain install "leanprover/lean4:v$version"
+  fi
+  "$ELAN_HOME/bin/elan" run "leanprover/lean4:v$version" lean --version | grep -F "version $version,"
+done
 
-"$ELAN_HOME/bin/elan" toolchain install leanprover/lean4:v4.34.1
+"$ELAN_HOME/bin/elan" default "leanprover/lean4:v$LEAN_VERSION"
 
 for proxy in elan lean lake leanc leanmake; do
   ln -sfn "$ELAN_HOME/bin/$proxy" "$bin_root/$proxy"
 done
 
 quint_binary="$tool_root/quint-$QUINT_VERSION/quint"
-if [[ ! -x "$quint_binary" ]]; then
-  mkdir -p "$(dirname "$quint_binary")"
+mkdir -p "$(dirname "$quint_binary")"
   download_verified \
     "https://github.com/quint-co/quint/releases/download/v$QUINT_VERSION/quint-linux-amd64" \
     "939b64095b706017f2f202c6f99c860c40be7c31bddc2b98557316e50f42cd7f" \
     "$quint_binary"
-  chmod +x "$quint_binary"
-fi
+chmod +x "$quint_binary"
 ln -sfn "$quint_binary" "$bin_root/quint"
 
 kani_archive="$download_root/kani-$KANI_VERSION-x86_64-unknown-linux-gnu.tar.gz"
@@ -143,6 +174,16 @@ tar -xzf "$apalache_archive" -C "$apalache_root"
 printf '%s  %s\n' \
   "4753c0ebb2cbb266e2c6ac19ab5ca3827d726cc80fd1fc5d7c1eeb64736cd60b" \
   "$apalache_root/apalache/lib/apalache.jar" | sha256sum --check --status
+
+test "$("$ELAN_HOME/bin/elan" --version | cut -d ' ' -f 2)" = "$ELAN_VERSION"
+ELAN_TOOLCHAIN="leanprover/lean4:v$LEAN_VERSION" "$bin_root/lean" --version | grep -F "version $LEAN_VERSION,"
+"$bin_root/quint" --version | grep -Fx "$QUINT_VERSION"
+KANI_HOME="$kani_home" "$bin_root/kani" --version | grep -Fx "kani $KANI_VERSION"
+"$bin_root/z3" --version | grep -F "Z3 version $Z3_VERSION "
+"$bin_root/java" -version 2>&1 | grep -F 'Temurin-21.0.12.1+1'
+
+installation_digest | sha256sum > "$receipt.tmp"
+mv "$receipt.tmp" "$receipt"
 
 cat <<EOF
 Installed pinned verification tools under:

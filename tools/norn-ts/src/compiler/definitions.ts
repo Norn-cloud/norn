@@ -642,12 +642,12 @@ class DefinitionCompiler {
   }
 
   private effect(input: ts.Expression): A.ActionEffect {
-    const m = this.closedRecord(input, ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode"], ["kind", "type", "objectIdField"])
+    const m = this.closedRecord(input, ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode", "acceptReceipt"], ["kind", "type", "objectIdField"])
     const kind = this.string(m.get("kind")!)
     const type = this.typeRef(m.get("type")!, OBJECT_TYPES, "a Norn.type definition")
     const field = this.string(m.get("objectIdField")!)
     if (kind === "upsert_input_object") {
-      if (m.has("lifecycle") || m.has("transition")) throw new CompileError("NORN-FLOW-LITERAL", "upsert_input_object takes no lifecycle or transition", input)
+      if (m.has("lifecycle") || m.has("transition") || m.has("acceptReceipt")) throw new CompileError("NORN-FLOW-LITERAL", "upsert_input_object takes no lifecycle or transition", input)
       const writeMode = m.get("writeMode")
       return A.upsertInputObject(type, field, writeMode ? this.upsertWriteMode(writeMode) : undefined)
     }
@@ -655,7 +655,18 @@ class DefinitionCompiler {
     if (m.has("writeMode")) throw new CompileError("NORN-FLOW-LITERAL", "writeMode belongs to upsert_input_object", m.get("writeMode")!)
     const lifecycle = m.get("lifecycle"), transition = m.get("transition")
     if (!lifecycle || !transition) throw new CompileError("NORN-FLOW-LITERAL", "fire_transition names its lifecycle and transition", input)
-    return A.fireTransition(type, field, this.string(lifecycle), this.string(transition))
+    const receipt = m.get("acceptReceipt")
+    if (!receipt) return A.fireTransition(type, field, this.string(lifecycle), this.string(transition))
+    const r = this.closedRecord(receipt, ["referenceField", "manifestDigest", "digestProperty", "resultBindings"], ["referenceField", "manifestDigest", "digestProperty", "resultBindings"])
+    const resultBindings: Record<string, string> = {}
+    for (const [target, source] of this.record(r.get("resultBindings")!)) {
+      if (target === "__proto__") throw new CompileError("NORN-FLOW-LITERAL", "__proto__ is not a portable JSON member name", source.parent)
+      resultBindings[target] = this.string(source)
+    }
+    return A.fireTransition(type, field, this.string(lifecycle), this.string(transition), {
+      referenceField: this.string(r.get("referenceField")!), manifestDigest: this.string(r.get("manifestDigest")!),
+      digestProperty: this.string(r.get("digestProperty")!), resultBindings,
+    })
   }
 
   private upsertWriteMode(input: ts.Expression): A.UpsertWriteMode {
@@ -1014,13 +1025,14 @@ class DefinitionCompiler {
   }
 
   private lifecycle(input: ts.Expression): E.LifecycleDecl {
-    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "transitions"], ["property", "initial", "transitions"])
-    const description = m.get("description"), terminal = m.get("terminal")
+    const m = this.closedRecord(input, ["property", "description", "initial", "terminal", "immutable", "transitions"], ["property", "initial", "transitions"])
+    const description = m.get("description"), terminal = m.get("terminal"), immutable = m.get("immutable")
     return {
       property: this.string(m.get("property")!),
       ...(description ? { description: this.string(description) } : {}),
       initial: this.strings(m.get("initial")!),
       ...(terminal ? { terminal: this.strings(terminal) } : {}),
+      ...(immutable ? { immutable: this.strings(immutable) } : {}),
       transitions: this.list(m.get("transitions")!).map((t) => this.transition(t)),
     }
   }
