@@ -191,6 +191,11 @@ def write(document: dict[str, Any], directory: Path, *, split_entries: bool = Fa
         (target / INDEX).write_text(json.dumps(split(body, []), indent=2) + "\n")
 
 
+def write_entries(document: dict[str, Any], directory: Path) -> None:
+    """Write independently addressed entries for migrations and fixtures."""
+    write(document, directory, split_entries=True)
+
+
 def digest(directory: Path = COVERAGE) -> str:
     """SHA-256 over each file's relative path and SHA-256, in path order."""
     total = hashlib.sha256()
