@@ -64,3 +64,5 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 4. Complete B1 mapping/role preservation with 06; EVENT-MULTI and source echo tests.
 5. Add uncertainty/reconciliation state contract, then dispatch/lookup tests, then compensation races with 04; each supported provider declares its assumptions.
 6. Qualify manifest-projected WASM/worker execution, secrets, bounds and replay; unsupported profiles stay refused.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
