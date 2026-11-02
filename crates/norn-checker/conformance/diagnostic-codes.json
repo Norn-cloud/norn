@@ -472,7 +472,7 @@
     },
     {
       "code": "core.values.inexact",
-      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+      "message": "the exact value or declared rounding site is outside the supported profile",
       "severity": "error",
       "since": "0.2.0",
       "tier": "T2"

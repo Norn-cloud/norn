@@ -417,7 +417,11 @@ fn resolve<'a>(
 }
 
 /// VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
-fn check_rounding_site(base: &[&str], rounding: Option<norn_ir::Rounding>, out: &mut Vec<Diagnostic>) {
+fn check_rounding_site(
+    base: &[&str],
+    rounding: Option<norn_ir::Rounding>,
+    out: &mut Vec<Diagnostic>,
+) {
     if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) {
         out.push(error(crate::property_codec::INEXACT,
             "VAL-ROUND: rounding requires the exact-site expression/store profile; this declaration is not yet executable".to_owned(),

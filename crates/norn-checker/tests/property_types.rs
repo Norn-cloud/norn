@@ -364,7 +364,10 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         ("-1.005", Some(Rounding::HalfAwayFromZero), Some("-1.01")),
     ] {
         let result = norn_expr::rescale_decimal(&site(2, rounding), &text.parse().expect("number"));
-        assert_eq!(result.as_ref().ok().map(norn_expr::Number::as_str), expected);
+        assert_eq!(
+            result.as_ref().ok().map(norn_expr::Number::as_str),
+            expected
+        );
     }
     for scale in [19, 28, u64::MAX] {
         let unsupported = site(scale, None);
