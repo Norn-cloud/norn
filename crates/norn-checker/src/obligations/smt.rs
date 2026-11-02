@@ -37,6 +37,7 @@ pub struct SmtEvidence {
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+#[cfg(any(test, not(target_family = "wasm")))]
 fn answer(output: &str, marker: &str) -> Result<SmtResult, &'static str> {
     let body = output.strip_prefix(&format!("{marker}\n")).and_then(|s| s.strip_suffix(&format!("{marker}\n"))).ok_or("invalid_output")?;
     if body == "unsat\n" { return Ok(SmtResult::Unsat); }
@@ -53,17 +54,21 @@ fn answer(output: &str, marker: &str) -> Result<SmtResult, &'static str> {
 /// Output-producing commands, errors, missing tools and timeouts return `unknown`.
 #[must_use]
 pub fn dispatch_smt(text: &str, bound: SmtBound, binary: &Path, expected_sha256: &str) -> SmtEvidence {
-    let mut evidence = SmtEvidence { z3_version: None, z3_sha256: None, obligation_sha256: digest(text.as_bytes()), result: SmtResult::Unknown("unsupported_platform".into()) };
+    let evidence = SmtEvidence { z3_version: None, z3_sha256: None, obligation_sha256: digest(text.as_bytes()), result: SmtResult::Unknown("unsupported_platform".into()) };
     #[cfg(not(target_family = "wasm"))]
     {
+        let mut evidence = evidence;
         match host::dispatch(text, bound, binary, expected_sha256, &mut evidence) {
             Ok(result) => evidence.result = result,
             Err(reason) => evidence.result = SmtResult::Unknown(reason.into()),
         }
+        evidence
     }
     #[cfg(target_family = "wasm")]
-    let _host_only = (bound, binary, expected_sha256);
-    evidence
+    {
+        let _host_only = (bound, binary, expected_sha256);
+        evidence
+    }
 }
 #[cfg(not(target_family = "wasm"))]
 mod host {
