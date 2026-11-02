@@ -30,6 +30,11 @@ pub struct BoundAssignment {
 /// # Errors
 /// Refuses unsupported exact graphs, erased numeric types and dimension mismatches.
 pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
+    if !crate::schema::contains_exact_annotation(&JsonValue::Object(root.input_schema.clone()))
+        && !crate::schema::contains_exact_annotation(&JsonValue::Object(root.output_schema.clone()))
+    {
+        return Ok(Vec::new());
+    }
     let input = Schema::parse(&JsonValue::Object(root.input_schema.clone()), "input")
         .map_err(|e| e.reason)?;
     let output = Schema::parse(&JsonValue::Object(root.output_schema.clone()), "output")

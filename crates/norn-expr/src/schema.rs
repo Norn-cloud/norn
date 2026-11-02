@@ -22,7 +22,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Value;
 use norn_ir::JsonValue;
-use serde::{Deserialize, de::IntoDeserializer};
 
 /// Deepest schema nesting the checker admits.
 const MAX_SCHEMA_DEPTH: usize = 32;
@@ -401,6 +400,26 @@ pub fn fixed_currency_schema(value: &JsonValue) -> bool {
         })
 }
 
+/// VAL-EXACT-1: select refinement admission only when a schema declares an exact site.
+#[must_use]
+pub fn contains_exact_annotation(value: &JsonValue) -> bool {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        if let Some(schema) = value.as_object() {
+            if schema.contains_key("nornType") {
+                return true;
+            }
+            if let Some(properties) = schema.get("properties").and_then(JsonValue::as_object) {
+                pending.extend(properties.values());
+            }
+            if let Some(items) = schema.get("items") {
+                pending.push(items);
+            }
+        }
+    }
+    false
+}
+
 /// VAL-EXACT-1: decode only the existing strict Decimal representation.
 ///
 /// # Errors
@@ -418,8 +437,8 @@ pub fn decimal_refinement(
     if schema.get("type").and_then(JsonValue::as_string) != Some("number") {
         return Err(Violation::new(path, "nornType requires type:number"));
     }
-    let site = norn_ir::PropertyType::deserialize(annotation.clone().into_deserializer())
-        .map_err(|e: serde::de::value::Error| Violation::new(path, e.to_string()))?;
+    let site: norn_ir::PropertyType =
+        norn_ir::runtime::decode(annotation).map_err(|reason| Violation::new(path, reason))?;
     let norn_ir::PropertyType::Decimal {
         scale,
         unit,

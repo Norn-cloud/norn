@@ -476,6 +476,9 @@ impl ZenTypeEnv {
     /// # Errors
     /// Refuses malformed schemas or colliding schema record identities.
     pub fn bind_exact_schema(self, name: &str, value: &norn_ir::JsonValue) -> Result<Self, String> {
+        if !crate::schema::contains_exact_annotation(value) {
+            return Ok(self);
+        }
         let schema = crate::schema::Schema::parse(value, name).map_err(|e| e.reason)?;
         self.bind_parsed_exact_schema(name, &schema)
     }
@@ -489,6 +492,9 @@ impl ZenTypeEnv {
         name: &str,
         value: &norn_ir::JsonValue,
     ) -> Result<Self, String> {
+        if !crate::schema::contains_exact_annotation(value) {
+            return Ok(self);
+        }
         let schema = crate::schema::Schema::parse_action(value, name).map_err(|e| e.reason)?;
         self.bind_parsed_exact_schema(name, &schema)
     }
