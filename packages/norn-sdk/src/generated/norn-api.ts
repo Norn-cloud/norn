@@ -571,6 +571,8 @@ export interface components {
          *     (T3-LIFE-3, #2867).
          */
         NornIrActionEffectProgramOneOf1: {
+            /** @description Bind a host-authenticated Function result before firing the transition. */
+            acceptReceipt?: components["schemas"]["NornIrReceiptAcceptance"];
             entityArtifactId: string;
             entityArtifactVersion: string;
             /** @enum {string} */
@@ -871,6 +873,8 @@ export interface components {
             /** @description Non-empty list of the pack's artifacts. */
             artifacts: components["schemas"]["NornIrPackArtifactRef"][];
             extensions?: components["schemas"]["NornIrCompositionPackRootPropertyExtensions"];
+            /** @description Declarations in the retained scoped graph; omitted when there are none. */
+            instances?: components["schemas"]["NornIrPackInstance"][];
             packId: string;
             /**
              * @description Omitted by IR `0.1` composition packs; newly authored packs emit it.
@@ -1588,6 +1592,14 @@ export interface components {
          * @enum {string}
          */
         NornIrDiagnosticSeverity: "error" | "warning" | "info";
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornIrDigest: string;
         /** @description A property reached by zero or more declared directional link roles. */
         NornIrDimensionPath: {
             /** @description Forward or inverse roles, in traversal order; empty means the root object. */
@@ -2320,6 +2332,15 @@ export interface components {
             markings?: components["schemas"]["NornIrMarkingId"][];
             /** @description The widest type an implementing property may have. */
             type: components["schemas"]["NornIrPropertyType"];
+        };
+        /** @description Exact Norn1 semantic envelope identity of an interpretation endpoint. */
+        NornIrInterpretationEndpoint: {
+            /** @description Retained artifact, resolved without namespace inference. */
+            artifactId: string;
+            /** @description Receipt-profile semantic content digest. */
+            sha256: string;
+            /** @description Exact artifact version. */
+            version: string;
         };
         /** @description One declared invariant of an object type or interface. */
         NornIrInvariant: {
@@ -3748,6 +3769,32 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description A scoped declaration; imports and contained instances reference this same model.
+         *     Identity survives release upgrades. Structural admission grants no execution authority.
+         */
+        NornIrPackInstance: {
+            imports: components["schemas"]["NornIrPackInstancePropertyImports"];
+            instanceId: string;
+            instances: components["schemas"]["NornIrPackInstanceRef"][];
+            pack: components["schemas"]["NornIrInterpretationEndpoint"];
+            scope: components["schemas"]["NornIrPackInstancePropertyScope"];
+        };
+        NornIrPackInstancePropertyImports: {
+            [key: string]: components["schemas"]["NornIrPackInstanceRef"];
+        };
+        NornIrPackInstancePropertyScope: {
+            businessUnitId?: string | null;
+            environmentId?: string | null;
+            orgId?: string | null;
+            tenantId?: string | null;
+            workspaceId?: string | null;
+        };
+        /** @description PACK-PIN-1: an opaque instance identity, pinned separately from its release. */
+        NornIrPackInstanceRef: {
+            instanceId: string;
+            pack: components["schemas"]["NornIrInterpretationEndpoint"];
+        };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {
             appliesTo: string;
@@ -4030,6 +4077,23 @@ export interface components {
         NornIrProposalMode: "preview";
         /** @enum {string} */
         NornIrProvenanceSource: "authoring_sdk" | "agent" | "migration" | "import" | "system";
+        /** @description RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results. */
+        NornIrReceiptAcceptance: {
+            /** @description Writable text property receiving the checked receipt digest. */
+            digestProperty: string;
+            /** @description Exact admitted Function manifest the host must authenticate. */
+            manifestDigest: string;
+            /** @description Required string input member naming the immutable receipt digest. */
+            referenceField: string;
+            resultBindings: components["schemas"]["NornIrReceiptAcceptancePropertyResultBindings"];
+        };
+        /**
+         * @description Writable target property to accepted result member. Target property
+         *     types govern decoding; action input supplies none of these values.
+         */
+        NornIrReceiptAcceptancePropertyResultBindings: {
+            [key: string]: components["schemas"]["NornIrPropertyId"];
+        };
         /**
          * @description One required member of a closed record. A nullable member must still be
          *     present, with an explicit null when it has no value.

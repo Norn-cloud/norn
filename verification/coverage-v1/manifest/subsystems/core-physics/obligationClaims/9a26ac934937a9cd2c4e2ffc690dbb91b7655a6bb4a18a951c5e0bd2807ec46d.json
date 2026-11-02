@@ -1,0 +1,21 @@
+{
+  "order": 4,
+  "value": {
+    "id": "INV-CORE-ESCROW-NON-NEGATIVE",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "missing",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry9a26ac934937a9cd2c4e2ffc690dbb91b7655a6bb4a18a951c5e0bd2807ec46d.evidence.proof"
+      }
+    },
+    "residual": "Specified only; the kernel quantity ledger refuses spending held or absent quantity. Core-pack model and proof are pending."
+  }
+}

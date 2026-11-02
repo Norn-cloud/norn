@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+    "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/QuantityLedger.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry88c5b71846e9469d389185bb5fcdaadfd5e9643af7cd2aea53de1507d1d66ce2.evidence.proof.entrycd1083bb27bcbfff20dca8db42f6f968b1db716b5ad619ad5b4c12a2f2f0eb41.selectors"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "quint verify verification/stripmine-2026-08-22/models/artifact-promotion.qnt --backend apalache --invariants typeOk authorityRequiresExactAppliedPlan --max-steps 8"
+}

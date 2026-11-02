@@ -1,0 +1,4 @@
+{
+  "order": 4,
+  "value": "lean -DwarningAsError=true verification/quantity-unit-dimension-v1/proofs/QuantityUnitDimension.lean"
+}

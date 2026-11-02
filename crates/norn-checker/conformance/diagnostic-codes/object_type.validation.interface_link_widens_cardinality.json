@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.interface_link_widens_cardinality",
+  "message": "link {link} has a wider cardinality than interface {interface} requires",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

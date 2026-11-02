@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.sample_bound",
+  "message": "sample set exceeds its bound: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
