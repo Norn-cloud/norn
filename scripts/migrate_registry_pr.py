@@ -19,7 +19,7 @@ MISSING = object()
 
 
 def git(root, *args, check=True):
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=check)
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=check, timeout=300)
 
 
 def read(root, revision, path):
@@ -231,5 +231,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         print("\n".join(migrate(Path(git(Path.cwd(), "rev-parse", "--show-toplevel").stdout.decode().strip()), args.base, args.head)))
-    except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         parser.exit(1, f"needs-human: {error}\n")
