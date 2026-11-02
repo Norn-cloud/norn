@@ -243,10 +243,8 @@ fn late_link_failure_and_secondary_denial_persist_no_partial_proposal() {
     let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
     let action = action();
     let request = call(&action);
-    for (occupied, authorizer) in [
-        (true, &Allow as &dyn ActionAuthorizer),
-        (false, &DenyQuote as &dyn ActionAuthorizer),
-    ] {
+    let scenarios: [(bool, &dyn ActionAuthorizer); 2] = [(true, &Allow), (false, &DenyQuote)];
+    for (occupied, authorizer) in scenarios {
         let path = directory.path().join(if occupied {
             "cardinality.sqlite"
         } else {
