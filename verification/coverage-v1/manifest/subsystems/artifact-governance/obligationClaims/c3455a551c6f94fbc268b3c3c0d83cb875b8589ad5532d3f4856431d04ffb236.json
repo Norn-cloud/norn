@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-ART-AUTHORITY-PROMOTION",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The retained in-memory store and BAC plan/apply path test direct-write rejection, exact active-version selection, trusted-checker receipt binding, and stale competing-plan rejection. No HTTP, Turso, or Postgres adapter is retained. Lean and Quint provide independent references, not Rust refinement or proof that the validator establishes arbitrary semantics. hax/F* prove only the direct-write lifecycle predicate; a proof of complete BAC/storage behavior remains open. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryc3455a551c6f94fbc268b3c3c0d83cb875b8589ad5532d3f4856431d04ffb236.evidence.proof"
+      }
+    }
+  }
+}
