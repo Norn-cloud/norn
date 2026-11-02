@@ -3922,7 +3922,7 @@ mod tests {
     }
 
     const SETTING_FIXTURE: &str =
-        include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json");
+        include_str!("../../../fixtures/ir/retail-reorder-threshold-v0.3.setting.json");
     const COMPOSITION_FIXTURE: &str =
         include_str!("../../../fixtures/ir/retail-core.business_pack.json");
     const ONTOLOGY_FIXTURE: &str =

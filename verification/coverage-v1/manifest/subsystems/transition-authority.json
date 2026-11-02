@@ -393,6 +393,7 @@
     "fixtures/ir/retail-purchase-request.entity.json",
     "fixtures/ir/retail-reorder-routing.rule.json",
     "fixtures/ir/retail-reorder-threshold.setting.json",
+    "fixtures/ir/retail-reorder-threshold-v0.3.setting.json",
     "fixtures/ir/retail-reorder.action.json",
     "fixtures/ir/retail-replenishment.widget.json",
     "fixtures/ir/retail-sku-reorder-point.customization.json",

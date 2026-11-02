@@ -2337,10 +2337,10 @@ export interface components {
          */
         NornIrIrVersion01: "0.1";
         /**
-         * @description Exact-decimal setting wire profile; older profiles require explicit migration.
+         * @description Setting value profiles: historical binary64 and current exact decimal literals.
          * @enum {string}
          */
-        NornIrIrVersion02: "0.2";
+        NornIrIrVersion02: "0.1" | "0.2";
         /** @description Custom-node content (`CustomNodeContent`). Decodable only for rejection. */
         NornIrJdmCustomNodeContent: {
             config: components["schemas"]["NornIrJsonValue"];
@@ -4449,8 +4449,8 @@ export interface components {
             /** @description The setting version this one replaces. */
             supersedes?: components["schemas"]["NornIrSettingSupersedes"];
             /**
-             * @description Numbers use exact `DecimalLiteral` strings; other branches retain their
-             *     JSON type. A `json` setting may be `null`.
+             * @description Version 0.2 numbers use exact decimal strings; retained 0.1 numbers
+             *     keep binary64 JSON numbers. A `json` setting may be `null`.
              */
             value: components["schemas"]["NornIrJsonValue"];
             valueType: components["schemas"]["NornIrSettingValueType"];
@@ -4459,7 +4459,15 @@ export interface components {
             /** @enum {unknown} */
             valueType?: "text";
         } | {
+            /** @enum {unknown} */
+            settingVersion?: "0.2";
             value?: components["schemas"]["NornIrDecimalLiteral"];
+            /** @enum {unknown} */
+            valueType?: "number";
+        } | {
+            /** @enum {unknown} */
+            settingVersion?: "0.1";
+            value?: number;
             /** @enum {unknown} */
             valueType?: "number";
         } | {

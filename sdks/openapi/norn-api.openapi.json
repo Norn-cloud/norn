@@ -6006,8 +6006,9 @@
       },
       "NornIrIrVersion02": {
         "type": "string",
-        "description": "Exact-decimal setting wire profile; older profiles require explicit migration.",
+        "description": "Setting value profiles: historical binary64 and current exact decimal literals.",
         "enum": [
+          "0.1",
           "0.2"
         ]
       },
@@ -11254,7 +11255,7 @@
               },
               "value": {
                 "$ref": "#/components/schemas/NornIrJsonValue",
-                "description": "Numbers use exact `DecimalLiteral` strings; other branches retain their\nJSON type. A `json` setting may be `null`."
+                "description": "Version 0.2 numbers use exact decimal strings; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`."
               },
               "valueType": {
                 "$ref": "#/components/schemas/NornIrSettingValueType"
@@ -11278,8 +11279,30 @@
               },
               {
                 "properties": {
+                  "settingVersion": {
+                    "enum": [
+                      "0.2"
+                    ]
+                  },
                   "value": {
                     "$ref": "#/components/schemas/NornIrDecimalLiteral"
+                  },
+                  "valueType": {
+                    "enum": [
+                      "number"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "settingVersion": {
+                    "enum": [
+                      "0.1"
+                    ]
+                  },
+                  "value": {
+                    "type": "number"
                   },
                   "valueType": {
                     "enum": [

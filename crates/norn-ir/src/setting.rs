@@ -12,8 +12,8 @@
 //! execution decodes them to exact runtime numbers. Numeric JSON tokens refuse.
 //! PARAM-EXACT-1: numeric settings retain their literal through admission and
 //! decode to the common exact runtime profile without rounding. Other value
-//! kinds retain their existing value representation. Wire version 0.2 refuses
-//! retained 0.1 payloads; callers must explicitly re-author and supersede them.
+//! kinds retain their existing value representation. PARAM-WIRE-2 keeps retained
+//! 0.1 values tagged as binary64; they never enter exact-decimal execution.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,6 +49,8 @@ pub enum SettingValue {
     Text(String),
     /// `valueType: "number"`: an exact decimal-string literal.
     Number(DecimalLiteral),
+    /// Historical `settingVersion: "0.1"` binary64 value; never an exact literal.
+    LegacyNumber(f64),
     /// `valueType: "boolean"`: a boolean.
     Boolean(bool),
     /// `valueType: "json"`: any JSON value, including `null`.
@@ -95,6 +97,9 @@ impl SettingValue {
     pub fn runtime_value(&self) -> Result<RuntimeValue, RuntimeValueError> {
         match self {
             Self::Number(literal) => Self::decimal(literal.as_str()).map(RuntimeValue::Number),
+            Self::LegacyNumber(value) => Err(RuntimeValueError::Inexact {
+                number: value.to_string(),
+            }),
             value @ (Self::Text(_) | Self::Boolean(_) | Self::Json(_)) => {
                 RuntimeValue::from_ir(&value.to_json_value())
             }
@@ -106,7 +111,7 @@ impl SettingValue {
     pub const fn value_type(&self) -> SettingValueType {
         match self {
             Self::Text(_) => SettingValueType::Text,
-            Self::Number(_) => SettingValueType::Number,
+            Self::Number(_) | Self::LegacyNumber(_) => SettingValueType::Number,
             Self::Boolean(_) => SettingValueType::Boolean,
             Self::Json(_) => SettingValueType::Json,
         }
@@ -118,6 +123,7 @@ impl SettingValue {
         match self {
             Self::Text(text) => JsonValue::String(text.clone()),
             Self::Number(number) => JsonValue::String(number.0.clone()),
+            Self::LegacyNumber(number) => JsonValue::Number(*number),
             Self::Boolean(flag) => JsonValue::Bool(*flag),
             Self::Json(value) => value.clone(),
         }
@@ -132,8 +138,8 @@ struct SettingRootWire {
     setting_version: IrVersion02,
     setting_key: String,
     value_type: SettingValueType,
-    /// Numbers use exact `DecimalLiteral` strings; other branches retain their
-    /// JSON type. A `json` setting may be `null`.
+    /// Version 0.2 numbers use exact decimal strings; retained 0.1 numbers
+    /// keep binary64 JSON numbers. A `json` setting may be `null`.
     value: JsonValue,
     effective_from: String,
     /// Must sort after `effectiveFrom` (checker rule).
@@ -170,7 +176,16 @@ impl TryFrom<SettingRootWire> for SettingRoot {
 
     fn try_from(wire: SettingRootWire) -> Result<Self, Self::Error> {
         let value_type = wire.value_type;
-        let value = SettingValue::from_wire(value_type, wire.value).ok_or_else(|| {
+        let value = match (wire.setting_version, value_type, wire.value) {
+            (IrVersion02::V0_1, SettingValueType::Number, JsonValue::Number(n))
+                if n.is_finite() =>
+            {
+                Some(SettingValue::LegacyNumber(n))
+            }
+            (IrVersion02::V0_1, SettingValueType::Number, _) => None,
+            (_, kind, value) => SettingValue::from_wire(kind, value),
+        }
+        .ok_or_else(|| {
             format!(
                 "value does not match valueType '{}'",
                 value_type.as_wire_str()
@@ -237,7 +252,18 @@ impl JsonSchema for SettingRoot {
         let mut one_of = schemars::json_schema!({
             "oneOf": [
                 branch(SettingValueType::Text, text),
-                branch(SettingValueType::Number, number),
+                {
+                    "properties": {
+                        "settingVersion": { "const": "0.2" },
+                        "valueType": { "const": "number" }, "value": number,
+                    },
+                },
+                {
+                    "properties": {
+                        "settingVersion": { "const": "0.1" },
+                        "valueType": { "const": "number" }, "value": { "type": "number" },
+                    },
+                },
                 branch(SettingValueType::Boolean, boolean),
                 branch(SettingValueType::Json, json),
             ],
