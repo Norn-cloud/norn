@@ -1810,7 +1810,7 @@ fn val_round_explicit_site_scopes_division_and_rescale() {
 #[test]
 fn val_round_dynamic_divisor_is_nonnullable_at_an_explicit_site() {
     let env = ZenTypeEnv::input_only(
-        fields([("a", Type::Number), ("b", Type::Number)]),
+        fields([("a", decimal(2)), ("b", decimal(2))]),
         EnvOptions::default(),
     )
     .unwrap();

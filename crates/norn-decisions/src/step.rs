@@ -167,6 +167,7 @@ mod tests {
         let contracts = StepContracts {
             schemas: BTreeMap::from([("step".into(), (record.clone(), record))]),
             folds: BTreeMap::new(),
+            expressions: BTreeMap::new(),
         };
         let meter = Meter::new(100);
         let valid = to_variable(&Value::object([("n", Value::from(1))])).unwrap();

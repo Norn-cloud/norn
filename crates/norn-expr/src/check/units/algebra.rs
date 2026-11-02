@@ -51,5 +51,5 @@ pub(crate) fn join<U: Clone + Eq, C: Clone + Eq>(a: &Operand<U, C>, b: &Operand<
     matches!((a,b), (Operand::Literal | Operand::Dimensionless, Operand::Literal | Operand::Dimensionless)).then_some(Operand::Dimensionless)
 }
 pub(crate) fn destination<U: Clone + Eq, C: Clone + Eq>(found: &Operand<U, C>, expected: &Operand<U, C>) -> bool {
-    !matches!(expected, Operand::Unresolved) && (matches!(found, Operand::Literal) || join(found,expected).is_some())
+    !matches!(expected, Operand::Unresolved) && (matches!(found, Operand::Literal) || matches!((found,expected),(Operand::Dimensionless,Operand::Legacy)) || join(found,expected).is_some())
 }

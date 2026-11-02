@@ -493,7 +493,7 @@ pub fn check_expression_with_root_bounds(
         expected,
         limits,
         Some(root_bounds),
-        false,
+        true,
     )
     .map(|(checked, _)| checked)
 }

@@ -395,10 +395,11 @@ pub fn decimal_refinement(value: &JsonValue, path: &str) -> Result<Option<norn_i
 /// # Errors
 /// Returns the same strict decoder findings as [`decimal_refinement`].
 pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>, Violation> {
-    Ok(decimal_refinement(value,"nornType")?.map(|site| {
-        let norn_ir::PropertyType::Decimal { scale,unit,currency_source,per_unit,rounding } = site else { unreachable!("decoder only admits Decimal") };
-        crate::Type::Decimal { scale:scale.0,unit,currency_source,per_unit,rounding:rounding.unwrap_or(norn_ir::Rounding::Refuse) }
-    }))
+    match decimal_refinement(value,"nornType")? {
+        None => Ok(None),
+        Some(norn_ir::PropertyType::Decimal { scale,unit,currency_source,per_unit,rounding }) => Ok(Some(crate::Type::Decimal {scale:scale.0,unit,currency_source,per_unit,rounding:rounding.unwrap_or(norn_ir::Rounding::Refuse)})),
+        Some(_) => Err(Violation::new("nornType","expected Decimal")),
+    }
 }
 
 impl Schema {
