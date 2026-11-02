@@ -84,7 +84,11 @@ impl Expression {
     ///
     /// # Errors
     /// Returns structural/type findings or refusals from the exact arithmetic profile.
-    pub fn check_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+    pub fn check_typed(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
         crate::check::check_typed_expression(self, env, expected)
     }
 
@@ -114,7 +118,12 @@ impl Expression {
             }
         };
         if checked.uses_exact_arithmetic() {
-            self.evaluate_exact_site(context, budget, crate::check::decimal_destination(expected).as_ref(), matches!(expected, crate::Type::Optional(_)))
+            self.evaluate_exact_site(
+                context,
+                budget,
+                crate::check::decimal_destination(expected).as_ref(),
+                matches!(expected, crate::Type::Optional(_)),
+            )
         } else {
             self.evaluate_metered(context, budget)
         }
@@ -132,7 +141,13 @@ impl Expression {
         self.evaluate_exact_site(context, budget, site, false)
     }
 
-    fn evaluate_exact_site(&self, context: &Value, budget: EvaluationBudget, site: Option<&norn_ir::PropertyType>, nullable: bool) -> EvaluationAttempt {
+    fn evaluate_exact_site(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+        nullable: bool,
+    ) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
         let result = (|| {
             let profile = match site {
@@ -152,7 +167,9 @@ impl Expression {
             let evaluated =
                 self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
             let mut evaluated = evaluated.result?;
-            if nullable && evaluated.value == Value::Null { return Ok(evaluated); }
+            if nullable && evaluated.value == Value::Null {
+                return Ok(evaluated);
+            }
             if let Some(site) = site {
                 let Value::Number(number) = &evaluated.value else {
                     return Err(ExprError::Evaluation {

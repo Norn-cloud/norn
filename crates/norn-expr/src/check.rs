@@ -467,8 +467,15 @@ pub fn check_expression_with_root_bounds(
     limits: &ResourceLimitProfile,
     root_bounds: &BTreeMap<String, RootCostBounds>,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, Some(root_bounds), false)
-        .map(|(checked, _)| checked)
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        limits,
+        Some(root_bounds),
+        false,
+    )
+    .map(|(checked, _)| checked)
 }
 
 /// Checks an expression with the same bounds and grammar as
@@ -490,8 +497,20 @@ pub fn check_expression_with_sources(
     check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
 }
 
-pub(crate) fn check_typed_expression(expr: &Expression, env: &ZenTypeEnv, expected: &Type) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, &ResourceLimitProfile::norn_limits_v1(), None, true).map(|(checked, _)| checked)
+pub(crate) fn check_typed_expression(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<CheckedExpression, Vec<Diagnostic>> {
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+        true,
+    )
+    .map(|(checked, _)| checked)
 }
 
 fn check_expression_with_sources_and_root_bounds(
@@ -533,7 +552,13 @@ fn check_expression_with_sources_and_root_bounds(
         });
         let construction = construction_source(ast, metadata, source);
         let exact = checker.exact || exact_type(expected);
-        if exact_enabled && exact { checker.diagnostics.extend(exact_admission(ast, metadata, decimal_destination(expected).is_some())); }
+        if exact_enabled && exact {
+            checker.diagnostics.extend(exact_admission(
+                ast,
+                metadata,
+                decimal_destination(expected).is_some(),
+            ));
+        }
         (
             inferred,
             checker.diagnostics,
@@ -553,7 +578,14 @@ fn check_expression_with_sources_and_root_bounds(
     // Only declared exact sites use error-on-zero division. Plain Number keeps
     // the legacy nullable division contract in this same checker.
     if exact_enabled && !exact {
-        return check_expression_with_sources_and_root_bounds(expr, env, expected, limits, root_bounds, false);
+        return check_expression_with_sources_and_root_bounds(
+            expr,
+            env,
+            expected,
+            limits,
+            root_bounds,
+            false,
+        );
     }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
