@@ -98,7 +98,7 @@ def _assemble(directory: Path) -> tuple[dict[str, Any], list[Path]]:
                 item = restore(entry["value"], [*parts, "entry" + path.stem])
                 keyed = not isinstance(item, dict) or "id" in item
                 identity = re.fullmatch(r"([0-9a-f]{64})(?:dup[1-9][0-9]*)?\.json", path.name)
-                if not identity or (keyed and identity[1] != entry_id(item)):
+                if not identity or (keyed and identity[1] != entry_id(item)) or (field == "obligations" and path.stem != identity[1]):
                     raise InvalidCoverageLayout(f"{path}: mismatched entry identity")
                 result.append(path)
                 entries.append((entry["order"], path.name, item))
