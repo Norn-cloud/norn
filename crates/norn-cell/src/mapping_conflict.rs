@@ -1,0 +1,89 @@
+//! FEED-CURSOR-1 / OBS-EVIDENCE-1: preserve immutable source-event conflicts.
+use crate::{CellError, CellStore, StoreReader, engine::{SqlEngine, params}, mapping_bundle::MappingBundle, system::INBOX};
+use norn_ir::{DataQualityFinding, DataQualityFindingStatus, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, DataQualitySubject, RuntimeValue};
+use norn_kernel::{ObservationId, Observed};
+use serde::{Deserialize, Serialize};
+
+/// Quarantined capture evidence; this never supplies canonical write authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MappingConflict {
+    /// Immutable first capture, retained even after its inbox entry is consumed.
+    pub accepted_bundle_id: String,
+    /// Complete changed evidence, including pins and mapping diagnostics.
+    pub incoming: MappingBundle,
+    /// Replay-stable boundary finding; resolution needs explicit review.
+    pub finding: DataQualityFinding,
+}
+
+fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
+    bundle.raw.get(name).and_then(RuntimeValue::as_str)
+        .filter(|s| !s.trim().is_empty()).ok_or(CellError::MappingBundleMismatch)
+}
+
+fn content(bundle: &MappingBundle) -> Result<String, CellError> {
+    Ok(norn_ir::canonical::domain_hash_hex(b"norn.source.content.v1\0", &(
+        field(bundle, "kind")?, field(bundle, "source_version")?,
+        field(bundle, "payload_digest")?, bundle.raw.get("redaction").filter(|v| !v.is_null()),
+    ))?)
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// Find a conflict against the first captured source event, including consumed captures.
+    pub(crate) fn mapping_conflict(&self, incoming: &MappingBundle) -> Result<Option<MappingConflict>, CellError> {
+        let new = content(incoming)?;
+        let captured: Option<String> = self.conn.query_optional(
+            &format!("SELECT observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position LIMIT 1"),
+            params![&incoming.input.connector_instance, &incoming.input.partition, field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?],
+            |row| row.get(0),
+        )?;
+        let Some(captured) = captured else { return Ok(None); };
+        let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
+        let accepted: MappingBundle = norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        self.recheck_mapping_bundle(&accepted)?;
+        if observed.id.0 != format!("mapping-bundle:{}", accepted.digest) {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        let old = content(&accepted)?;
+        if old == new { return Ok(None); }
+        let evidence = norn_ir::canonical::domain_hash_hex(b"norn.source.conflict.v1\0", &(
+            &incoming.input.connector_instance, &incoming.input.partition,
+            field(incoming,"source")?, field(incoming,"source_id")?, field(incoming,"event_id")?, old, new,
+        ))?;
+        let subjects = accepted.records.iter().chain(&incoming.records)
+            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key)).collect();
+        let finding = DataQualityFinding::v2(
+            DataQualityRuleRef::Builtin { id: "core.boundary.import_finding".into(), version: "1".into() },
+            subjects, DataQualitySeverity::Error, "conflicting immutable source event content",
+            DataQualityOutcome::NotSatisfied, Vec::new(), incoming.input.recorded_at.clone(),
+            incoming.input.recorded_at.clone(), DataQualityFindingStatus::Open,
+        )?.with_evidence_digest(evidence)?;
+        Ok(Some(MappingConflict { accepted_bundle_id: observed.id.0, incoming: incoming.clone(), finding }))
+    }
+
+    /// Recompute boundary conflict evidence before disclosure under the caller's source policy.
+    ///
+    /// # Errors
+    /// Corrupt evidence, missing retained pins or disagreement refuses bundle mismatch.
+    pub fn recheck_mapping_conflict(&self, conflict: &MappingConflict) -> Result<(), CellError> {
+        self.recheck_mapping_bundle(&conflict.incoming)?;
+        if self.mapping_conflict(&conflict.incoming)?.as_ref() != Some(conflict) {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// FEED-CURSOR-1: comparison and evidence capture share the caller's write transaction.
+pub(crate) fn capture<E: SqlEngine>(
+    store: &CellStore<E>, raw: &Observed<RuntimeValue>, bundle: MappingBundle,
+) -> Result<(String, bool), CellError> {
+    let (id, input) = if let Some(conflict) = store.read().mapping_conflict(&bundle)? {
+        (format!("mapping-conflict:{}", conflict.finding.id), norn_ir::runtime::encode(&conflict).map_err(CellError::Encoding)?)
+    } else {
+        (format!("mapping-bundle:{}", bundle.digest), norn_ir::runtime::encode(&bundle).map_err(CellError::Encoding)?)
+    };
+    let observed = Observed { id: ObservationId(id.clone()), provenance: raw.provenance.clone(), input };
+    let inserted = crate::store::inject_observation(&store.conn, &id, &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?)?;
+    Ok((id, inserted))
+}

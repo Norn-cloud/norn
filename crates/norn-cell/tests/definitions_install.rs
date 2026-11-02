@@ -6104,3 +6104,66 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
             .is_none()
     );
 }
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn feed_conflict_replay_preserves_first_capture_and_one_finding(fraction in 1u16..1000, deliveries in 2u64..5) {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("conflict.sqlite");
+        let mut store = mapping_bundle_store(&path);
+        let input = bundle_input();
+        let original = bundle_raw("MEAS-1", "0.90");
+        let (accepted_id, _) = store.inject_mapping_bundle(&original, &input).expect("original");
+        let model = store.model().clone();
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&accepted_id).expect("apply first");
+        let before = cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("read").expect("object");
+        drop(cell);
+        store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        let mut expected_id = None;
+        for attempt in 0..deliveries {
+            let mut raw = bundle_raw("MEAS-1", &format!("1.{fraction:03}"));
+            raw.input.insert("extracted_at".into(), Value::from(100u64 + attempt));
+            let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("conflict capture");
+            norn_testkit::proptest::prop_assert_eq!(inserted, attempt == 0);
+            if let Some(expected) = &expected_id { norn_testkit::proptest::prop_assert_eq!(&id, expected); }
+            expected_id = Some(id.clone());
+            let pending = store.read().pending_observations().expect("queue");
+            norn_testkit::proptest::prop_assert_eq!(pending.len(), 1);
+            let observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+            let conflict: norn_cell::mapping_conflict::MappingConflict = norn_ir::runtime::decode(&observed.input).expect("typed finding");
+            store.read().recheck_mapping_conflict(&conflict).expect("recomputed evidence");
+            norn_testkit::proptest::prop_assert_eq!(&conflict.accepted_bundle_id, &accepted_id);
+            norn_testkit::proptest::prop_assert_eq!(conflict.finding.status, norn_ir::DataQualityFindingStatus::Open);
+            let mut forged = conflict.clone(); forged.finding.message.push('!');
+            norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_conflict(&forged), Err(CellError::MappingBundleMismatch)));
+            let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+            norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::UnsupportedMappingProfile)));
+            norn_testkit::proptest::prop_assert_eq!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection"), Some(before.clone()));
+            drop(cell);
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        }
+    }
+}
+
+#[test]
+fn feed_conflict_uses_ingress_content_and_partition_semantics() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("scopes.sqlite"));
+    let raw = bundle_raw("MEAS-1", "0.90");
+    let input = bundle_input();
+    store.inject_mapping_bundle(&raw, &input).expect("original");
+    let mut metadata = raw.clone();
+    metadata.input.insert("cursor".into(), Value::from("new cursor"));
+    metadata.input.insert("pipeline_version".into(), Value::from("pipeline/2"));
+    let (id, _) = store.inject_mapping_bundle(&metadata, &input).expect("metadata");
+    assert!(id.starts_with("mapping-bundle:"));
+    for (field, value) in [("source_version", Value::from("2")), ("kind", Value::from("delete")), ("redaction", norn_ir::runtime_object! {"policy"=>"synthetic"})] {
+        let mut changed = raw.clone(); changed.input.insert(field.into(), value);
+        let (id, _) = store.inject_mapping_bundle(&changed, &input).expect("conflict");
+        assert!(id.starts_with("mapping-conflict:"));
+    }
+    let mut partition = input; partition.partition.push('x');
+    let (id, _) = store.inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &partition).expect("independent partition");
+    assert!(id.starts_with("mapping-bundle:"));
+}
