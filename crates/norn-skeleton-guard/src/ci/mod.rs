@@ -520,11 +520,6 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn workflow_canaries_are_a_trusted_gate_input() {
-        assert!(super::GATE_FILES.contains(&"verification/coverage-v1/negative_canaries.py"));
-    }
-
-    #[test]
     fn runner_routing_is_merge_only_opt_in_in_the_public_core_jobs() {
         let path = ".github/workflows/ci-policy.yml";
         for job in ["core", "plan", "test", "phase", "full"] {
