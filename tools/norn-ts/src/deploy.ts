@@ -6,8 +6,8 @@
  * such as `principals.json` are preserved.
  *
  * This module provides the directory operation; the public CLI exposes
- * check, compile and profile. Remote definition installs are provided by
- * `src/remote.ts` through `PUT /v1/defs`.
+ * check, compile and profile. This helper does not install definitions into
+ * a running cell.
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
