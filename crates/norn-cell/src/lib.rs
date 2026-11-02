@@ -49,6 +49,7 @@ mod reactive_read;
 pub mod read;
 #[cfg(feature = "native")]
 pub mod restore;
+pub mod source_provenance;
 pub mod store;
 pub mod system;
 mod write;

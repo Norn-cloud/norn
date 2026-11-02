@@ -5868,3 +5868,175 @@ fn mapping_bundle_refuses_mismatched_delivery_identity_without_consumption() {
             .is_none()
     );
 }
+
+#[test]
+fn instance_source_provenance_rechecks_bundle_and_disclosure_for_exact_version() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&directory.path().join("lineage.sqlite"));
+    let raw = bundle_raw("MEAS-1", "1.20");
+    let (id, _) = store
+        .inject_mapping_bundle(&raw, &bundle_input())
+        .expect("capture");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(cell.process_mapping_bundle(&id).expect("processing"));
+    let reader = cell.store().read();
+    let instance = reader
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("instance")
+        .expect("captured");
+    let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
+    let budget = || {
+        DecodeBudget::new(&ReactiveLimits {
+            max_scan: 100,
+            max_candidate_bytes_per_commit: 10_000_000,
+            ..ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1())
+        })
+    };
+    assert!(
+        reader
+            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(false))
+            .expect("withheld")
+            .is_none()
+    );
+    let evidence = reader
+        .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
+        .expect("checked source lineage")
+        .expect("bundle");
+    assert_eq!(id, format!("mapping-bundle:{}", evidence.bundle_digest));
+    assert_eq!(evidence.source_record_ref.record, "Rows/MEAS-1");
+    assert_eq!(evidence.source_record_ref.system, "synthetic-erpnext");
+    assert_eq!(evidence.document_ref.system, "synthetic-erpnext");
+    assert_eq!(evidence.document_ref.record, "MEAS-1");
+    assert_eq!(
+        evidence.document_digest,
+        raw.input
+            .get("payload_digest")
+            .and_then(Value::as_str)
+            .expect("source digest")
+    );
+    assert_eq!(evidence.mapping_pin.artifact_id, "quality.mapping");
+    assert_eq!(evidence.mapping_pin.version, "1.0.0");
+    let retained = reader
+        .installed_definitions(None)
+        .expect("definitions")
+        .expect("installed");
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(&retained.canonical_set).expect("artifacts");
+    let mapping = artifacts
+        .iter()
+        .find(|a| a.artifact_id == "quality.mapping")
+        .expect("mapping");
+    assert_eq!(
+        evidence.mapping_pin.sha256,
+        norn_checker::ArtifactRef::of(mapping)
+            .expect("mapping digest")
+            .sha256
+    );
+    assert!(
+        evidence
+            .field_provenance
+            .keys()
+            .any(|p| p.as_str() == "purity")
+    );
+    assert!(
+        reader
+            .instance_source_provenance("other-world", &fact, &mut budget(), |_| panic!(
+                "no disclosure of an unproven world"
+            ))
+            .is_err()
+    );
+    let unknown = norn_ir::FactRef {
+        version: fact.version.checked_add(1).expect("next version"),
+        ..fact
+    };
+    assert!(
+        reader
+            .instance_source_provenance(MAIN_WORLD, &unknown, &mut budget(), |_| panic!(
+                "no disclosure of an unproven version"
+            ))
+            .is_err()
+    );
+}
+
+#[test]
+fn instance_source_provenance_charges_external_payloads_and_omits_non_bundle_facts() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&directory.path().join("budget.sqlite"));
+    let mut raw = bundle_raw("MEAS-1", "1.20");
+    let payload = raw
+        .input
+        .as_object_mut()
+        .expect("raw")
+        .get_mut("payload")
+        .expect("payload");
+    payload
+        .as_object_mut()
+        .expect("source record")
+        .insert("ddlSql".into(), Value::from("x".repeat(500_000)));
+    let hash = norn_ir::canonical::HashProfile::Norn1
+        .hash_json(serde_json::to_string(payload).expect("payload JSON"))
+        .expect("sealed digest");
+    raw.input
+        .as_object_mut()
+        .expect("raw")
+        .insert("payload_digest".into(), Value::from(hash));
+    let (id, _) = store
+        .inject_mapping_bundle(&raw, &bundle_input())
+        .expect("capture");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    assert!(cell.process_mapping_bundle(&id).expect("processing"));
+    let reader = cell.store().read();
+    let instance = reader
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("read")
+        .expect("instance");
+    let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
+    let limits = |bytes| ReactiveLimits {
+        max_scan: 100,
+        max_candidate_bytes_per_commit: bytes,
+        ..ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1())
+    };
+    assert!(matches!(
+        reader.instance_source_provenance(
+            MAIN_WORLD,
+            &fact,
+            &mut DecodeBudget::new(&limits(100_000)),
+            |_| Ok(true)
+        ),
+        Err(CellError::MappingBundleMismatch)
+    ));
+    assert!(
+        reader
+            .instance_source_provenance(
+                MAIN_WORLD,
+                &fact,
+                &mut DecodeBudget::new(&limits(10_000_000)),
+                |_| Ok(true)
+            )
+            .expect("full byte budget")
+            .is_some()
+    );
+    drop(cell);
+    let mut cell = purity_quality_host(&directory.path().join("ordinary.sqlite"));
+    capture_purity(&mut cell, "ordinary-observation", "0.80");
+    let reader = cell.store().read();
+    let instance = reader
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("read")
+        .expect("instance");
+    let fact = norn_ir::FactRef::new("quality.Measurement", "MEAS-1", instance.version);
+    assert!(
+        reader
+            .instance_source_provenance(
+                MAIN_WORLD,
+                &fact,
+                &mut DecodeBudget::new(&limits(10_000_000)),
+                |_| Ok(true)
+            )
+            .expect("non-bundle observation")
+            .is_none()
+    );
+}
+
