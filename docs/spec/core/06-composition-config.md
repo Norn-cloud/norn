@@ -60,6 +60,8 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
 
+`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority.
+
 ## Named acceptance scenarios
 
 - **MAP-PINS/ROLES/MULTI/MEMBERS/UNITS:** Given two mappings from one layer, when checked, then retain both; stale pins, role swaps, omitted required transitions or unit changes refuse.
