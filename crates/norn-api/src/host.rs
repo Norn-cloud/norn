@@ -813,3 +813,7 @@ mod alpha_surface {
         }
     }
 }
+
+#[cfg(all(test, feature = "native", feature = "http-host"))]
+#[path = "four_surfaces.rs"]
+mod four_surfaces;

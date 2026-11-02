@@ -16,3 +16,6 @@ pub mod scope;
 
 /// Governed action transport adapters.
 pub mod actions;
+
+#[cfg(feature = "http-host")]
+mod ui;

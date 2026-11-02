@@ -522,7 +522,6 @@ pub static REGISTRY: &[CodeEntry] = &[
         crate::property_codec::INEXACT,
         Tier::T6,
         "the number is outside the exact 96-bit decimal profile (scale at most 28)",
-
         "0.2.0",
     ),
     entry(

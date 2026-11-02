@@ -1,0 +1,7 @@
+{
+  "name": "@norn/surface-acceptance",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "devDependencies": { "playwright": "1.56.1" }
+}

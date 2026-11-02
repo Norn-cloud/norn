@@ -1,0 +1,265 @@
+//! SURFACE-DEMO-1/2/3: real HTTP, MCP, CLI and rendered browser submissions share authority.
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::too_many_lines,
+    missing_docs,
+    reason = "four-surface correspondence assertions"
+)]
+
+use super::*;
+use crate::{
+    authz::{AccessRequest, Authorizer, DenyAll},
+    routes::router,
+};
+use norn_cell::engine::NativeEngine;
+use norn_kernel::{
+    ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+};
+use serde_json::{Value, json};
+use std::{collections::BTreeMap, sync::Arc};
+use tower::ServiceExt;
+
+struct Demo;
+impl Authorizer for Demo {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        if request.actor == Some("demo") {
+            Ok(())
+        } else {
+            DenyAll.authorize(request)
+        }
+    }
+    fn action(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn action_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn action_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+}
+
+fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {
+    host.cell()
+        .expect("cell")
+        .store()
+        .read()
+        .dump()
+        .expect("complete dump")
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "acceptance invokes real CLI and browser processes"
+)]
+async fn process(program: String, args: Vec<String>, input: Value) -> (Value, bool) {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut child = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("transport process");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(input.to_string().as_bytes())
+            .expect("input");
+        let output = child.wait_with_output().expect("process exit");
+        (
+            serde_json::from_slice(&output.stdout).expect("transport JSON"),
+            !output.status.success(),
+        )
+    })
+    .await
+    .expect("process worker")
+}
+
+async fn invoke(
+    app: &axum::Router,
+    surface: &str,
+    url: &str,
+    actor: &str,
+    input: Value,
+    key: &str,
+) -> (Value, bool) {
+    let request =
+        json!({"actionId":"demo.melt.record", "version":1, "input":input, "idempotencyKey":key});
+    if surface == "cli" {
+        let args = [
+            "remote",
+            "--url",
+            &format!("{url}/mcp"),
+            "--org",
+            "org_surfaces",
+            "--env",
+            "dev",
+            "--dev-actor",
+            actor,
+            "call",
+            "call_action",
+            "--idempotency-key",
+            key,
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let (reply, failed) =
+            process(std::env::var("NORN_CLI").expect("NORN_CLI"), args, request).await;
+        return (reply["result"]["structuredContent"].clone(), failed);
+    }
+    if surface == "ui" {
+        let driver = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/norn-surface-acceptance/browser.mjs");
+        let (reply, failed) = process(std::env::var("NORN_NODE").expect("NORN_NODE"), vec![driver.display().to_string()],
+            json!({"url":url,"actor":actor,"actionId":"demo.melt.record","input":input,"idempotencyKey":key})).await;
+        assert!(!failed, "browser process failed");
+        let refused = reply["status"].as_u64().expect("HTTP status") >= 400;
+        return (reply["body"].clone(), refused);
+    }
+    let body = if surface == "http" {
+        request
+    } else {
+        json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"call_action","arguments":request,"_meta":{"norn/idempotencyKey":key}}})
+    };
+    let response = app
+        .clone()
+        .oneshot(
+            http::Request::builder()
+                .method("POST")
+                .uri(if surface == "http" {
+                    "/v1/actions"
+                } else {
+                    "/mcp"
+                })
+                .header("x-norn-org-id", "org_surfaces")
+                .header("x-norn-environment-id", "dev")
+                .header("x-norn-actor", actor)
+                .body(axum::body::Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let failed = !response.status().is_success();
+    let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("response bytes");
+    let reply: Value = serde_json::from_slice(&bytes).expect("reply");
+    if surface == "http" || failed {
+        (reply, failed)
+    } else {
+        (
+            reply["result"]["structuredContent"].clone(),
+            reply["result"]["isError"] == true,
+        )
+    }
+}
+
+#[tokio::test]
+#[ignore = "explicit demo acceptance requires compiled CLI, authored definitions and Chromium"]
+async fn equivalent_governed_surfaces() {
+    let source = std::fs::read_to_string(
+        std::env::var("NORN_SURFACE_DEFINITIONS").expect("authored definitions path"),
+    )
+    .expect("authored fixture");
+    let mut results = Vec::new();
+    let mut states = Vec::new();
+    for surface in ["http", "mcp", "cli", "ui"] {
+        let host = Arc::new(
+            DevHost::new(
+                NativeEngine::open_in_memory().expect("fresh engine"),
+                &source,
+                CellScope {
+                    org_id: "org_surfaces".into(),
+                    environment_id: "dev".into(),
+                },
+                LogicalTime::EPOCH,
+            )
+            .expect("admitted fresh tenant")
+            .with_authorizer(Demo),
+        );
+        let app = router(Arc::clone(&host));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server_app = app.clone();
+        let server =
+            tokio::spawn(async move { axum::serve(listener, server_app).await.expect("serve") });
+        let input = json!({"id":"melt-1","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.800"});
+        let (accepted, failed) = invoke(&app, surface, &url, "demo", input.clone(), "melt").await;
+        assert!(!failed, "{surface}: {accepted}");
+        assert_eq!(accepted["replayed"], false);
+        let before = dump(&host);
+        let retry_surface = if surface == "http" { "mcp" } else { "http" };
+        let (replayed, failed) =
+            invoke(&app, retry_surface, &url, "demo", input.clone(), "melt").await;
+        assert!(!failed);
+        assert_eq!(replayed["replayed"], true);
+        assert_eq!(replayed["record"], accepted["record"]);
+        assert_eq!(dump(&host), before, "retry commits nothing");
+        let (denied, failed) = invoke(&app, surface, &url, "forbidden", input, "denied").await;
+        assert!(failed, "{surface}: {denied}");
+        assert_eq!(denied["code"], "authz.denied");
+        assert_eq!(denied["category"], "permission");
+        assert_eq!(dump(&host), before, "permission refusal changes no state");
+        let ledger_before = host
+            .cell()
+            .expect("cell")
+            .store()
+            .read()
+            .ledger(0)
+            .expect("ledger");
+        let (law, failed) = invoke(&app, surface, &url, "demo",
+            json!({"id":"melt-bad","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.000"}), "omitted-loss").await;
+        assert!(failed, "{surface}: {law}");
+        assert_eq!(law["code"], "decision.invariant_violation");
+        assert_eq!(law["category"], "precondition");
+        let after = dump(&host);
+        for (table, rows) in &before {
+            if !matches!(
+                table.as_str(),
+                "_norn_ledger" | "_norn_receipt" | "_norn_clock" | "_norn_export_journal"
+            ) {
+                assert_eq!(
+                    after.get(table),
+                    Some(rows),
+                    "law refusal changes no business state: {table}"
+                );
+            }
+        }
+        let ledger_after = host
+            .cell()
+            .expect("cell")
+            .store()
+            .read()
+            .ledger(0)
+            .expect("ledger");
+        assert_eq!(
+            ledger_after.len(),
+            ledger_before.len() + 1,
+            "one refusal audit event"
+        );
+        let event = &ledger_after.last().expect("refusal event").event;
+        assert_eq!(
+            event.get("op").and_then(norn_ir::RuntimeValue::as_str),
+            Some("invariant_refused")
+        );
+        assert_eq!(
+            event.get("id").and_then(norn_ir::RuntimeValue::as_str),
+            Some("fine_mass_conservation")
+        );
+        results.push((accepted, denied, law));
+        states.push(dump(&host));
+        server.abort();
+    }
+    for pair in results.windows(2) {
+        assert_eq!(pair[0], pair[1], "complete records and refusal envelopes");
+    }
+    for pair in states.windows(2) {
+        assert_eq!(pair[0], pair[1], "complete committed tenant state");
+    }
+}

@@ -134,23 +134,41 @@ pub fn router<E: SqlEngine + Send + 'static>(host: std::sync::Arc<DevHost<E>>) -
             .get("x-norn-actor")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
+        let html = headers
+            .get(http::header::ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|part| part.trim().split(';').next() == Some("text/html"))
+            });
         let result = match query {
-            Ok(Query(query)) => {
-                tokio::task::spawn_blocking(move || get_defs(&host, &query, actor.as_deref()))
-                    .await
-                    .map_err(Refusal::host)
-                    .and_then(std::convert::identity)
-            }
+            Ok(Query(query)) => tokio::task::spawn_blocking(move || {
+                let document = get_defs(&host, &query, actor.as_deref())?;
+                if html {
+                    Ok::<_, Refusal>(
+                        axum::response::Html(crate::ui::render(&document, &query)?).into_response(),
+                    )
+                } else {
+                    Ok(axum::Json(document).into_response())
+                }
+            })
+            .await
+            .map_err(Refusal::host)
+            .and_then(std::convert::identity),
             Err(error) => Err(Refusal::invalid(error.to_string())),
         };
         let mut response = match result {
-            Ok(document) => axum::Json(document).into_response(),
+            Ok(response) => response,
             Err(refusal) => (
                 StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                 axum::Json(refusal),
             )
                 .into_response(),
         };
+        response
+            .headers_mut()
+            .insert(http::header::VARY, http::HeaderValue::from_static("Accept"));
         response.headers_mut().insert(
             http::header::CACHE_CONTROL,
             http::HeaderValue::from_static("no-store"),

@@ -134,3 +134,45 @@ SURFACE-EXACT-JSON: nested exact decimals and integers retain their values
 in committed JSON fields, HTTP records and MCP structured content/text.
 
 SURFACE-PROTOCOL: MCP failures preserve request id and refusal data without writes.
+
+## Equivalent governed demo surfaces
+
+SURFACE-UI-1: `GET /v1/defs` with `Accept: text/html` renders the same authorized
+server document as an action workbench. It submits raw exact input to the existing
+`POST /v1/actions`; the renderer never evaluates permissions, guards or laws.
+The authenticated hosting adapter remains responsible for replacing actor headers.
+HTML and JSON responses are private, non-cacheable and vary by Accept.
+
+SURFACE-DEMO-1: `demo.melt.record` records an immutable measurement implementing
+`demo.ConservedFineMass`. Its inherited integrity invariant is the response of
+`demo.fine_mass_conservation`: nonnegative input = output + recorded loss, in
+fine grams at scale 3. This bounded jewelry measurement is not the full stock,
+books, approval or sell/scrap/melt application acceptance.
+
+SURFACE-DEMO-2: four fresh equivalent admitted DevHost tenants execute the same
+100.000 → 99.200 + 0.800 intent through HTTP, MCP, the compiled remote CLI and
+Chromium clicking the real server-rendered form. Complete action records and
+complete tenant dumps agree. A cross-transport retry returns the same record
+without another consequence. Browser form submission and displayed responses
+are exercised without intercepting or mocking network requests.
+
+SURFACE-DEMO-3: a forbidden actor gets `authz.denied` and leaves the complete dump
+unchanged. Omitting loss gets `decision.invariant_violation`; all business,
+action-call, outbox and timer state stays unchanged. The kernel deliberately
+retains one `invariant_refused` audit event with its receipt/clock/export journal;
+these audit records are included in complete cross-transport dump comparisons.
+The browser loads its document as an allowed actor before submitting as the
+forbidden actor, proving a previously rendered document grants no authority.
+
+On Boat, install the pinned browser package and Chromium (including its OS
+libraries) once, then run the one acceptance command:
+
+```sh
+(cd packages/norn-surface-acceptance && bun install --frozen-lockfile --backend copyfile && bunx playwright install --with-deps chromium)
+bash scripts/demo/equivalent-surfaces.sh
+```
+
+The entrypoint compiles the typed fixture, builds the real CLI and explicitly
+runs the ignored acceptance. Missing definitions, CLI, browser or admission are
+failures, never skips. The in-process trusted actor adapter and loopback listener
+are test infrastructure; this does not authorize a public deployment.
