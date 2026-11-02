@@ -41,10 +41,10 @@ fn export<'a>(
         frontier_age_ms: 0,
     }
 }
-fn enqueue(invocation: &FunctionInvocation) -> CellStore {
+fn enqueue(invocation: &FunctionInvocation, path: &std::path::Path) -> CellStore {
     let model = Model::from_definitions(&[], &[]).expect("model");
     let mut store = CellStore::open(
-        std::path::Path::new(":memory:"),
+        path,
         model,
         StoreOptions::default(),
     )
@@ -110,7 +110,9 @@ proptest::proptest! {
         wrong = invocation.clone();
         wrong.blobs.clear();
         assert!(perform_forecast(&wrong, &export(&plan, &rows, &digest, version), "unit-host", 10_000).is_err());
-        let store = enqueue(&invocation);
+        let directory = tempfile::tempdir().expect("store directory");
+        let path = directory.path().join("function.sqlite");
+        let store = enqueue(&invocation, &path);
         let mut cell: SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt> =
             SqliteCell::new(store, tenant, move |command: &Command<RuntimeValue>| {
                 let actual: FunctionInvocation = norn_ir::runtime::decode(
@@ -152,7 +154,11 @@ proptest::proptest! {
         assert_eq!(summary.rmse_nanos, Some(800_000_000));
         assert_eq!(summary.table_digest, input.table_digest);
         assert_eq!(summary.table_version, version.to_string());
-        assert!(cell.perform().expect("recorded retry").is_some());
+        drop(cell);
+        let store = CellStore::open(&path, Model::from_definitions(&[], &[]).expect("model"), StoreOptions::default()).expect("reopen recorded result");
+        let mut restored: SqliteCell<RuntimeValue, RuntimeValue, FunctionReceipt> = SqliteCell::new(store, tenant, |_: &Command<RuntimeValue>| -> FunctionReceipt { panic!("recorded results must replay without execution") }).expect("restored cell");
+        let replayed = restored.perform().expect("recorded retry").expect("redelivery");
+        assert_eq!(replayed.input, performed.input);
     }
 }
 
