@@ -1663,9 +1663,14 @@ fn val_exact_typed_sites_bind_admission_and_execution() {
         ZenTypeEnv::input_only(fields([("amount", Type::Number)]), EnvOptions::default()).unwrap();
     let expression = Expression::compile("input.amount / 3 > 0").unwrap();
     assert!(
-        !check_expression_with(&expression, &plain, &Type::Bool, &ResourceLimitProfile::norn_limits_v1())
-            .unwrap()
-            .uses_exact_arithmetic()
+        !check_expression_with(
+            &expression,
+            &plain,
+            &Type::Bool,
+            &ResourceLimitProfile::norn_limits_v1()
+        )
+        .unwrap()
+        .uses_exact_arithmetic()
     );
     assert!(
         expression
