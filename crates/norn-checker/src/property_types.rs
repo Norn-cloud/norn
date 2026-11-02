@@ -437,14 +437,14 @@ pub(crate) fn check_type_members(
     out: &mut Vec<Diagnostic>,
 ) {
     match property_type {
-        PropertyType::DecimalBinding { group } => {
-            if !matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, group) {
-                out.push(error(
-                    codes::UNIT_BINDING_REQUIRED,
-                    "a Decimal binding requires a nonempty identifier group".to_owned(),
-                    span_at(base, &["type", "group"]),
-                ));
-            }
+        PropertyType::DecimalBinding { group }
+            if !matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, group) =>
+        {
+            out.push(error(
+                codes::UNIT_BINDING_REQUIRED,
+                "a Decimal binding requires a nonempty identifier group".to_owned(),
+                span_at(base, &["type", "group"]),
+            ))
         }
         PropertyType::Record { members } => {
             if members.is_empty() {
@@ -529,7 +529,8 @@ pub(crate) fn check_type_members(
                 }
             }
         }
-        PropertyType::Text { .. }
+        PropertyType::DecimalBinding { .. }
+        | PropertyType::Text { .. }
         | PropertyType::Integer {}
         | PropertyType::Boolean {}
         | PropertyType::Timestamp { .. }
