@@ -282,12 +282,9 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             match op {
                 Opcode::ExactSite { scale, rounding } => {
                     let inherited = self.exact_sites.last().copied().flatten().or_else(|| self.meter.and_then(|meter| meter.arithmetic()));
-                    let exact = rounding.is_some() || inherited.is_some() || self.meter.is_some_and(|meter| meter.exact_arithmetic());
-                    let site = if exact {
-                        let mode = (*rounding).or_else(|| inherited.map(|site| site.rounding)).ok_or_else(|| OpcodeErr { opcode: "ExactSite".into(), message: "rounding must be declared".into() })?;
-                        if *scale > 18 || self.meter.is_none() { return Err(OpcodeErr { opcode: "ExactSite".into(), message: "invalid or unmetered exact site".into() }); }
-                        Some(crate::scaled::ScaledArithmetic { scale: *scale, rounding: mode })
-                    } else { None };
+                    let site = crate::scaled::ScaledArithmetic::rounding_site(*scale, *rounding, inherited, self.meter.is_some_and(|meter| meter.exact_arithmetic()))
+                        .map_err(|reason| OpcodeErr { opcode: "ExactSite".into(), message: reason.into() })?;
+                    if site.is_some() && self.meter.is_none() { return Err(OpcodeErr { opcode: "ExactSite".into(), message: "unmetered exact site".into() }); }
                     self.exact_sites.push(site);
                 }
                 Opcode::Rescale { scale } => {
