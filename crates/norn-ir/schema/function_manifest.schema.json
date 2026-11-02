@@ -379,7 +379,7 @@
       "type": "object",
       "properties": {
         "digest": {
-          "description": "The content digest of the module bytes or the OCI image manifest.",
+          "description": "The digest of module bytes, OCI manifest, or host implementation source tree.",
           "$ref": "#/$defs/Digest"
         },
         "entryPoint": {
@@ -417,6 +417,11 @@
           "description": "An OCI image.",
           "type": "string",
           "const": "oci_image"
+        },
+        {
+          "description": "FUNCTION-HOST-1: host-provided code, pinned by crate/version/source tree.\nThis is neither a WASM sandbox nor a container isolation claim.",
+          "type": "string",
+          "const": "host"
         }
       ]
     },
