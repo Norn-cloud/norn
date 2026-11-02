@@ -418,6 +418,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "group": "${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}",
         "cancel-in-progress": "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}",
     }, "workflow must cancel only superseded PR and main runs")
+    require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at) || github.event_name }}",
+            "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'

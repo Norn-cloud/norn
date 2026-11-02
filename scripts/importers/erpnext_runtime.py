@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import time
+import tempfile
 import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -53,7 +54,10 @@ def store(name, raw):
         return
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / name).write_bytes(raw)
+        with tempfile.TemporaryDirectory(dir=directory, prefix=".norn-interop-") as temporary:
+            pending = Path(temporary) / "schema"
+            pending.write_bytes(raw)
+            pending.replace(directory / name)
     except OSError:
         pass
 

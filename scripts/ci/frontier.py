@@ -22,7 +22,9 @@ seeded bootstrap 95% interval of each percentile; with n=10, p95 sits between
 the two slowest rows, so its band is wide by construction.
 """
 
+import base64
 import json
+import re
 import random
 import statistics
 import subprocess
@@ -32,6 +34,7 @@ from datetime import datetime
 REPO = "Norn-cloud/norn"
 SCHEMA = "norn.ci-frontier/v2"
 WORKFLOW = ".github/workflows/ci-policy.yml"
+RUN_NAME = "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at) || github.event_name }}"
 RESAMPLES = 2000
 RUNNER = "ubuntu-24.04"
 
@@ -74,11 +77,16 @@ def row(spec):
     if len({j["id"] for j in jobs}) != len(jobs):
         raise ValueError("duplicate job identity")
     created = run["created_at"] if attempt == 1 else run["run_started_at"]
-    ready = []
-    for pr in run.get("pull_requests", []):
-        events = pages(f"issues/{pr['number']}/timeline")
-        ready += [e["created_at"] for e in events
-                  if e.get("event") == "ready_for_review" and e["created_at"] <= created]
+    ready = None
+    attribution = re.fullmatch(r"READY ([0-9a-f]{40}) (\S+)", run.get("display_title", ""))
+    if attempt == 1 and run["event"] == "pull_request" and attribution and attribution[1] == run["head_sha"]:
+        # The pinned workflow emits this title only for the triggering READY event.
+        # A previous workflow's arbitrary PR title is not event attribution.
+        content = gh(f"contents/{WORKFLOW}?ref={run['head_sha']}")
+        source = base64.b64decode(content["content"]).decode("utf-8")
+        if "run-name: " + RUN_NAME in source.splitlines():
+            ts(attribution[2])
+            ready = attribution[2]
     entries = []
     for job in jobs:
         start, end = job.get("started_at"), job.get("completed_at")
@@ -99,7 +107,7 @@ def row(spec):
     return {"run_id": run["id"], "attempt": attempt, "event": run["event"],
             "head_sha": run["head_sha"], "created_at": created,
             "completed_at": run["updated_at"], "conclusion": run["conclusion"],
-            "ready_at": max(ready) if ready else None,
+            "ready_at": ready,
             "admitted_at": min(plan_starts) if plan_starts else None, "jobs": entries}
 
 
@@ -223,6 +231,27 @@ def self_test():
         assert len(collected["jobs"]) == 101 and collected["created_at"] == finish
         summary = attempt_document([collected], [])["summary"]
         assert summary["service_s"] == 0 and summary["job_queue_s"] is None and summary["executing_jobs"] == 0
+    for attempt, name, pinned, expected in (
+        (1, "READY " + "a" * 40 + " " + stamp, True, stamp),
+        (2, "READY " + "a" * 40 + " " + stamp, True, None),
+        (1, "READY " + "a" * 40 + " " + stamp, False, None),
+        (1, "pull_request", True, None),
+        (1, "READY " + "b" * 40 + " " + stamp, True, None),
+    ):
+        def ready_api(path):
+            if path == f"actions/runs/4/attempts/{attempt}":
+                return {"id": 4, "path": WORKFLOW, "status": "completed", "created_at": finish,
+                        "run_started_at": finish, "updated_at": finish, "event": "pull_request",
+                        "head_sha": "a" * 40, "conclusion": "success", "display_title": name,
+                        "pull_requests": [{"number": 7}]}
+            if path.startswith("contents/"):
+                body = "run-name: " + RUN_NAME if pinned else "name: Public core"
+                return {"content": base64.b64encode(body.encode()).decode()}
+            if "/jobs?" in path:
+                return {"jobs": []}
+            raise AssertionError(f"unattributed timeline lookup: {path}")
+        with patch.dict(globals(), gh=ready_api):
+            assert row(f"4:{attempt}")["ready_at"] == expected
     with patch.dict(globals(), row=lambda spec: {"run_id": int(spec.split(":")[0]), "attempt": int(spec.split(":")[1])}):
         assert len(collect_attempts(["1:2", "1:2", "1:1"])) == 2
     print("frontier: pagination, attempt deduplication and cost reconciliation passed")

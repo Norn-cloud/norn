@@ -617,6 +617,31 @@ sudo() {{
                 raise AssertionError(f"cleanup preflight drift: {initial}/{after}: {result.stderr!r}")
 
 
+def workflow_cache_canaries() -> None:
+    from unittest.mock import patch
+    importer = load_module("workflow_interop_cache_canary", ROOT / "scripts/importers/erpnext_runtime.py")
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        cache = directory / "cache"
+        cache.mkdir()
+        source = directory / "source"
+        source.mkdir()
+        protected = source / "protected.py"
+        protected.write_bytes(b"preserved source")
+        entry = cache / "schema.json"
+        entry.symlink_to(protected)
+        with patch.object(importer, "ROOT", source), patch.dict(os.environ, NORN_INTEROP_CACHE=str(cache)):
+            if importer.cached("schema.json", "wrong digest") is not None:
+                raise AssertionError("cache accepted a digest mismatch")
+            importer.store("schema.json", b"verified schema")
+            if protected.read_bytes() != b"preserved source" or entry.is_symlink() or entry.read_bytes() != b"verified schema":
+                raise AssertionError("cache replacement followed a symlink")
+            with patch.object(Path, "replace", side_effect=OSError("replacement failed")):
+                importer.store("schema.json", b"replacement")
+            if list(cache.iterdir()) != [entry] or entry.read_bytes() != b"verified schema":
+                raise AssertionError("failed cache replacement left temporary data")
+
+
 def workflow_context_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     if True in workflow:
@@ -658,6 +683,9 @@ def workflow_context_canaries(source: str) -> None:
                 expression = re.sub(r"!(?!=)", " not ", expression)
                 if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
                     raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
+        document = copy.deepcopy(workflow)
+        document["run-name"] = "${{ github.event.pull_request.title }}"
+        rejected("forged READY attribution", document)
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
@@ -766,6 +794,7 @@ def workflow_canaries() -> None:
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
     workflow_cleanup_canaries(source)
+    workflow_cache_canaries()
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
@@ -1453,6 +1482,7 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        workflow_cache_canaries()
         print("workflow contract: admission, verdict and context canaries passed")
         return 0
     if len(sys.argv) != 1:
