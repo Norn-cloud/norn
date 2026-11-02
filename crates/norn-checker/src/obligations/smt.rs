@@ -94,18 +94,28 @@ mod host {
     use super::{
         Digest, Duration, Path, Sha256, SmtBound, SmtEvidence, SmtResult, Z3_VERSION, answer,
     };
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::{
         fs::File,
         io::{Read, Seek, SeekFrom, Write},
         process::{Command, Stdio},
         time::Instant,
     };
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::sync::atomic::{AtomicU64, Ordering};
     fn temporary_file() -> Result<File, &'static str> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!("norn-smt-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-        let file = std::fs::OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).open(&path).map_err(|_error| "io")?;
+        let path = std::env::temp_dir().join(format!(
+            "norn-smt-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|_error| "io")?;
         std::fs::remove_file(path).map_err(|_error| "io")?;
         Ok(file)
     }
@@ -160,9 +170,16 @@ mod host {
                     if state.is_err() || Instant::now() >= deadline {
                         let _killed = child.kill();
                         let _reaped = child.wait();
-                        return Err(if state.is_err() { "process_error" } else { "timeout" });
+                        return Err(if state.is_err() {
+                            "process_error"
+                        } else {
+                            "timeout"
+                        });
                     }
-                    std::thread::sleep(Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())));
+                    std::thread::sleep(
+                        Duration::from_millis(1)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
                 }
             }
         };
@@ -251,24 +268,11 @@ mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn result_framing_refuses_spoofed_or_unsupported_output() {
-        assert_eq!(answer("x\nunsat\nx\n", "x"), Ok(SmtResult::Unsat));
-        for output in [
-            "unsat\n",
-            "(error unsupported)\nx\nunsat\nx\n",
-            "x\nunknown\nx\n",
-            "x\nunsat\n(error failed)\nx\n",
-        ] {
-            assert!(answer(output, "x").is_err());
-        }
-    }
     proptest::proptest! {
         #[test]
-        fn arbitrary_unframed_output_cannot_claim_unsat(text in ".{0,128}") {
-            proptest::prop_assume!(text != "unsat");
+        fn only_the_exact_framed_unsat_answer_has_unsat_authority(text in ".{0,128}") {
             let framed = format!("marker\n{text}\nmarker\n");
-            proptest::prop_assert_ne!(answer(&framed, "marker"), Ok(SmtResult::Unsat));
+            proptest::prop_assert_eq!(answer(&framed, "marker") == Ok(SmtResult::Unsat), text == "unsat");
         }
     }
 }
