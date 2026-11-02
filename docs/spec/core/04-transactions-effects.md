@@ -78,20 +78,28 @@ matching `decide` artifact whose required scope is covered by the action.
 Missing, ambiguous, wrong-version, wrong-contract or uncovered-scope bindings
 refuse. Unknown pin members and null pins refuse strict decoding.
 
-This contract cut does not enable execution. The existing action boundary must
-refuse a present synchronous writer before reading or writing the host, rather
-than executing only the primary transition. Named round-trip/refusal scenarios,
-generated version-pin cases and authoring dependency correspondence bind this
-contract to the code. Pin resolution traverses heap-backed artifact catalogs;
-the existing Kani profiles cannot call that catalog/serde admission path. No
-new bounded arithmetic primitive or handwritten application proof is introduced.
+Execution resolves the exact admitted writer before host access. A missing or
+ambiguous closure refuses rather than executing only the primary transition.
+The immutable `SynchronousRule` seals its RuleIR root, helper closure and decision
+binding. The ActionCall receipt binds their canonical digest together with the
+action, scope and world; changed writer intent cannot replay an earlier success.
+Named round-trip/refusal scenarios, generated version-pin cases and authoring
+dependency correspondence bind this contract to the code. Pin resolution
+traverses heap-backed artifact catalogs; the existing Kani profiles cannot call
+that catalog/serde admission path. No new bounded arithmetic primitive or
+handwritten application proof is introduced.
 
-The following execution cut must evaluate the pinned pure graph over the same
-authorized slice/input, reject uncovered writers, authorize every current and
-proposed object, retain absence/membership fences, and atomically finalize its
-facts plus the primary transition and ActionCall receipt. Rule output is
-facts-only in this profile; existing action command declarations enqueue payment
-intent in that same commit. Dispatch and payment success remain external.
+The pinned pure graph evaluates over the same authorized captured slice and
+effective input, with the authenticated call actor and operation ID. It shares
+the action's remaining fuel; exhaustion refuses. Rule facts are applied before
+the primary transition so its guards see the computed proposal. Each actual
+writer must be declared, and modifications require a captured object. Reserved
+framework writes, deletes and a second primary transition refuse. Every current
+and proposed object is authorized; fact, absence and membership fences remain
+in force. Facts, the primary transition and the ActionCall receipt finalize in
+one cell commit. Rule output is facts-only in this profile; existing action
+command declarations enqueue payment intent in that same commit. Dispatch and
+payment success remain external.
 
 
 ### Atomic proposal links (TXN-ATOMIC-1, TXN-CLOSED-1)
@@ -115,9 +123,11 @@ links to a newly created secondary fact, exact replay, and refusal before writes
 
 The link closure is bounded at sixteen bindings, checked before host access.
 The source is an object-only closed binding; explicit nulls, sequence aliases,
-unknown members and duplicate members refuse. Constant array indexes in authored
-expressions retain the array item schema; malformed indexes refuse compilation,
-and an out-of-range read still has to satisfy the decision's runtime typing.
+unknown members and duplicate members refuse. Bounded inline list indexes in
+authored expressions retain the declared item schema and resolve at compilation.
+Malformed or out-of-range inline indexes refuse. Indexes into declared runtime
+arrays refuse during authoring because the admitted expression profile supports
+only indexes into list literals; no nullable missing-item semantics are inferred.
 
 `atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry` executes
 the typed fixture after full artifact-set admission. Both directions of the link,
