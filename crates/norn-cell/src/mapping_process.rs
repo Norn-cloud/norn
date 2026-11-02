@@ -24,7 +24,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         else {
             return Ok(false);
         };
-        if observation_id.starts_with("mapping-conflict:") {
+        if observation_id.starts_with("mapping-conflict:")
+            || observation_id.starts_with("mapping-identity:")
+        {
             return Err(CellError::UnsupportedMappingProfile);
         }
         let observed: Observed<RuntimeValue> =
@@ -45,7 +47,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             return Err(CellError::MappingBundleMismatch);
         }
-        if self.store().read().mapping_conflict(&bundle)?.is_some() {
+        if self.store().read().mapping_conflict(&bundle)?.is_some()
+            || self.store().read().identity_is_disputed(&bundle)?
+        {
             return Err(CellError::UnsupportedMappingProfile);
         }
         let model = self.store().model().clone();

@@ -31,9 +31,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         record: &ObjectRecord,
     ) -> Result<bool, CellError> {
         if world == crate::MAIN_WORLD
-            && !self
+            && (!self
                 .source_conflict_findings(&record.object_type, &record.id)?
                 .is_empty()
+                || !self
+                    .identity_findings(&record.object_type, &record.id)?
+                    .is_empty())
         {
             return Ok(true);
         }
@@ -111,6 +114,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .collect();
         if world == crate::MAIN_WORLD {
             findings.extend(self.source_conflict_findings(object_type, key)?);
+            findings.extend(self.identity_findings(object_type, key)?);
         }
         Ok(findings)
     }

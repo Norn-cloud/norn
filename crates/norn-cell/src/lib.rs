@@ -38,6 +38,7 @@ mod history;
 pub mod host;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
+mod mapping_identity;
 mod mapping_process;
 mod migration;
 mod observation_quality;
