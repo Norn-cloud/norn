@@ -216,6 +216,9 @@ impl ActionAuthorizer for Authority {
 fn governed(path: &Path, model: &Model, transition: &str, key: &str, allow: bool) -> bool {
     let store =
         CellStore::open(path, model.clone(), StoreOptions::default()).expect("action store");
+    governed_on(store, model, transition, key, allow)
+}
+fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, allow: bool) -> bool {
     let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject> =
         SqliteCell::new(store, SCOPE, |c: &norn_kernel::Command<JsonObject>| {
             c.payload.clone()
@@ -297,6 +300,10 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
         .expect("version");
     assert_eq!(week(&old).totals[0].canonical(), "294");
     assert_eq!(week(&old).value.expect("ratio").canonical(), "0.98");
+    assert_eq!(
+        old.outputs["loss"].result.rows["\"2026-10-19\""].totals[0].canonical(),
+        "6"
+    );
     assert_eq!(old.label, "restated");
     assert!(!old.stale);
     let at = CLOCK + 86_400_000;
@@ -363,6 +370,24 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     store.stage_restatement(prepared).expect("ready");
     assert_eq!(view(&store, &context).generation, old.generation);
     drop(store);
+    assert!(governed(&path, &model, "approve", "approve/K2", true));
+    let failing = open(&path, &model);
+    failing.set_candidate_validator(Some(|_, _, _| {
+        Err(norn_cell::CellError::Engine(
+            "interrupted activation".into(),
+        ))
+    }));
+    assert!(!governed_on(
+        failing,
+        &model,
+        "activate",
+        "interrupted",
+        true
+    ));
+    let interrupted = open(&path, &model);
+    assert_eq!(view(&interrupted, &context).generation, old.generation);
+    assert!(view(&interrupted, &context).stale);
+    drop(interrupted);
     activate(&path, &model, "K2");
     let store = open(&path, &model);
     let current = view(&store, &context);
@@ -387,6 +412,9 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
         .read_restatement_at_version(ID, old_version, &context)
         .expect("reproducible original");
     assert_eq!(serde_json::to_vec(&original).expect("original"), old_bytes);
+    let delta = &current.deltas["loss"];
+    assert_eq!(delta.retract["\"2026-10-19\""].totals[0].canonical(), "6");
+    assert_eq!(delta.replace["\"2026-10-19\""].totals[0].canonical(), "7.5");
     let mut revoked = context.clone();
     revoked.authorization_epoch += 1;
     assert!(store.read_restatement(ID, &revoked).is_err());
@@ -480,20 +508,114 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
     assert_eq!(view(&store, &context).generation, old);
     assert!(view(&store, &context).stale);
 }
+fn generated_restatement_sequence(
+    changes: Vec<(i64, u8, bool, bool, bool)>,
+) -> proptest::test_runner::TestCaseResult {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let (mut store, plan, mut context, model) = setup(&path);
+    let point = cutoff(&store, &context);
+    stage(&mut store, &plan, &context, point);
+    drop(store);
+    activate(&path, &model, "initial");
+    let mut store = open(&path, &model);
+    let original_version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("version");
+    let original = serde_json::to_vec(&view(&store, &context)).expect("original");
+    for (index, (recovered, day, deleted, redeliver, restart)) in changes.into_iter().enumerate() {
+        let at = CLOCK + u64::try_from(index + 1).expect("bounded");
+        let batch = CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: at,
+            idempotency_key: Some(format!("correction/{index}")),
+            writes: vec![if deleted {
+                norn_cell::FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: "SYN-MELT-15-1".into(),
+                }
+            } else {
+                put(
+                    "SYN-MELT-15-1",
+                    75_000,
+                    recovered,
+                    &format!("2026-10-{day:02}T12:01:00Z"),
+                    "gold",
+                )
+            }],
+            ..CommitBatch::default()
+        };
+        store.commit(&batch).expect("correction");
+        let head = store.verified_head().expect("head");
+        if redeliver {
+            store.commit(&batch).expect("redelivery");
+            proptest::prop_assert_eq!(store.verified_head().expect("head"), head.clone());
+        }
+        progress(&mut context, at, head.commits);
+        let point = cutoff(&store, &context);
+        let old = view(&store, &context).generation;
+        let version = store
+            .read()
+            .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+            .expect("version");
+        let build = store
+            .begin_restatement(
+                ID,
+                context.clone(),
+                version,
+                "generated late evidence",
+                BTreeSet::from(["week".into(), "loss".into()]),
+            )
+            .expect("begin");
+        if restart {
+            drop(build);
+            drop(store);
+            store = open(&path, &model);
+            proptest::prop_assert_eq!(view(&store, &context).generation, old.clone());
+        }
+        let build = store
+            .resume_restatement(ID, context.clone())
+            .expect("durable build");
+        let prepared = store
+            .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+            .expect("generated IVM equals recompute");
+        store.stage_restatement(prepared).expect("stage");
+        proptest::prop_assert_eq!(view(&store, &context).generation, old);
+        drop(store);
+        activate(&path, &model, &format!("generation/{index}"));
+        store = open(&path, &model);
+        let active = view(&store, &context);
+        let exact = store
+            .evaluate_question_known_at(&plan, context.clone(), point, |_| Ok(true))
+            .expect("same slice exact");
+        for (id, answer) in &active.outputs {
+            let expected = if id == "week" {
+                exact.clone()
+            } else {
+                store
+                    .evaluate_question_known_at(&loss_plan(), context.clone(), point, |_| Ok(true))
+                    .expect("loss recompute")
+            };
+            proptest::prop_assert_eq!(&answer.result, &expected.result);
+        }
+        proptest::prop_assert_eq!(
+            serde_json::to_vec(
+                &store
+                    .read_restatement_at_version(ID, original_version, &context)
+                    .expect("old generation")
+            )
+            .expect("original"),
+            original.clone()
+        );
+    }
+    Ok(())
+}
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn activated_deltas_equal_full_recompute_through_redelivery_and_restart(changes in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY,proptest::bool::ANY,proptest::bool::ANY),1..5)) {
-        let dir=tempfile::tempdir().expect("directory");let path=dir.path().join("cell.sqlite");let (mut store,plan,mut context,model)=setup(&path);let point=cutoff(&store,&context);stage(&mut store,&plan,&context,point);drop(store);activate(&path,&model,"initial");
-        let mut store=open(&path,&model);let original_version=store.read().version(MAIN_WORLD,RESTATEMENT_TYPE,ID).expect("version");let original=serde_json::to_vec(&view(&store,&context)).expect("original");
-        for (index,(recovered,day,deleted,redeliver,restart)) in changes.into_iter().enumerate() {
-            let at=CLOCK+u64::try_from(index+1).expect("bounded");let batch=CommitBatch{world:MAIN_WORLD.into(),scope:SCOPE.into(),logical_time:at,idempotency_key:Some(format!("correction/{index}")),writes:vec![if deleted {norn_cell::FactWriteRow::Delete{object_type:TYPE.into(),key:"SYN-MELT-15-1".into()}} else {put("SYN-MELT-15-1",75_000,recovered,&format!("2026-10-{day:02}T12:01:00Z"),"gold")}],..CommitBatch::default()};store.commit(&batch).expect("correction");let head=store.verified_head().expect("head");if redeliver {store.commit(&batch).expect("redelivery");proptest::prop_assert_eq!(store.verified_head().expect("head"),head.clone());}
-            progress(&mut context,at,head.commits);let point=cutoff(&store,&context);let old=view(&store,&context).generation;
-            let version=store.read().version(MAIN_WORLD,RESTATEMENT_TYPE,ID).expect("version");let build=store.begin_restatement(ID,context.clone(),version,"generated late evidence",BTreeSet::from(["week".into(),"loss".into()])).expect("begin");
-            if restart {drop(build);drop(store);store=open(&path,&model);proptest::prop_assert_eq!(view(&store,&context).generation,old.clone());}
-            let build=store.resume_restatement(ID,context.clone()).expect("durable build");let prepared=store.prepare_restatement(build,requests(&plan,&context,point),|_|Ok(true)).expect("generated IVM equals recompute");store.stage_restatement(prepared).expect("stage");proptest::prop_assert_eq!(view(&store,&context).generation,old);drop(store);activate(&path,&model,&format!("generation/{index}"));store=open(&path,&model);
-            let active=view(&store,&context);let exact=store.evaluate_question_known_at(&plan,context.clone(),point,|_|Ok(true)).expect("same slice exact");for (id,answer) in &active.outputs {let expected=if id=="week" {exact.clone()} else {store.evaluate_question_known_at(&loss_plan(),context.clone(),point,|_|Ok(true)).expect("loss recompute")};proptest::prop_assert_eq!(&answer.result,&expected.result);}
-            proptest::prop_assert_eq!(serde_json::to_vec(&store.read_restatement_at_version(ID,original_version,&context).expect("old generation")).expect("original"),original.clone());
-        }
+        generated_restatement_sequence(changes)?;
     }
 }
