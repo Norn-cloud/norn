@@ -198,9 +198,13 @@ impl<E: SqlEngine> CellStore<E> {
             let max = usize::try_from(plan.max_items())
                 .map_err(|_bound| refused("core.compute.bound_exceeded"))?;
             let mut historical_receipt = None;
+            let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
-                (revision, historical_receipt) =
+                let (head, receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
+                revision = head;
+                historical_receipt = receipt.as_ref().map(|r| r.hash.clone());
+                frontier_receipt = receipt;
                 historical::history_ids(
                     &reader,
                     &context.world,
@@ -221,7 +225,7 @@ impl<E: SqlEngine> CellStore<E> {
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
-            let mut history = reader.history_read();
+            let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
             for id in ids {

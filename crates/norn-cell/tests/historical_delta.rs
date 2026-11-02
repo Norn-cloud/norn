@@ -101,12 +101,12 @@ fn showcase_restatement_retracts_recovered_mass_and_refusal_keeps_the_old_genera
         frontier: store.verified_head().expect("head").commits,
     };
     progress(&mut context, at, next.frontier);
-    assert!(
+    assert!(matches!(
         view.advance_known_at(&store, context.clone(), next, |_| Err(
             norn_cell::CellError::ComputeRefused("test.refusal")
-        ))
-        .is_err()
-    );
+        )),
+        Err(norn_cell::CellError::ComputeRefused("test.refusal"))
+    ));
     assert_eq!(view.result(), &old);
     view.advance_known_at(&store, context.clone(), next, |_| Ok(true))
         .expect("K2");
@@ -121,9 +121,11 @@ fn showcase_restatement_retracts_recovered_mass_and_refusal_keeps_the_old_genera
     assert_eq!(before.totals[1], after.totals[1]);
     assert_eq!(after.totals[1].canonical(), "300");
     let current = view.result().clone();
-    assert!(
-        view.advance_known_at(&store, context, first, |_| Ok(true))
-            .is_err()
-    );
+    assert!(matches!(
+        view.advance_known_at(&store, context, first, |_| Ok(true)),
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.world.invalid_restatement"
+        ))
+    ));
     assert_eq!(view.result(), &current);
 }

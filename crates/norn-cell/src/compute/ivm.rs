@@ -237,13 +237,13 @@ impl IncrementalQuestion {
         let verified = store.verified_head()?;
         let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
         let mut budget = DecodeBudget::new(&limits);
-        let head = if let Some(cutoff) = self.knowledge {
-            super::historical::frame(&reader, cutoff, context.now_ms, &mut budget)?.0
+        let (head, receipt) = if let Some(cutoff) = self.knowledge {
+            super::historical::frame(&reader, cutoff, context.now_ms, &mut budget)?
         } else {
-            verified
+            (verified, None)
         };
         let changed = self.changed_keys(store, &context, &head)?;
-        let mut history = reader.history_read();
+        let mut history = reader.history_read_seeded(receipt);
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;

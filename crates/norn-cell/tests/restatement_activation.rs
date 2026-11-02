@@ -729,3 +729,36 @@ fn prepared_candidates_stay_bound_to_their_native_host() {
     left.stage_restatement(prepared)
         .expect("same host stages without reopen");
 }
+
+#[test]
+fn candidate_budget_includes_the_complete_staged_slot() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (mut store, plan, context, _) = setup(&directory.path().join("cell.sqlite"));
+    let point = cutoff(&store, &context);
+    let size = usize::try_from(
+        norn_ir::ResourceLimitProfile::norn_limits_v1()
+            .slice
+            .max_canonical_bytes
+            .checked_div(2)
+            .expect("half")
+            .checked_sub(8192)
+            .expect("reserve"),
+    )
+    .expect("bounded text");
+    let reason = "x".repeat(size);
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            0,
+            &reason,
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("initial row fits");
+    assert!(matches!(
+        store.prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true)),
+        Err(norn_cell::CellError::ComputeRefused(
+            "core.compute.bound_exceeded"
+        ))
+    ));
+}

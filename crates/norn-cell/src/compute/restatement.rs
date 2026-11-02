@@ -100,6 +100,27 @@ impl PreparedRestatement {
         self.build.context.world == world && self.build.context.scope == scope
     }
 }
+fn check_slot_size(values: &BTreeMap<String, RuntimeValue>) -> Result<(), CellError> {
+    let bound = ResourceLimitProfile::norn_limits_v1()
+        .slice
+        .max_canonical_bytes
+        .saturating_sub(8192);
+    if u64::try_from(serde_json::to_vec(values)?.len()).map_err(|_size| refused(INVALID))? > bound {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
+    Ok(())
+}
+fn candidate_values(
+    build: &RestatementBuild,
+    encoded: &str,
+    digest: &str,
+) -> BTreeMap<String, RuntimeValue> {
+    let mut values = build.values.clone();
+    values.insert("candidate".into(), RuntimeValue::from(encoded));
+    values.insert("candidate_digest".into(), RuntimeValue::from(digest));
+    values.insert("status".into(), RuntimeValue::from("building"));
+    values
+}
 fn text<'a>(values: &'a BTreeMap<String, RuntimeValue>, key: &str) -> Result<&'a str, CellError> {
     values
         .get(key)
@@ -359,13 +380,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let digest = crate::codec::hash_json(&generation)?;
         let encoded = serde_json::to_string(&generation)?;
-        if u64::try_from(encoded.len()).map_err(|_invalid| refused(INVALID))?
-            > ResourceLimitProfile::norn_limits_v1()
-                .slice
-                .max_canonical_bytes
-        {
-            return Err(refused("core.compute.bound_exceeded"));
-        }
+        check_slot_size(&candidate_values(&build, &encoded, &digest))?;
         Ok(PreparedRestatement {
             build,
             encoded,
@@ -451,10 +466,7 @@ impl<E: SqlEngine> CellStore<E> {
             encoded,
             digest,
         } = prepared;
-        let mut values = build.values;
-        values.insert("candidate".into(), RuntimeValue::from(encoded));
-        values.insert("candidate_digest".into(), RuntimeValue::from(digest));
-        values.insert("status".into(), RuntimeValue::from("building"));
+        let values = candidate_values(&build, &encoded, &digest);
         self.write_restatement(
             &build.id,
             &build.context,
@@ -474,15 +486,7 @@ impl<E: SqlEngine> CellStore<E> {
         transition: Option<&str>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<u64, CellError> {
-        let bound = ResourceLimitProfile::norn_limits_v1()
-            .slice
-            .max_canonical_bytes
-            .saturating_sub(8192);
-        if u64::try_from(serde_json::to_vec(&values)?.len()).map_err(|_invalid| refused(INVALID))?
-            > bound
-        {
-            return Err(refused("core.compute.bound_exceeded"));
-        }
+        check_slot_size(&values)?;
         let batch = CommitBatch {
             world: context.world.clone(),
             scope: context.scope.clone(),

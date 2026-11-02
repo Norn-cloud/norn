@@ -153,23 +153,82 @@ pub(super) fn frame<E: SqlEngine>(
     cutoff: KnowledgeCutoff,
     now: u64,
     budget: &mut DecodeBudget,
-) -> Result<(crate::LedgerHead, Option<String>), CellError> {
+) -> Result<(crate::LedgerHead, Option<crate::Receipt>), CellError> {
     if now != cutoff.recorded_at.as_millis() {
         return Err(refused("core.compute.stale_input"));
     }
-    let revision = reader
-        .historical_revision_with_budget(cutoff, budget)?
+    let frame = reader
+        .historical_frame_with_budget(cutoff, budget)?
         .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-    let (version, pin) = if cutoff.frontier == 0 {
-        (0, None)
-    } else {
-        let receipt = reader
-            .receipt_at_with_budget(cutoff.frontier, budget)?
-            .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-        (receipt.body.definitions_version, Some(receipt.hash))
-    };
+    let version = frame
+        .receipt
+        .as_ref()
+        .map_or(0, |r| r.body.definitions_version);
     if reader.active_definitions_version()?.unwrap_or(0) != version {
         return Err(refused(UNSUPPORTED_ENGINE));
     }
-    Ok((revision, pin))
+    Ok((frame.revision, frame.receipt))
+}
+
+#[cfg(all(test, feature = "native"))]
+mod tests {
+    use super::*;
+    #[test]
+    fn frontier_receipt_and_fact_share_one_bounded_authentication() {
+        let definition:norn_ir::ObjectTypeDef=serde_json::from_value(serde_json::json!({"name":"budget.Item","properties":[{"id":"value","type":{"kind":"text"}}]})).expect("typed fixture");
+        let model = crate::Model::from_definitions(&[definition], &[]).expect("model");
+        let mut store = CellStore::open_in_memory(model).expect("store");
+        store
+            .commit(&crate::CommitBatch {
+                world: crate::MAIN_WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: 7,
+                writes: vec![crate::FactWriteRow::Put {
+                    object_type: "budget.Item".into(),
+                    key: "row".into(),
+                    values: std::collections::BTreeMap::from([(
+                        "value".into(),
+                        norn_ir::RuntimeValue::from("seed"),
+                    )]),
+                }],
+                ..crate::CommitBatch::default()
+            })
+            .expect("source");
+        let reader = store.read();
+        let cutoff = KnowledgeCutoff {
+            recorded_at: norn_kernel::LogicalTime::from_millis(7),
+            frontier: 1,
+        };
+        let lookup = |budget: &mut DecodeBudget| {
+            let (_, receipt) = frame(&reader, cutoff, 7, budget).expect("frontier");
+            reader
+                .history_read_seeded(receipt)
+                .known_at(crate::MAIN_WORLD, "budget.Item", "row", cutoff, budget)
+                .expect("lookup")
+        };
+        let mut limits = crate::reactive::ReactiveLimits::from_profile(
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        );
+        let mut measured = DecodeBudget::new(&limits);
+        assert!(matches!(
+            lookup(&mut measured),
+            crate::HistoricalEvidence::Found(_)
+        ));
+        limits.max_candidate_bytes_per_commit = limits
+            .max_candidate_bytes_per_commit
+            .checked_sub(measured.remaining_bytes())
+            .expect("meter");
+        assert!(matches!(
+            lookup(&mut DecodeBudget::new(&limits)),
+            crate::HistoricalEvidence::Found(_)
+        ));
+        limits.max_candidate_bytes_per_commit = limits
+            .max_candidate_bytes_per_commit
+            .checked_sub(1)
+            .expect("positive budget");
+        assert!(matches!(
+            lookup(&mut DecodeBudget::new(&limits)),
+            crate::HistoricalEvidence::Exhausted
+        ));
+    }
 }

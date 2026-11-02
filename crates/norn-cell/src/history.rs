@@ -62,6 +62,11 @@ pub struct FactVersionEvidence {
     receipt: Receipt,
 }
 
+pub(crate) struct HistoricalFrame {
+    pub(crate) revision: LedgerHead,
+    pub(crate) receipt: Option<Receipt>,
+}
+
 /// Immutable knowledge coordinate; the frontier disambiguates equal logical clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KnowledgeCutoff {
@@ -417,9 +422,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         history.known_at(world, object_type, key, known_as_of, budget)
     }
     pub(crate) fn history_read(&self) -> HistoryRead<'_, '_, E> {
+        self.history_read_seeded(None)
+    }
+    pub(crate) fn history_read_seeded(&self, receipt: Option<Receipt>) -> HistoryRead<'_, '_, E> {
         HistoryRead {
             reader: self,
-            receipts: BTreeMap::new(),
+            receipts: receipt
+                .into_iter()
+                .map(|r| (r.body.commit_seq, r))
+                .collect(),
         }
     }
     fn select_evidence_known_at_with_budget(
@@ -532,8 +543,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         cutoff: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<LedgerHead>, CellError> {
+        Ok(self
+            .historical_frame_with_budget(cutoff, budget)?
+            .map(|frame| frame.revision))
+    }
+    pub(crate) fn historical_frame_with_budget(
+        &self,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<HistoricalFrame>, CellError> {
         if cutoff.frontier == 0 {
-            return Ok(Some(LedgerHead::genesis()));
+            return Ok(Some(HistoricalFrame {
+                revision: LedgerHead::genesis(),
+                receipt: None,
+            }));
         }
         let Some(receipt) = self.receipt_at_with_budget(cutoff.frontier, budget)? else {
             return Ok(None);
@@ -546,10 +569,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             receipt.body.event_count,
         )
         .ok_or_else(unproven_snapshot)?;
-        Ok(Some(LedgerHead {
+        let revision = LedgerHead {
             seq,
-            hash: receipt.body.ledger_head,
+            hash: receipt.body.ledger_head.clone(),
             commits: receipt.body.commit_seq,
+        };
+        Ok(Some(HistoricalFrame {
+            revision,
+            receipt: Some(receipt),
         }))
     }
 
@@ -583,7 +610,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     &encoded,
                     &hash,
                 )?;
-                if snapshot.root_type != root || snapshot.object_type != row.object_type {
+                if snapshot.root_type != root
+                    || snapshot.object_type != row.object_type
+                    || !crate::receipt_commitment::receipt_digest_matches(
+                        row.snapshot_sha256.as_deref(),
+                        &hash,
+                    )
+                {
                     return Err(unproven_snapshot());
                 }
             }
@@ -657,7 +690,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: norn_kernel::LogicalTime,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
-        let Some(receipt) = self.receipt_for_fact_version_with_budget(
+        let Some(evidence) = self.fact_version_evidence_with_budget(
             world,
             fact.object_type.as_str(),
             &fact.key,
@@ -667,16 +700,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
         };
-        if receipt.body.logical_time > known_as_of.as_millis() {
+        if evidence.receipt.body.logical_time > known_as_of.as_millis() {
             return Err(CellError::TemporalLeakage);
         }
-        self.object_at_version_with_budget(
-            world,
-            fact.object_type.as_str(),
-            &fact.key,
-            version,
-            budget,
-        )
+        let snapshot = evidence.snapshot;
+        Ok(match snapshot.values {
+            Some(values) => crate::reactive::BudgetedRead::Found(ObjectRecord {
+                object_type: snapshot.object_type,
+                id: snapshot.key,
+                scope: snapshot.scope,
+                version: snapshot.version,
+                values,
+            }),
+            None => crate::reactive::BudgetedRead::Missing,
+        })
     }
 
     /// Authenticate a complete snapshot against engine-materialized committed values.
