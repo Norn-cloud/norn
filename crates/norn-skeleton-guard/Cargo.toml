@@ -28,6 +28,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3"
 
 [[bin]]
