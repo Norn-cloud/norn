@@ -84,7 +84,7 @@ pub fn overlay_obligations(
         tenant: None,
     };
     admit_with_authority(source, &context, Some(retained))
-        .map_err(|_| refuse("invalid_retained_input"))?;
+        .map_err(|_error| refuse("invalid_retained_input"))?;
     let mut layer = Layer::default();
     for (index, artifact) in retained.artifacts().iter().enumerate() {
         if let Decoded::Root(root) = decode_v2(artifact) {
@@ -102,7 +102,7 @@ pub fn overlay_obligations(
         retained.registry(),
         EnvOptions::from_limit_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1()),
     )
-    .map_err(|_| refuse("unsupported_predicate"))?;
+    .map_err(|_error| refuse("unsupported_predicate"))?;
     let catalog =
         EffectiveCatalog::from_artifacts_with_registry(retained.artifacts(), retained.registry());
     let mut goals = BTreeMap::<(String, String, String), OverlayGuardGoal>::new();
@@ -113,10 +113,10 @@ pub fn overlay_obligations(
         }
         let overlay: CustomizationRoot = serde_json::from_value(
             serde_json::to_value(artifact.payload.to_json_value())
-                .map_err(|_| refuse("unsupported_predicate"))?,
+                .map_err(|_error| refuse("unsupported_predicate"))?,
         )
-        .map_err(|_| refuse("unsupported_predicate"))?;
-        let dimensions = serde_json::to_value(scope).map_err(|_| refuse("scope_mismatch"))?;
+        .map_err(|_error| refuse("unsupported_predicate"))?;
+        let dimensions = serde_json::to_value(scope).map_err(|_error| refuse("scope_mismatch"))?;
         if &artifact.scope != scope
             || overlay.scope_required.iter().any(|name| {
                 dimensions
@@ -154,7 +154,7 @@ pub fn overlay_obligations(
             max_steps: 1_048_576,
         },
     )
-    .map_err(|_| refuse("invalid_retained_input"))?;
+    .map_err(|_error| refuse("invalid_retained_input"))?;
     Ok(OverlayPlan {
         source_sha256: source.exact_digest().to_owned(),
         retained_sha256: retained.exact_digest().to_owned(),
@@ -176,7 +176,7 @@ fn pinned_target<'a>(
                 && a.version == overlay.target_artifact.version
         })
         .ok_or_else(|| refuse("unresolved_pin"))?;
-    let pin = crate::receipt::ArtifactRef::of(target).map_err(|_| refuse("unresolved_pin"))?;
+    let pin = crate::receipt::ArtifactRef::of(target).map_err(|_error| refuse("unresolved_pin"))?;
     let expected = overlay
         .target_artifact
         .additional
@@ -215,7 +215,7 @@ fn append_guards(
             return Err(refuse("unsupported_predicate"));
         }
         goal.1
-            .push(linear_guard(expression, env).map_err(|_| refuse("unsupported_predicate"))?);
+            .push(linear_guard(expression, env).map_err(|_error| refuse("unsupported_predicate"))?);
     }
     Ok(())
 }
@@ -266,13 +266,13 @@ fn entity_guards(
         }
         _ => return Err(refuse("unsupported_predicate")),
     };
-    let bound = bound.map_err(|_| refuse("unsupported_predicate"))?;
+    let bound = bound.map_err(|_error| refuse("unsupported_predicate"))?;
     let guards = invariants
         .into_iter()
         .filter(|invariant| invariant.classification.is_integrity())
         .map(|invariant| {
             linear_guard(invariant.expression.as_str(), &bound)
-                .map_err(|_| refuse("unsupported_predicate"))
+                .map_err(|_error| refuse("unsupported_predicate"))
         })
         .collect::<Result<_, _>>()?;
     Ok((bound, guards))
