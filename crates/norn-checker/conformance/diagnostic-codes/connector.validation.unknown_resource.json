@@ -1,0 +1,7 @@
+{
+  "code": "connector.validation.unknown_resource",
+  "message": "resourceId '{resourceId}' does not match a declared connector resource",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

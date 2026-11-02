@@ -1,0 +1,4 @@
+{
+  "order": 2,
+  "value": "Differential refinement is uneven: rules and accounting have finite/reference comparisons and two predicates are extracted, while most retained Rust state machines still have independent formal references rather than machine-checked implementation correspondence."
+}

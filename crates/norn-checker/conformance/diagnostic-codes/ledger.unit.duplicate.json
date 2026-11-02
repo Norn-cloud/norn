@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.duplicate",
+  "message": "duplicate unit id `{unitId}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

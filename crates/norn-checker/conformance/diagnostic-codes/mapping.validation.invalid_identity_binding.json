@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_identity_binding",
+  "message": "identity binding needs a unique source key, party.Person reference, and review evidence",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,0 +1,21 @@
+{
+  "order": 3,
+  "value": {
+    "id": "INV-AUTH-CLOSED-CUSTOM-EFFECT",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "partial",
+    "residual": "The retained IR validator admits a closed upsert_input_object declaration and rejects unknown payload/schema fields, open object schemas, and contradictory idempotent/ledgered declarations. Quint and Lean check independent bounded/reference semantics for exact active-definition pins, schema/ontology guards, one effect/event, stale/no-op behavior, and stable replay. No HTTP executor or custom ActionIR runtime is retained. Relation effects, deletes, field templates, arithmetic, domain-specific invariant programs, task-result coupling, extraction/refinement, and arbitrary custom ActionIR remain open.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.proof"
+      }
+    }
+  }
+}

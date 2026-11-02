@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "Quantity has no Apalache BMC verdict. Exhaustive enumeration covers only the six named deterministic paths (four 4-step resolution paths and two 15-step expiry paths); unrestricted step remains sampled."
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.non_scalar_input",
+  "message": "input {name} is not a canonical scalar; pass structured data as a blob",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

@@ -1,0 +1,4 @@
+{
+  "order": 4,
+  "value": "Cedar's formal reference semantics are source evidence. No runtime differential-refinement harness is retained, and no checked correspondence theorem relates the Rust authorization implementation to the references."
+}

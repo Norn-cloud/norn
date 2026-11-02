@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.unbounded_resource",
+  "message": "bound {member} must be a positive number",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
