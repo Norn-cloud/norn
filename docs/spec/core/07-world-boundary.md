@@ -162,3 +162,8 @@ uncommitted state is visible. A moving evidence revision retries at most three
 complete rebuild attempts; continued movement refuses the retryable
 `core.boundary.source_evidence_changed`, while stable recomputation disagreement
 continues to refuse `core.boundary.bundle_mismatch`.
+
+Interface-typed governed link targets resolve their concrete identity roots in the
+requested world before index lookup. If the identity is absent, every verified
+indexed root for that key is checked conservatively; an interface name never
+causes `UnknownObjectType` at the dispute fence or silently loses quarantine.

@@ -204,6 +204,7 @@ pub(crate) struct SourceDisputeIndex {
     initialized: bool,
     subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
     identities: BTreeSet<[String; 5]>,
+    roots_by_key: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -258,6 +259,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         for subject in subjects {
+            index.roots_by_key.entry(subject.1.clone()).or_default().insert(subject.0.clone());
             index
                 .subjects
                 .entry(subject)
@@ -291,26 +293,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         identity: bool,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let subject = (self.root_type(object_type)?.to_owned(), key.to_owned());
+        let roots = self.source_dispute_roots(crate::MAIN_WORLD, object_type, key)?;
         self.with_source_dispute_index(|index| {
-            index
-                .subjects
-                .get(&subject)
-                .into_iter()
-                .flatten()
-                .filter(|(kind, _finding)| *kind == identity)
-                .map(|(_kind, finding)| finding.clone())
-                .collect()
+            let mut findings = BTreeMap::new();
+            for root in roots.as_ref().into_iter().flatten().chain(index.roots_by_key.get(key).into_iter().flatten().filter(|_root| roots.is_none())) {
+                for (kind, finding) in index.subjects.get(&(root.clone(), key.to_owned())).into_iter().flatten() {
+                    if *kind == identity { findings.insert(finding.id.clone(), finding.clone()); }
+                }
+            }
+            findings.into_values().collect()
         })
     }
 
-    pub(crate) fn indexed_source_dispute(
-        &self,
-        object_type: &str,
-        key: &str,
-    ) -> Result<bool, CellError> {
-        let subject = (self.root_type(object_type)?.to_owned(), key.to_owned());
-        self.with_source_dispute_index(|index| index.subjects.contains_key(&subject))
+    pub(crate) fn indexed_source_dispute(&self, world: &str, object_type: &str, key: &str) -> Result<bool, CellError> {
+        let roots = self.source_dispute_roots(world, object_type, key)?;
+        self.with_source_dispute_index(|index| match &roots {
+            Some(roots) => roots.iter().any(|root| index.subjects.contains_key(&(root.clone(), key.to_owned()))),
+            None => index.roots_by_key.contains_key(key),
+        })
     }
 
     pub(crate) fn indexed_identity_dispute(&self, keys: &[String; 5]) -> Result<bool, CellError> {

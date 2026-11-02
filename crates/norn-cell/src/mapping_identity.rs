@@ -153,7 +153,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<bool, CellError> {
-        let disputed = self.indexed_source_dispute(object_type, key)?;
+        let disputed = self.indexed_source_dispute(world, object_type, key)?;
         if disputed && world != crate::MAIN_WORLD {
             return Err(CellError::SourceDisputeWorldUnqualified);
         }
