@@ -1607,8 +1607,15 @@ pub fn validate_rule_ir_v2_payload(
             artifact_id,
         ));
     }
-    if let Ok(text) = serde_json::to_string(payload) && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text) && let Err(reason) = norn_expr::graph::bind(&root) {
-        diagnostics.push(invalid_diagnostic("core.values.inexact",reason,"payload.graph",artifact_id));
+    if let Ok(text) = serde_json::to_string(payload) && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text) {
+        match norn_expr::graph::bind(&root) {
+            Err(reason) => diagnostics.push(invalid_diagnostic("core.values.inexact",reason,"payload.graph",artifact_id)),
+            Ok(bindings) => for note in bindings.into_iter().flat_map(|binding| binding.notes) {
+                let mut diagnostic = invalid_diagnostic(note.code,note.message,"payload.graph",artifact_id);
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                diagnostics.push(diagnostic);
+            },
+        }
     }
     reject_rule_side_effect_fields(payload, diagnostics, artifact_id);
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);

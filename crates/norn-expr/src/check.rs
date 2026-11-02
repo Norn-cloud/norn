@@ -642,7 +642,7 @@ fn check_expression_with_sources_and_root_bounds(
         }]);
     }
     let quantizers = runtime_source.matches("round((").count().saturating_sub(source.matches("round((").count());
-    let cost = within_budget(CostEstimate(cost.units().saturating_add((quantizers as u64).saturating_mul(8))), limits, span)?;
+    let cost = within_budget(cost.saturating_add((quantizers as u64).saturating_mul(8)), limits, span)?;
     Ok((
         CheckedExpression {
             inferred,

@@ -16,6 +16,8 @@ pub struct BoundAssignment {
     pub runtime_source: String,
     /// Select the single exact arithmetic profile for this assignment.
     pub exact: bool,
+    /// Informational unit inference evidence.
+    pub notes: Vec<crate::Diagnostic>,
 }
 
 /// Derive typed assignments only when a schema declares exact numeric sites.
@@ -56,7 +58,7 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>,String> {
         let expected = &outputs.fields.get(&expression.key).ok_or("exact assignment must name a declared output field")?.ty;
         let compiled = Expression::compile(expression.value.as_str()).map_err(|e|e.to_string())?;
         let checked = compiled.check_typed(&env,expected).map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))?;
-        result.push(BoundAssignment {node:id.clone(),key:expression.key.clone(),source:expression.value.as_str().to_owned(),runtime_source:checked.runtime_source().to_owned(),exact:checked.uses_exact_arithmetic()});
+        result.push(BoundAssignment {node:id.clone(),key:expression.key.clone(),source:expression.value.as_str().to_owned(),runtime_source:checked.runtime_source().to_owned(),notes:checked.notes().to_vec(),exact:checked.uses_exact_arithmetic()});
     }
     Ok(result)
 }

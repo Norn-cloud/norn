@@ -488,6 +488,10 @@ pub static REGISTRY: &[CodeEntry] = &[
         "the exact value or declared rounding site is outside the supported profile",
         "0.2.0",
     ),
+    CodeEntry {
+        severity: DiagnosticSeverity::Info,
+        ..introduced("core.values.literal_unit",Tier::T2,"numeric literal inherits declared unit {unit}","0.2.0")
+    },
     entry(
         "core.values.unit_mismatch",
         Tier::T3,
