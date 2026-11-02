@@ -468,6 +468,14 @@ fn wording_fixture(
     norn_checker::law_wording::LawWordingArtifact,
 ) {
     let mut requirement = requirement();
+    requirement.norm.authority_id = requirement.norm.law.owner.clone();
+    requirement.norm.authority_version = "1.0.0".into();
+    requirement.norm.source = norn_ir::deontic::RuleSourceSpan {
+        artifact_id: format!("{}.wording", requirement.norm.law.id),
+        pointer: "/requirement/norm".into(),
+        bytes: None,
+    };
+    requirement.timing = norn_ir::deontic::RequirementTiming::EveryCommittedState;
     requirement.norm.law.response = norn_ir::LawResponse::Predicate {
         expression: norn_ir::ZenExpression(format!("input.quantity >= {minimum}")),
     };
@@ -497,6 +505,15 @@ proptest::proptest! {
         proptest::prop_assert_eq!(ar.binding, WordingBinding::Bound);
         proptest::prop_assert_eq!(&en.view.requirement, &ar.view.requirement);
         proptest::prop_assert_eq!(ar.view.direction(), "rtl");
+        let mut altered = wording.clone();
+        altered.requirement.norm.modality = norn_ir::deontic::DeonticModality::Permission;
+        proptest::prop_assert!(matches!(admit_wording(&altered, &law, &requirement_env(), RequirementLocale::En), Err(norn_checker::law_wording::WordingError::Document)));
+        altered = wording.clone();
+        altered.requirement.norm.authority_id.push('x');
+        proptest::prop_assert!(matches!(admit_wording(&altered, &law, &requirement_env(), RequirementLocale::En), Err(norn_checker::law_wording::WordingError::Document)));
+        altered = wording.clone();
+        altered.requirement.norm.authority_version.push('x');
+        proptest::prop_assert_eq!(admit_wording(&altered, &law, &requirement_env(), RequirementLocale::En).expect("unverified authority version").binding, WordingBinding::Unverified);
         let (changed, _) = wording_fixture(minimum.checked_add(1).expect("bounded threshold"));
         let stale = admit_wording(&wording, &changed, &requirement_env(), RequirementLocale::Ar).expect("unverified view");
         proptest::prop_assert_eq!(stale.binding, WordingBinding::Unverified);
