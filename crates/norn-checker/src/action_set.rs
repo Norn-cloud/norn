@@ -2125,6 +2125,8 @@ mod synchronous_rule_tests {
         #[test]
         fn exact_rule_versions_resolve_and_mismatches_refuse(version in 0u16..1000) {
             let (action, root, mut rule) = fixture(&format!("1.0.{version}"));
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!(["demo.rule", format!("1.0.{version}")])).is_err(), "sequence pins refuse");
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!({"artifactId":"demo.rule", "version":format!("1.0.{version}")})).is_ok(), "object pins decode");
             proptest::prop_assert!(synchronous_rule_findings(&action, &root, std::slice::from_ref(&rule), &[]).is_empty());
             rule.version.push_str("-changed");
             proptest::prop_assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());

@@ -133,13 +133,30 @@ pub struct ActionInputDerivation {
 }
 
 /// Closed reference to the admitted synchronous writer of an action.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionRuleRef {
     /// Exact RuleIR artifact identity.
     pub artifact_id: String,
     /// Exact artifact version; no latest-version resolution.
     pub version: String,
+}
+
+impl<'de> Deserialize<'de> for ActionRuleRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Pin {
+            artifact_id: String,
+            version: String,
+        }
+        // TXN-RULE-1: schema and decoder agree on the object-only wire form.
+        let pin: Pin = crate::members::deserialize_object(deserializer)?;
+        Ok(Self {
+            artifact_id: pin.artifact_id,
+            version: pin.version,
+        })
+    }
 }
 
 fn default_true() -> bool {
