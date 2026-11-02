@@ -29,6 +29,8 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod catalog;
+pub mod classification;
 mod codec;
 pub mod compute;
 pub mod engine;
