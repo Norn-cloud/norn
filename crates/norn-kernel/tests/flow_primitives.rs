@@ -114,7 +114,7 @@ proptest! {
 
     #[test]
     fn scheduling_matches_wide_arithmetic(sample: u64, floor: u64, delay: u64) {
-        let expected = u128::from(sample.max(floor)) + u128::from(delay);
+        let expected = u128::from(sample.max(floor)).checked_add(u128::from(delay)).expect("two u64 values fit u128");
         prop_assert_eq!(deadline(sample, floor, delay), u64::try_from(expected).ok());
     }
 
