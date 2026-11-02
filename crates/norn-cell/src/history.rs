@@ -226,18 +226,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
-        self.snapshot_for_commit(world, object_type, key, version, None)
-    }
-
-    // Only the private writer may read its own pre-receipt incarnation.
-    fn snapshot_for_commit(
-        &self,
-        world: &str,
-        object_type: &str,
-        key: &str,
-        version: u64,
-        pending_commit: Option<u64>,
-    ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
         let row: Option<(String, String, i64, String)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
@@ -250,13 +238,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Err(unproven_snapshot());
         }
         let commit = to_u64(commit, "snapshot commit")?;
-        if pending_commit != Some(commit) {
-            let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
-            if hash_json(&receipt.body)? != receipt.hash
-                || !fact_receipt_matches(&snapshot, &hash, &receipt)
-            {
-                return Err(unproven_snapshot());
-            }
+        if let Some((pending_commit, digests)) = self.pending_digests
+            && pending_commit == commit
+        {
+            let expected = digests.get(&(
+                snapshot.root_type.clone(),
+                snapshot.key.clone(),
+                snapshot.version,
+            ));
+            return if crate::receipt_commitment::receipt_digest_matches(
+                expected.map(String::as_str),
+                &hash,
+            ) {
+                Ok(snapshot)
+            } else {
+                Err(unproven_snapshot())
+            };
+        }
+        let receipt = self.receipt_at(commit)?.ok_or_else(unproven_snapshot)?;
+        if hash_json(&receipt.body)? != receipt.hash
+            || !fact_receipt_matches(&snapshot, &hash, &receipt)
+        {
+            return Err(unproven_snapshot());
         }
         Ok(snapshot)
     }
@@ -556,10 +559,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
         version: u64,
-        pending_commit: u64,
     ) -> Result<String, CellError> {
         Ok(self
-            .snapshot_for_commit(world, object_type, key, version, Some(pending_commit))?
+            .proven_snapshot(world, object_type, key, version)?
             .scope)
     }
 
@@ -625,7 +627,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
+        let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+COALESCE(octet_length(r.world),0)+COALESCE(octet_length(r.idempotency_key),0)+COALESCE(octet_length(r.request_hash),0)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
         if !budget.charge_rows(2) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
             return Ok(crate::reactive::BudgetedRead::Exhausted);
