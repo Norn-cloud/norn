@@ -196,7 +196,7 @@ for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/char
 done
 
 "$fstar_binary" --version | grep -Fx "F* $FSTAR_VERSION"
-test "$("$opam_binary" var ocaml-version)" = 5.4.1
+test "$("$OPAMROOT/$OPAM_SWITCH/bin/ocamlc" -version)" = 5.4.1
 test "$("$opam_binary" list --installed --short --columns=version hax-engine)" = 0.3.7
 test "$("$source_root/aeneas/bin/aeneas" -version)" = 'aeneas 74a460a2'
 test "$("$source_root/aeneas/charon/bin/charon" version)" = 0.1.240

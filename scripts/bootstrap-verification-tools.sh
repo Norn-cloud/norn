@@ -29,6 +29,32 @@ KANI_VERSION="0.67.0"
 Z3_VERSION="5.1.0"
 JRE_VERSION="21.0.12.1_1"
 
+export ELAN_HOME="$tool_root/elan"
+receipt="$tool_root/verification-install.sha256"
+installation_digest() {
+  sha256sum "${BASH_SOURCE[0]}"
+  find -L "$ELAN_HOME/bin" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v$LEAN_VERSION" \
+    "$ELAN_HOME/toolchains/leanprover--lean4---v4.34.1" \
+    "$tool_root/quint-$QUINT_VERSION" "$tool_root/kani-home/kani-$KANI_VERSION" \
+    "$tool_root/kani-wrapper/bin" "$tool_root/z3-$Z3_VERSION" \
+    "$tool_root/temurin-jre-$JRE_VERSION" \
+    "$tool_root/quint-home/apalache-dist-0.56.1" \
+    "$bin_root/elan" "$bin_root/lean" "$bin_root/lake" "$bin_root/leanc" \
+    "$bin_root/leanmake" "$bin_root/quint" "$bin_root/kani" \
+    "$bin_root/cargo-kani" "$bin_root/z3" "$bin_root/java" \
+    -type f -print0 | sort -z | xargs -0 -r sha256sum
+}
+if [[ -f "$receipt" ]]; then
+  installed_digest="$(installation_digest | sha256sum)"
+  if [[ "$installed_digest" != "$(cat "$receipt")" ]]; then
+    echo "Pinned verification installation changed; rebuild the snapshot without $receipt" >&2
+    exit 1
+  fi
+  echo "Exact pinned verification installation verified: $installed_digest"
+  exit 0
+fi
+
 elan_archive="$download_root/elan-$ELAN_VERSION-x86_64-unknown-linux-gnu.tar.gz"
 download_verified \
   "https://github.com/leanprover/elan/releases/download/v$ELAN_VERSION/elan-x86_64-unknown-linux-gnu.tar.gz" \
@@ -143,6 +169,12 @@ tar -xzf "$apalache_archive" -C "$apalache_root"
 printf '%s  %s\n' \
   "4753c0ebb2cbb266e2c6ac19ab5ca3827d726cc80fd1fc5d7c1eeb64736cd60b" \
   "$apalache_root/apalache/lib/apalache.jar" | sha256sum --check --status
+
+test "$("$ELAN_HOME/bin/elan" --version | cut -d ' ' -f 2)" = "$ELAN_VERSION"
+ELAN_TOOLCHAIN="leanprover/lean4:v$LEAN_VERSION" "$bin_root/lean" --version | grep -F "version $LEAN_VERSION,"
+"$bin_root/quint" --version | grep -Fx "$QUINT_VERSION"
+installation_digest | sha256sum > "$receipt.tmp"
+mv "$receipt.tmp" "$receipt"
 
 cat <<EOF
 Installed pinned verification tools under:
