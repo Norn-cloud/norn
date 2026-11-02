@@ -110,16 +110,29 @@ fn run(command: Command) -> Result<(String, bool), String> {
                 digest,
                 &rule,
             )?;
+            let mut accepted = 0_u64;
+            let mut refused = 0_u64;
             for line in std::io::stdin().lock().lines() {
                 let line = line.map_err(|error| error.to_string())?;
                 let response = match decision.run(&line, units) {
-                    Ok(output) => format!("{{\"ok\":true,\"output\":{output}}}"),
-                    Err(error) => serde_json::json!({"ok":false,"error":error}).to_string(),
+                    Ok(output) => {
+                        accepted += 1;
+                        format!("{{\"ok\":true,\"output\":{output}}}")
+                    }
+                    Err(error) => {
+                        refused += 1;
+                        serde_json::json!({"ok":false,"error":error}).to_string()
+                    }
                 };
                 writeln!(std::io::stdout().lock(), "{response}")
                     .map_err(|error| error.to_string())?;
             }
-            Ok((String::new(), true))
+            writeln!(
+                std::io::stderr().lock(),
+                "norn eval: {accepted} accepted, {refused} refused"
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((String::new(), refused == 0))
         }
         Command::Check { artifacts, context } => {
             let artifacts =
