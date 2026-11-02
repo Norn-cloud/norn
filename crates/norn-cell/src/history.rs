@@ -256,13 +256,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        self.fact_version_evidence_at_root(world, root, key, version)
+        self.fact_version_evidence_at_root(world, root, object_type, key, version)
     }
 
     fn fact_version_evidence_at_root(
         &self,
         world: &str,
         root: &str,
+        object_type: &str,
         key: &str,
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
@@ -272,7 +273,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let (encoded, hash, commit_seq) = row.ok_or_else(unproven_snapshot)?;
-        let snapshot = decode_snapshot(world, root, key, version, &encoded, &hash)?;
+        let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
         if snapshot.root_type != root {
             return Err(unproven_snapshot());
         }
@@ -328,13 +329,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
         let root = self.root_type(object_type).unwrap_or(object_type);
-        self.fact_version_evidence_at_root_with_budget(world, root, key, version, budget)
+        self.fact_version_evidence_at_root_with_budget(world, root, object_type, key, version, budget)
     }
 
     fn fact_version_evidence_at_root_with_budget(
         &self,
         world: &str,
         root: &str,
+        object_type: &str,
         key: &str,
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
@@ -352,7 +354,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !budget.charge_rows(2) || !budget.charge(bytes) {
             return Ok(None);
         }
-        self.fact_version_evidence_at_root(world, root, key, version)
+        self.fact_version_evidence_at_root(world, root, object_type, key, version)
             .map(Some)
     }
 

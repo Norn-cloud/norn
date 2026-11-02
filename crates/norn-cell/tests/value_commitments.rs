@@ -23,6 +23,7 @@ fn model() -> Model {
         json!({"name":"proof.Item","properties":[{"id":"value","type":{"kind":"text"}}]}),
         json!({"name":"proof.Input","properties":[{"id":"value","type":{"kind":"text"},"markings":["pii.contact"]}]}),
         json!({"name":"proof.Empty","properties":[]}),
+        json!({"name":"proof.Child","extends":"proof.Item"}),
         json!({"name":"proof.Observed","properties":[{"id":"observationJson","type":{"kind":"text"}}]}),
         json!({"name":"proof.Defaulted","properties":[{"id":"value","type":{"kind":"text"}},{"id":"optional","type":{"kind":"text"},"constraints":{"nullable":true}},{"id":"defaulted","type":{"kind":"text"},"default":"declared"}]}),
         json!({"name":"proof.State","properties":[{"id":"status","type":{"kind":"enum","values":[{"value":"draft"},{"value":"approved"}]}}],"lifecycles":[{"property":"status","initial":["draft"],"terminal":["approved"],"transitions":[{"id":"approve","from":["draft"],"to":"approved"}]}]}),
@@ -1765,11 +1766,14 @@ fn fact_version_receipts_reject_missing_or_tampered_identity_lookup_and_receipt(
     for (world, ty, key, version) in [
         ("wrong", "proof.Item", "item", 1),
         (MAIN_WORLD, "proof.Input", "item", 1),
+        (MAIN_WORLD, "proof.Child", "item", 1),
         (MAIN_WORLD, "proof.Item", "missing", 1),
         (MAIN_WORLD, "proof.Item", "item", 0),
         (MAIN_WORLD, "proof.Item", "item", 3),
     ] {
         assert!(read(world, ty, key, version).is_err());
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(store.read().fact_version_evidence_with_budget(world,ty,key,version,&mut DecodeBudget::new(&limits)).is_err());
     }
     let conn = rusqlite::Connection::open(path).expect("corruption fixture");
     // The locator's seq is not itself a proof: even authentic other receipts
