@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import tempfile
 
@@ -71,7 +70,7 @@ def projection(raw, identity, directory):
     if "id" in body:
         raise ValueError("legacy subsystem must not declare id")
     coverage.write_entries({"subsystems": [{"id": identity, **body}]}, directory)
-    return {p.relative_to(directory).as_posix(): coverage._object(p) for p in coverage.files(directory)
+    return {p.relative_to(directory).as_posix(): coverage.read_entry(p) for p in coverage.files(directory)
             if p.relative_to(directory).parts[0] == "subsystems"}
 
 
@@ -154,7 +153,7 @@ def migrate(root, base, head):
             return selected if re.search(rb"^<<<<<<< ", raw, re.M) else raw
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise ValueError(f"not a regular file {path}")
-        return target.read_bytes() if target.exists() else MISSING
+        return (json_bytes(coverage.read_entry(target)) if path.startswith(COVERAGE + "/") else target.read_bytes()) if target.exists() else MISSING
     def put(path, value, template):
         plan[path] = value
         record = RECORDS + path + ".json"
@@ -180,7 +179,7 @@ def migrate(root, base, head):
                     new = {**new, "order": value["order"]}
                 else:
                     if folder not in ranks:
-                        ranks[folder] = max((coverage._object(p)["order"] for p in (root / folder).glob("*.json")), default=-1)
+                        ranks[folder] = max((coverage.read_entry(p)["order"] for p in (root / folder).glob("*.json")), default=-1)
                     ranks[folder] += 1
                     new = {**new, "order": ranks[folder]}
             if isinstance(old, dict) and set(old) == {"order", "value"} and isinstance(value, dict):
@@ -227,45 +226,7 @@ def migrate(root, base, head):
                 raise ValueError("non-registry Rust changes conflict")
             if result.stdout != (root / RUST).read_bytes():
                 put(RUST, result.stdout, template)
-        staged = temporary / "coverage"
-        shutil.copytree(root / COVERAGE, staged, symlinks=True)
-        for path in changed:
-            if path.startswith(COVERAGE + "/"):
-                (staged / Path(path).relative_to(COVERAGE)).unlink(missing_ok=True)
-        if any((staged / "subsystems").glob("*.json")):
-            raise ValueError("coverage target has not migrated")
-        for path, content in plan.items():
-            if path.startswith(COVERAGE + "/"):
-                target = staged / Path(path).relative_to(COVERAGE)
-                if content is MISSING:
-                    target.unlink(missing_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(content)
-        for folder in sorted(staged.rglob("*"), reverse=True):
-            if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
-                folder.rmdir()
-        coverage.load(staged)
-        backups = {p: (root / p).read_bytes() if (root / p).exists() else MISSING for p in plan}
-        try:
-            for path, content in plan.items():
-                target = root / path
-                if content is MISSING:
-                    target.unlink(missing_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(content)
-            for folder in sorted((root / COVERAGE).rglob("*"), reverse=True):
-                if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
-                    folder.rmdir()
-        except BaseException:
-            for path, content in backups.items():
-                if content is MISSING:
-                    (root / path).unlink(missing_ok=True)
-                else:
-                    (root / path).parent.mkdir(parents=True, exist_ok=True)
-                    (root / path).write_bytes(content)
-            raise
+        coverage.apply_entries(root, {p: None if v is MISSING else v for p, v in plan.items()}, changed)
     return sorted(plan)
 
 

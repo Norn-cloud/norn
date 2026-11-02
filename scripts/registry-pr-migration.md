@@ -1,21 +1,11 @@
-After merging main, run from the PR worktree, with the pre-merge approved head
-and its old-layout merge base:
+Run from the merged PR worktree with its pre-merge approved head and old merge base:
 
 ```sh
 python3 scripts/migrate_registry_pr.py "$base" "$approved_head"
 ```
 
-Stage the printed paths. `git rm` conflicted legacy subsystem JSON and its
-provenance; remove old diagnostic JSON/record only when the per-code directory
-exists. Resolve other approved mechanical conflicts, refuse remaining unmerged
-paths, then run cheap and the approved-patch identity check **before** pushing.
-For that check, compare the projected registry delta, not the raw old-file diff:
-`projection`/`rust_projection` supply the approved side. Ignore only entry order;
-retain file identity/modes and nested hashes. Keep the normal check elsewhere.
-
-The command never stages or deletes legacy files. It preserves main's order,
-appends PR additions, and is idempotent. Conflicting edits, unkeyed replacements,
-unsupported Rust, Rust/JSON disagreement and header changes refuse before writes.
-Native, clean diagnostic files stay untouched until that registry migrates.
-Offline fixtures retain exact registry diffs and SHAs from approved #372/#409;
-tests replay both merge directions and both diagnostic layouts.
+Stage printed paths. Remove conflicted legacy subsystem JSON/records; remove old diagnostic JSON/record only if the per-code directory exists.
+Resolve other mechanical conflicts, refuse remaining unmerged paths, then run cheap and patch identity **before** push.
+Compare the projected registry delta (`projection`/`rust_projection`), retaining file identity/modes and nested hashes; ignore only entry order. Keep the normal check elsewhere.
+The command never stages/deletes legacy files. It preserves main order and is idempotent. Conflicts, unkeyed replacements, unsupported Rust, Rust/JSON mismatch and header changes refuse before writes; clean native diagnostics stay untouched.
+Frozen #372/#409 inputs test both merge directions/phases, refusals and byte-identical reruns.
