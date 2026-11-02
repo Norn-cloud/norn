@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
+/// Exact result membership and native fact evidence.
+pub mod lineage;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
@@ -186,6 +188,25 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+    }
+    fn question_snapshot_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.question_snapshot_at_with(plan, context, None, visible, consume)
+    }
+    fn question_snapshot_at_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
@@ -275,12 +296,15 @@ impl<E: SqlEngine> CellStore<E> {
                 definition_pin,
                 &contributions,
             )?;
-            Ok(Snapshot {
-                historical_receipt,
-                result,
-                contributions,
-                members,
-            })
+            consume(
+                Snapshot {
+                    historical_receipt,
+                    result,
+                    contributions,
+                    members,
+                },
+                &mut budget,
+            )
         })
     }
     fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {
