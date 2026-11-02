@@ -513,6 +513,20 @@
       "tier": "T3"
     },
     {
+      "code": "core.values.unit_binding_required",
+      "message": "an interface Decimal requires an explicit implementing unit and scale",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T2"
+    },
+    {
+      "code": "core.values.unit_mismatch",
+      "message": "interface Decimal group requires the same unit and scale",
+      "severity": "error",
+      "since": "0.1.0",
+      "tier": "T3"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",

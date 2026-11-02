@@ -42,6 +42,8 @@ fn linear_profile_refuses_calls_nonlinearity_and_dynamic_or_opaque_operands() {
     for expression in [
         "input.x * input.y > 0",
         "input.x / input.y > 0",
+        "input.x / 3 * 3 == 1",
+        "input.x / 10 > 0",
         "abs(input.x) > 0",
         "input['x' + 'y'] == 0",
         "input == input",
@@ -63,4 +65,10 @@ proptest::proptest! {
         let joined = vec![format!("{a}.{b}")];
         proptest::prop_assert_ne!(linear_symbol(&split), linear_symbol(&joined));
     }
+}
+
+#[test]
+fn linear_profile_keeps_type_diagnostics() {
+    let error = linear_guard("input.missing == 1", &env()).expect_err("unknown field");
+    assert!(error.to_string().contains("missing"));
 }

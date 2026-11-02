@@ -51,7 +51,7 @@ Evidence levels remain separate. Lean proof bodies must check the generated theo
 - **AUTH-REVOKE:** Given delegated approval at generation 1, when revoked before commit/dispatch, then no new governed action/external attempt; already dispatched results are recorded and reconciled.
 - **PROOF-STALE:** Given a passing old statement, when a writer/unit/mapping changes, then old evidence is unknown for the new goal, never proved.
 
-**LAW-CONVERSION-1 (first B4 cut):** `core.Conversion` carries the single `core.law.conversion_conservation` invariant over nonnegative accepted input/output/loss measurements in one explicit unit, at scale 3. Its LawIR references that invariant, and effective instances retain its core origin on a Melt implementor without copying the predicate. A balanced measurement is accepted; omitted loss, negative loss and wrong scale refuse. The shared commit invariant check rejects every write and outbox effect in the proposal on failure. Measurement conservation does not establish stock/value effect closure or derive totals from allocations; those aggregate obligations remain unknown until the declared fold/effect bindings are implemented.
+**LAW-CONVERSION-1 (first B4 cut):** `core.Conversion` carries the single `core.law.conversion_conservation` invariant over nonnegative accepted input/output/loss measurements; its Decimal binding group requires one identical concrete unit and scale from each implementor (Melt: UCUM `g`, scale 3), with no scalar or sibling-unit fallback. Its LawIR references that invariant, and effective instances retain its core origin on a Melt implementor without copying the predicate. A balanced measurement is accepted; omitted loss, negative loss and wrong scale refuse. The shared commit invariant check rejects every write and outbox effect in the proposal on failure. Measurement conservation does not establish stock/value effect closure or derive totals from allocations; those aggregate obligations remain unknown until the declared fold/effect bindings are implemented.
 
 ## Main and gaps
 
@@ -65,3 +65,5 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 4. B5 generate initialization/writer/non-vacuity statements; B6 generated Quint jobs; B7 exact result binding; B8 scenario/explanation projection, each separately gated.
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
+
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures reference `norn.values.property_validity` plus the canonical digest of the exact retained property-domain declaration closure (including inherited, referenced-type and interface constraints), with stale/forged pins Unverified and no attribution to an unrelated conservation law.
