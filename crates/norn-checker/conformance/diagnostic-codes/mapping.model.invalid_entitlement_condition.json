@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.invalid_entitlement_condition",
+  "message": "condition link {link} must target {expectedTarget}, got {actualTarget}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

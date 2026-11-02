@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_required_link",
+  "message": "required relationship {link} has no exact target key",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T6"
+}

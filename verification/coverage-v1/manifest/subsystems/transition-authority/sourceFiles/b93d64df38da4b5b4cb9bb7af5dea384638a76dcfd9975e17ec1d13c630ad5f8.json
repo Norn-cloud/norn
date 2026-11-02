@@ -1,0 +1,4 @@
+{
+  "order": 99,
+  "value": "crates/norn-kernel/src/snapshot_observe.rs"
+}

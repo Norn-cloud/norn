@@ -1,0 +1,40 @@
+{
+  "artifactId": "demo.commerce.CatalogEntry.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Catalog entry evidence",
+  "namespace": "demo.commerce",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "demo.commerce.SourceIdentity"
+      ],
+      "name": "demo.commerce.CatalogEntry",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-commerce/artifacts/demo.commerce.CatalogEntry.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.empty_record",
+  "message": "record must declare members",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

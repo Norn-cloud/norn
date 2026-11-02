@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-QL-UNIT-DIMENSION",
+    "runtime": "tested",
+    "model": "bounded_model_checked",
+    "proof": "reference_proved",
+    "residual": "Whole checker-admitted packs pin exact ontology, unit/dimension terms and precision in immutable Define receipts on the normalized cell path. Legacy authority/profile state was removed in quantity v2. Formal artifacts remain references; #3303 must establish v2 refinement.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry2aa6092c1a3b54093c65cce227e80481199a83aa01f2f2a5a18b637c5f09f1fe.evidence.proof"
+      }
+    }
+  }
+}

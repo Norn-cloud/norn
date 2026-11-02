@@ -701,6 +701,10 @@
           "description": "Fire one declared transition of the object the action input names\n(`objectIdField`), pinned by Entity artifact identity. `lifecycle` is\nthe lifecycle property and `transition` the transition id it declares;\nthe lifecycle owns the source states, the target state, and the\nguards, so the effect writes that one property and nothing else\n(T3-LIFE-3, #2867).",
           "type": "object",
           "properties": {
+            "acceptReceipt": {
+              "description": "Bind a host-authenticated Function result before firing the transition.",
+              "$ref": "#/$defs/ReceiptAcceptance"
+            },
             "entityArtifactId": {
               "type": "string"
             },
@@ -3332,6 +3336,11 @@
         "maintenance"
       ]
     },
+    "Digest": {
+      "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "DimensionPath": {
       "description": "A property reached by zero or more declared directional link roles.",
       "type": "object",
@@ -4249,6 +4258,59 @@
       "description": "The namespace a tenant (or a package) adds members under (`acme`).\nAllocated by the registry (T8-REG-4); unique per tenant.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9]*$"
+    },
+    "FoldArithmetic": {
+      "description": "Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN\ndivision and implicit rounding do not implement this contract.",
+      "type": "object",
+      "properties": {
+        "rounding": {
+          "$ref": "#/$defs/FoldRounding"
+        },
+        "scale": {
+          "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scale",
+        "rounding"
+      ]
+    },
+    "FoldOrderKey": {
+      "description": "One required scalar property of a fold item. All keys ascend; the final\nidentity breaks every tie without consulting input enumeration order.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FoldOrderKind"
+        },
+        "property": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "kind"
+      ]
+    },
+    "FoldOrderKind": {
+      "type": "string",
+      "enum": [
+        "string",
+        "integer"
+      ]
+    },
+    "FoldRounding": {
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
+      ]
     },
     "GapReason": {
       "description": "Why a target member is not mapped.",
@@ -5214,6 +5276,10 @@
         "key": {
           "description": "Key of the referenced decision graph: the `artifactId` of a `RuleIR` v2\nrule that the envelope declares as a required `rule` dependency. The\nchecker resolves it and bounds the sub-decision closure (T3-DEC-1).",
           "type": "string"
+        },
+        "orderedFold": {
+          "description": "Bounded ordered application of this existing sub-decision. Execution\nremains refused until the ordered-fold semantics profile is supported.",
+          "$ref": "#/$defs/OrderedFold"
         },
         "outputPath": {
           "type": [
@@ -7627,6 +7693,70 @@
         "superseded"
       ]
     },
+    "OrderedFold": {
+      "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
+      "type": "object",
+      "properties": {
+        "accumulatorSchema": {
+          "description": "Closed schema of the initial and every subsequent accumulator.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "arithmetic": {
+          "$ref": "#/$defs/FoldArithmetic"
+        },
+        "identity": {
+          "description": "The last order key; must be a unique, stable string identity.",
+          "type": "string"
+        },
+        "initial": {
+          "description": "Exact expression evaluated once against the node input.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "itemSchema": {
+          "description": "Closed schema of one input item.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "maxAccumulatorBytes": {
+          "description": "Canonical encoded byte bound, checked initially and after every step.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maxItems": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "order": {
+          "description": "Required, non-null item properties in lexicographic ascending order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FoldOrderKey"
+          }
+        },
+        "semanticsVersion": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "semanticsVersion",
+        "order",
+        "identity",
+        "itemSchema",
+        "accumulatorSchema",
+        "initial",
+        "maxItems",
+        "maxAccumulatorBytes",
+        "arithmetic"
+      ]
+    },
     "Origin": {
       "description": "Who asserted a fact about the source.",
       "oneOf": [
@@ -8394,6 +8524,41 @@
         "migration",
         "import",
         "system"
+      ]
+    },
+    "ReceiptAcceptance": {
+      "description": "RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results.",
+      "type": "object",
+      "properties": {
+        "digestProperty": {
+          "description": "Writable text property receiving the checked receipt digest.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "manifestDigest": {
+          "description": "Exact admitted Function manifest the host must authenticate.",
+          "$ref": "#/$defs/Digest"
+        },
+        "referenceField": {
+          "description": "Required string input member naming the immutable receipt digest.",
+          "type": "string"
+        },
+        "resultBindings": {
+          "description": "Writable target property to accepted result member. Target property\ntypes govern decoding; action input supplies none of these values.",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "$ref": "#/$defs/PropertyId"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "referenceField",
+        "manifestDigest",
+        "digestProperty",
+        "resultBindings"
       ]
     },
     "RecordMember": {

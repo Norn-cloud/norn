@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.unknown_field",
+  "message": "dataset {dataset} has no field {field}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

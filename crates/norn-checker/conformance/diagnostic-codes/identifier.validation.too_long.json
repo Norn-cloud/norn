@@ -1,0 +1,7 @@
+{
+  "code": "identifier.validation.too_long",
+  "message": "{identifier} is {actualBytes} UTF-8 bytes; the admission limit is {limitBytes}; rename it before installing updated definitions",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,21 @@
+{
+  "order": 5,
+  "value": {
+    "id": "INV-AUTH-DOMAIN-ADMISSION-PREDICATE",
+    "runtime": "missing",
+    "model": "bounded_model_checked",
+    "proof": "missing",
+    "residual": "Two pinned extraction lanes start from the exact production norn_ir::entity_mutation_authority_admits symbol: hax emits F* and Aeneas/Charon emits Lean, and both prove the complete representation-free Boolean truth table used by EntityMutationAuthority::admits. The Aeneas theorem reports no axioms and the gate checks four negative canaries, but the translator/compiler/prover toolchains remain trusted. This claim excludes descriptor parsing, enum-to-Boolean mapping, active-artifact lookup, call-site completeness, persistence, and every domain engine's internal invariants. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code. Public scope excludes the former engine/provider implementation and its evidence; no correspondence is claimed for that omitted code.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entryac3f4b9b255a1c0ef209b926abc11cea7de785df25fc18d7b4e9afbf77774fc1.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entryac3f4b9b255a1c0ef209b926abc11cea7de785df25fc18d7b4e9afbf77774fc1.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entryac3f4b9b255a1c0ef209b926abc11cea7de785df25fc18d7b4e9afbf77774fc1.evidence.proof"
+      }
+    }
+  }
+}

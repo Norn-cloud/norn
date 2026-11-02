@@ -571,6 +571,8 @@ export interface components {
          *     (T3-LIFE-3, #2867).
          */
         NornIrActionEffectProgramOneOf1: {
+            /** @description Bind a host-authenticated Function result before firing the transition. */
+            acceptReceipt?: components["schemas"]["NornIrReceiptAcceptance"];
             entityArtifactId: string;
             entityArtifactVersion: string;
             /** @enum {string} */
@@ -1590,6 +1592,14 @@ export interface components {
          * @enum {string}
          */
         NornIrDiagnosticSeverity: "error" | "warning" | "info";
+        /**
+         * @description A content digest, `sha256:<64 lower-case hex>`.
+         *
+         *     Decoding accepts any string so that admission can report a mutable
+         *     identity (a tag, URI, or object key) as a finding;
+         *     [`Digest::is_well_formed`] is the rule.
+         */
+        NornIrDigest: string;
         /** @description A property reached by zero or more declared directional link roles. */
         NornIrDimensionPath: {
             /** @description Forward or inverse roles, in traversal order; empty means the root object. */
@@ -2168,6 +2178,30 @@ export interface components {
          */
         NornIrFlowSourceMapStepKind: "perform" | "catchTag" | "if" | "switch" | "retry" | "sleep" | "all" | "succeed" | "fail" | "compose";
         /**
+         * @description Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN
+         *     division and implicit rounding do not implement this contract.
+         */
+        NornIrFoldArithmetic: {
+            rounding: components["schemas"]["NornIrFoldRounding"];
+            /**
+             * Format: uint32
+             * @description Quantity-ledger-compatible exact scaled integers; at most 18 places.
+             */
+            scale: number;
+        };
+        /**
+         * @description One required scalar property of a fold item. All keys ascend; the final
+         *     identity breaks every tie without consulting input enumeration order.
+         */
+        NornIrFoldOrderKey: {
+            kind: components["schemas"]["NornIrFoldOrderKind"];
+            property: string;
+        };
+        /** @enum {string} */
+        NornIrFoldOrderKind: "string" | "integer";
+        /** @enum {string} */
+        NornIrFoldRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
+        /**
          * @description Why a target member is not mapped.
          * @enum {string}
          */
@@ -2553,6 +2587,11 @@ export interface components {
              *     checker resolves it and bounds the sub-decision closure (T3-DEC-1).
              */
             key: string;
+            /**
+             * @description Bounded ordered application of this existing sub-decision. Execution
+             *     remains refused until the ordered-fold semantics profile is supported.
+             */
+            orderedFold?: components["schemas"]["NornIrOrderedFold"];
             outputPath?: string | null;
             passThrough?: boolean;
         };
@@ -3860,6 +3899,39 @@ export interface components {
          */
         NornIrOntologyTermStatus: "active" | "deprecated" | "superseded";
         /**
+         * @description A deterministic collection derivation through an existing RuleIR helper.
+         *     The helper's input is exactly `{accumulator, item, index}` and its output
+         *     is the next accumulator. Residuals and provenance are ordinary declared
+         *     accumulator fields; the evaluator does not interpret their names.
+         */
+        NornIrOrderedFold: {
+            accumulatorSchema: components["schemas"]["NornIrOrderedFoldPropertyAccumulatorSchema"];
+            arithmetic: components["schemas"]["NornIrFoldArithmetic"];
+            /** @description The last order key; must be a unique, stable string identity. */
+            identity: string;
+            /** @description Exact expression evaluated once against the node input. */
+            initial: string;
+            itemSchema: components["schemas"]["NornIrOrderedFoldPropertyItemSchema"];
+            /**
+             * Format: uint32
+             * @description Canonical encoded byte bound, checked initially and after every step.
+             */
+            maxAccumulatorBytes: number;
+            /** Format: uint32 */
+            maxItems: number;
+            /** @description Required, non-null item properties in lexicographic ascending order. */
+            order: components["schemas"]["NornIrFoldOrderKey"][];
+            semanticsVersion: string;
+        };
+        /** @description Closed schema of the initial and every subsequent accumulator. */
+        NornIrOrderedFoldPropertyAccumulatorSchema: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description Closed schema of one input item. */
+        NornIrOrderedFoldPropertyItemSchema: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
          * @description Who asserted a fact about the source.
          * @enum {string}
          */
@@ -4219,6 +4291,23 @@ export interface components {
         NornIrProposalMode: "preview";
         /** @enum {string} */
         NornIrProvenanceSource: "authoring_sdk" | "agent" | "migration" | "import" | "system";
+        /** @description RECEIPT-EFFECT-1: only a host-resolved reference may author receipt results. */
+        NornIrReceiptAcceptance: {
+            /** @description Writable text property receiving the checked receipt digest. */
+            digestProperty: string;
+            /** @description Exact admitted Function manifest the host must authenticate. */
+            manifestDigest: string;
+            /** @description Required string input member naming the immutable receipt digest. */
+            referenceField: string;
+            resultBindings: components["schemas"]["NornIrReceiptAcceptancePropertyResultBindings"];
+        };
+        /**
+         * @description Writable target property to accepted result member. Target property
+         *     types govern decoding; action input supplies none of these values.
+         */
+        NornIrReceiptAcceptancePropertyResultBindings: {
+            [key: string]: components["schemas"]["NornIrPropertyId"];
+        };
         /**
          * @description One required member of a closed record. A nullable member must still be
          *     present, with an explicit null when it has no value.

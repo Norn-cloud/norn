@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.sub_decision_bound",
+  "message": "sub-decision {key} nests {depth} levels deep, or the closure holds {count} graphs; the Norn profile admits at most {max}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

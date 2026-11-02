@@ -1,0 +1,7 @@
+{
+  "code": "ledger.posting.contract_version_mismatch",
+  "message": "unsupported posting contract version `{version}`; expected `{expected}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

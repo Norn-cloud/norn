@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.promoted_inference",
+  "message": "{entry} has origin {origin}, which its list does not admit; an inference is never a declaration",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
