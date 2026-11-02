@@ -113,3 +113,14 @@ Use [03](../core/03-query-compute.md) for query/grain/engines, [07](../core/07-w
 Main has metric IR/checking, source mappings, reactive substrate and history. Open #69 introduces `norn-metrics` point-in-time admission; #71 adds cursor-based historical reads; #97/#103 are WellDB prerequisites. None establishes full statistical publication or three-engine execution on the inspected baseline. Track DATA-FORECAST/publication as required additional work, not an existing crate capability.
 
 Pass when all nine cases run on pinned synthetic inputs with exact expected totals, no skips, source/correction lineage, three-engine correspondence, non-refused observation capture and guarded publication. Record separate runtime, sampled differential and statistical evidence. Run the same required CI/Boat gates as the core specs; correctness of this fixture is not a universal IVM proof or a production ML claim.
+
+DATA-FEED-REPLAY-1 (CP2 conformance): a signed synthetic ERPNext measurement
+webhook enters the public host's Observed inbox as a pinned bundle; invalid
+signatures capture nothing. Repeating the same sealed input creates one bundle
+and one admitted purity-law finding. Processing purity 1.20 excludes that row
+from authoritative aggregates with a visible quarantine count. A missed
+correction fetched by the ingress full-document sweep is captured and processed
+after restart; purity 0.90 resolves the retained finding and restores the row.
+Sweep replay adds no bundle, finding or canonical version. This qualifies the
+property-only host/inbox bridge, not durable cursor advancement, out-of-order
+source convergence, tombstones, or deferred conversion/lot role resolution.
