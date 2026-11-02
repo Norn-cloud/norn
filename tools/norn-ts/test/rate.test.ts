@@ -47,3 +47,22 @@ test("JEWEL-PRICE native acceptance uses freshly compiled typed declarations", (
  expect(canonicalJson(result.artifacts)).toBe(canonicalJson(retained))
  expect(result.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({kind:"action",payload:expect.objectContaining({derive:[{field:"amount",expression:"input.price_per_g * input.fine_g",inputRequired:false}]})})]))
 })
+
+test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bounds", () => {
+ const branchSource = (count: number, label = "ok") => `
+ import { Schema } from "effect"
+ import { Norn } from "@norn/authoring"
+ export const Branches = Norn.decision({id:"demo.branches",title:"Branches",version:"1.0.0",contract:"sub_decision",scopeRequired:[],
+ input:Schema.Struct({amount:Norn.decimal(2)}),output:Schema.Struct({amount:Norn.decimal(2),label:Schema.String})}, input => {
+ ${Array.from({length:count}, (_,i) => `if (input.amount > ${i}) return {amount:input.amount,label:${JSON.stringify(label)}}`).join("\n")}
+ return {amount:input.amount,label:"fallback"}
+ })`
+ const scope = {orgId:"org_demo",environmentId:"dev"}
+ expect(compileModule(branchSource(2), scope).ok).toBe(true)
+ for (const source of [branchSource(160), branchSource(1, "🪙".repeat(5000))]) {
+  const result = compileModule(source, scope)
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("oversized exact callback compiled")
+  expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({code:"NORN-FLOW-UNBOUNDED",message:expect.stringContaining("norn-expr/4 source bounds")})]))
+ }
+})

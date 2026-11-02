@@ -80,6 +80,25 @@ const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.rate", "@norn/authoring#
 /** `DECIMAL_LITERAL_PATTERN` without the sign (the sign is a prefix `-`). */
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/
 
+/** VAL-EXACT-1: generated callbacks obey norn-expr/4's pre-parser bounds. */
+function checkExactSource(source: string, node: ts.Node): void {
+  const refuse = (): never => { throw new CompileError("NORN-FLOW-UNBOUNDED", "exact decision output exceeds norn-expr/4 source bounds (16384 UTF-8 bytes, 128 bracket levels, 512 recursion-opening tokens)", node) }
+  if (new TextEncoder().encode(source).length > 16_384) refuse()
+  // Match the engine's conservative raw-source scan, including literal contents.
+  let brackets = 0, levels = 0, word = ""
+  const digit = (c: string | undefined): boolean => c !== undefined && c >= "0" && c <= "9"
+  for (let i = 0; i <= source.length; i++) {
+    const c = source[i] ?? " "
+    if (/[A-Za-z0-9_]/.test(c)) { word += c; continue }
+    if (["and", "or", "not", "in"].includes(word)) levels++
+    word = ""
+    if ("([{".includes(c)) { brackets++; levels++ }
+    else if (")]}".includes(c)) { brackets = Math.max(0, brackets - 1); levels++ }
+    else if (c === "." ? !(digit(source[i - 1]) && digit(source[i + 1])) : "+-*/%^!<>=&|?:".includes(c)) levels++
+    if (brackets > 128 || levels > 512) refuse()
+  }
+}
+
 type Lowered<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
 /** Profile-check a batch, then lower each accepted root with `lower`; failures carry source spans. */
@@ -832,6 +851,7 @@ class DefinitionCompiler {
             if (cells === null || typeof cells !== "object" || Array.isArray(cells)) throw new CompileError("NORN-FLOW-RESULT", "invalid decision row", body)
             value = cells.condition === "" ? String(cells[`out_${key}`]) : `(${String(cells.condition)}) ? (${String(cells[`out_${key}`])}) : (${value})`
           }
+          checkExactSource(value, body)
           this.sourceMap.push({ artifactId, pointer: `/payload/graph/nodes/1/content/expressions/${index}/value`, at: this.at(body) })
           return { id: `out_${key}`, key, value }
         })
