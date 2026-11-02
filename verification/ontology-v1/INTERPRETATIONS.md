@@ -79,9 +79,9 @@ origin, all paths and explicit typed substitutions. SDK/schema round trips
 retain every path of a diamond and binding; no caller-supplied proof flag is
 accepted. A proptest preserves generated paths/substitutions. This contract
 does not resolve instances or establish non-vacuity; B2's resolver follows.
-`LawRoot::App` remains and the explicit pack root is added. Pack-scoped laws
-and structured requirements refuse until retained membership is implemented.
-The LAW-CONTAINED refusal tests enforce that intermediate boundary. Kani is
+`LawRoot::App` remains and the explicit pack root is added. Structured
+requirements still refuse pack roots; pack-scoped laws resolve through
+LAW-CONTAINED-1 below. Kani is
 inapplicable to this serializer/schema contract over allocated member trees;
 there is no new bounded pure algorithm. LAW-* admission semantics follow.
 
@@ -100,7 +100,7 @@ LAW-TRANSITIVE/DIAMOND emits one instance per law/subject with all origin paths;
 the catalog selects subjects and the declaration graph provides provenance.
 Aggregate path-work, member-copy and byte limits refuse incomplete output.
 Generated orderings preserve instances; empty sets establish no non-vacuity.
-App/pack resolution awaits shared instance IR. Kani is infeasible for this
+App/pack resolution is specified by LAW-CONTAINED-1 below. Kani is infeasible for this
 allocated admission/expression/digest pipeline; correspondence is sampled.
 
 ## B3 retained authority construction

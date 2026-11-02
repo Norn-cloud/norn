@@ -278,7 +278,7 @@ fn retained_membership_with_catalog(
     if base.len() > budget.max_nodes {
         return Err(refused());
     }
-    let packs = scope_packs(base).ok_or_else(refused)?;
+    let packs = scope_packs(base, &law.scope).ok_or_else(refused)?;
     let mut instances = BTreeMap::new();
     for (owner, pack, _) in packs.values() {
         for instance in pack.instances.iter().flatten() {
@@ -313,13 +313,13 @@ fn retained_membership_with_catalog(
     .ok_or_else(refused)
 }
 
-fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
+fn scope_packs<'a>(base: &'a [ArtifactEnvelope], scope: &norn_ir::ScopeRef) -> Option<ScopePacks<'a>> {
     use norn_ir::definition_catalog::ArtifactKey;
     let mut packs = BTreeMap::new();
     let mut bytes = 0usize;
     for artifact in base
         .iter()
-        .filter(|a| a.kind() == ArtifactKind::BusinessPack)
+        .filter(|a| a.kind() == ArtifactKind::BusinessPack && crate::scope_conflict(scope, &a.scope).is_none())
     {
         let value = serde_json::to_value(artifact.payload.to_json_value()).ok()?;
         let size = norn_canonical::serialize_json_verbatim(&value).ok()?.len();
@@ -825,7 +825,7 @@ impl LawContext<'_> {
         };
         if matches!(law.scope.root, LawRoot::Pack(_))
             && let Err(findings) =
-                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+                retained_membership_with_catalog(artifact, self.base, RETAINED_SCOPE_BUDGET, Some(self.catalog))
         {
             out.extend(findings);
             return;
@@ -979,7 +979,7 @@ impl LawContext<'_> {
     ) {
         if matches!(law.scope.root, LawRoot::App(_))
             && let Err(findings) =
-                retained_law_membership(artifact, self.base, RETAINED_SCOPE_BUDGET)
+                retained_membership_with_catalog(artifact, self.base, RETAINED_SCOPE_BUDGET, Some(self.catalog))
         {
             out.extend(findings);
         }
