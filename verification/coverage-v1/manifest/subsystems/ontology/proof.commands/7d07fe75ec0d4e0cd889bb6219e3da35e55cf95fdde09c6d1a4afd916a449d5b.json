@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "lean -DwarningAsError=true verification/ontology-v1/OntologyMappingProvenance.lean"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "graph_load.validation.n_plus_one_risk",
+  "message": "relation batch '{sourceKind}:{relationKind}' risks unbounded fan-out",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

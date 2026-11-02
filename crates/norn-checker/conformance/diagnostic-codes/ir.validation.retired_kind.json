@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.retired_kind",
+  "message": "artifact kind '{kind}' is retired: {reason}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

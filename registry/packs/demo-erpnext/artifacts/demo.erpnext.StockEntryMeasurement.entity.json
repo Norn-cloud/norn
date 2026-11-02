@@ -1,0 +1,124 @@
+{
+  "artifactId": "demo.erpnext.StockEntryMeasurement.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock Entry measurement row",
+  "namespace": "demo.erpnext",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "demo.erpnext.Measurement"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "lot",
+          "target": "core.Resource"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "event",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "demo.erpnext.StockEntryMeasurement",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metal",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "gold"
+              },
+              {
+                "value": "silver"
+              }
+            ]
+          }
+        },
+        {
+          "id": "role",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "input"
+              },
+              {
+                "value": "output"
+              },
+              {
+                "value": "loss"
+              }
+            ]
+          }
+        },
+        {
+          "id": "gross_grams",
+          "type": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "purity",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "fine_grams",
+          "type": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/demo-erpnext/artifacts/demo.erpnext.StockEntryMeasurement.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

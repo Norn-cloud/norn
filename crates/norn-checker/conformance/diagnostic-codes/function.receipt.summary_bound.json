@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.summary_bound",
+  "message": "the {what} holds {size} canonical bytes; at most 32768 cross the receipt",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

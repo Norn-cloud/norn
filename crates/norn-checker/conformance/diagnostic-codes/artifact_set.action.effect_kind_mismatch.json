@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.effect_kind_mismatch",
+  "message": "the effect writes {objectKind}, but entity artifact {artifactId} version {version} defines {definition}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

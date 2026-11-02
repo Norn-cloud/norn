@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.unknown_link_target",
+  "message": "required link {link} targets {target}, which names no object type or interface",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

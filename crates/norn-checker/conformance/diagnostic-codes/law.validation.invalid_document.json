@@ -1,0 +1,7 @@
+{
+  "code": "law.validation.invalid_document",
+  "message": "law document is invalid: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

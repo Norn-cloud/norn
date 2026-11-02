@@ -1,0 +1,7 @@
+{
+  "code": "law.model.predicate_type",
+  "message": "law predicate does not type-check against the effective ZEN environment: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

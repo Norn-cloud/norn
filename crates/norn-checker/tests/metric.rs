@@ -991,3 +991,39 @@ proptest::proptest! {
         proptest::prop_assert_eq!(norn_checker::metric::compute::admit(&definitions, &question, &catalog, 100).is_ok(), age > 0);
     }
 }
+
+proptest::proptest! {
+    #[test]
+    fn query_projection_uses_iso_weeks_exact_values_and_half_open_windows(day in 19u8..=25, amount in 0u32..=1_000_000) {
+        use norn_checker::metric::compute::{admit, contribution::project};
+        let (definitions, mut question, catalog) = keyed_compute_fixture();
+        question.time_window.start = norn_ir::UtcTimestamp("2026-10-19T00:00:00Z".into());
+        question.time_window.end = norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into());
+        let plan = admit(&definitions, &question, &catalog, 100).expect("plan");
+        let mut row = std::collections::BTreeMap::from([
+            ("weight".into(), norn_ir::RuntimeValue::from(i64::from(amount))),
+            ("observed_at".into(), norn_ir::RuntimeValue::from(format!("2026-10-{day}T12:00:00Z"))),
+        ]);
+        let actual = project(&plan, &row).expect("project").expect("included");
+        proptest::prop_assert_eq!(actual.bucket, norn_ir::RuntimeValue::from("2026-10-19"));
+        proptest::prop_assert_eq!(actual.amounts, vec![Some(i64::from(amount).checked_mul(1_000_000).expect("coefficient"))]);
+        let mut invalid = row.clone();
+        invalid.insert("weight".into(), norn_ir::RuntimeValue::from_json_text("0.0000001").expect("decimal"));
+        proptest::prop_assert!(project(&plan, &invalid).is_err());
+        invalid.remove("weight");
+        proptest::prop_assert!(project(&plan, &invalid).is_err());
+        row.insert("observed_at".into(), norn_ir::RuntimeValue::from("2026-10-26T00:00:00Z"));
+        proptest::prop_assert!(project(&plan, &row).expect("boundary").is_none());
+    }
+}
+
+#[test]
+fn query_ordered_predicates_refuse_before_reading_any_population() {
+    use norn_checker::metric::compute::admit;
+    let (mut definitions, mut question, catalog) = keyed_compute_fixture();
+    let filter = decode(&json!({"path":{"property":"weight"},"operator":"gt","value":0}));
+    question.filters = vec![filter];
+    assert!(admit(&definitions, &question, &catalog, 100).is_err());
+    definitions[0].norn.default_filters = std::mem::take(&mut question.filters);
+    assert!(admit(&definitions, &question, &catalog, 100).is_err());
+}

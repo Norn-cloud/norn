@@ -1518,7 +1518,11 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "http",
+ "norn-cell",
+ "norn-checker",
  "norn-ir",
+ "norn-kernel",
  "serde",
  "serde_json",
  "utoipa",
@@ -1549,6 +1553,7 @@ dependencies = [
 name = "norn-cell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
@@ -1558,6 +1563,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",

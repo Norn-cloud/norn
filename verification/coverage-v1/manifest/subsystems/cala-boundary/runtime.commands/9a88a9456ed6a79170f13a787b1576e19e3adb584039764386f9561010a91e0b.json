@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "cargo test --locked -p norn-checker --test quantity_ledger_boundary"
+}

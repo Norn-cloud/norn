@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/stripmine-2026-08-22/models/closed-action-effect.qnt",
+    "command": "quint verify verification/stripmine-2026-08-22/models/closed-action-effect.qnt --backend apalache --invariants typeOk oneClosedEffectPerCommit acceptedBoundExactDefinitions acceptedPassedClosedChecks noOpPreservesAuthority --max-steps 8",
+    "selectors": {
+      "$entries": "obligationClaims.entry196bd9cc99340deef3447cded633ffb9706e1a0a7f2a380f1568a6105ab9cc09.evidence.model.entrya6364bf39f95a522e63b7c8ee78583d129199540b811e46a56e6143cc564dfd3.selectors"
+    }
+  }
+}
