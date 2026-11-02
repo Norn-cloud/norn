@@ -3649,7 +3649,14 @@ where
 
     for write in &mut prepared.writes {
         let key = write.key.clone();
-        authorize_proposed_target(catalog, call, &effective_input, authorizer, &key, std::slice::from_mut(write))?;
+        authorize_proposed_target(
+            catalog,
+            call,
+            &effective_input,
+            authorizer,
+            &key,
+            std::slice::from_mut(write),
+        )?;
     }
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
