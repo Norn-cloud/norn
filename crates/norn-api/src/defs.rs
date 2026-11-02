@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use http::StatusCode;
 use norn_cell::Model;
 use norn_checker::{
-    EntityArtifactSetContext, check_artifact_set_with_receipt, prepare_artifact_source,
+    check_artifact_sources_with_receipt, prepare_artifact_source,
 };
 use norn_ir::{ArtifactEnvelope, EntityRoot, ResourceLimitProfile, RuntimeValue};
 
@@ -75,15 +75,13 @@ impl Admitted {
             exact.push(prepared.source);
         }
         let registry = BTreeSet::new();
-        let context = EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
-            tenant: None,
-        };
-        let checked = check_artifact_set_with_receipt(
-            &artifacts,
-            &context,
+        let checked = check_artifact_sources_with_receipt(
+            &exact,
+            &[],
+            &registry,
+            None,
             &ResourceLimitProfile::norn_limits_v1(),
+            None,
         )
         .map_err(refused)?;
         if !checked.receipt.admitted {
