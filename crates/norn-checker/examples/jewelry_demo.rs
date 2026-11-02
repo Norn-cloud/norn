@@ -61,6 +61,144 @@ fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
     )?)
 }
 
+fn retain_demo(
+    artifacts: &[ArtifactEnvelope],
+) -> DemoResult<norn_checker::obligations::RetainedLayers> {
+    use norn_checker::obligations::{RetainedLayer, RetainedLayers};
+    let registry = BTreeSet::new();
+    let exact = source(artifacts)?;
+    let native: Vec<_> = artifacts
+        .iter()
+        .map(norn_ir::runtime::encode)
+        .collect::<Result<_, _>>()?;
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&native, &[])?,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )?;
+    if !checked.receipt.admitted {
+        return Err("retained demo source refused".into());
+    }
+    let receipt = String::from_utf8(checked.receipt.canonical_json()?)?;
+    let receipt_sha256 = checked.receipt.content_sha256()?;
+    Ok(RetainedLayers::verify(
+        &[RetainedLayer {
+            source: &exact,
+            source_sha256: exact.exact_digest(),
+            receipt: &receipt,
+            receipt_sha256: &receipt_sha256,
+        }],
+        &registry,
+    )?)
+}
+
+/// LAW-CONVERSION-OVERLAY: the Core 06 validator preserves retained core authority.
+fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
+    use norn_ir::{CustomizationOverlayOp, CustomizationRoot};
+    let retained = retain_demo(artifacts)?;
+    let target = retained
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.artifact_id == "demo.Melt.entity")
+        .ok_or("missing retained Melt")?;
+    let pin = norn_checker::ArtifactRef::of(target)?;
+    let law = retained
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.artifact_id == "core.law.conversion_conservation.law")
+        .ok_or("missing retained core law")?;
+    let law_pin = norn_checker::ArtifactRef::of(law)?;
+    let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/retail-sku-reorder-point.customization.json"
+    ))?;
+    envelope.artifact_id = "demo.Melt.loss_bound.customization".into();
+    envelope.namespace = "demo".into();
+    envelope.name = "Melt loss bound".into();
+    envelope.dependencies.clear();
+    envelope.scope = target.scope.clone();
+    let mut overlay: CustomizationRoot =
+        serde_json::from_value(serde_json::to_value(envelope.payload.to_json_value())?)?;
+    overlay.customization_id = "demo.Melt.loss_bound".into();
+    overlay
+        .target_artifact
+        .artifact_id
+        .clone_from(&target.artifact_id);
+    overlay.target_artifact.version.clone_from(&target.version);
+    overlay.target_artifact.additional = std::collections::BTreeMap::from([(
+        "sha256".into(),
+        norn_ir::JsonValue::String(pin.sha256),
+    )]);
+    let addition = std::collections::BTreeMap::from([
+        (
+            "id".into(),
+            norn_ir::JsonValue::String("demo_loss_bound".into()),
+        ),
+        (
+            "expression".into(),
+            norn_ir::JsonValue::String("self.loss_quantity <= 1".into()),
+        ),
+    ]);
+    let base = serde_json::to_string(retained.artifacts())?;
+    let input = |overlay: &CustomizationRoot| -> DemoResult<DefinitionSource> {
+        let mut candidate = envelope.clone();
+        candidate.payload = ArtifactPayload::from_kind_json(
+            &ArtifactKind::Customization,
+            serde_json::from_str(&serde_json::to_string(overlay)?)?,
+        )?;
+        Ok(DefinitionSource::parse(
+            &serde_json::to_string(&[candidate])?,
+            &base,
+        )?)
+    };
+    overlay.overlay.operations = vec![CustomizationOverlayOp::AddValidation {
+        additional: addition,
+    }];
+    let added = input(&overlay)?;
+    let plan = norn_checker::overlay::overlay_obligations(&added, &retained, &target.scope)
+        .map_err(|error| format!("additive overlay: {} / {}", error.code(), error.reason()))?;
+    if plan.retained_sha256() != retained.exact_digest()
+        || plan.source_sha256() != added.exact_digest()
+        || !plan.goals().any(|(_, guards)| guards.len() > 1)
+        || !plan.laws().iter().any(|instance| {
+            instance.law_digest == law_pin.sha256
+                && instance.subject.artifact_id == target.artifact_id
+        })
+    {
+        return Err("additive overlay did not retain core guard goals".into());
+    }
+    overlay.overlay.operations = vec![CustomizationOverlayOp::UpdateValidation {
+        additional: std::collections::BTreeMap::from([
+            (
+                "id".into(),
+                norn_ir::JsonValue::String("conversion_conservation".into()),
+            ),
+            (
+                "expression".into(),
+                norn_ir::JsonValue::String("true".into()),
+            ),
+        ]),
+    }];
+    let Err(refusal) =
+        norn_checker::overlay::overlay_obligations(&input(&overlay)?, &retained, &target.scope)
+    else {
+        return Err("overlay replaced the retained conversion invariant".into());
+    };
+    if refusal.code() != "core.composition.overlay_conflict"
+        || refusal.reason() != "weakens_inherited"
+    {
+        return Err("unexpected weakening refusal".into());
+    }
+    Ok(format!(
+        "{} / {}; additive guards remain pending solver/progress evidence",
+        refusal.code(),
+        refusal.reason()
+    ))
+}
+
 fn main() -> DemoResult<()> {
     let mut arguments = std::env::args().skip(1);
     let challenge_only = match (arguments.next().as_deref(), arguments.next()) {
@@ -128,6 +266,11 @@ fn main() -> DemoResult<()> {
         stdout,
         "{}",
         serde_json::to_string_pretty(challenge.body())?
+    )?;
+    writeln!(
+        stdout,
+        "CURRENT: weakening overlay refused: {}",
+        overlay_cannot_weaken(&artifacts)?
     )?;
     let mut weakened = law.clone();
     weakened.response = LawResponse::Predicate {

@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.overlay_conflict",
+  "message": "overlay must retain pinned inherited constraints and satisfy the supported profile",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
