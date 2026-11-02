@@ -1,7 +1,7 @@
 {
   "sha256": "03bad9d1a174548c98b930d45ddde7547439d3fc4c8b92f4e115dd725eef3945",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
