@@ -36,7 +36,7 @@
     "sha256": "f7ba6f0754c50c99631cc4cdea32ff456852b9f01dcdb57cc3d0fd0deb5f3d13"
   },
   "exprProfile": "norn-zen/6",
-  "format": "norn-checker/receipt@2",
+  "format": "norn-checker/receipt@5",
   "identifierProfile": "norn-identifiers/1",
   "limitProfile": {
     "id": "norn.limits",

@@ -156,11 +156,196 @@ fn fixture_sources(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> norn_checker::receipt::ReceiptSources {
-    let candidates = norn_ir::runtime::encode(artifacts).expect("receipt fixture");
-    let base = norn_ir::runtime::encode(base).expect("receipt fixture");
-    norn_checker::ReceiptSources::new(
-        candidates.as_array().expect("receipt fixture"),
-        base.as_array().expect("receipt fixture"),
+    let candidates = norn_ir::runtime::encode(artifacts).expect("fixture");
+    let installed = norn_ir::runtime::encode(base).expect("fixture");
+    norn_checker::receipt::ReceiptSources::new(
+        candidates.as_array().expect("fixture"),
+        installed.as_array().expect("fixture"),
     )
-    .expect("receipt fixture")
+    .expect("fixture")
+}
+
+#[test]
+fn receipt_shape_refuses_unknown_formats_and_malformed_law_origins() {
+    let source = norn_ir::runtime::encode(&valid_rule()).expect("source");
+    let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+        &[source],
+        &[],
+        &BTreeSet::new(),
+        None,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+    )
+    .expect("receipt");
+    let mut receipt: Value =
+        serde_json::from_slice(&checked.receipt.canonical_json().expect("bytes")).expect("JSON");
+    receipt["format"] = json!("norn-checker/receipt@999");
+    assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+    let valid = json!({"inherited_from": {
+        "pack_id":"test.pack", "pack_version":"0.1.0", "artifact_id":"test.law",
+        "artifact_digest":"a".repeat(64), "law_id":"test.member"
+    }});
+    for format in ["norn-checker/receipt@4", "norn-checker/receipt@7"] {
+        receipt["format"] = json!(format);
+        receipt["lawEnrollment"] = json!([valid.clone()]);
+        norn_checker::receipt::validate_receipt_shape(&receipt).expect("valid wire shape");
+        for invalid in [Value::Null, json!({}), json!({"inherited_from": null})] {
+            receipt["lawEnrollment"] = json!([invalid]);
+            assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+        }
+        for field in [
+            "pack_id",
+            "pack_version",
+            "artifact_id",
+            "artifact_digest",
+            "law_id",
+        ] {
+            for invalid in [Value::Null, json!(5)] {
+                let mut entry = valid.clone();
+                entry["inherited_from"][field] = invalid;
+                receipt["lawEnrollment"] = json!([entry]);
+                assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+            }
+            let mut entry = valid.clone();
+            entry["inherited_from"]
+                .as_object_mut()
+                .expect("origin")
+                .remove(field);
+            receipt["lawEnrollment"] = json!([entry]);
+            assert!(norn_checker::receipt::validate_receipt_shape(&receipt).is_err());
+        }
+    }
+}
+
+#[test]
+fn admitted_text_nfc_closes_semantic_identity_gap() {
+    let mut hashes = Vec::new();
+    let mut results = Vec::new();
+    for literal in ["é", "e\u{301}"] {
+        let expression = format!("len('{literal}')");
+        let mut document = valid_rule();
+        document["payload"]["outputSchema"]["properties"]["band"] = json!({"type":"integer"});
+        document["payload"]["graph"]["nodes"][4]["content"]["expressions"][1]["value"] =
+            json!(expression);
+        let source = norn_ir::runtime::encode(&document).expect("source");
+        hashes.push(source.canonical_json().expect("Norn1 hash input"));
+        let checked = norn_checker::receipt::check_artifact_sources_with_receipt(
+            &[source],
+            &[],
+            &BTreeSet::new(),
+            None,
+            &ResourceLimitProfile::norn_limits_v1(),
+            None,
+        );
+        if literal == "é" {
+            assert!(checked.expect("NFC receipt").receipt.admitted);
+        } else {
+            let refused = checked.expect("structured non-NFC refusal");
+            assert!(!refused.receipt.admitted);
+            assert!(refused.receipt.type_env.is_none());
+            assert!(
+                refused
+                    .diagnostics
+                    .iter()
+                    .any(|finding| finding.code.as_str() == "definition.text.not_nfc")
+            );
+        }
+        results.push(
+            norn_expr::Expression::compile(&expression)
+                .expect("expression")
+                .evaluate(
+                    &norn_expr::Value::Null,
+                    norn_expr::EvaluationBudget::new(100),
+                )
+                .expect("evaluation")
+                .value()
+                .clone(),
+        );
+    }
+    assert_eq!(
+        hashes[0], hashes[1],
+        "the existing Norn1 profile is preserved"
+    );
+    assert_eq!(
+        results,
+        vec![norn_expr::Value::from(2), norn_expr::Value::from(3)]
+    );
+}
+
+#[test]
+fn definition_text_nfc_paths() {
+    for (field, value, pointer) in [
+        ("artifactId", json!("e\u{301}"), "/artifactId"),
+        ("name", json!("e\u{301}"), "/name"),
+        (
+            "payload",
+            json!({"e\u{301}/~": true}),
+            "/payload/e\u{301}~1~0",
+        ),
+        (
+            "payload",
+            json!({"items": ["e\u{301}"]}),
+            "/payload/items/0",
+        ),
+    ] {
+        let mut document = valid_rule();
+        document[field] = value;
+        let source = norn_ir::runtime::encode(&document).expect("source");
+        let diagnostics =
+            norn_checker::prepare_artifact_source(source).expect_err("non-NFC refused");
+        assert_eq!(diagnostics[0].code.as_str(), "definition.text.not_nfc");
+        assert_eq!(diagnostics[0].span.as_ref().expect("span").pointer, pointer);
+    }
+}
+
+#[test]
+fn retained_receipt_refuses_non_nfc_substitution_in_both_layers() {
+    use norn_checker::receipt::{
+        check_artifact_sources_with_receipt, verify_admission_receipt_sources,
+    };
+    let mut document = valid_rule();
+    document["artifactId"] = json!("test.café");
+    let source = norn_ir::runtime::encode(&document).expect("source");
+    let changed = norn_ir::RuntimeValue::from_json_text(
+        serde_json::to_string(&document)
+            .expect("JSON")
+            .replace('é', "e\u{301}"),
+    )
+    .expect("non-NFC source");
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for in_base in [false, true] {
+        let sources = [source.clone()];
+        let changed = [changed.clone()];
+        let (candidate, base) = if in_base {
+            (&[][..], &sources[..])
+        } else {
+            (&sources[..], &[][..])
+        };
+        let checked = check_artifact_sources_with_receipt(
+            candidate,
+            base,
+            &BTreeSet::new(),
+            None,
+            &limits,
+            None,
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted);
+        let body =
+            String::from_utf8(checked.receipt.canonical_json().expect("JSON")).expect("UTF-8");
+        let digest = checked.receipt.content_sha256().expect("hash");
+        verify_admission_receipt_sources(&body, &digest, candidate, base, &limits)
+            .expect("unchanged source verifies");
+        let (candidate, base) = if in_base {
+            (&[][..], &changed[..])
+        } else {
+            (&changed[..], &[][..])
+        };
+        assert!(
+            verify_admission_receipt_sources(&body, &digest, candidate, base, &limits)
+                .expect_err("non-NFC substitution")
+                .to_string()
+                .contains("definition.text.not_nfc")
+        );
+    }
 }

@@ -26,25 +26,21 @@ pub struct PreparedArtifact {
 /// Extract inline layout from exact source JSON and decode the semantic envelope.
 ///
 /// This is the raw admission preparation boundary. It consumes the source and
-/// returns its normalized exact value beside the decoded envelope and layout.
+/// returns its exact semantic value beside the decoded envelope and layout.
 ///
 /// # Errors
 /// Returns extraction or envelope decode diagnostics.
 pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact, Vec<Diagnostic>> {
     let mut semantic_source = source;
     let layout = extract_inline_layout(&mut semantic_source)?;
-    let bytes = semantic_source.canonical_json().map_err(|error| {
-        vec![invalid_source_diagnostic(
-            None,
-            &format!("normalized artifact source cannot be canonicalized: {error}"),
-        )]
-    })?;
-    let document = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
-        vec![invalid_source_diagnostic(
-            None,
-            &format!("normalized artifact source cannot be decoded: {error}"),
-        )]
-    })?;
+    let document: serde_json::Value =
+        norn_ir::runtime::decode(&semantic_source).map_err(|error| {
+            vec![invalid_source_diagnostic(
+                None,
+                &format!("artifact source cannot be decoded: {error}"),
+            )]
+        })?;
+    require_nfc_text(&document)?;
     let artifact = crate::decode_artifact_json(&document).map_err(|legacy| {
         legacy
             .into_iter()
@@ -58,12 +54,59 @@ pub fn prepare_artifact_source(source: RuntimeValue) -> Result<PreparedArtifact,
     })
 }
 
+pub(crate) fn require_nfc_text(source: &serde_json::Value) -> Result<(), Vec<Diagnostic>> {
+    fn visit(value: &serde_json::Value, path: &str) -> Option<String> {
+        match value {
+            serde_json::Value::String(text) if norn_canonical::nfc(text) != *text => {
+                Some(path.to_owned())
+            }
+            serde_json::Value::Array(items) => items
+                .iter()
+                .enumerate()
+                .find_map(|(i, item)| visit(item, &format!("{path}/{i}"))),
+            serde_json::Value::Object(fields) => fields.iter().find_map(|(key, value)| {
+                let pointer = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+                if norn_canonical::nfc(key) == *key {
+                    visit(value, &pointer)
+                } else {
+                    Some(pointer)
+                }
+            }),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => None,
+        }
+    }
+    if let Some(path) = visit(source, "") {
+        return Err(vec![Diagnostic {
+            code: DiagnosticCode::new("definition.text.not_nfc"),
+            severity: DiagnosticSeverity::Error,
+            message: format!("definition text at {path} must already be Unicode NFC"),
+            span: Some(Span::pointer(path)),
+            artifact_id: source
+                .get("artifactId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            remediation: Some(DiagnosticRemediation::FixDefinition),
+        }]);
+    }
+    Ok(())
+}
+
 /// Normalize one typed envelope for checker admission while retaining any
 /// lenient root diagnostics. Only the raw graph field is replaced: serializing
 /// the whole envelope would discard the payload root's recorded unknown keys.
 pub(crate) fn normalize_artifact(
     artifact: &ArtifactEnvelope,
 ) -> Result<(ArtifactEnvelope, LayoutSidecar), Vec<Diagnostic>> {
+    let source = serde_json::to_value(artifact).map_err(|error| {
+        vec![invalid_source_diagnostic(
+            Some(artifact.artifact_id.clone()),
+            &error.to_string(),
+        )]
+    })?;
+    require_nfc_text(&crate::receipt::semantic_artifact_projection(source))?;
     let ArtifactPayload::Rule(rule) = &artifact.payload else {
         return Ok((artifact.clone(), LayoutSidecar::default()));
     };

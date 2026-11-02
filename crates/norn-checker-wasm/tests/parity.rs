@@ -34,7 +34,7 @@ const OUT_ENV: &str = "NORN_CHECKER_WASM_PARITY_OUT";
 /// `norn-checker`'s pinned hash of the retail registry receipt
 /// (`tests/check_receipt.rs`): the ABI issues the same receipt.
 const RETAIL_RECEIPT_SHA256: &str =
-    "c4f1873c8393a5148cc6b039bcb4e01355345f45e4d921ee55d0d0c8766b803e";
+    "14ea133c9477b0218076a0afa73d87be7da5a529745f1609c67c2035520a347f";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -279,7 +279,7 @@ fn clean_set_issues_the_pinned_receipt() {
         "norn-checker/diagnostics@1"
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
-    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
+    assert_eq!(output["receipt"]["format"], "norn-checker/receipt@5");
     assert_eq!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
 }
 
@@ -372,6 +372,11 @@ fn invalid_input_is_an_error() {
     assert!(output_of("artifacts-not-json").starts_with("error: invalid artifacts: "));
     assert!(output_of("context-unknown-member").starts_with("error: invalid context: "));
     assert!(output_of("expression-bad-expected-type").starts_with("error: invalid expectedType: "));
+    let source = read("fixtures/ir/entity-v2/artifact-set/commerce.property-types.entity.json");
+    let duplicate = source.replacen("\"payload\": {", "\"payload\": {},\"payload\": {", 1);
+    assert!(
+        matches!(check_artifact_set_json(&format!("[{duplicate}]"), "null"), Err(norn_checker_wasm::AbiError::Receipt(detail)) if detail.contains("duplicate"))
+    );
 }
 
 #[test]
@@ -567,7 +572,7 @@ fn version_names_the_formats() {
     let version = json_of(&output_of("version"));
     assert_eq!(version["abi"], "norn-checker-abi/1");
     assert_eq!(version["diagnosticsFormat"], "norn-checker/diagnostics@1");
-    assert_eq!(version["receiptFormat"], "norn-checker/receipt@2");
+    assert_eq!(version["receiptFormat"], "norn-checker/receipt@5");
     assert_eq!(version["exprProfile"], "norn-zen/6");
 }
 
@@ -724,4 +729,78 @@ fn fixture_sources(
         installed.as_array().expect("fixture"),
     )
     .expect("fixture")
+}
+
+#[test]
+fn abi_exact_receipt_writer_conformance() {
+    let source = read("fixtures/ir/retail-reorder-threshold.setting.json");
+    for (left, right) in [
+        ("9007199254740992", "9007199254740993"),
+        (
+            "0.1234567890123456789012345678",
+            "0.1234567890123456789012345679",
+        ),
+    ] {
+        for in_base in [false, true] {
+            let check = |number: &str| {
+                let mut value: Value = serde_json::from_str(&source).expect("fixture");
+                value["payload"]
+                    .as_object_mut()
+                    .expect("fixture")
+                    .remove("supersedes");
+                value["payload"]["value"] = Value::Null;
+                let text = serde_json::to_string(&value)
+                    .expect("fixture")
+                    .replace("\"value\":null", &format!("\"value\":{number}"));
+                let (artifacts, context) = if in_base {
+                    ("[]".to_owned(), format!("{{\"base\":[{text}]}}"))
+                } else {
+                    (format!("[{text}]"), "null".to_owned())
+                };
+                let result =
+                    json_of(&check_artifact_set_json(&artifacts, &context).expect("fixture"));
+                assert_eq!(result["admitted"], true, "{result}");
+                result["receiptSha256"].clone()
+            };
+            assert_ne!(check(left), check(right));
+        }
+    }
+}
+
+#[test]
+fn non_nfc_sources_return_findings_and_rejected_receipts_in_both_layers() {
+    for name in [
+        "non-nfc-setting-is-a-checker-finding",
+        "non-nfc-unknown-scope-key",
+        "non-nfc-unknown-scope-value",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case["name"] == name)
+            .expect("NFC refusal vector");
+        let sources = artifacts_text(&case);
+        for in_base in [false, true] {
+            let (artifacts, context) = if in_base {
+                ("[]".to_owned(), format!("{{\"base\":{sources}}}"))
+            } else {
+                (sources.clone(), "null".to_owned())
+            };
+            let output =
+                json_of(&check_artifact_set_json(&artifacts, &context).expect("checker reply"));
+            assert_eq!(output["admitted"], false);
+            assert_eq!(output["receipt"]["admitted"], false);
+            assert!(
+                output["receiptSha256"]
+                    .as_str()
+                    .is_some_and(|hash| hash.len() == 64)
+            );
+            assert!(
+                output["diagnostics"]["diagnostics"]
+                    .as_array()
+                    .expect("findings")
+                    .iter()
+                    .any(|finding| finding["code"] == "definition.text.not_nfc")
+            );
+        }
+    }
 }
