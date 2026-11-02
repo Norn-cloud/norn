@@ -39,7 +39,7 @@
       "$ref": "#/$defs/SettingSupersedes"
     },
     "value": {
-      "description": "The value, whose JSON type agrees with `valueType`. A `json` setting\nmay be `null`.",
+      "description": "Numbers use exact `DecimalLiteral` strings; other branches retain their\nJSON type. A `json` setting may be `null`.",
       "$ref": "#/$defs/JsonValue"
     },
     "valueType": {
