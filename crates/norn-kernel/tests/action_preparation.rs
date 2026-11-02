@@ -173,7 +173,7 @@ proptest::proptest! {
         let expected = norn_ir::RuntimeValue::String(principal.clone());
         proptest::prop_assert_eq!(record.derived_values.first().map(|d| &d.value),Some(&expected));
         let retained = storage.load(&FactKey::new("test.Target",principal.as_str())).unwrap();
-        proptest::prop_assert_eq!(retained.values.as_ref().and_then(|v| v.get("code")).and_then(norn_ir::RuntimeValue::as_string),Some(principal.as_str()));
+        proptest::prop_assert_eq!(retained.values.as_ref().and_then(|v| v.get("code")).and_then(norn_ir::RuntimeValue::as_str),Some(principal.as_str()));
     }
 
     #[test]
