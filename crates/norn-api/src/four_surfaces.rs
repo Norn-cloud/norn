@@ -214,12 +214,14 @@ async fn equivalent_governed_surfaces() {
         assert!(!failed, "{surface}: {accepted}");
         assert_eq!(accepted["replayed"], false);
         let before = dump(&host);
-        let retry_surface = if surface == "http" { "mcp" } else { "http" };
-        let (replayed, failed) = invoke(retry_surface, &url, "demo", input.clone(), "melt").await;
-        assert!(!failed);
-        assert_eq!(replayed["replayed"], true);
-        assert_eq!(replayed["record"], accepted["record"]);
-        assert_eq!(dump(&host), before, "retry commits nothing");
+        for retry_surface in ["http", "mcp", "cli", "ui"] {
+            let (replayed, failed) =
+                invoke(retry_surface, &url, "demo", input.clone(), "melt").await;
+            assert!(!failed, "retry through {retry_surface}: {replayed}");
+            assert_eq!(replayed["replayed"], true);
+            assert_eq!(replayed["record"], accepted["record"]);
+            assert_eq!(dump(&host), before, "retry commits nothing");
+        }
         let (denied, failed) = invoke(surface, &url, "forbidden", input, "denied").await;
         assert!(failed, "{surface}: {denied}");
         assert_eq!(denied["code"], "authz.denied");

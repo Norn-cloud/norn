@@ -478,6 +478,48 @@
       "tier": "T3"
     },
     {
+      "code": "core.composition.duplicate_instance",
+      "message": "instance ID must be unique in the retained scoped graph",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.instance_cycle",
+      "message": "instance imports and containment must be acyclic",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.composition.unresolved_pin",
+      "message": "instance reference must resolve to an exact scoped pack pin",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.ambiguous_grain",
+      "message": "Query requires an explicit unambiguous identity grain.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.compute.unsupported_engine",
+      "message": "Query semantics are unsupported by the selected compute profile.",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T3"
+    },
+    {
+      "code": "core.values.inexact",
+      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T6"
+    },
+    {
       "code": "customization.validation.invalid_payload",
       "message": "CustomizationIR payload is invalid at {path}: {detail}",
       "severity": "error",
@@ -3166,6 +3208,20 @@
       "tier": "T2"
     },
     {
+      "code": "rule.validation.ordered_fold_invalid",
+      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
+      "code": "rule.validation.ordered_fold_unsupported",
+      "message": "ordered-fold execution is unavailable in this semantics profile",
+      "severity": "error",
+      "since": "0.2.0",
+      "tier": "T2"
+    },
+    {
       "code": "sealing.extension_point.capability_missing",
       "message": "operation lacks the capabilities its extension point grants: {capabilities}",
       "severity": "error",
@@ -3443,62 +3499,6 @@
       "message": "action binding must target a Norn action or process command, not a raw mutation",
       "severity": "error",
       "since": "0.1.0",
-      "tier": "T2"
-    },
-    {
-      "code": "core.composition.duplicate_instance",
-      "message": "instance ID must be unique in the retained scoped graph",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T3"
-    },
-    {
-      "code": "core.composition.instance_cycle",
-      "message": "instance imports and containment must be acyclic",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T3"
-    },
-    {
-      "code": "core.composition.unresolved_pin",
-      "message": "instance reference must resolve to an exact scoped pack pin",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T3"
-    },
-    {
-      "code": "core.compute.ambiguous_grain",
-      "message": "Query requires an explicit unambiguous identity grain.",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T3"
-    },
-    {
-      "code": "core.compute.unsupported_engine",
-      "message": "Query semantics are unsupported by the selected compute profile.",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T3"
-    },
-    {
-      "code": "core.values.inexact",
-      "message": "the number is outside the exact 96-bit decimal profile (scale at most 28)",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T6"
-    },
-    {
-      "code": "rule.validation.ordered_fold_invalid",
-      "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
-      "severity": "error",
-      "since": "0.2.0",
-      "tier": "T2"
-    },
-    {
-      "code": "rule.validation.ordered_fold_unsupported",
-      "message": "ordered-fold execution is unavailable in this semantics profile",
-      "severity": "error",
-      "since": "0.2.0",
       "tier": "T2"
     }
   ],
