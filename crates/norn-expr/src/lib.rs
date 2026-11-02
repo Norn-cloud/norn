@@ -55,13 +55,13 @@ pub mod actor;
 pub mod check;
 mod convert;
 pub mod env;
-pub mod units;
 mod error;
 mod expression;
 mod reads;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
 pub mod temporal;
+pub mod units;
 mod value;
 
 pub use check::{
