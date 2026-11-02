@@ -18,8 +18,8 @@ class MigrationTests(unittest.TestCase):
 
     def test_real_approved_prs(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/registry-prs.json").read_text())
-        for case, reverse in [(case, reverse) for case in fixture["cases"] for reverse in (False, True)]:
-            with self.subTest(pr=case["pr"], reverse=reverse), tempfile.TemporaryDirectory() as temporary:
+        for case, reverse, native in [(case, r, n) for case in fixture["cases"] for r, n in ((False, False), (True, False), (False, True))]:
+            with self.subTest(pr=case["pr"], reverse=reverse, native=native), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 def git(*args):
                     return migration.git(root, *args).stdout.decode().strip()
@@ -42,15 +42,17 @@ class MigrationTests(unittest.TestCase):
                 coverage.write_entries(document, root / migration.COVERAGE)
                 old = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())
                 target = root / migration.DIAGNOSTICS
-                target.mkdir()
-                for entry in old["codes"]:
-                    (target / (entry["code"] + ".json")).write_bytes(migration.json_bytes(entry))
                 extra = {**old["codes"][0], "code": "toy.validation.concurrent"}
-                (target / (extra["code"] + ".json")).write_bytes(migration.json_bytes(extra))
-                (root / (migration.DIAGNOSTICS + ".json")).unlink()
+                if not native:
+                    target.mkdir()
+                    for entry in old["codes"]:
+                        (target / (entry["code"] + ".json")).write_bytes(migration.json_bytes(entry))
+                    (target / (extra["code"] + ".json")).write_bytes(migration.json_bytes(extra))
+                    (root / (migration.DIAGNOSTICS + ".json")).unlink()
                 raw = (root / migration.RUST).read_bytes()
                 helpers = "const fn entry(" + raw.decode().split("pub static REGISTRY: &[CodeEntry] = &[\n")[0].split("const fn entry(", 1)[1]
-                (root / migration.RUST).write_bytes(migration.rust_projection(root, base, raw, old, helpers))
+                if not native:
+                    (root / migration.RUST).write_bytes(migration.rust_projection(root, base, raw, old, helpers))
                 main = commit()
                 git("checkout", "-q", main if reverse else head)
                 migration.git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "merge", "--no-edit", head if reverse else main, check=False)
@@ -62,8 +64,9 @@ class MigrationTests(unittest.TestCase):
                 proposed = [json.loads(git("show", head + ":" + migration.COVERAGE + "/subsystems/" + s["id"] + ".json")) for s in result["subsystems"]]
                 for actual, expected in zip(result["subsystems"], proposed):
                     self.assertEqual(set(actual["sourceFiles"]), set(expected["sourceFiles"]) | ({"synthetic/main.rs"} if actual["id"] == document["subsystems"][0]["id"] else set()))
-                expected_codes = json.loads(git("show", head + ":" + migration.DIAGNOSTICS + ".json"))["codes"] + [extra]
-                self.assertEqual(sorted([json.loads(p.read_text()) for p in target.glob("*.json")], key=lambda x: x["code"]), sorted(expected_codes, key=lambda x: x["code"]))
+                expected_codes = json.loads(git("show", head + ":" + migration.DIAGNOSTICS + ".json"))["codes"]
+                actual_codes = json.loads((root / (migration.DIAGNOSTICS + ".json")).read_text())["codes"] if native else [json.loads(p.read_text()) for p in target.glob("*.json")]
+                self.assertEqual(sorted(actual_codes, key=lambda x: x["code"]), sorted(expected_codes + ([] if native else [extra]), key=lambda x: x["code"]))
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}
                 self.assertEqual(migration.migrate(root, base, head), [])
                 self.assertEqual(before, {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts})
@@ -71,6 +74,8 @@ class MigrationTests(unittest.TestCase):
                 old_head["codes"][0]["message"] += " corrupted"
                 with self.assertRaisesRegex(ValueError, "disagree"):
                     migration.rust_projection(root, head, migration.read(root, head, migration.RUST), old_head, helpers)
+                if native:
+                    continue
                 path = target / (next(e["code"] for e in expected_codes if e not in old["codes"] and e != extra) + ".json")
                 path.write_bytes(migration.json_bytes({**json.loads(path.read_text()), "message": "concurrent edit"}))
                 before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file() and ".git" not in p.parts}

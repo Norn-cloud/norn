@@ -199,7 +199,10 @@ def migrate(root, base, head):
             record = read(root, head, RECORDS + path + ".json")
             template = object_bytes(read(root, base, RECORDS + path + ".json") if record is MISSING else record)
             apply(before, after, COVERAGE + "/", template)
-        if RUST in changed or DIAGNOSTICS + ".json" in changed:
+        diagnostic_changed = RUST in changed or DIAGNOSTICS + ".json" in changed
+        if diagnostic_changed and not (root / DIAGNOSTICS).is_dir() and git(root, "ls-files", "-u", "--", RUST, DIAGNOSTICS + ".json").stdout:
+            raise ValueError("unmigrated diagnostic conflict needs the legacy resolver")
+        if diagnostic_changed and (root / DIAGNOSTICS).is_dir():
             manifests = [object_bytes(read(root, rev, DIAGNOSTICS + ".json")) for rev in (base, head)]
             if {k: v for k, v in manifests[0].items() if k != "codes"} != {k: v for k, v in manifests[1].items() if k != "codes"}:
                 raise ValueError("diagnostic manifest header changed")
