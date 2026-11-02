@@ -1772,7 +1772,7 @@ proptest::proptest! {
         let spelling = mode.canonical_field().unwrap_or("refuse");
         let factor = 10_i128.pow(scale);
         let coefficient = i128::from(a);
-        let text = if scale == 0 { a.to_string() } else { format!("{}{}.{:0width$}", if a<0 {"-"} else {""}, coefficient.abs()/factor, coefficient.abs()%factor, width=scale as usize) };
+        let text = if scale == 0 { a.to_string() } else { format!("{}{}.{:0width$}", if a<0 {"-"} else {""}, coefficient.abs()/factor, coefficient.abs()%factor, width=usize::try_from(scale).unwrap()) };
         let number: norn_expr::Number = text.parse().unwrap();
         let site = norn_ir::PropertyType::Decimal { scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None, per_unit:None };
         let expected = norn_expr::rescale_decimal(&site, &number);
@@ -1819,13 +1819,7 @@ fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
         ("rate", num("15")),
         ("grams", num("20")),
     ]);
-    let evaluated = run(
-        &decision,
-        slice.clone(),
-        event(),
-        EvaluationBudget::default(),
-    )
-    .unwrap();
+    let evaluated = run(&decision, slice, event(), EvaluationBudget::default()).unwrap();
     assert_eq!(
         evaluated.output.commands[0].get("value"),
         Some(&norn_ir::RuntimeValue::from_json_text("300").unwrap())
@@ -1854,7 +1848,7 @@ proptest::proptest! {
         let decision = admit_inline(&bounded_rate_rule("g","USD"));
         let slice = Value::object([("currency",Value::String("USD".into())),("rate",num(&rate.to_string())),("grams",num(&grams.to_string()))]);
         let evaluated = run(&decision,slice,event(),EvaluationBudget::default()).unwrap();
-        let expected = norn_ir::RuntimeValue::from_json_text(&(rate*grams).to_string()).unwrap();
+        let expected = norn_ir::RuntimeValue::from_json_text((rate*grams).to_string()).unwrap();
         proptest::prop_assert_eq!(evaluated.output.commands[0].get("value"),Some(&expected));
     }
 }
