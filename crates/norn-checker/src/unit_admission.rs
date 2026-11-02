@@ -15,7 +15,7 @@ pub(crate) fn check(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) 
         let vocabulary = pinned_codes(artifact, candidates, base);
         let codes = vocabulary.as_deref();
         let payload = artifact.payload.to_json_value();
-        visit_schema(&payload, "/payload", artifact, codes, 0, &mut out);
+        visit_schema(&payload, "/payload", artifact, codes, &mut out);
         let Decoded::Root(root) = decode_v2(artifact) else {
             continue;
         };
@@ -158,52 +158,35 @@ fn visit_schema(
     path: &str,
     owner: &ArtifactEnvelope,
     codes: Option<&[EnumValue]>,
-    depth: usize,
     out: &mut Vec<Diagnostic>,
 ) {
-    if depth > 64 {
-        let mut diagnostic = crate::property_types::error(
-            MISMATCH,
-            "unit admission exceeds the bounded schema traversal depth".to_owned(),
-            Span::pointer(path.to_owned()),
-        );
-        diagnostic.artifact_id = Some(owner.artifact_id.clone());
-        out.push(diagnostic);
-        return;
-    }
-    match value {
-        norn_ir::JsonValue::Object(fields) => {
-            if fields.contains_key("nornType")
-                && let Ok(Some(ty)) = norn_expr::schema::decimal_refinement(value, path)
-            {
-                visit(&ty, &format!("{path}/nornType"), owner, codes, out);
-            }
-            for (key, value) in fields {
-                visit_schema(
-                    value,
-                    &format!("{path}/{key}"),
-                    owner,
-                    codes,
-                    depth.saturating_add(1),
-                    out,
+    let mut pending = vec![(value, path.to_owned())];
+    while let Some((value, path)) = pending.pop() {
+        match value {
+            norn_ir::JsonValue::Object(fields) => {
+                if fields.contains_key("nornType")
+                    && let Ok(Some(ty)) = norn_expr::schema::decimal_refinement(value, &path)
+                {
+                    visit(&ty, &format!("{path}/nornType"), owner, codes, out);
+                }
+                pending.extend(
+                    fields
+                        .iter()
+                        .map(|(key, value)| (value, format!("{path}/{key}"))),
                 );
             }
-        }
-        norn_ir::JsonValue::Array(items) => {
-            for (i, value) in items.iter().enumerate() {
-                visit_schema(
-                    value,
-                    &format!("{path}/{i}"),
-                    owner,
-                    codes,
-                    depth.saturating_add(1),
-                    out,
+            norn_ir::JsonValue::Array(items) => {
+                pending.extend(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| (value, format!("{path}/{index}"))),
                 );
             }
+            norn_ir::JsonValue::Null
+            | norn_ir::JsonValue::Bool(_)
+            | norn_ir::JsonValue::Number(_)
+            | norn_ir::JsonValue::String(_) => {}
         }
-        norn_ir::JsonValue::Null
-        | norn_ir::JsonValue::Bool(_)
-        | norn_ir::JsonValue::Number(_)
-        | norn_ir::JsonValue::String(_) => {}
     }
 }

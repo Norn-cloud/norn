@@ -160,9 +160,7 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let mut diagnostics = validate_artifact_unchecked(&normalized)
-        .err()
-        .unwrap_or_default();
+    let mut diagnostics = collect_artifact_diagnostics(&normalized);
     for diagnostic in layout_findings.into_iter().map(layout_finding_to_legacy) {
         if !diagnostics.iter().any(|existing| {
             existing.code == diagnostic.code
@@ -172,16 +170,17 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
             diagnostics.push(diagnostic);
         }
     }
-    if diagnostics.is_empty() {
-        Ok(())
-    } else {
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
         Err(diagnostics)
+    } else {
+        Ok(())
     }
 }
 
-pub(crate) fn validate_artifact_unchecked(
-    artifact: &ArtifactEnvelope,
-) -> Result<(), Vec<Diagnostic>> {
+pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if artifact.ir_version != SUPPORTED_IR_VERSION {
@@ -245,11 +244,7 @@ pub(crate) fn validate_artifact_unchecked(
     );
     validate_kind_payload(artifact, &mut diagnostics);
 
-    if diagnostics.is_empty() {
-        Ok(())
-    } else {
-        Err(diagnostics)
-    }
+    diagnostics
 }
 
 fn layout_finding_to_legacy(diagnostic: crate::Diagnostic) -> Diagnostic {

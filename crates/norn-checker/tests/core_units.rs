@@ -245,3 +245,57 @@ fn val_unit_link_properties_refuse_unknown_units() {
         );
     }
 }
+
+#[test]
+fn val_unit_literal_note_is_retained_without_refusing_a_valid_artifact() {
+    let mut artifact: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/rule-ir-v2/valid/reorder-priority.rule.json"
+    ))
+    .expect("sub-decision fixture");
+    artifact["dependencies"] = serde_json::json!([{"artifactId":"core.units","kind":"entity","version":"1.0.0","required":true}]);
+    artifact["payload"]["inputSchema"] = serde_json::json!({"type":"object","properties":{"mass":{"type":"number","nornType":unit_type("g",norn_ir::UnitSystem::Ucum)}},"required":["mass"],"additionalProperties":false});
+    artifact["payload"]["outputSchema"] = serde_json::json!({"type":"object","properties":{"positive":{"type":"boolean"}},"required":["positive"],"additionalProperties":false});
+    artifact["payload"]
+        .as_object_mut()
+        .expect("payload")
+        .remove("defaults");
+    artifact["payload"]["graph"] = serde_json::json!({"nodes":[
+        {"id":"input","name":"input","type":"inputNode"},
+        {"id":"decision","name":"decision","type":"expressionNode","content":{"expressions":[{"id":"positive","key":"positive","value":"input.mass > 0"}]}},
+        {"id":"output","name":"output","type":"outputNode"}
+    ],"edges":[{"id":"in","sourceId":"input","targetId":"decision"},{"id":"out","sourceId":"decision","targetId":"output"}]});
+    let artifact: norn_ir::ArtifactEnvelope =
+        serde_json::from_value(artifact).expect("typed artifact");
+    let findings = norn_checker::check_artifact(&artifact);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.code == "core.values.literal_unit"
+                && finding.severity == norn_ir::DiagnosticSeverity::Info)
+    );
+    artifact
+        .validate()
+        .expect("informational unit inference does not refuse validation");
+    assert!(
+        unit_findings(&artifact, &[units::pack().expect("pack")])
+            .iter()
+            .all(|finding| finding.severity != norn_ir::DiagnosticSeverity::Error)
+    );
+}
+
+#[test]
+fn val_unit_unrelated_deep_payload_does_not_report_a_unit_mismatch() {
+    let mut artifact = serde_json::to_value(declaration(unit_type("g", norn_ir::UnitSystem::Ucum)))
+        .expect("artifact");
+    let mut nested = serde_json::Value::Null;
+    for _ in 0..80 {
+        nested = serde_json::json!([nested]);
+    }
+    artifact["payload"]["extensions"] = serde_json::json!({"test.metadata/1.0.0":nested});
+    let artifact = serde_json::from_value(artifact).expect("typed artifact");
+    assert!(
+        !unit_findings(&artifact, &[units::pack().expect("pack")])
+            .iter()
+            .any(|finding| finding.code == MISMATCH)
+    );
+}
