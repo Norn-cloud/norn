@@ -82,21 +82,20 @@ pub(crate) fn targets(
         {
             return Err("core.composition.mapping_gap");
         }
-        let (fields, links) = contracts(interface, pool).ok_or("core.composition.mapping_gap")?;
+        let required = contracts(interface, pool).ok_or("core.composition.mapping_gap")?;
         let concrete_links = catalog
             .and_then(|c| c.links_for_object_type(effective.name.as_str()))
             .unwrap_or(&[]);
-        for (id, target) in links {
-            if let Some(expected) = substitutions.get(target.as_str()) {
-                if !concrete_links
+        for (id, target) in required.links {
+            if let Some(expected) = substitutions.get(target.as_str())
+                && !concrete_links
                     .iter()
                     .any(|link| link.id == id && link.target.as_str() == expected.as_str())
                 {
                     return Err("core.composition.mapping_gap");
-                }
             }
         }
-        if !fields.iter().eq(binding.decimals.keys()) {
+        if !required.fields.iter().eq(binding.decimals.keys()) {
             return Err("core.composition.mapping_gap");
         }
         for (id, contract) in &binding.decimals {
@@ -117,18 +116,7 @@ pub(crate) fn targets(
             {
                 return Err("core.values.unit_mismatch");
             }
-            if let Some(currency) = currency_source {
-                if !currency.links.is_empty()
-                    || !effective.properties.iter().any(|p| {
-                        p.id == currency.property
-                            && !p.nullable
-                            && matches!(&p.kind, EffectiveKind::Base(PropertyType::Enum { values })
-                            if values.len() == 1)
-                    })
-                {
-                    return Err("core.values.unit_binding_required");
-                }
-            }
+
         }
         out.push(ArtifactKey {
             artifact_id: target.artifact_id.clone(),
@@ -175,13 +163,14 @@ pub(crate) fn parameters(
     }
     Ok(out)
 }
+struct InterfaceContracts {
+    fields: BTreeSet<String>,
+    links: Vec<(norn_ir::LinkId, norn_ir::ObjectTypeName)>,
+}
 fn contracts(
     first: EntityInterfaceRootV2,
     pool: &[&ArtifactEnvelope],
-) -> Option<(
-    BTreeSet<String>,
-    Vec<(norn_ir::LinkId, norn_ir::ObjectTypeName)>,
-)> {
+) -> Option<InterfaceContracts> {
     let mut links = Vec::new();
     let mut pending = vec![first.interface];
     let mut seen = BTreeSet::new();
@@ -212,5 +201,5 @@ fn contracts(
             pending.push(interfaces.get(parent)?.clone());
         }
     }
-    Some((fields, links))
+    Some(InterfaceContracts { fields, links })
 }

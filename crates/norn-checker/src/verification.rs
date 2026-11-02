@@ -339,6 +339,24 @@ fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
     Some(packs)
 }
 
+fn instance_members(
+    pack: &norn_ir::CompositionPackRoot,
+    instance: &norn_ir::PackInstance,
+    base: &[ArtifactEnvelope],
+    catalog: Option<&EffectiveCatalog>,
+) -> Option<Vec<norn_ir::PackArtifactRef>> {
+    let mut members = pack.artifacts.clone();
+    for binding in crate::pack_bindings::targets(instance, &base.iter().collect::<Vec<_>>(), catalog).ok()? {
+        members.push(norn_ir::PackArtifactRef {
+            artifact_id: binding.artifact_id,
+            version: binding.version,
+            kind: norn_ir::PackArtifactKind::Entity,
+            additional: BTreeMap::new(),
+        });
+    }
+    Some(members)
+}
+
 fn scope_members(
     base: &[ArtifactEnvelope],
     packs: &ScopePacks<'_>,
@@ -373,18 +391,7 @@ fn scope_members(
         {
             return None;
         }
-        let mut members = pack.artifacts.clone();
-        for binding in
-            crate::pack_bindings::targets(instance, &base.iter().collect::<Vec<_>>(), catalog)
-                .ok()?
-        {
-            members.push(norn_ir::PackArtifactRef {
-                artifact_id: binding.artifact_id,
-                version: binding.version,
-                kind: norn_ir::PackArtifactKind::Entity,
-                additional: BTreeMap::new(),
-            });
-        }
+        let members = instance_members(pack, instance, base, catalog)?;
         for member in &members {
             let mut matches = base
                 .iter()

@@ -646,6 +646,14 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
     }
 }
 
+fn check_pack_parameters(pool: &[&ArtifactEnvelope]) -> Vec<Diagnostic> {
+    pool.iter().filter_map(|owner| {
+        let root = crate::pack_bindings::composition(owner)?;
+        let code = crate::pack_bindings::parameters(&root, &owner.scope, pool).err()?;
+        Some(finding(code, "generic pack type slots must name exact declared interfaces".into(), owner, "/payload/typeParameters"))
+    }).collect()
+}
+
 /// PACK-PIN-1: unique scoped IDs, exact endpoints and an acyclic instance graph.
 fn check_pack_instances(
     artifacts: &[ArtifactEnvelope],
@@ -654,18 +662,8 @@ fn check_pack_instances(
 ) -> Vec<Diagnostic> {
     let pool: Vec<_> = base.iter().chain(artifacts).collect();
     let mut declarations = Vec::new();
-    let mut findings = Vec::new();
+    let mut findings = check_pack_parameters(&pool);
     for owner in &pool {
-        if let Some(root) = crate::pack_bindings::composition(owner) {
-            if let Err(code) = crate::pack_bindings::parameters(&root, &owner.scope, &pool) {
-                findings.push(finding(
-                    code,
-                    "generic pack type slots must name exact declared interfaces".into(),
-                    owner,
-                    "/payload/typeParameters",
-                ));
-            }
-        }
         if let ArtifactPayload::BusinessPack(payload) = &owner.payload {
             let instances: Vec<PackInstance> = payload
                 .instances
