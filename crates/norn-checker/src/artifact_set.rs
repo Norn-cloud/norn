@@ -656,9 +656,14 @@ fn check_pack_instances(
     let mut declarations = Vec::new();
     let mut findings = Vec::new();
     for owner in &pool {
-        if let Some(root) = crate::pack_bindings::payload::<norn_ir::CompositionPackRoot>(owner) {
+        if let Some(root) = crate::pack_bindings::composition(owner) {
             if let Err(code) = crate::pack_bindings::parameters(&root, &owner.scope, &pool) {
-                findings.push(finding(code, "generic pack type slots must name exact declared interfaces".into(), owner, "/payload/typeParameters"));
+                findings.push(finding(
+                    code,
+                    "generic pack type slots must name exact declared interfaces".into(),
+                    owner,
+                    "/payload/typeParameters",
+                ));
             }
         }
         if let ArtifactPayload::BusinessPack(payload) = &owner.payload {
@@ -673,8 +678,15 @@ fn check_pack_instances(
             }
         }
     }
-    let catalog = declarations.iter().any(|(_, _, i)| !i.type_unit_bindings.is_empty())
-        .then(|| crate::EffectiveCatalog::from_artifacts_with_registry(&pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(), registry));
+    let catalog = declarations
+        .iter()
+        .any(|(_, _, i)| !i.type_unit_bindings.is_empty())
+        .then(|| {
+            crate::EffectiveCatalog::from_artifacts_with_registry(
+                &pool.iter().map(|a| (*a).clone()).collect::<Vec<_>>(),
+                registry,
+            )
+        });
     let mut edges = BTreeMap::new();
     for (index, (owner, pointer, instance)) in declarations.iter().enumerate() {
         let mut reject =
@@ -707,7 +719,10 @@ fn check_pack_instances(
             );
         }
         if let Err(code) = crate::pack_bindings::targets(instance, &pool, catalog.as_ref()) {
-            reject(code, "pack instance requires complete pinned type/unit substitutions");
+            reject(
+                code,
+                "pack instance requires complete pinned type/unit substitutions",
+            );
         }
         if instance.imports.keys().any(|alias| alias.trim().is_empty()) {
             reject(

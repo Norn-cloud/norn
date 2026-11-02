@@ -1550,6 +1550,7 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "norn-checker",
+ "norn-graph",
  "norn-ir",
  "norn-kernel",
  "norn-projections",

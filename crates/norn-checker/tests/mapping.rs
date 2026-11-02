@@ -58,7 +58,7 @@ fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
                 pack_version: "0.1".to_owned(),
                 pack_kind: None,
                 provides: None,
-            type_parameters: BTreeMap::new(),
+                type_parameters: BTreeMap::new(),
                 instances: None,
                 extensions: None,
                 artifacts: vec![PackArtifactRef {

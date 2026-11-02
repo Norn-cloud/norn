@@ -1829,7 +1829,7 @@ impl<'a> Checker<'a, '_> {
                             ..
                         }) if unit.is_some() != currency_source.is_some() => {
                             Some((scale.0, unit.clone(), currency_source.clone()))
-                        },
+                        }
                         TypeResolution::Base(_)
                         | TypeResolution::Registry
                         | TypeResolution::Unresolved { .. } => None,
@@ -1837,7 +1837,8 @@ impl<'a> Checker<'a, '_> {
             let Some(binding) = binding else {
                 self.out.push(error(
                     crate::property_types::codes::UNIT_BINDING_REQUIRED,
-                    "interface Decimal requires an explicit unit or currencySource and scale".to_owned(),
+                    "interface Decimal requires an explicit unit or currencySource and scale"
+                        .to_owned(),
                     at,
                 ));
                 continue;
@@ -2285,9 +2286,17 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
     match (narrow, wide) {
         (
-            PropertyType::Decimal { unit: Some(_), currency_source: None, .. }
-                | PropertyType::Decimal { unit: None, currency_source: Some(_), .. }
-                | PropertyType::DecimalBinding { .. },
+            PropertyType::Decimal {
+                unit: Some(_),
+                currency_source: None,
+                ..
+            }
+            | PropertyType::Decimal {
+                unit: None,
+                currency_source: Some(_),
+                ..
+            }
+            | PropertyType::DecimalBinding { .. },
             PropertyType::DecimalBinding { .. },
         ) => true,
         (PropertyType::Text { format: narrow }, PropertyType::Text { format: wide }) => {
