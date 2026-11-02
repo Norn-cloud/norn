@@ -4107,6 +4107,8 @@ norn_testkit::proptest::proptest! {
         record.rule_binding = Some(binding);
         let mut values: JsonObject = serde_json::from_value(serde_json::to_value(&record).unwrap()).unwrap();
         assert_eq!(norn_kernel::ActionCallRecord::from_values(&values), Some(record));
+        values.insert("ruleBinding".into(), JsonValue::Null);
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values).map(|record| record.rule_binding), Some(None));
         values.insert("ruleBinding".into(), JsonValue::Bool(true));
         assert!(norn_kernel::ActionCallRecord::from_values(&values).is_none());
     }
