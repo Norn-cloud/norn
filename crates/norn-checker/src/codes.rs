@@ -489,6 +489,12 @@ pub static REGISTRY: &[CodeEntry] = &[
         "0.2.0",
     ),
     introduced(
+        "core.composition.overlay_conflict",
+        Tier::T3,
+        "overlay must retain pinned inherited constraints and satisfy the supported profile",
+        "0.2.0",
+    ),
+    introduced(
         "core.composition.unresolved_pin",
         Tier::T3,
         "instance reference must resolve to an exact scoped pack pin",
