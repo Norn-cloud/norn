@@ -77,6 +77,7 @@ run_phase() {
       cargo fmt --all -- --check
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       cargo xtask ci policy
@@ -181,6 +182,7 @@ PY
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
+      (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       python3 -m venv "$upstream/openapi-venv"
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
