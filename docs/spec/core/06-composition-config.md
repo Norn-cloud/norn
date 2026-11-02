@@ -61,7 +61,7 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
 
-`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms refuse; projection alone supplies no solver evidence or admission authority.
+`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms and string characters outside SMT Unicode planes 0–2 refuse; projection alone supplies no solver evidence or admission authority.
 
 `overlay_obligations` binds a pending entity-guard conjunction to checked B3 retained layers and B2 law instances. Replacement, stale target pins and unsupported syntax refuse through `core.composition.overlay_conflict`. Pending goals grant no admission or proof; solver dispatch, progress analysis and additional-law overlays remain unqualified in this preparatory cut.
 

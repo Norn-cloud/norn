@@ -54,6 +54,9 @@ declare module "@norn/authoring" {
       readonly code: string
     }
 
+    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
+    function boundDecimal(group: string): Schema.Finite
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -62,9 +65,6 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
-    function boundDecimal(group: string): Schema.Finite
-
     function decimal(scale: number, options?: { readonly unit?: UnitRef } | { readonly currency: string }): Schema.Finite
 
     /**

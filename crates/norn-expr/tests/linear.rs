@@ -51,7 +51,24 @@ fn linear_profile_refuses_calls_nonlinearity_and_dynamic_or_opaque_operands() {
     }
     assert!(linear_guard("true or 1 / 0 > 0", &env()).is_err());
 }
+#[test]
+fn linear_profile_refuses_strings_outside_the_smt_unicode_repertoire() {
+    let boundary = linear_guard("'\u{2ffff}' == '\u{2ffff}'", &env()).expect("SMT character");
+    assert!(boundary.predicate().contains("\\u{2ffff}"));
+    for ch in ['\u{30000}', '\u{e0001}', '\u{10ffff}'] {
+        let source = format!("'{ch}' == '{ch}'");
+        let error = linear_guard(&source, &env()).expect_err("unsupported SMT character");
+        assert!(error.to_string().contains("unsupported_predicate"));
+    }
+}
 proptest::proptest! {
+    #[test]
+    fn generated_out_of_repertoire_strings_never_get_an_smt_predicate(code in 0x30000u32..=0x10ffff) {
+        let ch = char::from_u32(code).expect("Unicode scalar");
+        let source = format!("'{ch}' == '{ch}'");
+        let error = linear_guard(&source, &env()).expect_err("unsupported SMT character");
+        proptest::prop_assert!(error.to_string().contains("unsupported_predicate"));
+    }
     #[test]
     fn every_generated_affine_guard_is_in_profile(a in proptest::num::i16::ANY, b in proptest::num::i16::ANY) {
         let source = format!("{a} * input.x + {b} <= input.y");
