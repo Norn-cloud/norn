@@ -1524,6 +1524,33 @@ export interface components {
          * @enum {string}
          */
         NornIrCustomizationTargetKind: "entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "business_pack" | "policy";
+        /** @description A stable reference to the constraint or rule that produced a finding. */
+        NornIrDataQualityRuleRef: {
+            /** @description Artifact containing the governing LawIR. */
+            artifactId: string;
+            /** @enum {string} */
+            kind: "law";
+            /** @description Stable LawIR identity, independent of its artifact name. */
+            lawId: string;
+            /** @description Canonical declaration digest, including its scope and predicate. */
+            version: string;
+        } | {
+            /** @description The invariant identity within its owner. */
+            invariantId: string;
+            /** @enum {string} */
+            kind: "invariant";
+            /** @description The object type or interface that declares this invariant. */
+            owner: components["schemas"]["NornIrInvariantOwner"];
+            /** @description The pinned declaration version or canonical content digest. */
+            version: string;
+        } | {
+            /** @description The globally qualified built-in rule id. */
+            id: string;
+            /** @enum {string} */
+            kind: "builtin";
+            /** @description The built-in rule semantics version. */
+            version: string;
+        };
         /**
          * @description What kind of collection a dataset is.
          * @enum {string}
@@ -2364,6 +2391,16 @@ export interface components {
          *     have their own name space.
          */
         NornIrInvariantId: string;
+        /** @description Which declaration owns an invariant. */
+        NornIrInvariantOwner: {
+            /** @enum {string} */
+            kind: "object";
+            name: components["schemas"]["NornIrObjectTypeName"];
+        } | {
+            /** @enum {string} */
+            kind: "interface";
+            name: components["schemas"]["NornIrInterfaceName"];
+        };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
          *     policy, derived, and setting roots and of ontology business packs.
@@ -2606,7 +2643,9 @@ export interface components {
         };
         /** @constant */
         NornIrJsonFalse: false;
-        NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
+        NornIrJsonValue: null | boolean | number | string | unknown[] | {
+            [key: string]: unknown;
+        };
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
         };
@@ -4111,6 +4150,23 @@ export interface components {
          * @enum {string}
          */
         NornIrRedaction: "none" | "masked" | "hashed" | "withheld";
+        /**
+         * RefusalReason
+         * @description Structured refusal evidence shared by checker and transport projections.
+         *     DIAG-REASON-1: declaration pins and operands are disclosed as one unit.
+         */
+        NornIrRefusalReason: {
+            /** @description Stable governing law or invariant identity. */
+            law: string;
+            /** @description Exact governing declaration, absent only in historical unpinned reasons. */
+            pin?: components["schemas"]["NornIrDataQualityRuleRef"] | null;
+            /** @description Subject of the refused change. */
+            subject: string;
+            /** @description Typed operands; disclosure authority is required before projection. */
+            values: {
+                [key: string]: components["schemas"]["NornIrJsonValue"];
+            };
+        };
         /** @description Directional `rel(from, role)`. */
         NornIrRelCondition: {
             from: components["schemas"]["NornIrRelEndpoint"];
@@ -5912,6 +5968,33 @@ export interface components {
             /** @description Pack, artifact digest and stable law member identity. */
             inherited_from: components["schemas"]["NornInheritedLawOrigin"];
         };
+        /** @description A refused request. */
+        Refusal: {
+            /** @description What the caller can do about it (the discriminant SDKs switch on). */
+            category: components["schemas"]["RefusalCategory"];
+            /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */
+            code: string;
+            /** @description Why, and what would make the request admissible. */
+            explanation: string;
+            /** @description Versioned projection; stored checker receipts keep their original bytes. */
+            format: components["schemas"]["RefusalFormat"];
+            /** @description One-line summary. */
+            message: string;
+            reason: components["schemas"]["NornIrRefusalReason"] | null;
+            /** @description Engine-defined retryability, false unless explicitly supplied by the engine. */
+            retryable: boolean;
+        };
+        /**
+         * @description What the caller can do about a refusal: the kernel refusal taxonomy's
+         *     closed category set (`norn_kernel::RefusalCategory`).
+         * @enum {string}
+         */
+        RefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+        /**
+         * @description Version of the public refusal projection, independent of stored receipt formats.
+         * @enum {string}
+         */
+        RefusalFormat: "norn/refusal@2";
     };
     responses: never;
     parameters: never;

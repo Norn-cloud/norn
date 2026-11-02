@@ -1916,6 +1916,27 @@ pub enum DiagnosticRemediation {
     Internal,
 }
 
+/// Structured refusal evidence shared by checker and transport projections.
+/// DIAG-REASON-1: declaration pins and operands are disclosed as one unit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalReason {
+    /// Stable governing law or invariant identity.
+    pub law: String,
+    /// Subject of the refused change.
+    pub subject: String,
+    /// Typed operands; disclosure authority is required before projection.
+    pub values: BTreeMap<String, RuntimeValue>,
+    /// Exact governing declaration, absent only in historical unpinned reasons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<DataQualityRuleRef>,
+}
+
+/// Schema for the shared refusal reason; transports do not redefine it.
+pub fn refusal_reason_schema() -> Schema {
+    schema_for!(RefusalReason)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
