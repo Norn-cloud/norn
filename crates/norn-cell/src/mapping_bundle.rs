@@ -100,7 +100,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Missing/corrupt retained definitions or an unknown subject type.
     pub fn retained_mapping_root(&self, version: u64, object_type: &str) -> Result<String, CellError> {
-        self.retained_definition_model(version)?.chain(object_type)?.into_iter().next().ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
+        self.retained_definition_model(version)?.chain(object_type)?.into_iter().next().cloned().ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
     }
 
     fn mapping_bundle(
