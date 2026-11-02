@@ -31,16 +31,28 @@ impl IncrementalQuestion {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        Self::rebuild_at(store,plan,context,None,&mut visible)
+        Self::rebuild_at(store, plan, context, None, &mut visible)
     }
     /// RESTATE-HISTORY-1: rebuild a private generation at an authenticated history slice.
     /// # Errors
     /// The same scope, interpretation and budget refusals as historical evaluation.
-    pub fn rebuild_known_at<E:SqlEngine>(store:&CellStore<E>,plan:&QuestionPlan,context:QueryContext,cutoff:crate::KnowledgeCutoff,mut visible:impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<Self,CellError> {
-        Self::rebuild_at(store,plan,context,Some(cutoff),&mut visible)
+    pub fn rebuild_known_at<E: SqlEngine>(
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: crate::KnowledgeCutoff,
+        mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Self, CellError> {
+        Self::rebuild_at(store, plan, context, Some(cutoff), &mut visible)
     }
-    fn rebuild_at<E:SqlEngine>(store:&CellStore<E>,plan:&QuestionPlan,context:QueryContext,knowledge:Option<crate::KnowledgeCutoff>,visible:&mut impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<Self,CellError> {
-        let snapshot=store.question_snapshot_at(plan,context,knowledge,visible)?;
+    fn rebuild_at<E: SqlEngine>(
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        knowledge: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Self, CellError> {
+        let snapshot = store.question_snapshot_at(plan, context, knowledge, visible)?;
         let mut totals = Totals::default();
         for (_, value) in snapshot.contributions.values() {
             totals.adjust(value, false)?;
@@ -84,7 +96,9 @@ impl IncrementalQuestion {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<&QueryResult, CellError> {
-        if self.knowledge.is_some() {return Err(refused("core.world.invalid_restatement"))}
+        if self.knowledge.is_some() {
+            return Err(refused("core.world.invalid_restatement"));
+        }
         let mut staged = self.clone();
         store
             .conn
@@ -97,12 +111,31 @@ impl IncrementalQuestion {
     /// This maintains a private cache; governed activation and durable outputs are separate.
     /// # Errors
     /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
-    pub fn advance_known_at<E:SqlEngine>(&mut self,store:&CellStore<E>,context:QueryContext,cutoff:crate::KnowledgeCutoff,mut visible:impl FnMut(&ObjectRecord)->Result<bool,CellError>)->Result<&QueryResult,CellError> {
-        let prior=self.knowledge.ok_or_else(||refused("core.world.invalid_restatement"))?;
-        if !crate::history_selection::next_known_slice(prior.frontier,prior.recorded_at.as_millis(),cutoff.frontier,cutoff.recorded_at.as_millis()) {return Err(refused("core.world.invalid_restatement"))}
-        let mut staged=self.clone();staged.knowledge=Some(cutoff);
-        store.conn.transaction(||staged.apply(store,context,&mut visible))?;
-        *self=staged;Ok(&self.result)
+    pub fn advance_known_at<E: SqlEngine>(
+        &mut self,
+        store: &CellStore<E>,
+        context: QueryContext,
+        cutoff: crate::KnowledgeCutoff,
+        mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<&QueryResult, CellError> {
+        let prior = self
+            .knowledge
+            .ok_or_else(|| refused("core.world.invalid_restatement"))?;
+        if !crate::history_selection::next_known_slice(
+            prior.frontier,
+            prior.recorded_at.as_millis(),
+            cutoff.frontier,
+            cutoff.recorded_at.as_millis(),
+        ) {
+            return Err(refused("core.world.invalid_restatement"));
+        }
+        let mut staged = self.clone();
+        staged.knowledge = Some(cutoff);
+        store
+            .conn
+            .transaction(|| staged.apply(store, context, &mut visible))?;
+        *self = staged;
+        Ok(&self.result)
     }
 
     fn check_binding<E: SqlEngine>(
@@ -146,9 +179,15 @@ impl IncrementalQuestion {
         Ok(definition_pin)
     }
 
-    fn changed_keys<E:SqlEngine>(&self,store:&CellStore<E>,context:&QueryContext,head:&crate::LedgerHead)->Result<BTreeSet<String>,CellError> {
-        let reader=store.read();let old=&self.result.context;
-        let stale=||refused("core.compute.stale_input");
+    fn changed_keys<E: SqlEngine>(
+        &self,
+        store: &CellStore<E>,
+        context: &QueryContext,
+        head: &crate::LedgerHead,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let reader = store.read();
+        let old = &self.result.context;
+        let stale = || refused("core.compute.stale_input");
         let mut changed = BTreeSet::new();
         if head != &self.result.revision {
             let next = self
@@ -195,19 +234,38 @@ impl IncrementalQuestion {
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
-        let verified=store.verified_head()?;
-        let limits=ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
-        let mut budget=DecodeBudget::new(&limits);
-        let head=if let Some(cutoff)=self.knowledge {super::historical::frame(&reader,cutoff,context.now_ms,&mut budget)?.0} else {verified};
-        let changed=self.changed_keys(store,&context,&head)?;
-        let mut history=reader.history_read();
+        let verified = store.verified_head()?;
+        let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+        let mut budget = DecodeBudget::new(&limits);
+        let head = if let Some(cutoff) = self.knowledge {
+            super::historical::frame(&reader, cutoff, context.now_ms, &mut budget)?.0
+        } else {
+            verified
+        };
+        let changed = self.changed_keys(store, &context, &head)?;
+        let mut history = reader.history_read();
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;
             }
-            let record=if let Some(cutoff)=self.knowledge {
-                super::historical::historical_record(&mut history,&context.world,self.plan.grain().as_str(),&id,cutoff,store.model().model_hash(),&mut budget)?
-            } else {reader.object_with_budget(&context.world,self.plan.grain().as_str(),&id,&mut budget)?};
+            let record = if let Some(cutoff) = self.knowledge {
+                super::historical::historical_record(
+                    &mut history,
+                    &context.world,
+                    self.plan.grain().as_str(),
+                    &id,
+                    cutoff,
+                    store.model().model_hash(),
+                    &mut budget,
+                )?
+            } else {
+                reader.object_with_budget(
+                    &context.world,
+                    self.plan.grain().as_str(),
+                    &id,
+                    &mut budget,
+                )?
+            };
             match record {
                 BudgetedRead::Found(record) => {
                     if record.scope != context.scope {
@@ -235,7 +293,12 @@ impl IncrementalQuestion {
             &self.plan,
             context,
             head,
-            super::historical::query_pin(store.model().model_hash(),&self.plan,&definition_pin,self.knowledge)?,
+            super::historical::query_pin(
+                store.model().model_hash(),
+                &self.plan,
+                &definition_pin,
+                self.knowledge,
+            )?,
             definition_pin,
             &self.contributions,
             &self.totals,

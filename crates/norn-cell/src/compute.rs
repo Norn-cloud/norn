@@ -1,9 +1,9 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
 use std::collections::{BTreeMap, BTreeSet};
 
+mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
-mod historical;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -173,7 +173,7 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
-        self.question_snapshot_at(plan,context,None,visible)
+        self.question_snapshot_at(plan, context, None, visible)
     }
     fn question_snapshot_at(
         &self,
@@ -194,28 +194,58 @@ impl<E: SqlEngine> CellStore<E> {
             let mut budget = DecodeBudget::new(&limits);
             let max = usize::try_from(plan.max_items())
                 .map_err(|_bound| refused("core.compute.bound_exceeded"))?;
-            let mut historical_receipt=None;
-            let (ids,complete)=if let Some(cutoff)=cutoff {
-                (revision,historical_receipt)=historical::frame(&reader,cutoff,context.now_ms,&mut budget)?;
-                historical::history_ids(&reader,&context.world,plan.grain().as_str(),cutoff.frontier,max,&mut budget)?
+            let mut historical_receipt = None;
+            let (ids, complete) = if let Some(cutoff) = cutoff {
+                (revision, historical_receipt) =
+                    historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
+                historical::history_ids(
+                    &reader,
+                    &context.world,
+                    plan.grain().as_str(),
+                    cutoff.frontier,
+                    max,
+                    &mut budget,
+                )?
             } else {
-                let (rows,complete)=reader.root_rows_with_budget(&context.world,plan.grain().as_str(),max,&mut budget)?;
-                (rows.into_iter().map(|(id,_)|id).collect(),complete)
+                let (rows, complete) = reader.root_rows_with_budget(
+                    &context.world,
+                    plan.grain().as_str(),
+                    max,
+                    &mut budget,
+                )?;
+                (rows.into_iter().map(|(id, _)| id).collect(), complete)
             };
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
-            let mut history=reader.history_read();
+            let mut history = reader.history_read();
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
             for id in ids {
-                let selected=if let Some(cutoff)=cutoff {
-                    historical::historical_record(&mut history,&context.world,plan.grain().as_str(),&id,cutoff,self.model().model_hash(),&mut budget)?
-                } else { reader.object_with_budget(&context.world,plan.grain().as_str(),&id,&mut budget)? };
-                let record=match selected {
-                    BudgetedRead::Found(record)=>record,
-                    BudgetedRead::Missing if cutoff.is_some()=>continue,
-                    BudgetedRead::Missing|BudgetedRead::Exhausted=>return Err(refused("core.compute.bound_exceeded")),
+                let selected = if let Some(cutoff) = cutoff {
+                    historical::historical_record(
+                        &mut history,
+                        &context.world,
+                        plan.grain().as_str(),
+                        &id,
+                        cutoff,
+                        self.model().model_hash(),
+                        &mut budget,
+                    )?
+                } else {
+                    reader.object_with_budget(
+                        &context.world,
+                        plan.grain().as_str(),
+                        &id,
+                        &mut budget,
+                    )?
+                };
+                let record = match selected {
+                    BudgetedRead::Found(record) => record,
+                    BudgetedRead::Missing if cutoff.is_some() => continue,
+                    BudgetedRead::Missing | BudgetedRead::Exhausted => {
+                        return Err(refused("core.compute.bound_exceeded"));
+                    }
                 };
                 if record.scope != context.scope {
                     return Err(refused("core.compute.stale_input"));
@@ -228,7 +258,7 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions.insert(id, (record.version, value));
                 }
             }
-            let (query_pin,definition_pin)=self.question_pins(plan,cutoff)?;
+            let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
             let result = materialize(
                 plan,
                 context,
@@ -245,21 +275,35 @@ impl<E: SqlEngine> CellStore<E> {
             })
         })
     }
-    fn check_question_model(&self,plan:&QuestionPlan)->Result<(),CellError> {
-        let model=self.model().query_contract(plan.grain().as_str())?;
-        if plan.properties().iter().any(|p|model.property(p.id.as_str()).is_none_or(|actual|!p.same_contract(actual))) {return Err(refused(UNSUPPORTED_ENGINE))}
+    fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {
+        let model = self.model().query_contract(plan.grain().as_str())?;
+        if plan.properties().iter().any(|p| {
+            model
+                .property(p.id.as_str())
+                .is_none_or(|actual| !p.same_contract(actual))
+        }) {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
         Ok(())
     }
-    fn question_pins(&self,plan:&QuestionPlan,cutoff:Option<crate::KnowledgeCutoff>)->Result<(String,String),CellError> {
-        let reader=self.read();
-        let definition_pin=match reader.active_definitions_version()? {
-            Some(version)=>reader.installed_definitions(Some(version))?.ok_or_else(||refused("core.compute.stale_input"))?.receipt_sha256,
-            None=>self.model().model_hash().to_owned(),
+    fn question_pins(
+        &self,
+        plan: &QuestionPlan,
+        cutoff: Option<crate::KnowledgeCutoff>,
+    ) -> Result<(String, String), CellError> {
+        let reader = self.read();
+        let definition_pin = match reader.active_definitions_version()? {
+            Some(version) => {
+                reader
+                    .installed_definitions(Some(version))?
+                    .ok_or_else(|| refused("core.compute.stale_input"))?
+                    .receipt_sha256
+            }
+            None => self.model().model_hash().to_owned(),
         };
-        let pin=historical::query_pin(self.model().model_hash(),plan,&definition_pin,cutoff)?;
-        Ok((pin,definition_pin))
+        let pin = historical::query_pin(self.model().model_hash(), plan, &definition_pin, cutoff)?;
+        Ok((pin, definition_pin))
     }
-
 }
 
 struct Snapshot {

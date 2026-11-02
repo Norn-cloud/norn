@@ -25,16 +25,21 @@ pub(crate) const fn receipt_last_sequence(first: u64, count: u64) -> Option<u64>
 }
 
 /// RESTATE-HISTORY-1: a private generation advances at most one source receipt.
-pub(crate) const fn next_known_slice(old_frontier:u64,old_clock:u64,new_frontier:u64,new_clock:u64)->bool {
+pub(crate) const fn next_known_slice(
+    old_frontier: u64,
+    old_clock: u64,
+    new_frontier: u64,
+    new_clock: u64,
+) -> bool {
     match new_frontier.checked_sub(old_frontier) {
-        Some(delta)=>delta<=1 && new_clock>=old_clock,
-        None=>false,
+        Some(delta) => delta <= 1 && new_clock >= old_clock,
+        None => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{select_known_version,receipt_last_sequence,next_known_slice};
+    use super::{next_known_slice, receipt_last_sequence, select_known_version};
     use norn_testkit::proptest::prelude::*;
     proptest! {
         #[test]
