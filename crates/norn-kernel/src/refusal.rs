@@ -532,21 +532,27 @@ impl<X> DecisionRefusal<X> {
             | Self::Overflow
             | Self::Host(_) => None,
         };
-        reason.map(|(law, key, mut values)| {
-            values.insert(
-                "canonical_code".into(),
-                RuntimeValue::String(norn_checker::entity_model::GRAPH_INVALID_TRANSITION.into()),
-            );
-            values.insert(
-                "invariant_id".into(),
-                RuntimeValue::String("GRAPH-STATE-1".into()),
-            );
-            RefusalReason {
-                law: law.to_owned(),
-                subject: key.to_string(),
-                values,
-            }
-        })
+        reason.map(|(law, key, values)| graph_state_reason(law, key, values))
+    }
+}
+
+fn graph_state_reason(
+    law: &str,
+    key: &crate::FactKey,
+    mut values: BTreeMap<String, RuntimeValue>,
+) -> RefusalReason {
+    values.insert(
+        "canonical_code".into(),
+        RuntimeValue::String(norn_checker::entity_model::GRAPH_INVALID_TRANSITION.into()),
+    );
+    values.insert(
+        "invariant_id".into(),
+        RuntimeValue::String("GRAPH-STATE-1".into()),
+    );
+    RefusalReason {
+        law: law.to_owned(),
+        subject: key.to_string(),
+        values,
     }
 }
 

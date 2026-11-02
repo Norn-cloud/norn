@@ -1728,29 +1728,22 @@ impl<X> DecisionRefusal<X> {
             CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
                 reason: format!("link targets for {source_key} -{link}-> are malformed"),
             },
-            CommitError::DanglingLink { key, missing } => Self::InvalidGraphLink {
-                key: key.source.clone(),
-                link: key.link.clone(),
-                reason: format!("link {key} would dangle: {missing} does not exist"),
-            },
-            CommitError::LinkTarget { key } => Self::InvalidGraphLink {
-                key: key.source.clone(),
-                link: key.link.clone(),
-                reason: format!("link {key} is not a declared link to an admitted target"),
-            },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidGraphLink {
-                key: key.source.clone(),
-                link: key.link.clone(),
-                reason: format!("link {key} exceeds its cardinality at {endpoint}"),
-            },
-            CommitError::LinkRequired { parent, link } => Self::InvalidGraphLink {
-                reason: format!("{parent} has no required link {link}"),
-                key: parent,
-                link,
-            },
-            CommitError::RequiredLinkProof { key, link, .. } => Self::InvalidGraphLink {
+            CommitError::DanglingLink { key, missing } => Self::invalid_graph_link(
+                &key,
+                format!("link {key} would dangle: {missing} does not exist"),
+            ),
+            CommitError::LinkTarget { key } => Self::invalid_graph_link(
+                &key,
+                format!("link {key} is not a declared link to an admitted target"),
+            ),
+            CommitError::LinkCardinality { key, endpoint } => Self::invalid_graph_link(
+                &key,
+                format!("link {key} exceeds its cardinality at {endpoint}"),
+            ),
+            CommitError::LinkRequired { parent: key, link }
+            | CommitError::RequiredLinkProof { key, link, .. } => Self::InvalidGraphLink {
                 reason: format!(
-                    "required link {link} from {key} has no proven target in the final graph"
+                    "required link `{link}` from {key} has no proven target in the final graph"
                 ),
                 key,
                 link,
@@ -1788,6 +1781,14 @@ impl<X> DecisionRefusal<X> {
             },
             CommitError::Overflow => Self::Overflow,
             CommitError::Host(error) => Self::Host(error),
+        }
+    }
+
+    fn invalid_graph_link(link: &crate::LinkKey, reason: String) -> Self {
+        Self::InvalidGraphLink {
+            key: link.source.clone(),
+            link: link.link.clone(),
+            reason,
         }
     }
 

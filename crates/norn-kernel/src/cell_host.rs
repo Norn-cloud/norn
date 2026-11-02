@@ -735,7 +735,7 @@ pub enum CommitError<X> {
         link: String,
     },
     /// GRAPH-LINK-1: a required relation has no proven surviving target.
-    #[error("required link {link} from {key} has no proven target in the final graph")]
+    #[error("required link `{link}` from {key} has no proven target in the final graph")]
     RequiredLinkProof {
         /// The source object.
         key: FactKey,
