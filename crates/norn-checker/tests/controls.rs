@@ -60,8 +60,15 @@ fn check(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
 ) -> norn_checker::CheckedArtifactSet {
+    let candidates = norn_ir::runtime::encode(artifacts).expect("candidate sources");
+    let base_sources = norn_ir::runtime::encode(base).expect("base sources");
+    let sources = norn_checker::ReceiptSources::new(
+        candidates.as_array().expect("candidate array"),
+        base_sources.as_array().expect("base array"),
+    )
+    .expect("receipt sources");
     check_artifact_set_with_receipt(
-        artifacts,
+        &sources,
         &EntityArtifactSetContext {
             registry: &BTreeSet::new(),
             base,
