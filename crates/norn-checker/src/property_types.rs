@@ -426,15 +426,14 @@ fn check_rate_site(
     currency_source: Option<&norn_ir::metric::DimensionPath>,
     out: &mut Vec<Diagnostic>,
 ) {
-    if let Some(per_unit) = per_unit {
-        if currency_source.is_none()
+    if let Some(per_unit) = per_unit
+        && (currency_source.is_none()
             || unit.is_some()
             || per_unit.code.is_empty()
             || per_unit.code.chars().any(char::is_whitespace)
-            || scale > 18
+            || scale > 18)
         {
             out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
-        }
     }
 }
 

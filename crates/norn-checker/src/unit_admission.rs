@@ -177,16 +177,16 @@ fn visit_schema(
                     &format!("{path}/{key}"),
                     owner,
                     codes,
-                    depth + 1,
+                    depth.saturating_add(1),
                     out,
                 );
             }
         }
         norn_ir::JsonValue::Array(items) => {
             for (i, value) in items.iter().enumerate() {
-                visit_schema(value, &format!("{path}/{i}"), owner, codes, depth + 1, out);
+                visit_schema(value, &format!("{path}/{i}"), owner, codes, depth.saturating_add(1), out);
             }
         }
-        _ => {}
+        norn_ir::JsonValue::Null | norn_ir::JsonValue::Bool(_) | norn_ir::JsonValue::Number(_) | norn_ir::JsonValue::String(_) => {}
     }
 }

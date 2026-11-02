@@ -2226,7 +2226,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
     }
 
     /// Find the table that physically stores a property and whether it is a
-    /// real SQLite column. Inherited properties stay on their oldest
+    /// real `SQLite` column. Inherited properties stay on their oldest
     /// declaration's table; computed and overflow properties are not columns.
     fn binding_property_column_owner(
         &self,
