@@ -205,3 +205,53 @@ def digest(directory: Path = COVERAGE) -> str:
         total.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
         total.update(b"\n")
     return total.hexdigest()
+
+
+read_entry = _object
+
+def apply_entries(root: Path, updates: dict, legacy=()) -> None:
+    """Validate staged coverage, then apply registry updates with rollback on failure."""
+    import tempfile
+    relative = COVERAGE.relative_to(ROOT)
+    if any(Path(p).is_absolute() or ".." in Path(p).parts for p in (*updates, *legacy)):
+        raise ValueError("registry updates must stay within the repository")
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary) / "coverage"
+        shutil.copytree(root / relative, staged, symlinks=True)
+        for path in legacy:
+            if path.startswith(str(relative) + "/"):
+                (staged / Path(path).relative_to(relative)).unlink(missing_ok=True)
+        if any((staged / "subsystems").glob("*.json")):
+            raise ValueError("coverage target has not migrated")
+        for path, content in updates.items():
+            if path.startswith(str(relative) + "/"):
+                target = staged / Path(path).relative_to(relative)
+                if content is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+        for folder in sorted(staged.rglob("*"), reverse=True):
+            if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                folder.rmdir()
+        load(staged)
+        backups = {p: (root / p).read_bytes() if (root / p).exists() else None for p in updates}
+        try:
+            for path, content in updates.items():
+                target = root / path
+                if content is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+            for folder in sorted((root / relative).rglob("*"), reverse=True):
+                if folder.is_dir() and not folder.is_symlink() and not any(folder.iterdir()):
+                    folder.rmdir()
+        except BaseException:
+            for path, content in backups.items():
+                if content is None:
+                    (root / path).unlink(missing_ok=True)
+                else:
+                    (root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (root / path).write_bytes(content)
+            raise
