@@ -10,7 +10,7 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
-use crate::read::{LedgerEntry, ObjectRecord, StoreReader, to_i64, to_u64};
+use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
 use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
 use crate::{CellStore, CommitOutcome, InstalledDefinitionInput, Model, Receipt};
 
@@ -266,26 +266,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
-        if known_as_of.frontier > 0 {
-            let bytes: Option<i64> = self.conn.query_optional(
-                &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
-                params![to_i64(known_as_of.frontier,"knowledge frontier")?], |row| row.get(0),
-            )?;
-            let bytes = to_u64(
-                bytes.ok_or_else(unproven_snapshot)?,
-                "frontier receipt bytes",
-            )?;
-            if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
-                return Ok(HistoricalEvidence::Exhausted);
-            }
-            self.receipt_at(known_as_of.frontier)?
-                .ok_or_else(unproven_snapshot)?;
+        if known_as_of.frontier > 0 && self.receipt_at_with_budget(known_as_of.frontier,budget)?.is_none() {
+            return Ok(HistoricalEvidence::Exhausted);
         }
         let root = self.root_type(object_type).unwrap_or(object_type);
         let capacity = budget.remaining_rows() / 2;
         let limit = capacity.saturating_add(1);
         let rows = self.conn.query(
-            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"version\" LIMIT ?5"),
+            &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\"=?1 AND \"root_type\"=?2 AND \"id\"=?3 AND \"commit_seq\"<=?4 ORDER BY \"commit_seq\", \"version\" LIMIT ?5"),
             params![world, root, key, to_i64(known_as_of.frontier, "knowledge frontier")?, to_i64(u64::try_from(limit).map_err(|_bound| unproven_snapshot())?, "historical limit")?],
         )?;
         let versions = rows
@@ -325,6 +313,45 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .map_or(HistoricalEvidence::Missing, |proof| {
                 HistoricalEvidence::Found(Box::new(proof))
             }))
+    }
+
+    /// Read a pinned receipt only after admitting its complete encoded size.
+    /// ASOF-KNOWLEDGE-1: absence/corruption refuses; None means budget exhaustion.
+    /// # Errors
+    /// Missing/corrupt receipt or engine failure. The empty frontier has no receipt.
+    pub fn receipt_at_with_budget(
+        &self,
+        commit_seq: u64,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<Receipt>, CellError> {
+        let bytes: Option<i64> = self.conn.query_optional(
+            &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
+            params![to_i64(commit_seq,"knowledge frontier")?], |row| row.get(0),
+        )?;
+        let bytes = to_u64(
+            bytes.ok_or_else(unproven_snapshot)?,
+            "frontier receipt bytes",
+        )?;
+        if !budget.charge_rows(1) || !budget.charge(bytes.saturating_add(64)) {
+            return Ok(None);
+        }
+        self.receipt_at(commit_seq)?.map(Some).ok_or_else(unproven_snapshot)
+    }
+
+    /// Bind a historical result to the actual immutable ledger prefix.
+    /// ASOF-KNOWLEDGE-1: a frontier recorded after its cutoff refuses.
+    /// # Errors
+    /// Unproven/future receipt, invalid ledger span, or engine failure.
+    pub fn historical_revision_with_budget(
+        &self,
+        cutoff: KnowledgeCutoff,
+        budget: &mut crate::reactive::DecodeBudget,
+    ) -> Result<Option<LedgerHead>, CellError> {
+        if cutoff.frontier==0 { return Ok(Some(LedgerHead::genesis())); }
+        let Some(receipt)=self.receipt_at_with_budget(cutoff.frontier,budget)? else {return Ok(None)};
+        if receipt.body.logical_time>cutoff.recorded_at.as_millis() {return Err(CellError::TemporalLeakage)}
+        let seq=crate::history_selection::receipt_last_sequence(receipt.body.first_event_seq,receipt.body.event_count).ok_or_else(unproven_snapshot)?;
+        Ok(Some(LedgerHead { seq,hash:receipt.body.ledger_head,commits:receipt.body.commit_seq }))
     }
 
     pub(crate) fn retained_fact_scope(

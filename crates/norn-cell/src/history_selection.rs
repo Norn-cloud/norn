@@ -16,11 +16,24 @@ pub(crate) const fn select_known_version(
     }
 }
 
+/// ASOF-KNOWLEDGE-1: event-free commits retain the preceding ledger sequence.
+pub(crate) const fn receipt_last_sequence(first: u64, count: u64) -> Option<u64> {
+    match first.checked_sub(1) {
+        Some(prior) => prior.checked_add(count),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::select_known_version;
+    use super::{select_known_version,receipt_last_sequence};
     use norn_testkit::proptest::prelude::*;
     proptest! {
+        #[test]
+        fn receipt_prefix_matches_wide_arithmetic(first in any::<u64>(), count in any::<u64>()) {
+            let expected=u128::from(first).checked_sub(1).and_then(|n|n.checked_add(u128::from(count))).and_then(|n|u64::try_from(n).ok());
+            prop_assert_eq!(receipt_last_sequence(first,count),expected);
+        }
         #[test]
         fn selection_equals_rebuild_and_later_knowledge_preserves_old_answer(
             recorded in prop::collection::vec(any::<u64>(), 0..64), cutoff in 0u64..u64::MAX,

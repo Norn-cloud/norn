@@ -62,3 +62,5 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 6. Complete subscription cursor/authority reset, then IVM/full-recompute equivalence with 03, then EN/AR explanations over the same result IDs.
 
 ASOF-KNOWLEDGE-1 incarnation selection reads authenticated immutable version evidence under an aggregate row/byte budget. It selects the highest eligible version at an inclusive knowledge cutoff and immutable source commit frontier (including equal-clock corrections), preserves tombstones and source receipts, and returns explicit exhaustion without a partial answer. Effective-time interpretation, query projection, authorization and restatement publication remain the declared question/host boundaries; this lookup alone is not DATA-ASOF acceptance.
+
+ASOF-KNOWLEDGE-1 historical revisions derive event sequence, ledger hash and commit count from the authenticated frontier receipt, including event-free commits. Receipt bytes/rows are admitted before decode; a frontier recorded after the requested knowledge clock refuses temporal leakage. An empty frontier is the real genesis prefix.
