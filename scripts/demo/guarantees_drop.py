@@ -30,8 +30,10 @@ def dependency_closure(available, roots):
             continue
         selected[key] = artifact
         for dependency in artifact.get("dependencies", []):
-            target = catalog.get((dependency["artifactId"], dependency["version"]))
+            target = catalog.get((dependency["artifactId"], dependency.get("version")))
             if target is None:
+                if dependency.get("required") is False:
+                    continue
                 raise ValueError("pack dependency is not retained at its exact version")
             pending.append(target)
     return [selected[key] for key in sorted(selected)]
