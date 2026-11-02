@@ -2437,13 +2437,7 @@ pub(crate) fn exact_admission<'n>(
     let mut pending = vec![(root, destination)];
     let mut out = Vec::new();
     while let Some((node, destination)) = pending.pop() {
-        let round = matches!(
-            node,
-            Node::FunctionCall {
-                kind: FunctionKind::Internal(InternalFunction::Round),
-                ..
-            }
-        );
+        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() >= 2);
         let site = destination
             || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
         let reason = if matches!(
