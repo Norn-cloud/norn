@@ -4039,9 +4039,22 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
 }
 
 fn synchronous_writer() -> norn_kernel::SynchronousRule {
-    let artifacts: Vec<Value> = serde_json::from_str(include_str!("fixtures/action-writer.json")).unwrap();
+    let artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/action-writer.json")).unwrap();
     let root = serde_json::from_value(artifacts[0]["payload"].clone()).unwrap();
-    norn_kernel::SynchronousRule::admit(norn_ir::ActionRuleRef { artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into() }, &root, &BTreeMap::new(), norn_decisions::DecisionBinding {profile_id:"norn-zen/6".into(),environment_hash:"test".into()}).unwrap()
+    norn_kernel::SynchronousRule::admit(
+        norn_ir::ActionRuleRef {
+            artifact_id: "example.atomic.writer.rule".into(),
+            version: "1.0.0".into(),
+        },
+        &root,
+        &BTreeMap::new(),
+        norn_decisions::DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: "test".into(),
+        },
+    )
+    .unwrap()
 }
 
 norn_testkit::proptest::proptest! {

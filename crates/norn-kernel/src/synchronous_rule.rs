@@ -143,8 +143,13 @@ pub(crate) fn resolve<'a, X>(
     let Some(pin) = &call.action.synchronous_rule else {
         return Ok(None);
     };
-    if !matches!(call.action.effect_program, Some(norn_ir::ActionEffectProgram::FireTransition { .. })) {
-        return Err(refused("only transition actions admit a synchronous writer"));
+    if !matches!(
+        call.action.effect_program,
+        Some(norn_ir::ActionEffectProgram::FireTransition { .. })
+    ) {
+        return Err(refused(
+            "only transition actions admit a synchronous writer",
+        ));
     }
     let mut matching = catalog
         .action_rules
