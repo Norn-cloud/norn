@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// Observation quality evaluation could not complete.
+    #[error("quality evaluation: {0}")]
+    QualityEvaluation(String),
     /// CP2 cannot resolve an applicable inherited/effective law without B2.
     #[error("core.laws.unsupported_semantics: law {law_id} scope unsupported until B2")]
     UnsupportedLawScope {

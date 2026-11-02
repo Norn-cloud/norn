@@ -37,6 +37,8 @@ mod export_journal;
 mod history;
 pub mod host;
 mod migration;
+mod observation_quality;
+pub use observation_quality::AuthoritativePage;
 pub mod model;
 mod payload_storage;
 pub mod quantity;
@@ -66,5 +68,3 @@ pub use store::{
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
-
-mod observation_quality;

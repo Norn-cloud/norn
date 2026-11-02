@@ -5250,6 +5250,124 @@ fn capture_purity(
     ));
 }
 
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn data_quarantine_redelivery_persists_one_finding_and_correction_recovers(deliveries in 2usize..6, fraction in 1u16..1000) {
+        for purity in ["1.20".to_owned(), format!("1.{fraction:03}")] {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("quality.sqlite");
+        let mut cell = purity_quality_host(&path);
+        for delivery in 0..deliveries {
+            capture_purity(&mut cell, &format!("delivery-{delivery}"), &purity);
+            let model = cell.store().model().clone();
+            drop(cell);
+            cell = norn_cell::SqliteCell::open(&path, model, StoreOptions::default(), "org_demo/dev", |_| BTreeMap::new()).expect("restart");
+            let reader = cell.store().read();
+            let raw = reader.object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw").expect("captured");
+            norn_testkit::proptest::prop_assert!(reader.observation_is_quarantined(MAIN_WORLD, &raw).expect("quarantine"));
+            norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
+            norn_testkit::proptest::prop_assert!(page.records.is_empty());
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+            norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
+            let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+            norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Open);
+        }
+        capture_purity(&mut cell, "corrected", "0.80");
+        let reader = cell.store().read();
+        norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_some());
+        let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review");
+        norn_testkit::proptest::prop_assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Resolved);
+        let persisted: Vec<_> = reader.ledger_page(0, 100).expect("ledger").into_iter().filter(|event| event.event.get("op").and_then(Value::as_str) == Some("data_quality_finding")).collect();
+        norn_testkit::proptest::prop_assert_eq!(persisted.len(), 1);
+        norn_testkit::proptest::prop_assert_eq!(persisted[0].event.get("fact").and_then(|fact| fact.get("status")).and_then(Value::as_str), Some("open"));
+        }
+    }
+}
+
+norn_testkit::proptest::proptest! {
+#[test]
+fn obs_recovery_upgrade_uses_each_findings_retained_model(fraction in 501u16..1000) {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("upgrade.sqlite");
+    let mut cell = purity_quality_host(&path);
+    capture_purity(&mut cell, "original", "1.20");
+    let original = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings")[0].clone();
+    let previous = cell.store().read().installed_definitions(None).expect("definitions").expect("installed");
+    let mut artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&previous.canonical_set).expect("artifacts");
+    let mut snapshot = cell.store().model().definitions_snapshot();
+    let mut law = serde_json::to_value(&artifacts[1]).expect("law");
+    law["version"] = json!("0.2.0");
+    law["payload"]["response"]["expression"] = json!("self.purity >= 0 and self.purity <= 0.5");
+    artifacts[1] = serde_json::from_value(law).expect("tightened law");
+    snapshot.law_artifacts = vec![artifacts[1].clone()];
+    let model = Model::from_snapshot(&snapshot).expect("retained candidate");
+    let mut input = install_input("tightened", previous.installed_at.checked_add(1).expect("next epoch"), &model);
+    input.canonical_set = String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set")).expect("UTF8");
+    let old_model = cell.store().model().clone();
+    drop(cell);
+    let mut store = CellStore::open(&path, old_model, StoreOptions::default()).expect("store");
+    store.install_definitions(model, input, Some(previous.version), "org_demo/dev").expect("upgrade");
+    let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+    let review = |cell: &norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>| cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("version-bound review");
+    assert_eq!(review(&cell)[0].status, norn_ir::DataQualityFindingStatus::Open);
+    capture_purity(&mut cell, "still-invalid", "1.30");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    capture_purity(&mut cell, "passes-old-law", &format!("0.{fraction:03}"));
+    let findings = review(&cell);
+    assert_eq!(findings.iter().find(|f| f.id == original.id).expect("original retained").status, norn_ir::DataQualityFindingStatus::Resolved);
+    assert!(findings.iter().any(|f| f.status == norn_ir::DataQualityFindingStatus::Open));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("still quarantined").is_none());
+    capture_purity(&mut cell, "passes-both-laws", "0.40");
+    assert!(review(&cell).iter().all(|f| f.status == norn_ir::DataQualityFindingStatus::Resolved));
+    assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("recovered").is_some());
+    let original_event = cell.store().read().ledger_page(0, 100).expect("history").into_iter().find(|e| e.event.get("fact").and_then(|f| f.get("id")).and_then(Value::as_str) == Some(original.id.as_str())).expect("original event");
+    assert_eq!(original_event.event.get("fact").and_then(|f| f.get("status")).and_then(Value::as_str), Some("open"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("cache connection");
+    engine.execute(&format!("UPDATE {} SET {} = {} + 1", quote_identifier("o:quality.Measurement"), quote_identifier(VERSION_COLUMN), quote_identifier(VERSION_COLUMN)), &[]).expect("unproven mutable version");
+    assert!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").is_err(), "unproven correction refuses");
+}
+
+}
+
+#[test]
+fn obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = purity_quality_host(&directory.path().join("quality.sqlite"));
+    let mut native = CellCommit::empty();
+    native.writes.push(FactWrite {
+        key: FactKey::new("quality.Measurement", "MEAS-1"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([(
+                "purity".into(),
+                Value::from_json_text("1.20").expect("decimal"),
+            )]),
+        },
+    });
+    let refusal = cell.commit(native).expect_err("native invalid purity");
+    assert_eq!(refusal.code(), "core.laws.violated");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("raw")
+            .is_none()
+    );
+    capture_purity(&mut cell, "purity-120", "1.20");
+    let findings = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("persisted findings");
+    assert_eq!(findings.len(), 1);
+    assert!(
+        matches!(&findings[0].rule_ref, norn_ir::DataQualityRuleRef::Law {law_id, ..} if law_id == "purity_in_range")
+    );
+}
+
 // OBS-EVIDENCE-1: local delivery/restart metadata cannot duplicate a persisted finding.
 norn_testkit::proptest::proptest! {
     #[test]
@@ -5404,6 +5522,13 @@ fn obs_evidence_legacy_candidates_do_not_block_a_verified_producer() {
         }
     }
     assert_eq!(verified, 1, "proof search passes the first candidate page");
+    assert_eq!(
+        reader
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+            .expect("paged review")
+            .len(),
+        1
+    );
     assert!(
         reader
             .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")

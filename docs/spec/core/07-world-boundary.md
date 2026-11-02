@@ -43,7 +43,7 @@ Unsupported timing, response, lifecycle or commitment scope fails closed with
 OBS-EVIDENCE-1 evaluates observations against those same retained direct laws,
 retaining the actual law ID/declaration digest in each finding. The emitting
 receipt pins the definition version for historical re-evaluation; current laws
-cannot substitute for that snapshot. A law pin is classified as enforced only
+cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
 when it resolves to the supported direct-law contract.
 
 Pointwise recovery checks the violated rule under an authenticated retained
@@ -58,9 +58,26 @@ CDC replays deduplicate by `(connector instance, partition, source event identit
 
 Canonical promotion/write-back is a separate governed action under 04/05. Its laws may **refuse** the proposed commit. Observational truth and authoritative posted truth are separate projections; source violations cannot authorize native mutations. Write-back carries causal source/operation IDs to suppress echoes without discarding independent evidence.
 
-OBS-EVIDENCE-1 capture atomically suppresses an already proven finding ID,
-including after redelivery/restart; retry normalization uses the original commit
-cutoff. Raw observations remain durable.
+CP2 quarantine constraints include integrity-classified invariants, error-severity
+direct safety laws, and error-severity findings from supported built-in rules.
+Warning-severity built-in findings do not quarantine. Recovery uses revalidation:
+an appended corrected observation is eligible only when every such constraint passes. `authoritative_object` excludes quarantined
+records; raw reads retain source truth. Finding status is per law: a correction that passes law A resolves finding A
+without rewriting the original, even if law B still has an open finding.
+Object quarantine remains while any finding under the declared quarantine
+constraints is open; recovery requires every such finding to be resolved.
+Recovery re-evaluates each finding's rule using the retained definition model
+pinned by its emitting receipt, including after a definition install; the current
+catalog never substitutes. Quarantine derives from these version-bound open
+findings, and changed failing values do not resolve a still-violated rule.
+Capture atomically suppresses an already proven finding ID, including after
+redelivery/restart; retry normalization uses the original commit cutoff.
+
+The CP2 bridge contract captures content-addressed evidence bundles over the
+sealed raw-envelope digest and exact source/mapping/definition pins, preserving
+diagnostics and nonconforming records, and issues observed-write authority only
+after cell-owned recomputation matches the pinned bundle
+(`core.boundary.bundle_mismatch` on disagreement).
 
 ## Perform and recovery semantics
 
@@ -86,6 +103,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
+- **OBS-RECOVERY-UPGRADE:** After a definition install, an old finding stays open while its pinned rule fails; only a correction satisfying that retained rule resolves it. New definitions never supersede the old finding implicitly.
 - **OBS-RECOVERY-LIFECYCLE-REFUSE:** An unchanged out-of-band lifecycle finding cannot resolve through pointwise evaluation; unsupported state-aware recovery refuses.
 - **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
 - **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
