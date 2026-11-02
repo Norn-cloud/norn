@@ -181,6 +181,9 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             }) {
                 let exact = meter.exact_arithmetic()
                     || self.exact_sites.last().is_some_and(Option::is_some);
+                let arithmetic = self.exact_sites.last().copied().flatten().or_else(|| meter.arithmetic());
+                let next = self.bytecode.get(self.ip as usize);
+                let at_rescale = arithmetic.is_some() && (next.is_none() || matches!(next, Some(Opcode::Rescale { .. })) || (matches!(next, Some(Opcode::Negate)) && matches!(self.bytecode.get(self.ip as usize + 1), None | Some(Opcode::Rescale { .. }))));
                 let failure = |message: &str| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
@@ -237,7 +240,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     Opcode::In if exact => {
                         return Err(failure("membership outside the exact arithmetic profile"))
                     }
-                    Opcode::Negate if exact => {
+                    Opcode::Negate if exact && !at_rescale => {
                         if let Some(Number(number)) = self.peek(0) {
                             crate::scaled::ScaledArithmetic::exact_result_scale(
                                 "Add",
@@ -254,14 +257,14 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                         }
                     }
                     Opcode::PushNumber(n) => {
-                        if exact {
+                        if exact && !at_rescale {
                             crate::scaled::ScaledArithmetic::exact_result_scale(
                                 "Add",
                                 n.scale(),
                                 0,
                             )
                             .map_err(failure)?;
-                        } else {
+                        } else if !exact {
                             meter
                                 .arithmetic()
                                 .ok_or_else(|| failure("missing arithmetic site"))?

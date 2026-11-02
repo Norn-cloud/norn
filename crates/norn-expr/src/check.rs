@@ -2480,7 +2480,7 @@ pub(crate) fn exact_admission<'n>(
         } else if matches!(node, Node::FunctionCall { kind, .. } if !matches!(kind, FunctionKind::Internal(InternalFunction::Len)) && !(round && site))
         {
             Some("function requires an explicit supported exact site")
-        } else if matches!(node, Node::Number(value) if value.scale() > 18) {
+        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
             Some("numeric literal exceeds the exact arithmetic scale bound")
         } else {
             None
