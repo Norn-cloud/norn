@@ -1165,3 +1165,42 @@ fn interface_decimal_binding_cannot_be_a_stored_value_type() {
             .any(|d| d.code.as_str() == "core.values.unit_mismatch")
     );
 }
+
+#[test]
+fn interface_decimal_binding_inherited_contract_rechecks_effective_members() {
+    let names = ["input", "output", "loss"];
+    let requirements =
+        names.map(|id| json!({"id":id,"type":{"kind":"decimal-binding","group":"conversion"}}));
+    let concrete = names.map(|id| json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}}));
+    let interface =
+        serde_json::from_value(json!({"name":"core.Conversion","properties":requirements}))
+            .expect("interface");
+    let parent = serde_json::from_value(
+        json!({"name":"toy.Conversion","implements":["core.Conversion"],"properties":concrete}),
+    )
+    .expect("parent");
+    let child = serde_json::from_value(
+        json!({"name":"toy.Melt","extends":"toy.Conversion","properties":[
+            {"id":"output","type":{"kind":"decimal","scale":2,"unit":{"system":"ucum","code":"g"}}}
+        ]}),
+    )
+    .expect("child");
+    let findings = norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[interface],
+            object_types: &[parent, child],
+            ..norn_checker::EntityModel::EMPTY
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &BTreeSet::new(),
+            base: norn_checker::EntityModel::EMPTY,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.code.as_str() == "core.values.unit_mismatch")
+    );
+}
