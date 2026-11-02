@@ -4,7 +4,7 @@ import { Norn } from "@norn/authoring"
 // JEWEL-PRICE: the governed pricing step shared by sell and scrap exchanges.
 const PricingInput = Schema.Struct({
   quote_id: Schema.String,
-  side: Schema.Literals(["sell", "scrap"]),
+  side: Schema.String,
   currency: Schema.Literal("USD"),
   price_per_g: Norn.rate(6, { currency: "currency", perUnit: { system: "ucum", code: "g" } }),
   fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),

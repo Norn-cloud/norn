@@ -304,7 +304,8 @@ fn jewel_price_milligram_denominator_refuses_before_execution() {
     assert!(
         diagnostics
             .iter()
-            .any(|d| d.code == "core.values.unit_mismatch"
+            .any(|d| d.code == "action.validation.invalid_payload"
+                && d.message.contains("core.values.unit_mismatch")
                 && d.severity == DiagnosticSeverity::Error),
         "{diagnostics:?}"
     );
