@@ -133,3 +133,30 @@ async fn restore_requires_same_explicit_identity_and_export_refuses_unqualified_
         Err(norn_cell::export::ExportError::IdentityMismatch)
     ));
 }
+
+#[test]
+fn legacy_history_stays_local_and_cannot_adopt_an_identity() {
+    use norn_cell::engine::SqlEngine as _;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("legacy.sqlite");
+    drop(CellStore::open(&path, model(), StoreOptions::default()).expect("empty store"));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute("DELETE FROM _norn_meta WHERE key = 'binding:cell_id'", &[])
+        .expect("legacy fixture");
+    let mut store = CellStore::from_engine(engine, model()).expect("legacy local open");
+    assert_eq!(store.cell_id().expect("unqualified"), None);
+    assert!(matches!(
+        store.bind("cell_id", a().as_str()),
+        Err(CellError::BindingMismatch { .. })
+    ));
+    let receipt = store
+        .commit(&CommitBatch::default())
+        .expect("local commit")
+        .receipt()
+        .clone();
+    drop(store);
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("legacy reopen");
+    assert_eq!(store.read().receipt_at(1).expect("receipt"), Some(receipt));
+    assert_eq!(store.cell_id().expect("unqualified"), None);
+}
