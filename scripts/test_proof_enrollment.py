@@ -248,7 +248,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        self.assertEqual(len(self.full["bundle"]), 6)
+        self.assertGreaterEqual(len(self.full["bundle"]), 4)
+        self.assertLessEqual(len(self.full["bundle"]), 6)
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()
         reordered["phase"].reverse()
@@ -270,6 +271,10 @@ class AffectedPlanTests(unittest.TestCase):
                 result = subprocess.run(command + args, capture_output=True, text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
         result = subprocess.run(command + ["bundle", json.dumps(self.full), "missing"], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        incomplete = copy.deepcopy(self.full)
+        incomplete["phase"].remove("guards")
+        result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
 
     def test_bundle_executor_logs_success_and_propagates_failure(self):

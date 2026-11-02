@@ -561,7 +561,9 @@ def core_physics_closure_canaries() -> None:
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
-    full_plan = {"mode": "full", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["clippy"]}
+    full_plan = json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "plan"],
+                                         cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
+    full_plan.update(base_sha="base", head_sha="head")
     affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
     def packed(plan: dict[str, Any]) -> dict[str, Any]:
         return json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "bundle-plan", json.dumps(plan)],
