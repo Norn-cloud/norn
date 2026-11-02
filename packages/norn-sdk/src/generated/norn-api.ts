@@ -642,6 +642,7 @@ export interface components {
             quantityEffect?: components["schemas"]["NornIrActionQuantityEffect"];
             scopeRequired: string[];
             slice?: components["schemas"]["NornIrSliceDeclaration"][];
+            synchronousRule?: components["schemas"]["NornIrActionRuleRef"];
             title?: string;
             uiEffects?: components["schemas"]["NornIrActionUiEffects"];
             writes?: components["schemas"]["NornIrActionWrite"][];
@@ -713,6 +714,13 @@ export interface components {
              * @description Scale expected by the pinned template parameter.
              */
             scale: number;
+        };
+        /** @description Closed reference to the admitted synchronous writer of an action. */
+        NornIrActionRuleRef: {
+            /** @description Exact RuleIR artifact identity. */
+            artifactId: string;
+            /** @description Exact artifact version; no latest-version resolution. */
+            version: string;
         };
         /**
          * @description Versioned, closed declarations for UI-facing effects that cannot be
