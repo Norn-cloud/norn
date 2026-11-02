@@ -473,10 +473,10 @@ impl<E: SqlEngine> CellStore<E> {
             }],
             facts: transition
                 .map(|transition| norn_ir::FactChange::Transition {
-                    object_type: RESTATEMENT_TYPE.into(),
+                    object_type: norn_ir::ObjectTypeName(RESTATEMENT_TYPE.into()),
                     key: id.into(),
-                    lifecycle: "status".into(),
-                    transition: transition.into(),
+                    lifecycle: norn_ir::PropertyId("status".into()),
+                    transition: norn_ir::TransitionId(transition.into()),
                 })
                 .into_iter()
                 .collect(),
@@ -497,7 +497,7 @@ impl<E: SqlEngine> CellStore<E> {
                 GuardedError::Guard(e) | GuardedError::Store(e) => e,
             })?;
         outcome
-            .receipt
+            .receipt()
             .body
             .written
             .iter()
