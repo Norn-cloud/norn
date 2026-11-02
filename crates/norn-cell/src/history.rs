@@ -402,7 +402,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
                 )?;
                 let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
-                let snapshot = decode_snapshot(&receipt.body.world, &row.object_type, &row.key, row.version, &encoded, &hash)?;
+                let snapshot = decode_snapshot(
+                    &receipt.body.world,
+                    &row.object_type,
+                    &row.key,
+                    row.version,
+                    &encoded,
+                    &hash,
+                )?;
                 if snapshot.root_type != root || snapshot.object_type != row.object_type {
                     return Err(unproven_snapshot());
                 }
