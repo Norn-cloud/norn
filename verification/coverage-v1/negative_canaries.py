@@ -759,6 +759,8 @@ def workflow_context_canaries(source: str) -> None:
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             if name == "trusted-policy":
                 unsafe.append(runner)
+            else:
+                unsafe.append("ubuntu-24.04")
             for value in unsafe:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value

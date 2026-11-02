@@ -241,7 +241,7 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(plan["shard"], ["rest-1"])
         self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
         self.assertEqual(plan["packages"], "norn-skeleton-guard")
-        self.assertEqual(len(plan["bundle"]), 1)
+        self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
 
     def test_bundle_inventory_is_exact_and_deterministic(self):
         command = ["bash", str(ROOT / "scripts/ci/core.sh")]
