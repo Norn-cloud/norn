@@ -5268,7 +5268,6 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
-            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("second role").is_none());
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
@@ -6162,6 +6161,8 @@ norn_testkit::proptest::proptest! {
             }
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
+            norn_testkit::proptest::prop_assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("raw alternate").is_some());
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("alternate excluded").is_none());
             let governed = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
             norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &governed).is_err());
             let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
@@ -6300,6 +6301,9 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &key).is_err());
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_bounded(&cell, &key, 4096).is_err());
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_reference(&cell, &key, 4096).is_err());
+        let link = norn_kernel::LinkKey::new(norn_kernel::FactKey::new("quality.Measurement", "MEAS-2"), "unused", key.clone());
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::QualityEvaluation(_))));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_link_targets(&cell, &key, "unused", 1, 64), Err(CellError::QualityEvaluation(_))));
         let mut stale = norn_kernel::CellCommit::empty();
         stale.reads.push(norn_kernel::FactExpectation { key, expected });
         norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
