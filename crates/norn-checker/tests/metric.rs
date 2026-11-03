@@ -294,6 +294,11 @@ fn ratios_check_units_currencies_object_grain_references_cycles_and_additivity()
         check_metrics_and_questions(&metrics, &[], &catalog(ONTOLOGY))
     };
     assert!(run(&sales, &other, &base_ratio).is_empty());
+    let mut average = other.clone();
+    average["type_params"]["metric_aggregation_params"]["agg"] = json!("average");
+    average["x-norn"]["additivity"] = json!({"kind":"non_additive"});
+    assert_code(&run(&sales, &average, &base_ratio), codes::RATIO_AGGREGATION);
+
     other["x-norn"]["currency"] = json!({"property":{"links":["parent_sales_invoice"],"property":"currency"},"conversion":{"target":"USD","rate":{"property":"conversion_rate"}}});
     assert_code(&run(&sales, &other, &base_ratio), codes::UNIT_MISMATCH);
     let mut kg = sales;
@@ -420,7 +425,7 @@ fn effective_shared_units_and_inherited_links_are_used() {
     let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
     let mut types = ontology[0].clone();
     types["artifactId"] = json!("erpnext.property_types.entity.v2");
-    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.mass","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"kg"}}}]});
+    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.mass","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"kg"}}}]});
     ontology.as_array_mut().expect("array").push(types);
     // Locate the physical weight property by id, rather than relying on order.
     for property in ontology[0]["payload"]["objectType"]["properties"]
@@ -1058,5 +1063,21 @@ fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
         let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
         properties.iter_mut().find(|p| p["id"] == "net_amount").expect("amount")["type"]["additivity"] = class;
         assert_code(&check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string())), expected);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn numeric_additivity_cannot_be_inferred_from_units_or_scale(scale in 0u64..=18, additive in proptest::bool::ANY) {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
+        let amount = properties.iter_mut().find(|p| p["id"] == "weight").expect("weight");
+        amount["type"]["scale"] = json!(scale);
+        if !additive { amount["type"].as_object_mut().expect("type").remove("additivity"); }
+        let (mut metric, question) = sales();
+        metric["type_params"]["expr"] = json!("weight");
+        metric["x-norn"].as_object_mut().expect("extension").remove("currency");
+        let findings = check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string()));
+        proptest::prop_assert_eq!(findings.iter().any(|d| d.code == codes::UNDECLARED_ADDITIVITY), !additive);
     }
 }

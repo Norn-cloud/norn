@@ -570,6 +570,9 @@ impl<'a> Checker<'a> {
                 let mut operands = Vec::new();
                 for (field, operand) in [("numerator", numerator), ("denominator", denominator)] {
                     if let Some(&(_, referenced)) = self.metrics.get(operand.as_str()) {
+                        if !matches!(referenced.measure, BoundMeasure::Property { aggregate: MeasureAggregate::Sum | MeasureAggregate::Count, .. }) {
+                            self.reject(codes::RATIO_AGGREGATION, &format!("{at}/measure/{field}"));
+                        }
                         if referenced.time_dimension != metric.time_dimension {
                             self.reject(codes::GRAIN_MISMATCH, &format!("{at}/measure/{field}"));
                         }
@@ -612,33 +615,14 @@ impl<'a> Checker<'a> {
         signature
     }
 
-    fn property_metric(
+    fn numeric_additivity(
         &mut self,
+        property: &EffectiveProperty,
         metric: &BoundMetric,
-        root: &str,
         aggregate: MeasureAggregate,
-        property: Option<&str>,
         at: &str,
-    ) -> Option<Signature> {
-        let Some(Ok(object)) = self.catalog.object_type_named(root) else {
-            self.reject(codes::UNKNOWN_OBJECT, &format!("{at}/measure/objectType"));
-            return None;
-        };
-        let resolved = property.and_then(|id| object.property(id));
-        if resolved.is_some_and(|property| {
-            matches!(
-                &property.kind,
-                EffectiveKind::Base(PropertyType::Decimal {
-                    per_unit: Some(_),
-                    ..
-                })
-            )
-        }) {
-            self.reject(codes::UNSUPPORTED_SEMANTICS, &format!("{at}/measure"));
-            return None;
-        }
-        if let Some(property) = resolved.filter(|property| is_numeric(property)) {
-            let EffectiveKind::Base(kind) = &property.kind else { return None };
+    ) {
+            let EffectiveKind::Base(kind) = &property.kind else { return };
             let refusal = match kind.additivity() {
                 norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
                 norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
@@ -654,6 +638,35 @@ impl<'a> Checker<'a> {
                     finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
                 }
             }
+    }
+
+    fn property_metric(
+        &mut self,
+        metric: &BoundMetric,
+        root: &str,
+        aggregate: MeasureAggregate,
+        property: Option<&str>,
+        at: &str,
+    ) -> Option<Signature> {
+        let Some(Ok(object)) = self.catalog.object_type_named(root) else {
+            self.reject(codes::UNKNOWN_OBJECT, &format!("{at}/measure/objectType"));
+            return None;
+        };
+        let resolved = property.and_then(|id| object.property(id));
+        if let Some(property) = resolved.filter(|property| is_numeric(property)) {
+            self.numeric_additivity(property, metric, aggregate, at);
+        }
+        if resolved.is_some_and(|property| {
+            matches!(
+                &property.kind,
+                EffectiveKind::Base(PropertyType::Decimal {
+                    per_unit: Some(_),
+                    ..
+                })
+            )
+        }) {
+            self.reject(codes::UNSUPPORTED_SEMANTICS, &format!("{at}/measure"));
+            return None;
         }
         if property.is_some() && resolved.is_none() {
             self.reject(codes::UNKNOWN_PATH, &format!("{at}/measure/property"));
