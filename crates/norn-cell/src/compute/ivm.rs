@@ -7,7 +7,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{QuestionPlan, contribution::project};
 use norn_ir::ResourceLimitProfile;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Private complete generation; restart explicitly rebuilds from the cell.
 #[derive(Clone)]
@@ -249,6 +249,7 @@ impl IncrementalQuestion {
         let mut changed = self.changed_keys(store, &context, &head)?;
         let mut history = reader.history_read_seeded(receipt);
         let candidates: BTreeSet<_> = self.members.union(&changed).cloned().collect();
+        let mut records = BTreeMap::new();
         for id in candidates {
             let selected = if let Some(cutoff) = self.knowledge {
                 super::historical::historical_record(
@@ -273,7 +274,8 @@ impl IncrementalQuestion {
                     if record.scope != context.scope {
                         return Err(stale());
                     }
-                    if visible(&record)?
+                    let authorized = visible(&record)?;
+                    if authorized
                         && let Some(finding) = reader
                             .question_findings(
                                 &context.world,
@@ -284,6 +286,7 @@ impl IncrementalQuestion {
                     {
                         context.exclusions.insert(id.clone(), finding.id.clone());
                     }
+                    records.insert(id, (record, authorized));
                 }
                 BudgetedRead::Missing => {}
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
@@ -302,31 +305,10 @@ impl IncrementalQuestion {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;
             }
-            let record = if let Some(cutoff) = self.knowledge {
-                super::historical::historical_record(
-                    &mut history,
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    cutoff,
-                    store.model().model_hash(),
-                    &mut budget,
-                )?
-            } else {
-                reader.object_with_budget(
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    &mut budget,
-                )?
-            };
-            match record {
-                BudgetedRead::Found(record) => {
-                    if record.scope != context.scope {
-                        return Err(stale());
-                    }
+            match records.remove(&id) {
+                Some((record, authorized)) => {
                     self.members.insert(id.clone());
-                    if visible(&record)?
+                    if authorized
                         && !context.exclusions.contains_key(&id)
                         && let Some(value) = project(&self.plan, &record.values).map_err(refused)?
                     {
@@ -334,10 +316,9 @@ impl IncrementalQuestion {
                         self.contributions.insert(id, (record.version, value));
                     }
                 }
-                BudgetedRead::Missing => {
+                None => {
                     self.members.remove(&id);
                 }
-                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
