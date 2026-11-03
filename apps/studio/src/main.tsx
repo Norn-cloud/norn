@@ -5,7 +5,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { QuestionsPage } from "./questions.tsx"
@@ -26,49 +26,60 @@ const SECTIONS: readonly Section[] = [
 ]
 
 function Shell() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <Sidebar variant="inset" collapsible="icon">
-          <SidebarHeader>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton size="lg" asChild>
-                  <Link to="/questions">
-                    <span className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground">N</span>
-                    <span className="text-panel font-medium">Norn Studio</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarHeader>
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {SECTIONS.map(({ path, label, icon: Icon }) => (
-                    <SidebarMenuItem key={path}>
-                      <SidebarMenuButton asChild isActive={pathname === path} tooltip={label}>
-                        <Link to={path}><Icon /><span>{label}</span></Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-          <SidebarRail />
-        </Sidebar>
-        <SidebarInset>
-          <header className="flex h-12 items-center gap-2 border-b px-4">
-            <SidebarTrigger />
-            <span className="text-meta text-muted-foreground">{SECTIONS.find(({ path }) => path === pathname)?.label}</span>
-          </header>
-          <main className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></main>
-        </SidebarInset>
+        <Navigation />
       </SidebarProvider>
     </TooltipProvider>
+  )
+}
+
+/** The sidebar and page card; on mobile the sidebar is a sheet that closes once a link is followed. */
+function Navigation() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const { setOpenMobile } = useSidebar()
+  const closeMobile = () => setOpenMobile(false)
+  return (
+    <>
+      <Sidebar variant="inset" collapsible="icon">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" asChild>
+                <Link to="/questions" onClick={closeMobile}>
+                  <span className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground">N</span>
+                  <span className="text-panel font-medium">Norn Studio</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {SECTIONS.map(({ path, label, icon: Icon }) => (
+                  <SidebarMenuItem key={path}>
+                    <SidebarMenuButton asChild isActive={pathname === path} tooltip={label}>
+                      <Link to={path} onClick={closeMobile}><Icon /><span>{label}</span></Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarRail />
+      </Sidebar>
+      <SidebarInset>
+        <header className="flex h-12 items-center gap-2 border-b px-4">
+          <SidebarTrigger />
+          <span className="text-meta text-muted-foreground">{SECTIONS.find(({ path }) => path === pathname)?.label}</span>
+        </header>
+        <main className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></main>
+      </SidebarInset>
+    </>
   )
 }
 
