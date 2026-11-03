@@ -202,11 +202,12 @@ fn bind(
     result: &Value,
     tool: &EvidenceTool,
     bounds: &str,
-) -> Result<Vec<EvidenceRecord>> {
+) -> Result<(Vec<EvidenceRecord>, Vec<String>)> {
     let goals = challenge.body()["obligations"]
         .as_array()
         .ok_or("missing generated goals")?;
     let mut records = Vec::new();
+    let mut checked_digests = Vec::new();
     for (index, goal) in goals.iter().enumerate() {
         let kind = goal["goal"]["kind"]
             .as_str()
@@ -231,11 +232,12 @@ fn bind(
             return Err("fresh result identity refused".into());
         }
         records.push(record);
+        checked_digests.push(checked_digest);
     }
     if records.len() != 3 {
         return Err("unexpected generated goal inventory; driver scope must be reviewed".into());
     }
-    Ok(records)
+    Ok((records, checked_digests))
 }
 
 fn main() -> Result<()> {
@@ -290,13 +292,13 @@ fn main() -> Result<()> {
     {
         return Err("positive/mutation/restoration correspondence failed".into());
     }
-    let original_records = bind(&good, &original_result, &tool, &bounds)?;
-    let bad_records = bind(&bad, &mutated_result, &tool, &bounds)?;
-    let restored_records = bind(&restored, &restored_result, &tool, &bounds)?;
+    let (original_records, original_digests) = bind(&good, &original_result, &tool, &bounds)?;
+    let (bad_records, _) = bind(&bad, &mutated_result, &tool, &bounds)?;
+    let (restored_records, _) = bind(&restored, &restored_result, &tool, &bounds)?;
     let prior = original_records.first().ok_or("no bound result")?;
     let changed_pins = bad.evidence_pins(prior.pins.goal_index, tool.clone(), &bounds, 0)?;
-    let prior_digest = format!("{:x}", Sha256::digest(prior.result_json.as_bytes()));
-    if bad.evidence_identity(&changed_pins, &prior_digest, prior) != EvidenceIdentity::Unknown {
+    let prior_digest = original_digests.first().ok_or("no checked result digest")?;
+    if bad.evidence_identity(&changed_pins, prior_digest, prior) != EvidenceIdentity::Unknown {
         return Err("stale pass accepted for changed writer".into());
     }
     println!(
