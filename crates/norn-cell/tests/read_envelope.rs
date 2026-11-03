@@ -97,7 +97,7 @@ proptest! {
     fn tokens_cannot_cross_any_context_pin(changed in 0usize..15, salt in any::<u64>()) {
         let host = host();
         let key = norn_testkit::cell_host::law_key(1);
-        let authority = CommitBinding { resource_kind: key.object_type.0.clone(), ..binding() };
+        let authority = binding_for(&key);
         let envelope = host.read_envelope(&key, &authority).expect("read");
         let mut context = envelope.token.context.clone();
         let suffix = format!("-changed-{salt}");

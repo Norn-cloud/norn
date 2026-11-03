@@ -41,6 +41,14 @@ where
             })?;
             let head = store.verified_head()?;
             let installed = store.read().installed_definitions(None)?;
+            if let Some(definitions) = &installed
+                && definitions.model_hash != store.model().model_hash()
+            {
+                return Err(CellError::SchemaMismatch {
+                    expected: store.model().model_hash().to_owned(),
+                    found: definitions.model_hash.clone(),
+                });
+            }
             let definition_pin = DefinitionPin {
                 version: installed
                     .as_ref()
