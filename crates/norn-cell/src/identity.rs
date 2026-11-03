@@ -32,11 +32,6 @@ pub(crate) fn validate_model(
     }
     for object in objects.values() {
         for key in object.keys.iter().filter(|key| !key.normalize.is_empty()) {
-            if key.match_policy.is_some() {
-                return Err(CellError::Encoding(
-                    "normalized identity does not admit entity-resolution policies".into(),
-                ));
-            }
             for component in &key.components {
                 let supported = object.property(component.as_str()).is_some_and(|property| {
                     matches!(

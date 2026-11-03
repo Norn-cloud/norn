@@ -208,16 +208,6 @@ fn normalized_scan_row_limit_refuses_atomically() {
 #[test]
 fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
     let mut defs = definitions();
-    defs[0].identity[0]
-        .rule
-        .as_mut()
-        .expect("normalizer")
-        .match_policy = Some(norn_ir::ResolutionPolicyName("unsupported.policy".into()));
-    assert!(matches!(
-        Model::from_definitions(&defs, &[]),
-        Err(CellError::Encoding(_))
-    ));
-    let mut defs = definitions();
     let mut amount = defs[0].properties[0].clone();
     amount.id = PropertyId("amount".into());
     amount.property_type = PropertyType::Decimal {
@@ -245,6 +235,45 @@ fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
     assert!(matches!(
         Model::from_definitions(&defs, &[]),
         Err(CellError::Encoding(_))
+    ));
+}
+
+#[test]
+fn normalized_uniqueness_retains_resolution_metadata_without_invoking_it() {
+    let mut defs = definitions();
+    let policy = Some(norn_ir::ResolutionPolicyName("unavailable.policy".into()));
+    defs[0].identity[0]
+        .rule
+        .as_mut()
+        .expect("normalizer")
+        .match_policy = policy.clone();
+    let model = Model::from_definitions(&defs, &[]).expect("existing metadata remains valid");
+    assert_eq!(
+        model
+            .object_type("identity.Root")
+            .expect("definition")
+            .identity[0]
+            .rule
+            .as_ref()
+            .expect("normalizer")
+            .match_policy,
+        policy
+    );
+    let mut store = CellStore::open_in_memory(model).expect("store");
+    store
+        .commit(&batch(
+            "org_a",
+            "main",
+            vec![put("identity.Child", "a", " abc ")],
+        ))
+        .expect("canonical key");
+    assert!(matches!(
+        store.commit(&batch(
+            "org_a",
+            "main",
+            vec![put("identity.Sibling", "b", "ABC")]
+        )),
+        Err(CellError::IdentityCollision { .. })
     ));
 }
 #[test]
