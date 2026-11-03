@@ -221,6 +221,9 @@
               "scale": 2.0,
               "additivity": {
                 "kind": "additive"
+              },
+              "currencySource": {
+                "property": "currency"
               }
             }
           },

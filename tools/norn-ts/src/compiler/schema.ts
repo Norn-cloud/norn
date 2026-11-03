@@ -256,7 +256,7 @@ export class SchemaProjection {
           if (kind === "ratio" && fields.size === 3) {
             additivity = { kind, numerator: this.stringLiteral(fields.get("numerator"), additivityNode, "additivity.numerator"), denominator: this.stringLiteral(fields.get("denominator"), additivityNode, "additivity.denominator") }
           } else if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
-            additivity = { kind }
+            additivity = kind === "undeclared" ? undefined : { kind }
           } else {
             throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", additivityNode)
           }

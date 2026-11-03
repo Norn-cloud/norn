@@ -641,16 +641,16 @@ impl<'a> Checker<'a> {
             return;
         };
         let refusal = match kind.additivity() {
-            norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
+            norn_ir::PropertyAdditivity::Undeclared {} => Some(codes::UNDECLARED_ADDITIVITY),
             norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
-            norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
-            norn_ir::PropertyAdditivity::SemiAdditive
+            norn_ir::PropertyAdditivity::NonAdditive {} => Some(codes::INVALID_ADDITIVITY),
+            norn_ir::PropertyAdditivity::SemiAdditive {}
                 if !matches!(metric.additivity, MetricAdditivity::SemiAdditive { .. })
                     || aggregate != MeasureAggregate::Sum =>
             {
                 Some(codes::SEMI_ADDITIVE_TIME)
             }
-            norn_ir::PropertyAdditivity::SemiAdditive | norn_ir::PropertyAdditivity::Additive => {
+            norn_ir::PropertyAdditivity::SemiAdditive {} | norn_ir::PropertyAdditivity::Additive {} => {
                 None
             }
         };
