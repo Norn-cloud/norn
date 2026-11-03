@@ -438,8 +438,11 @@ impl<'a> Checker<'a> {
         } else {
             at.to_owned()
         };
-        self.out
-            .push(error(code, message.to_owned(), Span::pointer(at)));
+        let mut finding = error(code, message.to_owned(), Span::pointer(at));
+        if matches!(code, codes::UNDECLARED_ADDITIVITY | codes::RATIO_AGGREGATION) {
+            finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
+        }
+        self.out.push(finding);
     }
 
     /// Resolve all concrete targets; polymorphic paths must have the same
