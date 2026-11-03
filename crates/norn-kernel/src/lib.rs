@@ -124,3 +124,7 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+/// Versioned single-cell read evidence and context validation.
+pub mod read_envelope;
+mod read_token_check;
