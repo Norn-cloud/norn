@@ -146,7 +146,7 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
     let [entry] = ledger.as_slice() else {
         return Err("refusal must record exactly one audit event".into());
     };
-    let event: FactEvent = serde_json::from_value(entry.event.clone())?;
+    let event: FactEvent = serde_json::from_value(serde_json::to_value(&entry.event)?)?;
     if !matches!(event, FactEvent::InvariantRefused { key, owner, id, outcome, attempt_id, .. }
         if key == FactKey::new(MELT, "melt")
             && owner == norn_ir::InvariantOwner::Interface(norn_ir::InterfaceName("core.Conversion".into()))
