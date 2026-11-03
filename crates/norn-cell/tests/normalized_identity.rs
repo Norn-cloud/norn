@@ -145,8 +145,7 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     let head = records[2].hash().expect("retained head");
     let rebuilt = CellStore::rebuild_export_history(engine, &records, &head).expect("rebuild");
     assert_eq!(rebuilt.read().dump().expect("replayed"), committed);
-    let mut rebuilt =
-        IdentityCell::new(rebuilt, "org_a", |_| JsonObject::new()).expect("rebuilt host");
+    let mut rebuilt = IdentityCell::new(rebuilt, "org_a", |_| JsonObject::new()).expect("host");
     rebuilt
         .commit(identity_proposal(&rebuilt, None))
         .expect("new authored delete");
@@ -254,10 +253,8 @@ fn id_collision_between_sibling_types_rolls_back_the_complete_commit() {
         values: BTreeMap::from([("code".into(), RuntimeValue::from("other"))]),
     });
     // A live sibling is not a deletion; preserve the existing duplicate-row refusal.
-    assert!(matches!(
-        store.commit(&same_identity),
-        Err(CellError::Sqlite(_))
-    ));
+    let collision = store.commit(&same_identity).expect_err("live sibling");
+    assert!(matches!(collision, CellError::Sqlite(_)));
     assert_eq!(store.read().dump().expect("live sibling refusal"), before);
     let error = store
         .commit(&batch(

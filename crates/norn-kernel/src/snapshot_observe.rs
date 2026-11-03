@@ -1580,6 +1580,9 @@ pub fn prepare_observed_delete(
         let failures = evaluate_observed_invariants(catalog, key, values)?;
         authorization.authorize(catalog, write, provenance, &turn.id, &failures)?;
     }
+    if !reachable && let Some(write) = writes.first() {
+        authorization.authorize(catalog, write, provenance, &turn.id, &[])?;
+    }
     check_observation_event_limit(events.len().saturating_add(authorization.finding_count()))?;
     Ok(PreparedObservation {
         commit: CellCommit {
