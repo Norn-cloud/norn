@@ -70,17 +70,33 @@ fn scenario(trace: &Value, bounds: &Value, kind: &str) -> Result<GuaranteeScenar
                 .ok_or("exact trace integer")?;
             let kind = declaration.get("type").ok_or("declared type")?;
             if present {
-                values.insert(field(declaration, "property")?.to_owned(), GuaranteeScalar {
-                    coefficient,
-                    scale: u32::try_from(kind.get("scale").and_then(Value::as_u64).ok_or("declared scale")?)?,
-                    unit: serde_json::from_value(kind.get("unit").cloned().unwrap_or(Value::Null))?,
-                });
+                values.insert(
+                    field(declaration, "property")?.to_owned(),
+                    GuaranteeScalar {
+                        coefficient,
+                        scale: u32::try_from(
+                            kind.get("scale")
+                                .and_then(Value::as_u64)
+                                .ok_or("declared scale")?,
+                        )?,
+                        unit: serde_json::from_value(
+                            kind.get("unit").cloned().unwrap_or(Value::Null),
+                        )?,
+                    },
+                );
             }
         }
-        states.push(GuaranteeState { exists: present, values });
+        states.push(GuaranteeState {
+            exists: present,
+            values,
+        });
     }
     Ok(GuaranteeScenario {
-        kind: if kind == "non_vacuity" { GuaranteeScenarioKind::NonVacuityWitness } else { GuaranteeScenarioKind::Counterexample },
+        kind: if kind == "non_vacuity" {
+            GuaranteeScenarioKind::NonVacuityWitness
+        } else {
+            GuaranteeScenarioKind::Counterexample
+        },
         writer_artifact_id: field(bounds, "action")?.into(),
         identity: field(bounds, "identity")?.into(),
         states,
@@ -89,27 +105,66 @@ fn scenario(trace: &Value, bounds: &Value, kind: &str) -> Result<GuaranteeScenar
 // PROOF-GUARANTEE-1: presentation carries actual bound records, never authority.
 fn assessment(kind: &str, status: &str, reason: &str) -> (GuaranteeVerdict, GuaranteeLevel) {
     let verdict = match (kind, status) {
-        ("non_vacuity", "violation") | ("initialization" | "preservation", "ok") => GuaranteeVerdict::BoundedPass {},
+        ("non_vacuity", "violation") | ("initialization" | "preservation", "ok") => {
+            GuaranteeVerdict::BoundedPass {}
+        }
         ("initialization" | "preservation", "violation") => GuaranteeVerdict::Refuted {},
-        _ => GuaranteeVerdict::Unknown { reason: reason.into() },
+        _ => GuaranteeVerdict::Unknown {
+            reason: reason.into(),
+        },
     };
     let level = if matches!(verdict, GuaranteeVerdict::Unknown { .. }) {
-        GuaranteeLevel::Unknown { reason: reason.into() }
-    } else { GuaranteeLevel::ExhaustiveFiniteBounded {} };
+        GuaranteeLevel::Unknown {
+            reason: reason.into(),
+        }
+    } else {
+        GuaranteeLevel::ExhaustiveFiniteBounded {}
+    };
     (verdict, level)
 }
 
-fn supported_goal(index: u32, kind: &str, record: EvidenceRecord, bounds: &Value) -> Result<GoalGuarantee> {
+fn supported_goal(
+    index: u32,
+    kind: &str,
+    record: EvidenceRecord,
+    bounds: &Value,
+) -> Result<GoalGuarantee> {
     let output: Value = serde_json::from_str(&record.result_json)?;
     let status = field(&output, "status")?;
-    let reason = output.get("reason").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).unwrap_or("backend supplied no qualified verdict");
+    let reason = output
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("backend supplied no qualified verdict");
     let (verdict, level) = assessment(kind, status, reason);
-    Ok(GoalGuarantee { index, goal_kind: kind.into(), eligible: true, verdict, level,
-        scenario: output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,bounds,kind)).transpose()?, evidence: Some(record) })
+    Ok(GoalGuarantee {
+        index,
+        goal_kind: kind.into(),
+        eligible: true,
+        verdict,
+        level,
+        scenario: output
+            .get("trace")
+            .filter(|trace| !trace.is_null())
+            .map(|t| scenario(t, bounds, kind))
+            .transpose()?,
+        evidence: Some(record),
+    })
 }
 fn unsupported_goal(index: u32, kind: &str, reason: &str) -> GoalGuarantee {
-    GoalGuarantee { index, goal_kind: kind.into(), eligible: false,
-        verdict: GuaranteeVerdict::Unknown { reason: reason.into() }, level: GuaranteeLevel::Unknown { reason: reason.into() }, evidence: None, scenario: None }
+    GoalGuarantee {
+        index,
+        goal_kind: kind.into(),
+        eligible: false,
+        verdict: GuaranteeVerdict::Unknown {
+            reason: reason.into(),
+        },
+        level: GuaranteeLevel::Unknown {
+            reason: reason.into(),
+        },
+        evidence: None,
+        scenario: None,
+    }
 }
 
 #[derive(Serialize)]
@@ -132,22 +187,74 @@ struct AcceptanceReport {
     stale_rejected: bool,
     acceptance_passed: bool,
 }
-fn documents(source: &DefinitionSource, batch: &super::Batch, profile: &Value, goals: &[GoalGuarantee]) -> Result<Vec<GuaranteesDocument>> {
+fn documents(
+    source: &DefinitionSource,
+    batch: &super::Batch,
+    profile: &Value,
+    goals: &[GoalGuarantee],
+) -> Result<Vec<GuaranteesDocument>> {
     let mut documents = Vec::new();
-    for (law_index, identity) in batch.challenge.body().get("lawStatements").and_then(Value::as_array).ok_or("law statements")?.iter().enumerate() {
+    for (law_index, identity) in batch
+        .challenge
+        .body()
+        .get("lawStatements")
+        .and_then(Value::as_array)
+        .ok_or("law statements")?
+        .iter()
+        .enumerate()
+    {
         let artifact_id = field(identity, "artifactId")?;
-        let artifact = source.artifacts.iter().chain(&source.base).find(|a| a.artifact_id == artifact_id).ok_or("governing law artifact")?;
-        let law: norn_ir::LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
-        let selected: Vec<_> = goals.iter().filter(|g| batch.challenge.body().get("obligations").and_then(|v|usize::try_from(g.index).ok().and_then(|index|v.get(index))).and_then(|v|v.get("law")).and_then(Value::as_u64) == u64::try_from(law_index).ok()).cloned().collect();
-        let eligible = selected.iter().filter(|g|g.eligible).count();
-        let discharged = selected.iter().filter(|g|matches!(g.verdict, GuaranteeVerdict::BoundedPass {})).count();
-        let verdict = if selected.iter().any(|g|matches!(g.verdict, GuaranteeVerdict::Refuted {})) { GuaranteeVerdict::Refuted {} }
-            else if eligible > 0 && discharged == eligible { GuaranteeVerdict::BoundedPass {} }
-            else { GuaranteeVerdict::Unknown { reason: "eligible obligations lack a complete agreeing backend result".into() } };
-        let level = if matches!(verdict, GuaranteeVerdict::Unknown { .. }) { GuaranteeLevel::Unknown { reason: "eligible obligations lack qualified evidence".into() } } else { GuaranteeLevel::ExhaustiveFiniteBounded {} };
+        let artifact = source
+            .artifacts
+            .iter()
+            .chain(&source.base)
+            .find(|a| a.artifact_id == artifact_id)
+            .ok_or("governing law artifact")?;
+        let law: norn_ir::LawIR =
+            serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
+        let selected: Vec<_> = goals
+            .iter()
+            .filter(|g| {
+                batch
+                    .challenge
+                    .body()
+                    .get("obligations")
+                    .and_then(|v| usize::try_from(g.index).ok().and_then(|index| v.get(index)))
+                    .and_then(|v| v.get("law"))
+                    .and_then(Value::as_u64)
+                    == u64::try_from(law_index).ok()
+            })
+            .cloned()
+            .collect();
+        let eligible = selected.iter().filter(|g| g.eligible).count();
+        let discharged = selected
+            .iter()
+            .filter(|g| matches!(g.verdict, GuaranteeVerdict::BoundedPass {}))
+            .count();
+        let verdict = if selected
+            .iter()
+            .any(|g| matches!(g.verdict, GuaranteeVerdict::Refuted {}))
+        {
+            GuaranteeVerdict::Refuted {}
+        } else if eligible > 0 && discharged == eligible {
+            GuaranteeVerdict::BoundedPass {}
+        } else {
+            GuaranteeVerdict::Unknown {
+                reason: "eligible obligations lack a complete agreeing backend result".into(),
+            }
+        };
+        let level = if matches!(verdict, GuaranteeVerdict::Unknown { .. }) {
+            GuaranteeLevel::Unknown {
+                reason: "eligible obligations lack qualified evidence".into(),
+            }
+        } else {
+            GuaranteeLevel::ExhaustiveFiniteBounded {}
+        };
         let mut tools = Vec::new();
-        for record in selected.iter().filter_map(|g|g.evidence.as_ref()) {
-            if !tools.contains(&record.pins.tool) { tools.push(record.pins.tool.clone()); }
+        for record in selected.iter().filter_map(|g| g.evidence.as_ref()) {
+            if !tools.contains(&record.pins.tool) {
+                tools.push(record.pins.tool.clone());
+            }
         }
         documents.push(GuaranteesDocument {
             format: GuaranteesFormat::V1, law_artifact_id: artifact_id.into(), law_id: law.id,
@@ -310,12 +417,26 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
             }
             goals.push(goal);
         }
-        if mode == DriverMode::Prepare { continue; }
-        let counterexample = label != "mutant" || goals.iter().any(|g| g.goal_kind == "preservation" && matches!(g.verdict, GuaranteeVerdict::Refuted {}));
+        if mode == DriverMode::Prepare {
+            continue;
+        }
+        let counterexample = label != "mutant"
+            || goals.iter().any(|g| {
+                g.goal_kind == "preservation" && matches!(g.verdict, GuaranteeVerdict::Refuted {})
+            });
         let expected = if label == "mutant" { 2 } else { 3 };
-        cases.push(CaseReport { label: label.into(), challenge: batch.challenge.sha256().into(), total: batch.goals.len(), eligible, discharged,
-            acceptance_passed: eligible == 3 && batch.goals.len() == 10 && discharged == expected && counterexample,
-            documents: documents(source, &batch, &profile, &goals)? });
+        cases.push(CaseReport {
+            label: label.into(),
+            challenge: batch.challenge.sha256().into(),
+            total: batch.goals.len(),
+            eligible,
+            discharged,
+            acceptance_passed: eligible == 3
+                && batch.goals.len() == 10
+                && discharged == expected
+                && counterexample,
+            documents: documents(source, &batch, &profile, &goals)?,
+        });
     }
     if mode == DriverMode::Prepare {
         writeln!(
@@ -325,19 +446,31 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
         )?;
         return Ok(());
     }
-    let restored = cases.first().map(|c|&c.challenge) == cases.last().map(|c|&c.challenge);
+    let restored = cases.first().map(|c| &c.challenge) == cases.last().map(|c| &c.challenge);
     let accepted = restored && stale_rejected && cases.iter().all(|c| c.acceptance_passed);
     if accepted {
         for case in &cases {
             for (index, document) in case.documents.iter().enumerate() {
-                std::fs::write(work.join(format!("{}-law-{index}.guarantees.json", case.label)), format!("{}\n", serde_json::to_string_pretty(document)?))?;
+                std::fs::write(
+                    work.join(format!("{}-law-{index}.guarantees.json", case.label)),
+                    format!("{}\n", serde_json::to_string_pretty(document)?),
+                )?;
             }
         }
     }
-    writeln!(std::io::stdout().lock(), "{}", serde_json::to_string(&AcceptanceReport {
-        cases, stale_evidence: GuaranteeVerdict::Unknown { reason: "evidence belongs to the original Challenge and is stale under the mutant".into() },
-        stale_rejected, acceptance_passed: accepted,
-    })?)?;
+    writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        serde_json::to_string(&AcceptanceReport {
+            cases,
+            stale_evidence: GuaranteeVerdict::Unknown {
+                reason: "evidence belongs to the original Challenge and is stale under the mutant"
+                    .into()
+            },
+            stale_rejected,
+            acceptance_passed: accepted,
+        })?
+    )?;
     if !accepted {
         return Err("bounded original/mutant/restored acceptance failed".into());
     }
@@ -351,7 +484,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     reason = "bounded binder fixtures"
 )]
 mod tests {
-    use super::{assessment, scenario, GuaranteeVerdict, GuaranteeLevel};
+    use super::{GuaranteeLevel, GuaranteeVerdict, assessment, scenario};
     use serde_json::json;
 
     #[test]
@@ -383,31 +516,70 @@ mod tests {
     }
     #[test]
     fn missing_witness_and_unsupported_goals_keep_unknown_assurance() {
-        for (kind, status) in [("non_vacuity", "ok"), ("law_semantics", "ok"), ("preservation", "unknown")] {
-            assert_eq!(assessment(kind,status,"missing witness"), (GuaranteeVerdict::Unknown {reason:"missing witness".into()}, GuaranteeLevel::Unknown {reason:"missing witness".into()}));
+        for (kind, status) in [
+            ("non_vacuity", "ok"),
+            ("law_semantics", "ok"),
+            ("preservation", "unknown"),
+        ] {
+            assert_eq!(
+                assessment(kind, status, "missing witness"),
+                (
+                    GuaranteeVerdict::Unknown {
+                        reason: "missing witness".into()
+                    },
+                    GuaranteeLevel::Unknown {
+                        reason: "missing witness".into()
+                    }
+                )
+            );
         }
-        for (kind, status) in [("non_vacuity", "violation"), ("initialization", "ok"), ("preservation", "ok")] {
-            assert_eq!(assessment(kind,status,"backend parity"), (GuaranteeVerdict::BoundedPass {}, GuaranteeLevel::ExhaustiveFiniteBounded {}));
+        for (kind, status) in [
+            ("non_vacuity", "violation"),
+            ("initialization", "ok"),
+            ("preservation", "ok"),
+        ] {
+            assert_eq!(
+                assessment(kind, status, "backend parity"),
+                (
+                    GuaranteeVerdict::BoundedPass {},
+                    GuaranteeLevel::ExhaustiveFiniteBounded {}
+                )
+            );
         }
-        assert_eq!(assessment("preservation","violation","backend parity"), (GuaranteeVerdict::Refuted {}, GuaranteeLevel::ExhaustiveFiniteBounded {}));
+        assert_eq!(
+            assessment("preservation", "violation", "backend parity"),
+            (
+                GuaranteeVerdict::Refuted {},
+                GuaranteeLevel::ExhaustiveFiniteBounded {}
+            )
+        );
     }
     #[test]
-    #[allow(clippy::too_many_lines, reason = "one retained end-to-end correspondence fixture")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one retained end-to-end correspondence fixture"
+    )]
     fn recorded_guarantees_match_bound_results() {
-        use super::{documents, supported_goal, unsupported_goal, ApprovedContract, Bounds, DefinitionSource, GuaranteesDocument};
+        use super::{
+            ApprovedContract, Bounds, DefinitionSource, GuaranteesDocument, documents,
+            supported_goal, unsupported_goal,
+        };
         use serde::Deserialize;
         use serde_json::value::RawValue;
-        use std::collections::BTreeSet;
         use sha2::{Digest, Sha256};
+        use std::collections::BTreeSet;
         #[derive(Deserialize)]
-        #[serde(rename_all="camelCase")]
+        #[serde(rename_all = "camelCase")]
         struct Sources<'a> {
-            #[serde(borrow)] with_loss: &'a RawValue,
-            #[serde(borrow)] without_loss: &'a RawValue,
+            #[serde(borrow)]
+            with_loss: &'a RawValue,
+            #[serde(borrow)]
+            without_loss: &'a RawValue,
         }
         #[derive(Deserialize)]
         struct RawChallenge<'a> {
-            #[serde(borrow)] obligations: Vec<&'a RawValue>,
+            #[serde(borrow)]
+            obligations: Vec<&'a RawValue>,
         }
         // Match JSON.stringify's whitespace removal for this integer/string corpus,
         // keeping the declared field order and literal spelling intact.
@@ -417,75 +589,186 @@ mod tests {
             for ch in text.chars() {
                 if quoted {
                     out.push(ch);
-                    if escaped { escaped = false; }
-                    else if ch == '\\' { escaped = true; }
-                    else if ch == '"' { quoted = false; }
-                } else if ch == '"' { quoted = true; out.push(ch); }
-                else if !ch.is_ascii_whitespace() { out.push(ch); }
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == '"' {
+                        quoted = false;
+                    }
+                } else if ch == '"' {
+                    quoted = true;
+                    out.push(ch);
+                } else if !ch.is_ascii_whitespace() {
+                    out.push(ch);
+                }
             }
             out
         }
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let corpus = std::fs::read_to_string(root.join("crates/norn-cell/tests/fixtures/constitution.json")).expect("actual declarations");
+        let corpus =
+            std::fs::read_to_string(root.join("crates/norn-cell/tests/fixtures/constitution.json"))
+                .expect("actual declarations");
         let sources: Sources<'_> = serde_json::from_str(&corpus).expect("source corpus");
-        let base = ["core.units", "core.Process.interface", "core.Conversion.interface"].iter().map(|name|compact(&std::fs::read_to_string(root.join(format!("registry/core/artifacts/{name}.json"))).expect("base artifact"))).collect::<Vec<_>>().join(",");
+        let base = [
+            "core.units",
+            "core.Process.interface",
+            "core.Conversion.interface",
+        ]
+        .iter()
+        .map(|name| {
+            compact(
+                &std::fs::read_to_string(root.join(format!("registry/core/artifacts/{name}.json")))
+                    .expect("base artifact"),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
         let base = format!("[{base}]");
-        let original = DefinitionSource::parse(&compact(sources.with_loss.get()), &base).expect("original");
+        let original =
+            DefinitionSource::parse(&compact(sources.with_loss.get()), &base).expect("original");
         let registry = BTreeSet::new();
-        let authority = ApprovedContract::approve(&original, &registry,
+        let authority = ApprovedContract::approve(
+            &original,
+            &registry,
             json!({"expression":"norn-zen/6","lowering":"norn.quint.one-create/1"}),
-            json!({"store":"empty","objects":1,"steps":1}), json!({"level":"exhaustive-finite/bounded"})).expect("protected contract");
-        let profile: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join("verification/profiles/constitution-one-create.json")).expect("profile")).expect("bounds");
-        let bounds = Bounds { action: profile["action"].as_str().expect("action").into(), identity: profile["identity"].as_str().expect("identity").into(), inputs: serde_json::from_value(profile["inputs"].clone()).expect("intervals"), seed: 0 };
-        for (label, text) in [("original", sources.with_loss.get()), ("mutant", sources.without_loss.get())] {
+            json!({"store":"empty","objects":1,"steps":1}),
+            json!({"level":"exhaustive-finite/bounded"}),
+        )
+        .expect("protected contract");
+        let profile: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                root.join("verification/profiles/constitution-one-create.json"),
+            )
+            .expect("profile"),
+        )
+        .expect("bounds");
+        let bounds = Bounds {
+            action: profile["action"].as_str().expect("action").into(),
+            identity: profile["identity"].as_str().expect("identity").into(),
+            inputs: serde_json::from_value(profile["inputs"].clone()).expect("intervals"),
+            seed: 0,
+        };
+        for (label, text) in [
+            ("original", sources.with_loss.get()),
+            ("mutant", sources.without_loss.get()),
+        ] {
             let source = DefinitionSource::parse(&compact(text), &base).expect("actual source");
-            let batch = authority.quint(&source, &registry, &bounds).expect("generated challenge");
-            let path = root.join(format!("fixtures/demo/guarantees/constitution.{label}.guarantees.json"));
+            let batch = authority
+                .quint(&source, &registry, &bounds)
+                .expect("generated challenge");
+            let path = root.join(format!(
+                "fixtures/demo/guarantees/constitution.{label}.guarantees.json"
+            ));
             let bytes = std::fs::read_to_string(&path).expect("captured real binder document");
-            let recorded: GuaranteesDocument = serde_json::from_str(&bytes).expect("typed document");
+            let recorded: GuaranteesDocument =
+                serde_json::from_str(&bytes).expect("typed document");
             let mut goals = Vec::new();
             for (index, model) in batch.goals.iter().enumerate() {
                 let index32 = u32::try_from(index).expect("index");
-                let kind = batch.challenge.body()["obligations"][index]["goal"]["kind"].as_str().expect("kind");
-                if let Err(reason) = model { goals.push(unsupported_goal(index32,kind,reason)); continue; }
-                let record = recorded.goals[index].evidence.clone().expect("actual evidence");
+                let kind = batch.challenge.body()["obligations"][index]["goal"]["kind"]
+                    .as_str()
+                    .expect("kind");
+                if let Err(reason) = model {
+                    goals.push(unsupported_goal(index32, kind, reason));
+                    continue;
+                }
+                let record = recorded.goals[index]
+                    .evidence
+                    .clone()
+                    .expect("actual evidence");
                 // These are retained run bytes, not a fresh verdict by this test binary.
                 // Feature-specific Serde map order may change a new binary's exact digest.
-                assert_eq!(serde_json::from_str::<serde_json::Value>(&record.challenge_json).expect("retained challenge"), *batch.challenge.body());
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&record.challenge_json)
+                        .expect("retained challenge"),
+                    *batch.challenge.body()
+                );
                 assert_eq!(record.pins.challenge_sha256, recorded.challenge_sha256);
-                assert_eq!(record.pins.goal_index,index32);
-                assert_eq!(record.pins.challenge_sha256, crate::obligations::exact_commitment(b"challenge", &[record.challenge_json.as_bytes()]).expect("challenge digest"));
-                let raw: RawChallenge<'_> = serde_json::from_str(&record.challenge_json).expect("raw goals");
-                assert_eq!(record.pins.goal_sha256, crate::obligations::exact_commitment(b"evidence-goal", &[raw.obligations[index].get().as_bytes()]).expect("goal digest"));
-                assert_eq!(record.result_sha256,format!("{:x}",Sha256::digest(record.result_json.as_bytes())));
-                let pinned: serde_json::Value=serde_json::from_str(&record.pins.bounds_json).expect("bound profile");
-                assert_eq!(pinned["profile"],batch.bounds);
-                assert_eq!(pinned["declaredBoundsProfile"],profile);
-                assert_eq!(pinned["modelSha256"],format!("{:x}",Sha256::digest(model.as_ref().expect("supported").as_bytes())));
-                goals.push(supported_goal(index32,kind,record,&batch.bounds).expect("typed actual result"));
+                assert_eq!(record.pins.goal_index, index32);
+                assert_eq!(
+                    record.pins.challenge_sha256,
+                    crate::obligations::exact_commitment(
+                        b"challenge",
+                        &[record.challenge_json.as_bytes()]
+                    )
+                    .expect("challenge digest")
+                );
+                let raw: RawChallenge<'_> =
+                    serde_json::from_str(&record.challenge_json).expect("raw goals");
+                assert_eq!(
+                    record.pins.goal_sha256,
+                    crate::obligations::exact_commitment(
+                        b"evidence-goal",
+                        &[raw.obligations[index].get().as_bytes()]
+                    )
+                    .expect("goal digest")
+                );
+                assert_eq!(
+                    record.result_sha256,
+                    format!("{:x}", Sha256::digest(record.result_json.as_bytes()))
+                );
+                let pinned: serde_json::Value =
+                    serde_json::from_str(&record.pins.bounds_json).expect("bound profile");
+                assert_eq!(pinned["profile"], batch.bounds);
+                assert_eq!(pinned["declaredBoundsProfile"], profile);
+                assert_eq!(
+                    pinned["modelSha256"],
+                    format!(
+                        "{:x}",
+                        Sha256::digest(model.as_ref().expect("supported").as_bytes())
+                    )
+                );
+                goals.push(
+                    supported_goal(index32, kind, record, &batch.bounds)
+                        .expect("typed actual result"),
+                );
             }
-            let rendered = documents(&source,&batch,&profile,&goals).expect("per-law presentation");
-            assert_eq!(rendered.len(),1);
-            let document=&rendered[0];
-            assert_eq!((document.total,document.eligible,document.discharged),(10,3,if label=="original"{3}else{2}));
-            assert_eq!(document.goals.iter().filter(|g|!g.eligible).count(),7);
-            if label=="mutant" {
-                let trace=document.goals.iter().find(|g|matches!(g.verdict,GuaranteeVerdict::Refuted {})).expect("actual refutation").scenario.as_ref().expect("counterexample");
+            let rendered =
+                documents(&source, &batch, &profile, &goals).expect("per-law presentation");
+            assert_eq!(rendered.len(), 1);
+            let document = &rendered[0];
+            assert_eq!(
+                (document.total, document.eligible, document.discharged),
+                (10, 3, if label == "original" { 3 } else { 2 })
+            );
+            assert_eq!(document.goals.iter().filter(|g| !g.eligible).count(), 7);
+            if label == "mutant" {
+                let trace = document
+                    .goals
+                    .iter()
+                    .find(|g| matches!(g.verdict, GuaranteeVerdict::Refuted {}))
+                    .expect("actual refutation")
+                    .scenario
+                    .as_ref()
+                    .expect("counterexample");
                 assert!(!trace.states[0].exists);
                 assert!(trace.states[0].values.is_empty());
-                for (name,expected)in [("input_fine_g",2),("output_fine_g",1),("loss_fine_g",0)] {
-                    let value=&trace.states[1].values[name];
-                    assert_eq!((value.coefficient,value.scale),(expected,0));
-                    assert_eq!(value.unit.as_ref().expect("unit").code,"g");
+                for (name, expected) in [
+                    ("input_fine_g", 2),
+                    ("output_fine_g", 1),
+                    ("loss_fine_g", 0),
+                ] {
+                    let value = &trace.states[1].values[name];
+                    assert_eq!((value.coefficient, value.scale), (expected, 0));
+                    assert_eq!(value.unit.as_ref().expect("unit").code, "g");
                 }
             }
-            let schema=norn_ir::verification::guarantees::guarantees_document_schema();
-            let validator=jsonschema::validator_for(schema.as_value()).expect("schema");
+            let schema = norn_ir::verification::guarantees::guarantees_document_schema();
+            let validator = jsonschema::validator_for(schema.as_value()).expect("schema");
             assert!(validator.is_valid(&serde_json::to_value(document).expect("wire value")));
-            let text=format!("{}\n",serde_json::to_string_pretty(document).expect("exact binder serialization"));
-            if std::env::var("NORN_BLESS").as_deref()==Ok("1") { std::fs::write(&path,&text).expect("bless retained presentation"); }
-            assert_eq!(std::fs::read_to_string(path).expect("recorded bytes"),text,"review and bless the retained presentation; this is not a fresh solver run");
+            let text = format!(
+                "{}\n",
+                serde_json::to_string_pretty(document).expect("exact binder serialization")
+            );
+            if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+                std::fs::write(&path, &text).expect("bless retained presentation");
+            }
+            assert_eq!(
+                std::fs::read_to_string(path).expect("recorded bytes"),
+                text,
+                "review and bless the retained presentation; this is not a fresh solver run"
+            );
         }
     }
-
 }
