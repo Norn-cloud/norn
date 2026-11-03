@@ -1052,6 +1052,19 @@ mod tests {
     }
 
     #[test]
+    fn conservation_term_count_accepts_18_and_64_but_refuses_65() {
+        for count in [18usize, 64, 65] {
+            let terms = (0..count).map(|index| format!("self.output{index}")).collect::<Vec<_>>().join(" + ");
+            let derived = conservation_terms(&format!("self.input == {terms}"));
+            if count <= 64 {
+                assert_eq!(derived.expect("bounded terms").1.len(), count);
+            } else {
+                assert!(derived.is_none());
+            }
+        }
+    }
+
+    #[test]
     fn nonlinear_duplicate_or_conditional_equalities_do_not_derive() {
         for expression in [
             "self.input == self.recovered * self.loss",
