@@ -1,4 +1,4 @@
 {
-  "order": 100,
+  "order": 106,
   "value": "crates/norn-ir/src/verification/finite.rs"
 }

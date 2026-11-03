@@ -22,3 +22,7 @@ pub mod authz;
 pub mod host;
 /// Authorized read services shared by transports.
 pub mod routes;
+
+mod action_admission;
+/// Epoch-pinned governed action service.
+pub mod actions;

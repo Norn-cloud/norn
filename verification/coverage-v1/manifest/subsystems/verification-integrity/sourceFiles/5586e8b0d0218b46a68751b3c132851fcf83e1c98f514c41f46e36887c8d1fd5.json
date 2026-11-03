@@ -1,4 +1,4 @@
 {
-  "order": 100,
+  "order": 107,
   "value": "crates/norn-checker/src/obligations/finite.rs"
 }
