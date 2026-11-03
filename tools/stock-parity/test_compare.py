@@ -24,7 +24,7 @@ class Contract(unittest.TestCase):
         traces = [dict(format='norn.stock-trace/1', id='synthetic', method='fifo', steps=[{}, {}])]
         self.assertFalse(compare(self.n, self.e, [], traces)['passed'])
         missing = unbound_norn(traces)
-        self.assertEqual(missing['cases'][0]['reason'], 'not yet: #694')
+        self.assertEqual(missing['cases'][0]['reason'], 'not yet: #850')
         self.assertFalse(compare(missing, self.e, [], traces)['passed'])
         self.n['cases'] = self.e['cases'] = []
         self.assertFalse(compare(self.n, self.e, [], traces)['passed'])

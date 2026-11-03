@@ -40,4 +40,4 @@ NornAdapter = Callable[[List[Trace]], StockDump]
 def unbound_norn(traces: List[Trace]) -> StockDump:
     return dict(format='norn.stock-dump/1', engine='norn', versions={}, cases=[
         dict(case=t['id'], method=t['method'], status='unsupported',
-             reason='not yet: #694', checkpoints=[]) for t in traces])
+             reason='not yet: #850', checkpoints=[]) for t in traces])
