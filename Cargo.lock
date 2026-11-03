@@ -1561,6 +1561,7 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "js-sys",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
@@ -1576,6 +1577,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "wasm-bindgen",
 ]
 
 [[package]]
