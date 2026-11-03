@@ -159,8 +159,7 @@ async fn invoke_with_metadata(
     key: &str,
     metadata: Metadata<'_>,
 ) -> (Value, bool) {
-    let request =
-        json!({"actionId":"demo.melt.record", "version":metadata.version, "input":input, "idempotencyKey":key});
+    let request = json!({"actionId":"demo.melt.record", "version":metadata.version, "input":input, "idempotencyKey":key});
     if surface == "cli" {
         let args = [
             "remote",
@@ -380,24 +379,33 @@ async fn equivalent_governed_surfaces() {
     }
 }
 
-
 /// SURFACE-ACTION-2 / SURFACE-DENY-1/2: metadata and retry state remain server-owned.
 #[tokio::test]
 #[ignore = "explicit transport acceptance requires compiled CLI and authored definitions"]
 async fn transport_metadata_and_refusal_key_conformance() {
     let source = std::fs::read_to_string(
         std::env::var("NORN_SURFACE_DEFINITIONS").expect("authored definitions path"),
-    ).expect("authored fixture");
+    )
+    .expect("authored fixture");
     let mut results = Vec::new();
     let mut states = Vec::new();
     for surface in ["http", "mcp", "cli"] {
-        let host = Arc::new(DevHost::new(
-            NativeEngine::open_in_memory().expect("fresh engine"),
-            &source,
-            CellScope { org_id: "org_surfaces".into(), environment_id: "dev".into() },
-            LogicalTime::EPOCH,
-        ).expect("admitted fresh tenant").with_authorizer(Demo));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("loopback");
+        let host = Arc::new(
+            DevHost::new(
+                NativeEngine::open_in_memory().expect("fresh engine"),
+                &source,
+                CellScope {
+                    org_id: "org_surfaces".into(),
+                    environment_id: "dev".into(),
+                },
+                LogicalTime::EPOCH,
+            )
+            .expect("admitted fresh tenant")
+            .with_authorizer(Demo),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback");
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let app = router(Arc::clone(&host));
         let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
@@ -406,37 +414,85 @@ async fn transport_metadata_and_refusal_key_conformance() {
         let mut refusals = Vec::new();
         // Every rejected attempt uses the key that must still commit below.
         for (metadata, actor, code) in [
-            (Metadata { org: "other", ..METADATA }, "demo", "scope.denied"),
-            (Metadata { environment: "other", ..METADATA }, "demo", "scope.denied"),
-            (Metadata { version: 0, ..METADATA }, "demo", "defs.stale"),
+            (
+                Metadata {
+                    org: "other",
+                    ..METADATA
+                },
+                "demo",
+                "scope.denied",
+            ),
+            (
+                Metadata {
+                    environment: "other",
+                    ..METADATA
+                },
+                "demo",
+                "scope.denied",
+            ),
+            (
+                Metadata {
+                    version: 0,
+                    ..METADATA
+                },
+                "demo",
+                "defs.stale",
+            ),
             (METADATA, "forbidden", "authz.denied"),
         ] {
-            let (refusal, failed) = invoke_with_metadata(surface, &url, actor, input.clone(), "metadata", metadata).await;
+            let (refusal, failed) =
+                invoke_with_metadata(surface, &url, actor, input.clone(), "metadata", metadata)
+                    .await;
             assert!(failed, "{surface}: {refusal}");
             assert_eq!(refusal["code"], code);
-            assert_eq!(dump(&host), initial, "{code} consumes no successful-call key or effects");
+            assert_eq!(
+                dump(&host),
+                initial,
+                "{code} consumes no successful-call key or effects"
+            );
             refusals.push(refusal);
         }
         let (accepted, failed) = invoke(surface, &url, "demo", input.clone(), "metadata").await;
         assert!(!failed, "{surface}: {accepted}");
         assert_eq!(accepted["replayed"], false);
         assert_eq!(accepted["record"]["actor"], "demo");
-        assert_eq!(accepted["record"]["actionArtifactId"], "demo.melt.record.action");
+        assert_eq!(
+            accepted["record"]["actionArtifactId"],
+            "demo.melt.record.action"
+        );
         assert_eq!(accepted["record"]["actionVersion"], "0.1.0");
         assert_eq!(accepted["record"]["input"], input);
         let committed = dump(&host);
         let mut changed = input.clone();
-        changed["id"] = json!("different-intent");
+        changed["output_fine_g"] = json!("99.000");
+        changed["loss_fine_g"] = json!("1.000");
         for (metadata, actor, args, code) in [
             (METADATA, "forbidden", input.clone(), "authz.denied"),
-            (METADATA, "peer", input.clone(), "action.idempotency_conflict"),
-            (Metadata { version: 0, ..METADATA }, "demo", input.clone(), "defs.stale"),
+            (
+                METADATA,
+                "peer",
+                input.clone(),
+                "action.idempotency_conflict",
+            ),
+            (
+                Metadata {
+                    version: 0,
+                    ..METADATA
+                },
+                "demo",
+                input.clone(),
+                "defs.stale",
+            ),
             (METADATA, "demo", changed, "action.idempotency_conflict"),
         ] {
-            let (refusal, failed) = invoke_with_metadata(surface, &url, actor, args, "metadata", metadata).await;
+            let (refusal, failed) =
+                invoke_with_metadata(surface, &url, actor, args, "metadata", metadata).await;
             assert!(failed, "{surface}: {refusal}");
             assert_eq!(refusal["code"], code);
-            assert!(refusal.get("record").is_none(), "refusal discloses no success receipt");
+            assert!(
+                refusal.get("record").is_none(),
+                "refusal discloses no success receipt"
+            );
             assert_eq!(dump(&host), committed, "{code} mutates no persisted table");
             refusals.push(refusal);
         }
@@ -445,14 +501,21 @@ async fn transport_metadata_and_refusal_key_conformance() {
             assert!(!failed, "{retry}: {replayed}");
             assert_eq!(replayed["replayed"], true);
             assert_eq!(replayed["record"], accepted["record"]);
-            assert_eq!(dump(&host), committed, "authorized retry adds no consequence");
+            assert_eq!(
+                dump(&host),
+                committed,
+                "authorized retry adds no consequence"
+            );
         }
         results.push((accepted, refusals));
         states.push(committed);
         server.abort();
     }
     for pair in results.windows(2) {
-        assert_eq!(pair[0], pair[1], "complete receipts and refusal envelopes agree");
+        assert_eq!(
+            pair[0], pair[1],
+            "complete receipts and refusal envelopes agree"
+        );
     }
     for pair in states.windows(2) {
         assert_eq!(pair[0], pair[1], "complete committed tenant state agrees");
