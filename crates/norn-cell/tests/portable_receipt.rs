@@ -412,3 +412,52 @@ fn portable_export_validation_checks_function_cell_world_and_commit() {
         }
     }
 }
+
+#[test]
+fn exported_command_matches_the_retained_generation_and_commit() {
+    let mut source = store(1);
+    let enqueue = |generation, value| {
+        let EffectRow::Enqueue { mut command } = command(RuntimeValue::String(value)) else {
+            unreachable!()
+        };
+        command.generation = generation;
+        EffectRow::Enqueue { command }
+    };
+    source
+        .commit(&CommitBatch {
+            effects: vec![enqueue(2, "first".into())],
+            ..CommitBatch::default()
+        })
+        .expect("first");
+    source
+        .commit(&CommitBatch {
+            effects: vec![enqueue(1, "ignored".into())],
+            ..CommitBatch::default()
+        })
+        .expect("ignored older generation");
+    assert!(source.export_command(2, "same-command").is_err());
+    assert_eq!(
+        source
+            .export_command(1, "same-command")
+            .expect("retained")
+            .command
+            .generation,
+        2
+    );
+    source
+        .commit(&CommitBatch {
+            effects: vec![
+                enqueue(3, "intermediate".into()),
+                enqueue(4, "final".into()),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("two replacements");
+    assert!(source.export_command(1, "same-command").is_err());
+    let retained = source.export_command(3, "same-command").expect("final");
+    assert_eq!(retained.command.generation, 4);
+    assert_eq!(
+        retained.command.command,
+        RuntimeValue::String("final".into())
+    );
+}

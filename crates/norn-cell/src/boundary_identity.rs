@@ -1,6 +1,9 @@
 //! CELL-QUALIFY-1: exported commands and foreign inbox deduplication use envelopes.
 
-use crate::{CellError, CellStore, EffectRow, OutboxCommand, engine::SqlEngine};
+use crate::{
+    CellError, CellStore, OutboxCommand,
+    engine::{SqlEngine, params},
+};
 use norn_ir::cell_reference::{CellReference, QualifiedCommit, ReferenceNamespace};
 use serde::{Deserialize, Serialize};
 
@@ -51,22 +54,24 @@ impl<E: SqlEngine> CellStore<E> {
         command_id: &str,
     ) -> Result<ExportedCommand, CellError> {
         let portable = self.portable_receipt(commit)?;
-        let record = self
-            .export_record(commit)?
-            .ok_or_else(|| CellError::Encoding("unknown commit".to_owned()))?;
-        let command = record
-            .batch
-            .effects
-            .iter()
-            .find_map(|effect| match effect {
-                EffectRow::Enqueue { command } => {
-                    (command.command_id == command_id).then_some(command)
-                }
-                EffectRow::ClaimPerform { .. }
-                | EffectRow::Schedule { .. }
-                | EffectRow::CancelTimer { .. } => None,
-            })
-            .ok_or_else(|| CellError::Encoding("command not retained in commit".to_owned()))?;
+        let command = self.conn.query_optional(
+            &format!(
+                "SELECT \"generation\", \"idempotency_key\", \"deadline\", \"command\" FROM \"{}\" WHERE \"command_id\" = ?1 AND \"commit_seq\" = ?2",
+                crate::system::OUTBOX,
+            ),
+            params![command_id, crate::read::to_i64(commit, "commit sequence")?],
+            |row| {
+                let deadline: Option<i64> = row.get(2)?;
+                let payload: String = row.get(3)?;
+                Ok(OutboxCommand {
+                    command_id: command_id.to_owned(),
+                    generation: crate::read::to_u64(row.get(0)?, "generation")?,
+                    idempotency_key: row.get(1)?,
+                    deadline: deadline.map(|v| crate::read::to_u64(v, "deadline")).transpose()?,
+                    command: serde_json::from_str(&payload)?,
+                })
+            },
+        )?.ok_or_else(|| CellError::Encoding("command not retained from this commit".to_owned()))?;
         if let Some(invocation) = crate::portable_receipt::function_invocation(&command.command)?
             && invocation.provenance_commit.qualified().is_none()
         {
@@ -86,7 +91,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &command.idempotency_key,
             )?,
             origin: portable.origin,
-            command: command.clone(),
+            command,
         })
     }
 
