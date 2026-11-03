@@ -132,4 +132,3 @@ class Contract(unittest.TestCase):
         self.assertNotIn('private', public)
         self.assertNotIn('native-gl', public)
         self.assertEqual(len(self.report()['cases'][0]['checkpoints'][1]['rawGl']['norn']), 1)
-
