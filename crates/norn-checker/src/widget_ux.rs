@@ -7459,7 +7459,7 @@ mod decimal_wire_tests {
 
     #[test]
     fn action_mapping_accepts_decimal_text_but_not_numeric_wire_values() -> Result<(), String> {
-        let schema = Schema::parse_action(&serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).map_err(|e| e.to_string())?, "amount").map_err(|e| e.to_string())?;
+        let schema = Schema::parse_action(&serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).map_err(|e| format!("{e:?}"))?, "amount").map_err(|e| format!("{e:?}"))?;
         let accepts = |inferred| {
             inferred_matches_schema(
                 &inferred,
