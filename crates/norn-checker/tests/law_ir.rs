@@ -1223,7 +1223,16 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         "../../../registry/core/artifacts/std.value_types.entity.json"
     ))
     .expect("shared unit vocabulary");
+    let units: ArtifactEnvelope =
+        serde_json::from_str(include_str!("../../../registry/core/artifacts/core.units.json"))
+            .expect("pinned unit catalog");
     let mut melt = interface.clone();
+    melt.dependencies.push(norn_ir::ArtifactDependency {
+        artifact_id: units.artifact_id.clone(),
+        kind: units.kind(),
+        version: Some(units.version.clone()),
+        required: true,
+    });
     melt.artifact_id = "jewelry.Melt.entity".into();
     melt.namespace = "jewelry".into();
     melt.name = "Melt".into();
@@ -1238,7 +1247,7 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         .expect("exact payload"),
     )
     .expect("Melt");
-    let base = vec![process, interface, property_types, melt];
+    let base = vec![process, interface, property_types, units, melt];
     assert_eq!(
         check_artifact_set(
             &base,

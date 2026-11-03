@@ -244,6 +244,7 @@ fn main() -> DemoResult<()> {
         include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
+        include_str!("../../../registry/core/artifacts/core.units.json"),
     ] {
         types.push(serde_json::from_str(document)?);
     }
