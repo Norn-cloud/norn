@@ -1,3 +1,5 @@
+experimental = ["setup-scripts", "wrapper-scripts"]
+
 # Pinned gate file: CI runs the `ci` profile and ignores any default filter.
 [profile.ci]
 fail-fast = false
@@ -6,3 +8,143 @@ slow-timeout = { period = "120s" }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Native profiles retain the compiler and bounded-check steps alongside Rust tests.
+[scripts.setup.authored-profile]
+command = ["bun", "tools/norn-ts/src/cli.ts", "profile", "scripts/demo/jewelry.source.ts"]
+
+[scripts.setup.fold-authoring]
+command = ["bun", "test", "tools/norn-ts/test/authoring-sdk.test.ts", "--test-name-pattern", "CP3 allocation goldens come from core-aligned typed declarations"]
+
+[scripts.setup.rate-authoring]
+command = ["bun", "test", "tools/norn-ts/test/rate.test.ts", "--timeout", "60000"]
+
+[scripts.setup.pack-authoring]
+command = { command-line = ["bun", "test", "tools/norn-ts/test/registry-packs.test.ts", "--test-name-pattern", "registry packs are generated from their typed sources"], env = { NORN_PACKS_UPDATE = "" } }
+
+[scripts.setup.constitution-authoring]
+command = { command-line = ["bun", "test", "tools/norn-ts/test/constitution.test.ts", "--timeout", "60000"], env = { NORN_UPDATE_CONSTITUTION_GOLDEN = "" } }
+
+[scripts.wrapper.sampled-evidence]
+command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc" } }
+
+[scripts.wrapper.quarantine-evidence]
+command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc", PROPTEST_CASES = "16" } }
+
+[scripts.setup.decimal-kani-0]
+command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "canonical_decimal_preserves_bounded_values", "--output-format", "terse"]
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[scripts.setup.decimal-kani-1]
+command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_multiplier_is_exact_in_bounded_profile", "--output-format", "terse"]
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[scripts.setup.decimal-kani-2]
+command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_overflow_refuses", "--output-format", "terse"]
+slow-timeout = { period = "300s", terminate-after = 1 }
+
+[profile.drop-01]
+default-filter = '''binary_id(norn-cell::exact_values) | binary_id(norn-expr::profile_conformance) | binary_id(norn-checker::core_units) | (binary_id(norn-checker) & (test(/^property_codec::tests::/) | test(/^quantity_ledger::decimal::tests::/)))'''
+
+[[profile.drop-01.scripts]]
+filter = "all()"
+setup = ["decimal-kani-0", "decimal-kani-1", "decimal-kani-2"]
+
+[profile.drop-02]
+default-filter = '''binary(=jewelry_demo) & test(=authored_laws_admit_refuse_and_render_en_ar)'''
+
+[[profile.drop-02.scripts]]
+filter = "all()"
+setup = ["authored-profile"]
+
+[profile.drop-03]
+default-filter = '''binary(=catalog_demo) & test(=authored_catalog_reads_and_refusals_use_kernel_pdp)'''
+
+[[profile.drop-03.scripts]]
+filter = "all()"
+setup = ["authored-profile"]
+
+[profile.drop-04]
+default-filter = '''binary_id(norn-decisions::evaluate) & (test(=fold_capacity_complete_allocate_matches_the_core_spec) |
+  test(=declared_fifo_matches_all_retained_reference_histories_and_cp1) |
+  test(=declared_average_matches_every_retained_prefix_with_original_cost_returns) |
+  test(=declared_average_cp1_and_delivery_to_transfer_identity_collision) |
+  test(=fold_boundaries_refuse_without_a_partial_decision) |
+  test(=fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration) |
+  test(=cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations))'''
+
+[[profile.drop-04.scripts]]
+filter = "all()"
+setup = ["fold-authoring"]
+
+[profile.drop-05]
+default-filter = '''binary_id(norn-cell::definitions_install) & (test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses) |
+  test(=data_quarantine_redelivery_persists_one_finding_and_correction_recovers) |
+  test(=obs_evidence_redelivery_persists_one_law_finding_after_restart) |
+  test(=obs_recovery_upgrade_uses_each_findings_retained_model) |
+  test(=obs_evidence_historical_governing_laws_do_not_follow_current_definitions) |
+  test(=obs_evidence_install_refuses_missing_or_substituted_governing_laws) |
+  test(=obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity) |
+  test(=obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff) |
+  test(=obs_evidence_legacy_candidates_do_not_block_a_verified_producer) |
+  test(=law_complete_inherited_and_effective_scopes_refuse_until_b2) |
+  test(=legacy_law_snapshot_refuses_without_effects) |
+  test(=legacy_version_zero_finding_refuses_without_effects))'''
+
+[[profile.drop-05.scripts]]
+filter = "all()"
+run-wrapper = "quarantine-evidence"
+
+[profile.drop-06]
+default-filter = '''binary_id(norn-cell::jewelry_pricing)'''
+
+[[profile.drop-06.scripts]]
+filter = "all()"
+setup = ["rate-authoring"]
+
+[profile.drop-07]
+default-filter = '''package(=norn-cell) & binary(/^incremental_question$/) & (test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart) |
+  test(=empty_generation_refuses_a_new_foreign_scope_binding) |
+  test(=skipped_receipt_or_changed_population_refuses_without_partial_publication))'''
+
+[[profile.drop-07.scripts]]
+filter = "all()"
+run-wrapper = "sampled-evidence"
+
+[profile.drop-08]
+default-filter = '''package(=norn-cell) & binary(/^restatement_activation$/) & (test(=clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart) |
+  test(=generated_clock_leads_preserve_pinned_restatement_and_recovery) |
+  test(=governed_activation_switches_all_slices_and_preserves_old_answers) |
+  test(=missing_incomplete_and_stale_candidates_never_replace_the_complete_output) |
+  test(=activated_deltas_equal_full_recompute_through_redelivery_and_restart) |
+  test(=declared_restatement_law_and_reviewer_actions_are_admitted_together) |
+  test(=prepared_candidates_stay_bound_to_their_native_host) |
+  test(=candidate_budget_includes_the_complete_staged_slot) |
+  test(=resumed_slice_declarations_keep_the_same_admission_bound) |
+  test(=approved_candidate_refuses_an_alternate_kernel_writer_before_activation))'''
+
+[[profile.drop-08.scripts]]
+filter = "all()"
+run-wrapper = "sampled-evidence"
+
+[profile.drop-09]
+default-filter = '''binary_id(norn-checker::three_systems) & (test(=mvp_map_three_artifact_set_is_admitted) |
+  test(=mvp_map_three_aliases_roles_and_one_economic_identity) |
+  test(=mvp_item_holding_catalog_and_owner_location_partitions) |
+  test(=mvp_map_gap_shopify_price_is_never_stock_cost_or_gl) |
+  test(=mvp_map_three_ambiguous_identity_refuses_without_sku_guessing) |
+  test(=mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic) |
+  test(=mvp_map_three_unresolved_units_and_draft_postings_refuse) |
+  test(=mvp_map_three_generated_aliases_never_guess_catalog_identity))'''
+
+[[profile.drop-09.scripts]]
+filter = "all()"
+setup = ["pack-authoring"]
+run-wrapper = "sampled-evidence"
+
+[profile.drop-constitution]
+default-filter = '''binary(=constitution) & test(=constitution_loss_mutation_refusal_and_restoration)'''
+
+[[profile.drop-constitution.scripts]]
+filter = "all()"
+setup = ["constitution-authoring"]

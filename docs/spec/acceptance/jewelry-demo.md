@@ -52,7 +52,7 @@ Required differential output per checkpoint: quantities, availability/holds, val
 
 [Default] Approval policy for this synthetic demo requires two assays for every scrap exchange, an intentionally stricter fixture than a threshold-only policy. Assay and approval states/actions must be reachable; a policy naming a nonexistent action fails acceptance. The metal ledger keeps measured loss provenance; balanced accounting alone does not prove fine-metal conservation.
 
-- **JEWEL-PRICE:** The sell and scrap pricing step declares USD/g at scale 6, fine g at scale 3, and USD at scale 2 with default Refuse: 20 g × 15 USD/g = USD 300 and 20 g × 9 USD/g = USD 180. The checked action derives the money value, commits once, and preserves it through retry/reopen; EUR input, an mg denominator, zero mass and a nonzero cent remainder refuse without partial writes. `bash scripts/demo/drop-06-exact-pricing.sh` exercises this step through typed source, native admission and SQLite. Pricing evidence alone does not establish stock valuation, balanced GL, assay or the full sell → scrap → melt cycle.
+- **JEWEL-PRICE:** The sell and scrap pricing step declares USD/g at scale 6, fine g at scale 3, and USD at scale 2 with default Refuse: 20 g × 15 USD/g = USD 300 and 20 g × 9 USD/g = USD 180. The checked action derives the money value, commits once, and preserves it through retry/reopen; EUR input, an mg denominator, zero mass and a nonzero cent remainder refuse without partial writes. `cargo nextest run --profile drop-06` exercises this step through typed source, native admission and SQLite. Pricing evidence alone does not establish stock valuation, balanced GL, assay or the full sell → scrap → melt cycle.
 
 ## Completion and lane integration
 

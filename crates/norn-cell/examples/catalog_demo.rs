@@ -139,15 +139,14 @@ fn access(scope: &ScopeKey, capabilities: Vec<String>) -> DemoResult<(Pdp, Acces
     Ok((pdp, request))
 }
 
-fn main() -> DemoResult<()> {
-    let mut input = String::new();
-    std::io::stdin()
-        .take(1_048_577)
-        .read_to_string(&mut input)?;
+fn rehearse(input: &str) -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("catalog input exceeds 1 MiB".into());
     }
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(input)?;
+    artifacts.push(serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))?);
     let mut store = install(&artifacts)?;
     let snapshot = CatalogSnapshot::read_active(&store, &BTreeSet::new())?;
     let head = store.verified_head()?;
@@ -238,4 +237,32 @@ fn main() -> DemoResult<()> {
         "CURRENT: cell head unchanged by catalog reads and refusals"
     )?;
     Ok(())
+}
+
+fn main() -> DemoResult<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_string(&mut input)?;
+    rehearse(&input)
+}
+
+#[test]
+fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
+    let output = std::process::Command::new("bun")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .args([
+            "tools/norn-ts/src/cli.ts",
+            "compile",
+            "scripts/demo/jewelry.source.ts",
+            "--org",
+            "org_demo",
+            "--env",
+            "dev",
+        ])
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    rehearse(std::str::from_utf8(&output.stdout)?)
 }

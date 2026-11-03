@@ -1,4 +1,4 @@
-//! Admission-only jewelry fallback. Run through scripts/demo/run.sh.
+//! Admission-only jewelry authoring and rendering correspondence.
 use std::{
     collections::BTreeSet,
     error::Error,
@@ -103,26 +103,28 @@ fn refusal_probe(
 fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
     Ok(DefinitionSource::parse(
         &serde_json::to_string(artifacts)?,
-        "[]",
+        &serde_json::to_string(&unit_catalog()?)?,
     )?)
 }
 
-fn main() -> DemoResult<()> {
-    let mut stdout = std::io::stdout().lock();
-    let mut input = String::new();
-    std::io::stdin()
-        .take(1_048_577)
-        .read_to_string(&mut input)?;
+fn unit_catalog() -> DemoResult<[ArtifactEnvelope; 1]> {
+    Ok([serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))?])
+}
+
+fn rehearse(input: &str, mut stdout: impl std::io::Write) -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
-    let exact = DefinitionSource::parse(&input, "[]")?;
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    let base = unit_catalog()?;
+    let exact = DefinitionSource::parse(input, &serde_json::to_string(&base)?)?;
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(input)?;
     let law = authored_law(&artifacts)?;
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &registry,
-        base: &[],
+        base: &base,
         tenant: None,
     };
     let diagnostics = check_artifact_set(&artifacts, &context);
@@ -182,4 +184,35 @@ fn main() -> DemoResult<()> {
     }
     writeln!(stdout, "CURRENT: invalid law diagnostics: {refused:?}")?;
     Ok(())
+}
+
+fn main() -> DemoResult<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_string(&mut input)?;
+    rehearse(&input, std::io::stdout().lock())
+}
+
+#[test]
+fn authored_laws_admit_refuse_and_render_en_ar() -> DemoResult<()> {
+    let output = std::process::Command::new("bun")
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .args([
+            "tools/norn-ts/src/cli.ts",
+            "compile",
+            "scripts/demo/jewelry.source.ts",
+            "--org",
+            "org_demo",
+            "--env",
+            "dev",
+        ])
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    rehearse(
+        std::str::from_utf8(&output.stdout)?,
+        std::io::stdout().lock(),
+    )
 }
