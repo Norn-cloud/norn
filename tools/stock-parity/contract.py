@@ -8,8 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, TypedDict
 StockRow = TypedDict('StockRow', {
     'id': str, 'requestId': str, 'line': str, 'warehouse': str, 'cancelled': bool,
     'quantityDelta': str, 'valueDelta': str, 'quantity': str, 'value': str,
-    'incomingRate': Optional[str], 'valuationRate': Optional[str],
-    'fifo': Optional[List[List[str]]],
+    'incomingRate': Optional[str], 'valuationRate': Optional[str], 'fifo': Optional[List[List[str]]],
 })
 GlRow = TypedDict('GlRow', {'id': str, 'requestId': str, 'account': str,
     'currency': str, 'debit': str, 'credit': str, 'cancelled': bool})
@@ -17,20 +16,16 @@ Attempt = TypedDict('Attempt', {'attempt': int, 'requestId': str,
     'nativeId': Optional[str], 'outcome': Literal['accepted', 'refused'],
     'nativeCode': Optional[str], 'reason': Optional[str], 'completionOrder': int})
 Document = TypedDict('Document', {'requestId': str, 'status': int})
-
 Checkpoint = TypedDict('Checkpoint', {'step': int, 'attempts': List[Attempt],
     'stock': List[StockRow], 'gl': List[GlRow], 'documents': List[Document],
     'status': Literal['unsupported']}, total=False)
-
 Case = TypedDict('Case', {'case': str, 'method': str,
-    'status': Literal['complete', 'unsupported'], 'reason': Optional[str],
-    'initial': Checkpoint, 'checkpoints': List[Checkpoint]}, total=False)
-
+    'status': Literal['complete', 'unsupported'], 'reason': Optional[str], 'initial': Checkpoint,
+    'checkpoints': List[Checkpoint]}, total=False)
 StockDump = TypedDict('StockDump', {
     'format': Literal['norn.stock-dump/1'], 'engine': Literal['norn', 'erpnext'],
     'versions': Dict[str, Any], 'cases': List[Case],
 })
-
 
 # Input has already passed the shared TypeScript parseStockTrace boundary.
 Trace = Dict[str, Any]

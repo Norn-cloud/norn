@@ -63,7 +63,13 @@ def refusal_unchanged(before, after):
         return True
     if not available(before):
         return None
-    return all(ledger_values(before, k) == ledger_values(after, k) for k in ('stock', 'gl'))
+    changes = []
+    for kind in ('stock', 'gl'):
+        left, right = ledger_values(before, kind), ledger_values(after, kind)
+        changes.extend((kind, identity, left.get(identity), right.get(identity))
+                       for identity in sorted(left.keys() | right.keys())
+                       if left.get(identity) != right.get(identity))
+    return tuple(changes) or True
 
 
 def fingerprint(case, method, step, field, left, right):
@@ -150,7 +156,7 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
             entry['observations'] = [{k: sanitized(v) for k, v in view.items()} for view in views]
             for category in sorted(set(views[0]) | set(views[1])):
                 a, b = views[0].get(category), views[1].get(category)
-                if category == 'refusalPreserved' and None in (a, b) and False not in (a, b):
+                if category == 'refusalPreserved' and None in (a, b) and all(v is None or v is True for v in (a, b)):
                     entry['status'] = row['status'] = 'unsupported'
                     counts['unsupported'] += 1
                     continue

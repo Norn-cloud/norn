@@ -47,8 +47,7 @@ class Contract(unittest.TestCase):
         leg = self.n['cases'][0]['checkpoints'][0]['gl'][0]
         leg.update(debit='20.01', credit='0.01')
         self.assertFalse(self.report()['passed'])
-        with self.assertRaises(ValueError):
-            exact('0.001', 2)
+        self.assertRaises(ValueError, exact, '0.001', 2)
 
     def test_refusal_identity_even_if_both_engines_do_it(self):
         for change in ('replace', 'swap'):
@@ -63,22 +62,26 @@ class Contract(unittest.TestCase):
                     ('replacement', 'second') if change == 'replace' else ('second', 'native-gl'))
                 d['cases'][0]['checkpoints'].append(cp)
             self.assertFalse(self.report()['passed'])
+            difference = self.report()['cases'][0]['checkpoints'][2]['differences'][0]
+            evidence = 'https://github.com/Norn-cloud/norn/issues/215'
+            reviewed = [dict(fingerprint=difference['fingerprint'], bucket='intentional-difference',
+                reviewer='reviewer', review=evidence, decision=DECISIONS[0], decisionRecord=evidence)]
+            self.assertTrue(self.report(reviewed)['passed'])
+            for d in (self.n, self.e):
+                d['cases'][0]['checkpoints'][1]['gl'][0]['id'] = 'different-row'
+            self.assertRaises(ValueError, self.report, reviewed)
 
     def test_missing_and_unsupported_fail(self):
-        for field, value in [('checkpoints', []), ('status', 'unsupported')]:
+        for checkpoint, field, value in [(False, 'checkpoints', []), (False, 'status', 'unsupported'),
+                                         (True, 'status', 'unsupported'), (True, 'gl', None)]:
             self.e = dump('erpnext')
-            self.e['cases'][0][field] = value
+            target = self.e['cases'][0]
+            (target['checkpoints'][0] if checkpoint else target)[field] = value
             self.assertFalse(self.report()['passed'])
-        self.e = dump('erpnext')
-        self.e['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
-        self.assertFalse(self.report()['passed'])
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
 
     def test_incomplete_checkpoint_and_refusal_after_missing_observation(self):
-        del self.e['cases'][0]['checkpoints'][0]['gl']
-        self.assertFalse(self.report()['passed'])
-        self.e = dump('erpnext')
         for d in (self.n, self.e):
             d['cases'][0]['initial'] = dict(step=-1, status='unsupported')
             d['cases'][0]['checkpoints'][0]['attempts'][0]['outcome'] = 'refused'
@@ -102,21 +105,17 @@ class Contract(unittest.TestCase):
         d = dict(fingerprint=diff['fingerprint'], bucket='intentional-difference', reviewer='reviewer',
                  review=evidence, decision=DECISIONS[0], decisionRecord=evidence)
         self.assertTrue(self.report([d])['passed'])
-        with self.assertRaises(ValueError):
-            self.report([d, d])
+        self.assertRaises(ValueError, self.report, [d, d])
         d.update(bucket='unsupported')
-        with self.assertRaises(ValueError):
-            self.report([d])
+        self.assertRaises(ValueError, self.report, [d])
         d.update(bucket='erpnext-bug', reproduction=evidence, receipt=evidence, issue=evidence)
-        with self.assertRaises(ValueError):
-            self.report([d])
+        self.assertRaises(ValueError, self.report, [d])
         d['invariant'] = 'POST-VALUE'
         self.assertEqual(self.report([d])['counts']['openErpnextBugs'], 1)
         d['bucket'] = 'norn-bug'
         self.assertEqual(self.report([d])['counts']['openNornBugs'], 1)
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '22'
-        with self.assertRaises(ValueError):
-            self.report([d])
+        self.assertRaises(ValueError, self.report, [d])
 
     def test_gl_dispositions_are_per_request_account(self):
         leg = self.n['cases'][0]['checkpoints'][0]['gl'][0]
