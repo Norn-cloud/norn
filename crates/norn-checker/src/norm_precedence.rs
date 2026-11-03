@@ -352,7 +352,7 @@ pub fn diagnose_declared_order(
         }
     }
     for (i, left) in norms.iter().enumerate() {
-        for (j, right) in norms.iter().enumerate().skip(i + 1) {
+        for (j, right) in norms.iter().enumerate().skip(i.saturating_add(1)) {
             if opposed(left.modality, right.modality)
                 && (0..contexts).any(|c| {
                     left.applicable.contains(&c)

@@ -169,7 +169,6 @@ masks for one action/subject. Declared priorities must be acyclic. Opposing pair
 need declared comparability within a layer; cross-layer clashes always diagnose.
 Lower-to-higher overrides refuse even when inactive/excepted. CD returns exact
 protected cores and source locations; limits/malformed inputs remain unknown.
-Legacy defeat discrepancies emit `consistency.normative.legacy_resolution` (#767).
-Scenarios cover priority deletion, exact cycles, override, valid three-layer stack,
-transitivity, disjoint masks, permutation and unknowns. Admission stays unchanged;
+Legacy discrepancies emit `consistency.normative.legacy_resolution` (#767); admission
+stays unchanged. Tests cover cycles, layers, deletion, transitivity and unknowns.
 DeonticIR lowering, fulfilment, CTD, Datalog and proof are outside this cut.
