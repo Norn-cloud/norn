@@ -289,8 +289,8 @@ impl<'a> TypeCatalog<'a> {
     /// Build the complete stored values for one effective link instance:
     /// preserve submitted values and fill each effective stored property with
     /// its declared default or `null`. Computed properties are omitted.
-    /// Temporal values are checked against their declared type and valid
-    /// timestamps are canonicalized to UTC.
+    /// VAL-DECIMAL-SCALE-1: Decimal and Record domains, including defaults,
+    /// are checked before a link can commit. Valid timestamps normalize to UTC.
     ///
     /// An unknown source type or link returns `submitted` unchanged; callers
     /// that admit link facts must fail closed when the shared shape is absent.
@@ -300,7 +300,8 @@ impl<'a> TypeCatalog<'a> {
     /// Returns [`EffectiveValuesError::Runtime`] when a submitted typed value
     /// or effective default cannot be represented as an exact runtime value,
     /// and [`EffectiveValuesError::ValueType`] when its scalar encoding or
-    /// temporal form does not match the effective property.
+    /// domain does not match the effective property. Unsupported Record members
+    /// return [`EffectiveValuesError::Unsupported`].
     pub fn effective_link_values(
         &self,
         source: &ObjectTypeName,
@@ -336,13 +337,26 @@ impl<'a> TypeCatalog<'a> {
                 .map_err(|error| property_codec_error(name, error))?;
             let value = property_codec::decode(kind, &encoded)
                 .map_err(|error| property_codec_error(name, error))?;
-            if let Some(expected) = temporal_property_expected(property) {
-                property.check_runtime_value(&value).map_err(|_error| {
-                    EffectiveValuesError::ValueType {
-                        property: name.to_owned(),
-                        expected,
-                    }
-                })?;
+            let expected = match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("valid decimal"),
+                EffectiveKind::Base(PropertyType::Record { .. }) => Some("valid record"),
+                _ => temporal_property_expected(property),
+            };
+            if let Some(expected) = expected {
+                property
+                    .check_runtime_value(&value)
+                    .map_err(|error| match error {
+                        norn_checker::entity_instance::InstanceError::Unsupported(feature) => {
+                            EffectiveValuesError::Unsupported {
+                                property: name.to_owned(),
+                                feature,
+                            }
+                        }
+                        _ => EffectiveValuesError::ValueType {
+                            property: name.to_owned(),
+                            expected,
+                        },
+                    })?;
             }
             let value = property.canonical_runtime_value(&value);
             values.insert(name.to_owned(), value);
