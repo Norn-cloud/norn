@@ -1747,6 +1747,7 @@ async function collectGroup() {
  await record({comment:revoke});
  assert.equal(history.filter(s=>s.context==='rights-revocation').length,3);
  assert(history.every(s=>s.sha===head && s.state===(s.context==='rights-revocation'?'success':'failure')));
+ history[0].context='RIGHTS-REVOCATION'; // Context names are case-insensitive.
  const evidence = await collectPR();
  assert.equal(evidence.revocations.length,3);
  assert.equal(evidence.comments.length,1);
