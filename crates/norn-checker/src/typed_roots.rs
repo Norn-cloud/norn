@@ -1904,7 +1904,9 @@ fn check_document_root(
     artifact_id: Option<&str>,
 ) {
     if matches!(payload, ArtifactPayload::Mapping(_))
-        && object.get("format").is_some_and(|value| matches!(value, JsonValue::String(format) if format == "norn.interpretation/1"))
+        && object.get("format").is_some_and(
+            |value| matches!(value, JsonValue::String(format) if format == "norn.interpretation/1"),
+        )
     {
         check_root!(
             norn_ir::mapping::LawInterpretationIr,
