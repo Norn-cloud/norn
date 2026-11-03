@@ -19,7 +19,7 @@ fn field<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("missing {name}").into())
 }
-fn scenario(trace: &Value, bounds: &Value) -> Result<Value> {
+fn scenario(trace: &Value, bounds: &Value, law: &Value) -> Result<Value> {
     let fields = bounds
         .get("interpretation")
         .and_then(Value::as_object)
@@ -45,7 +45,7 @@ fn scenario(trace: &Value, bounds: &Value) -> Result<Value> {
         states.push(json!({"exists":present,"values":values}));
     }
     Ok(
-        json!({"writer":bounds.get("action"),"identity":bounds.get("identity"),"states":states,"interpretation":"writer proposal before runtime law enforcement"}),
+        json!({"law":law,"writer":bounds.get("action"),"identity":bounds.get("identity"),"states":states,"interpretation":"writer proposal before runtime law enforcement"}),
     )
 }
 #[allow(
@@ -130,6 +130,13 @@ fn main() -> Result<()> {
                     continue;
                 }
             };
+            let law = statement
+                .get("law")
+                .and_then(Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+                .and_then(|index| batch.challenge.body().get("lawStatements")?.get(index))
+                .and_then(|law| law.get("artifactId"))
+                .ok_or("source law identity")?;
             let path = Path::new(work).join(format!("{label}-{index}.qnt"));
             let result = Path::new(work).join(format!("{label}-{index}.json"));
             let key = format!("{label}-{index}");
@@ -168,7 +175,7 @@ fn main() -> Result<()> {
                 status == "ok"
             };
             let evidence_bounds = serde_json::to_string(
-                &json!({"profile":batch.bounds,"modelSha256":digest(&path)?,"invariant":invariant,"step":step,"toolchain":implementation,"expectedStates":profile.get("expectedStates"),"workers":1,"exclusions":profile.get("exclusions").ok_or("explicit exclusions required")?}),
+                &json!({"declaredBoundsProfile":profile,"profile":batch.bounds,"modelSha256":digest(&path)?,"invariant":invariant,"step":step,"toolchain":implementation,"expectedStates":profile.get("expectedStates"),"workers":1,"exclusions":profile.get("exclusions").ok_or("explicit exclusions required")?}),
             )?;
             let pins = batch.challenge.evidence_pins(
                 u32::try_from(index)?,
@@ -199,7 +206,7 @@ fn main() -> Result<()> {
             if passed {
                 discharged = discharged.saturating_add(1);
             }
-            goals.push(json!({"goal":index,"kind":kind,"status":if passed{"bounded-pass"}else if status=="violation"{"refuted"}else{"unknown"},"level":if status=="unknown"{"unknown"}else{"exhaustive-finite/bounded"},"reason":output.get("reason"),"scenario":output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,&batch.bounds)).transpose()?,"record":record}));
+            goals.push(json!({"goal":index,"kind":kind,"status":if passed{"bounded-pass"}else if status=="violation"{"refuted"}else{"unknown"},"level":if status=="unknown"{"unknown"}else{"exhaustive-finite/bounded"},"reason":output.get("reason"),"scenario":output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,&batch.bounds,law)).transpose()?,"record":record}));
         }
         let counterexample = label != "mutant"
             || goals.iter().any(|goal| {

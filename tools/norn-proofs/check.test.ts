@@ -30,9 +30,12 @@ test("tla_ts_apalache_parity", async () => {
     const report: unknown = JSON.parse(output)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
       {case: "original", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
-      {case: "mutant", total: 10, eligible: 3, discharged: 2, acceptancePassed: true},
+      {case: "mutant", total: 10, eligible: 3, discharged: 2, acceptancePassed: true,
+        goals: expect.arrayContaining([expect.objectContaining({kind: "preservation", status: "refuted",
+          scenario: expect.objectContaining({law: "constitution.fine_mass.law", writer: "constitution.melt.convert.action"})})])},
       {case: "restored", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
     ]})
+    console.info(output)
   } finally {
     await rm(work, {recursive: true, force: true})
   }
