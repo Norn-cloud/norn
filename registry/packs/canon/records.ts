@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } from "../../../core/src/physics"
+import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } from "../../core/src/physics.ts"
 
 export const Catalog = Norn.interfaceType({
   name: "canon.Catalog", title: "Catalog metadata, never stock", version: "0.1.0",
@@ -29,7 +29,7 @@ export const Holding = Norn.type({
     resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity"),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
-    location: Schema.String, stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency" })),
+    location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency" })),
     cost_currency: Schema.NullOr(Schema.String),
   }),
   links: [

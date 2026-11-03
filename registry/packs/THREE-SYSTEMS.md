@@ -50,6 +50,11 @@ other units, account-role interpretations, returns and original-event correction
 are not inferred. Settlement reports retain payer/payee but cannot establish
 cash movement, settlement finality or balanced posting without further evidence.
 
+Holding `quantity_basis` preserves the semantic difference: ERPNext/Odoo report
+on-hand quantities in this profile; Shopify reports available quantities.
+Availability is not an ownership or complete on-hand assertion; reservation and
+on-hand reconciliation remain unqualified, and the reports cannot be summed.
+
 Shopify catalog price is deliberately ignored with a reason. Its holdings have
 explicit `stock_cost` and `cost_currency` gaps and a null valuation method;
 valuation coverage is incomplete. Neither the sales price nor a payment amount

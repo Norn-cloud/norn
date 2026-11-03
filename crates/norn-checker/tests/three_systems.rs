@@ -125,7 +125,7 @@ fn mvp_map_three_ambiguous_identity_refuses_without_sku_guessing() {
             let findings=mapping.apply(&documents(&[row]),&UtcTimestamp("2026-11-02T12:00:00Z".into())).expect_err("mapping refusal");
             assert!(findings.iter().any(|d| ["mapping.runtime.invalid_record","mapping.runtime.invalid_key"].contains(&d.code.as_str())));
         }
-        let mut second=item.clone(); second.record[field]=json!("demo/item/other");
+        let mut second=item.clone(); second.record[field]=json!("demo/item/other"); second.record[if system=="erpnext" {"name"} else {"id"}]=json!("SYN-DISTINCT-SOURCE");
         let mapped=apply(&mapping,&[item.clone(),second]);
         assert_ne!(mapped[0].key,mapped[1].key,"equal SKUs never merge explicit identities");
     }
@@ -157,5 +157,27 @@ fn mvp_map_three_unresolved_units_and_draft_postings_refuse() {
         let mut row=Row{dataset:f.incremental[0].dataset.clone(),record:f.incremental[0].record.clone()};
         row.record["posting_state"]=json!("draft");
         assert!(mapping.apply(&documents(&[row]), &UtcTimestamp("2026-11-02T12:00:00Z".into())).is_err());
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn mvp_map_three_generated_aliases_never_guess_catalog_identity(a in "[A-Z]{1,10}", b in "[A-Z]{1,10}") {
+        proptest::prop_assume!(a != b);
+        let mut canonical = BTreeSet::new();
+        for (system,field,native) in [("erpnext","custom_norn_ref","name"),("shopify","metafield_norn_ref","id"),("odoo","x_norn_ref","id")] {
+            let mapping=compiled(system); let f=fixture(system);
+            let item=f.snapshot.iter().find(|r|r.record.get("sku").is_some()).expect("item");
+            let mut first=item.clone(); first.record[field]=json!(format!("demo/item/{a}"));
+            let mut second=item.clone(); second.record[field]=json!(format!("demo/item/{b}")); second.record[native]=json!("SYN-DISTINCT-SOURCE");
+            let mapped=apply(&mapping,&[first.clone(),second.clone()]);
+            proptest::prop_assert_ne!(&mapped[0].key,&mapped[1].key);
+            canonical.insert((mapped[0].object_type.clone(),mapped[0].key.clone()));
+            let reversed=apply(&mapping,&[second,first]);
+            proptest::prop_assert_eq!(&mapped[0],&reversed[1]);
+            proptest::prop_assert_eq!(&mapped[1],&reversed[0]);
+        }
+        proptest::prop_assert_eq!(canonical.len(),1);
     }
 }
