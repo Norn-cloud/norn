@@ -5,7 +5,8 @@ use norn_cell::{InstalledDefinitionSet, engine::SqlEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use crate::{host::DevHost, refusal::Refusal};
+use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
+use norn_ir::{ResourceLimitProfile, RuntimeValue};
 
 /// Explicit scope and optional retained definition version.
 #[derive(Debug, Default, Deserialize)]
@@ -31,14 +32,14 @@ pub struct DefsResponse {
     pub layout_revision: u64,
     /// Editor sidecar.
     pub layout: norn_ir::LayoutSidecar,
-    /// Sidecar findings, separate from semantic admission.
-    pub layout_diagnostics: serde_json::Value,
+    /// Not retained; null rather than a new check at read time.
+    pub layout_diagnostics: Option<serde_json::Value>,
     /// Original checker receipt, without host reinterpretation.
     pub receipt: Box<RawValue>,
     /// Original receipt digest.
     pub receipt_sha256: String,
-    /// Non-error checker findings.
-    pub diagnostics: serde_json::Value,
+    /// Finding text is not retained; the original receipt carries its digest.
+    pub diagnostics: Option<serde_json::Value>,
     /// Selected registry releases.
     pub registry: Vec<String>,
     /// Read-only base artifact identities.
@@ -85,17 +86,10 @@ fn defs_response(
     installed: InstalledDefinitionSet,
     scope: &crate::scope::CellScope,
 ) -> Result<DefsResponse, Refusal> {
+    verify_retained(&installed, scope)?;
     let receipt = installed
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
-    let admitted = crate::defs::Admitted::from_source(&installed.canonical_set, scope)
-        .map_err(|error| Refusal::host(error.code))?;
-    let digest = norn_checker::admission_receipt_sha256(&receipt).map_err(Refusal::host)?;
-    if digest != installed.receipt_sha256 || digest != admitted.receipt_sha256 {
-        return Err(Refusal::host(
-            "retained receipt does not bind these definitions",
-        ));
-    }
     Ok(DefsResponse {
         admitted: true,
         version: installed.version,
@@ -107,14 +101,72 @@ fn defs_response(
             .transpose()
             .map_err(Refusal::host)?
             .unwrap_or_default(),
-        layout_diagnostics: norn_checker::diagnostics_to_json(&[]),
+        layout_diagnostics: None,
         receipt: RawValue::from_string(receipt).map_err(Refusal::host)?,
         receipt_sha256: installed.receipt_sha256,
-        diagnostics: admitted.diagnostics,
+        diagnostics: None,
         registry: installed.registry,
         base_artifact_ids: Vec::new(),
         artifacts: serde_json::from_str(&installed.canonical_set).map_err(Refusal::host)?,
     })
+}
+
+fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Result<(), Refusal> {
+    let receipt = installed
+        .admission_receipt
+        .as_deref()
+        .ok_or_else(|| Refusal::host("missing receipt"))?;
+    let digest = norn_checker::admission_receipt_sha256(receipt).map_err(Refusal::host)?;
+    if digest != installed.receipt_sha256 {
+        return Err(Refusal::host("retained receipt digest mismatch"));
+    }
+    let retained: serde_json::Value = serde_json::from_str(receipt).map_err(Refusal::host)?;
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let profile =
+        serde_json::to_value(limits.reference().map_err(Refusal::host)?).map_err(Refusal::host)?;
+    // Release pins never grant type authority; verify self-contained sources only.
+    if retained
+        .pointer("/artifactSet/base")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|base| !base.is_empty())
+        || retained.get("limitProfile") != Some(&profile)
+    {
+        return Err(context_unavailable());
+    }
+    let RuntimeValue::Array(sources) =
+        RuntimeValue::from_json_text(&installed.canonical_set).map_err(Refusal::host)?
+    else {
+        return Err(Refusal::host(
+            "retained definitions must be an artifact array",
+        ));
+    };
+    for source in &sources {
+        let artifact: norn_ir::ArtifactEnvelope =
+            norn_ir::runtime::decode(source).map_err(Refusal::host)?;
+        if norn_checker::scope_conflict(&scope.as_scope_ref(), &artifact.scope).is_some() {
+            return Err(Refusal::host("retained artifact outside cell scope"));
+        }
+    }
+    norn_checker::verify_admission_receipt_sources(
+        receipt,
+        &installed.receipt_sha256,
+        &sources,
+        &[],
+        &limits,
+    )
+    .map(drop)
+    .map_err(|error| match error {
+        norn_checker::ReceiptError::UnsupportedReceiptVersion { .. } => context_unavailable(),
+        other => Refusal::host(other),
+    })
+}
+fn context_unavailable() -> Refusal {
+    Refusal::new(
+        http::StatusCode::CONFLICT,
+        "defs.receipt_context_unavailable",
+        "the retained admission context is unavailable",
+        "this host cannot resolve the receipt's external base, limit profile or checker version",
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -136,25 +188,23 @@ mod tests {
 
     fn host() -> DevHost<NativeEngine> {
         let scope = CellScope {
-            org_id: "demo".into(),
+            org_id: "org_demo".into(),
             environment_id: "dev".into(),
         };
-        let registry = BTreeSet::new();
-        let sources = ReceiptSources::new(&[], &[]).unwrap();
         let context = EntityArtifactSetContext {
-            registry: &registry,
+            registry: &BTreeSet::new(),
             base: &[],
             tenant: None,
         };
         let checked = check_artifact_set_with_receipt(
-            &sources,
+            &ReceiptSources::new(&[], &[]).unwrap(),
             &context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
         .unwrap();
         let input = InstalledDefinitionInput {
             canonical_set: "[]".into(),
-            registry: Vec::new(),
+            registry: vec!["synthetic.library@1.0.0".into()],
             receipt_sha256: checked.receipt.content_sha256().unwrap(),
             admission_receipt: Some(
                 String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
@@ -173,8 +223,17 @@ mod tests {
         .unwrap();
         DevHost::from_store(store, scope, |command| command.payload.clone()).unwrap()
     }
+    fn installed(host: &DevHost<NativeEngine>) -> InstalledDefinitionSet {
+        host.cell()
+            .unwrap()
+            .store()
+            .read()
+            .installed_definitions(None)
+            .unwrap()
+            .unwrap()
+    }
     fn query() -> DefinitionsQuery {
-        serde_json::from_str(r#"{"orgId":"demo","environmentId":"dev"}"#).unwrap()
+        serde_json::from_str(r#"{"orgId":"org_demo","environmentId":"dev"}"#).unwrap()
     }
     struct Fixture;
     impl Authorizer for Fixture {
@@ -195,15 +254,11 @@ mod tests {
         assert_eq!(get_defs(&host, &query(), None).unwrap_err().status, 403);
         let mut bad = query();
         bad.org_id = Some("foreign".into());
-        assert_eq!(
-            get_defs(&host, &bad, actor).unwrap_err().code,
-            "scope.denied"
-        );
+        let refused = get_defs(&host, &bad, actor).unwrap_err();
+        assert_eq!(refused.code, "scope.denied");
         bad.org_id = None;
-        assert_eq!(
-            get_defs(&host, &bad, actor).unwrap_err().code,
-            "scope.missing"
-        );
+        let refused = get_defs(&host, &bad, actor).unwrap_err();
+        assert_eq!(refused.code, "scope.missing");
     }
     #[test]
     fn admitted_document_and_missing_version_preserve_cell_state() {
@@ -212,6 +267,13 @@ mod tests {
         let before = host.cell().unwrap().store().verified_head().unwrap();
         let result = get_defs(&host, &query(), actor).unwrap();
         assert!(result.admitted && result.artifacts.is_empty());
+        assert_eq!(result.registry, ["synthetic.library@1.0.0"]);
+        assert!(result.diagnostics.is_none() && result.layout_diagnostics.is_none());
+        let installed = installed(&host);
+        assert_eq!(
+            result.receipt.get(),
+            installed.admission_receipt.as_deref().unwrap()
+        );
         assert_eq!(
             norn_checker::admission_receipt_sha256(result.receipt.get()).unwrap(),
             result.receipt_sha256
@@ -223,5 +285,53 @@ mod tests {
             before,
             host.cell().unwrap().store().verified_head().unwrap()
         );
+    }
+    #[test]
+    fn retained_receipt_checks_sources_and_context_without_readmission() {
+        let host = host();
+        let installed = installed(&host);
+        let verify = |set: &InstalledDefinitionSet| verify_retained(set, host.scope());
+        let rewrite = |set: &mut InstalledDefinitionSet, key: &str, value: serde_json::Value| {
+            let mut receipt =
+                norn_ir::RuntimeValue::from_json_text(set.admission_receipt.as_deref().unwrap())
+                    .unwrap();
+            receipt.as_object_mut().unwrap().insert(
+                key.into(),
+                norn_ir::RuntimeValue::from_json_text(&value.to_string()).unwrap(),
+            );
+            set.admission_receipt =
+                Some(String::from_utf8(receipt.canonical_json().unwrap()).unwrap());
+            set.receipt_sha256 =
+                norn_checker::admission_receipt_sha256(set.admission_receipt.as_deref().unwrap())
+                    .unwrap();
+        };
+        assert!(verify(&installed).is_ok());
+        let mut bad = installed.clone();
+        bad.receipt_sha256 = "0".repeat(64);
+        assert_eq!(verify(&bad).unwrap_err().status, 500);
+        let wrong_set = serde_json::json!({"artifacts":[],"base":[],"sha256":"0".repeat(64)});
+        let wrong_env =
+            serde_json::json!({"id":"norn.expr.env","version":1,"sha256":"0".repeat(64)});
+        let external_base = serde_json::json!({"artifacts":[],"base":[{}],"sha256":"0".repeat(64)});
+        let future_limits =
+            serde_json::json!({"id":"future.limits","version":99,"sha256":"0".repeat(64)});
+        let unavailable = "defs.receipt_context_unavailable";
+        for (key, value, expected) in [
+            ("admitted", serde_json::json!(false), "host.error"),
+            ("artifactSet", wrong_set, "host.error"),
+            ("typeEnv", wrong_env, "host.error"),
+            ("artifactSet", external_base, unavailable),
+            ("limitProfile", future_limits, unavailable),
+        ] {
+            let mut bad = installed.clone();
+            rewrite(&mut bad, key, value);
+            assert_eq!(verify(&bad).unwrap_err().code, expected, "{key}");
+        }
+        let mut bad = installed.clone();
+        bad.canonical_set = format!(
+            "[{}]",
+            include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json")
+        );
+        assert_eq!(verify(&bad).unwrap_err().status, 500);
     }
 }

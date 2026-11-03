@@ -5,14 +5,11 @@ use crate::{
     scope::CellScope,
 };
 use norn_cell::{CellStore, engine::SqlEngine};
+use norn_ir::RuntimeObject;
+use norn_kernel::{Command, FactEvent};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
-pub(crate) type ActionCell<E> = norn_cell::SqliteCell<
-    norn_kernel::FactEvent,
-    norn_ir::RuntimeObject,
-    norn_ir::RuntimeObject,
-    E,
->;
+pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
 pub struct DevHost<E: SqlEngine> {
     scope: CellScope,
@@ -28,9 +25,7 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn from_store(
         store: CellStore<E>,
         scope: CellScope,
-        responder: impl FnMut(&norn_kernel::Command<norn_ir::RuntimeObject>) -> norn_ir::RuntimeObject
-        + Send
-        + 'static,
+        responder: impl FnMut(&Command<RuntimeObject>) -> RuntimeObject + Send + 'static,
     ) -> Result<Self, Refusal> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         let cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
