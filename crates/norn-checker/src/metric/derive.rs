@@ -352,7 +352,7 @@ mod ontology_derived_measures {
                             && path.property.as_str() == property
                     })
             };
-            assert!(has("name"));
+            assert!(has("name"), "role={role}; item={:?}; store={:?}; candidates={:?}", generated.catalog.object_type_named("erpnext.SalesInvoiceItem").and_then(Result::err), generated.catalog.object_type_named("erpnext.Store").and_then(Result::err), generated.candidates);
             assert_eq!(has("idx"), expected, "{role}");
         }
     }
