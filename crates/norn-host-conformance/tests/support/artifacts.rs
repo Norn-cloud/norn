@@ -1,4 +1,4 @@
-//! Compile the actual core policy with the configured native Function identity.
+//! ANALYSIS-PUBLISH-1: compile the actual policy with its native Function and unit pins.
 #![allow(
     clippy::expect_used,
     clippy::panic,
@@ -22,10 +22,11 @@ await Bun.write(`${output}/registry/core/src/shared/metrics-pin.ts`, `export con
 const { compilePack } = await import(`${root}/tools/norn-ts/src/pack.ts`)
 const core = compilePack(`${output}/registry/core/src`, { scope: {}, registry: "registry/core", root: output, modules: [`${output}/registry/core/src/analytics.ts`] })
 if (!core.ok) throw new Error(JSON.stringify(core.failures))
+const units = await Bun.file(`${root}/registry/core/artifacts/core.units.json`).json()
 const { compileDefinitions } = await import(`${root}/tools/norn-ts/src/compiler/definitions.ts`)
 const source = compileDefinitions(`${root}/crates/norn-host-conformance/tests/scrap.source.ts`, { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "crates/norn-host-conformance/tests/scrap.source.ts" })
 if (!source.ok) throw new Error(JSON.stringify(source.diagnostics))
-await Bun.write(`${output}/scrap-publication.json`, JSON.stringify([...core.artifacts, ...source.artifacts]))
+await Bun.write(`${output}/scrap-publication.json`, JSON.stringify([...core.artifacts, units, ...source.artifacts]))
 "#;
         let result=std::process::Command::new("bun").arg("--eval").arg(script).arg(root).arg(dir.path()).arg(function.digest.0).output().expect("typed compiler");
         assert!(result.status.success(),"{}{}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));

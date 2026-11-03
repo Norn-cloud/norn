@@ -7,7 +7,9 @@ wrong scope/table/blob pins. The analytics library keeps its IR/checker boundary
 
 The CSV/PUBLISH fixture admits the typed declarations and uses the pinned
 scrap-yield CSV, authenticated incarnation exports, native Function execution and
-the governed PUBLISH action. The timed world publishes. The October 26 bulk world
+the governed PUBLISH action. The forecast's gram properties declare the exact
+core unit-catalog dependency, and fixture admission includes that retained catalog.
+The timed world publishes. The October 26 bulk world
 refuses with `core.projection.publication_guard` and temporal-leakage detail,
 retains its unconsumed receipt and writes no partial effects. This demonstrates
 bounded publication acceptance; source ingestion and full document lineage have

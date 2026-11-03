@@ -6,5 +6,6 @@ export const Measurement = Norn.type({
 })
 export const Forecast = Norn.type({
   name: "demo.ScrapForecast", title: "Synthetic recovered mass forecast", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   properties: Schema.Struct({ input: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }), recovered: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }) }),
 })
