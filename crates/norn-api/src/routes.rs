@@ -263,6 +263,26 @@ mod tests {
         assert_eq!(refused.code, "scope.missing");
     }
     #[test]
+    fn denied_read_refusals_do_not_disclose_the_physical_scope() {
+        for host in [host(), host().with_authorizer(Fixture)] {
+            for actor in [None, Some("clerk@demo"), Some("reviewer@demo")] {
+                for org in [None, Some("foreign"), Some("org_demo")] {
+                    for environment in [None, Some("foreign"), Some("dev")] {
+                        let request = DefinitionsQuery {
+                            org_id: org.map(str::to_owned),
+                            environment_id: environment.map(str::to_owned),
+                            version: Some(999),
+                        };
+                        let refusal = get_defs(&host, &request, actor).unwrap_err();
+                        let wire = serde_json::to_string(&refusal).unwrap();
+                        assert!(!wire.contains(&host.scope().org_id), "{wire}");
+                        assert!(!wire.contains(&host.scope().environment_id), "{wire}");
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn admitted_document_and_missing_version_preserve_cell_state() {
         let actor = Some("reviewer@demo");
         let host = host().with_authorizer(Fixture);
