@@ -1,6 +1,3 @@
-//! Ontology-derived metric candidates. Admission and execution use the existing
-//! metric checker and compute plan; this module has no evaluator.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
@@ -148,22 +145,43 @@ fn dimensions(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec<D
         .filter(|p| super::is_scalar(p))
         .map(|p| direct(&p.id))
         .collect();
-    for link in catalog
+    let forward = catalog
         .links_for_object_type(object.name.as_str())
-        .into_iter()
-        .flatten()
-    {
-        for target in catalog
-            .target_types(link.target.as_str())
-            .into_iter()
-            .flatten()
-        {
+        .unwrap_or_default();
+    let mut roles: BTreeMap<_, BTreeSet<_>> = forward
+        .iter()
+        .map(|link| {
+            (
+                link.id.clone(),
+                catalog
+                    .target_types(link.target.as_str())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    for source in catalog.object_type_names() {
+        for link in catalog.links_for_object_type(source).into_iter().flatten() {
+            if let Some(role) = &link.inverse
+                && !forward.iter().any(|link| &link.id == role)
+                && catalog
+                    .target_types(link.target.as_str())
+                    .is_some_and(|targets| targets.contains(object.name.as_str()))
+            {
+                roles
+                    .entry(role.clone())
+                    .or_default()
+                    .insert(source.to_owned());
+            }
+        }
+    }
+    for (role, targets) in roles {
+        for target in targets {
             let Some(Ok(target)) = catalog.object_type_named(&target) else {
                 continue;
             };
             for property in target.properties.iter().filter(|p| super::is_scalar(p)) {
                 paths.insert(DimensionPath {
-                    links: vec![link.id.clone()],
+                    links: vec![role.clone()],
                     property: property.id.clone(),
                 });
             }
@@ -304,6 +322,34 @@ mod ontology_derived_measures {
         );
     }
 
+    }
+
+    #[test]
+    fn inverse_dimensions_preserve_forward_role_precedence() {
+        for (role, expected) in [("invoice_lines", true), ("store", false)] {
+            let mut artifacts = fixture();
+            let mut root: EntityRootV2 = serde_json::from_value(
+                serde_json::to_value(artifacts[0].payload.to_json_value()).expect("payload"),
+            )
+            .expect("entity");
+            root.object_type.links[0].inverse = Some(norn_ir::LinkId(role.to_owned()));
+            artifacts[0].payload = ArtifactPayload::from_kind_json(
+                &ArtifactKind::Entity,
+                serde_json::from_value(serde_json::to_value(root).expect("typed entity"))
+                    .expect("IR JSON"),
+            )
+            .expect("entity payload");
+            let generated = derive(&artifacts);
+            assert_eq!(
+                generated.candidates[0]
+                    .dimensions
+                    .iter()
+                    .any(|path| path.links == [norn_ir::LinkId(role.to_owned())]
+                        && path.property.as_str() == "idx"),
+                expected,
+                "{role}"
+            );
+        }
     }
 
     #[test]
