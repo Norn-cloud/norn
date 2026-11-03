@@ -170,9 +170,9 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
-            Self::AtomicBoundary { .. } => RefusalCategory::Invalid,
             Self::Law { reason, .. } => law_category(reason),
-            Self::DuplicateKey { .. }
+            Self::AtomicBoundary { .. }
+            | Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
@@ -288,7 +288,6 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
-            Self::AtomicBoundary { .. } => RefusalCategory::Invalid,
             Self::Law { reason, .. } => law_category(reason),
             Self::GuardFalse { .. }
             | Self::GuardError { .. }
@@ -365,7 +364,8 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }

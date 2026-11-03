@@ -36,7 +36,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
     pub(crate) fn validate<E, C, T>(
         &self,
         commit: &CellCommit<E, C, T>,
-        model: &crate::CommitModel<'_, '_>,
+        model: crate::CommitModel<'_, '_>,
     ) -> Result<(), CommitError<V::Error>> {
         for read in &commit.reads {
             self.fact(&read.key);

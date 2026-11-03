@@ -444,7 +444,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     let profile = crate::execution_profile::ProfileView::new(view);
     let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
-    profile.validate(commit, &model)?;
+    profile.validate(commit, model)?;
     result
 }
 
