@@ -52,14 +52,18 @@ def available(cp):
         isinstance(cp.get(field), list) for field in ("stock", "gl", "documents", "attempts"))
 
 
+def ledger_values(cp, kind):
+    return {identity: view(dict(stock=[row] if kind == 'stock' else [],
+        gl=[row] if kind == 'gl' else [], documents=[], attempts=[]))[kind]
+        for identity, row in indexed(cp[kind], 'id').items()}
+
+
 def refusal_unchanged(before, after):
     if not after['attempts'] or not all(a['outcome'] == 'refused' for a in after['attempts']):
         return True
     if not available(before):
         return None
-    return all(view(before)[k] == view(after)[k] and
-               {r['id'] for r in before[k]} == {r['id'] for r in after[k]}
-               for k in ('stock', 'gl'))
+    return all(ledger_values(before, k) == ledger_values(after, k) for k in ('stock', 'gl'))
 
 
 def fingerprint(case, method, step, field, left, right):

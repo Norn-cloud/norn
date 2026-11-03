@@ -51,19 +51,27 @@ class Contract(unittest.TestCase):
             exact('0.001', 2)
 
     def test_refusal_identity_even_if_both_engines_do_it(self):
-        for d in (self.n, self.e):
-            cp = deepcopy(d['cases'][0]['checkpoints'][0])
-            cp['step'] = 1
-            cp['attempts'][0].update(outcome='refused', reason='insufficient-stock')
-            cp['gl'][0]['id'] = 'replacement'
-            d['cases'][0]['checkpoints'].append(cp)
-        self.assertFalse(self.report()['passed'])
+        for change in ('replace', 'swap'):
+            self.n, self.e = dump('norn'), dump('erpnext')
+            for d in (self.n, self.e):
+                before = d['cases'][0]['checkpoints'][0]
+                before['gl'].append(dict(before['gl'][0], id='second', debit='1'))
+                cp = deepcopy(before)
+                cp['step'] = 1
+                cp['attempts'][0].update(outcome='refused', reason='insufficient-stock')
+                cp['gl'][0]['id'], cp['gl'][1]['id'] = (
+                    ('replacement', 'second') if change == 'replace' else ('second', 'native-gl'))
+                d['cases'][0]['checkpoints'].append(cp)
+            self.assertFalse(self.report()['passed'])
 
     def test_missing_and_unsupported_fail(self):
         for field, value in [('checkpoints', []), ('status', 'unsupported')]:
             self.e = dump('erpnext')
             self.e['cases'][0][field] = value
             self.assertFalse(self.report()['passed'])
+        self.e = dump('erpnext')
+        self.e['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
+        self.assertFalse(self.report()['passed'])
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
 
@@ -78,11 +86,6 @@ class Contract(unittest.TestCase):
         self.assertEqual((counts['unsupported'], counts['untriaged']), (2, 0))
         self.n['cases'][0]['initial'] = dump('norn')['cases'][0]['initial']
         self.assertEqual(self.report()['counts']['untriaged'], 1)
-
-    def test_unavailable_snapshot_is_not_an_empty_observation(self):
-        for dump in (self.n, self.e):
-            dump['cases'][0]['checkpoints'][0]['status'] = 'unsupported'
-        self.assertFalse(self.report()['passed'])
 
     def test_incomplete_prefix_is_still_compared(self):
         self.e['cases'][0]['status'] = 'unsupported'

@@ -18,20 +18,13 @@ Attempt = TypedDict('Attempt', {'attempt': int, 'requestId': str,
     'nativeCode': Optional[str], 'reason': Optional[str], 'completionOrder': int})
 Document = TypedDict('Document', {'requestId': str, 'status': int})
 
-
-class Checkpoint(TypedDict, total=False):
-    step: int
-    attempts: List[Attempt]
-    stock: List[StockRow]
-    gl: List[GlRow]
-    documents: List[Document]
-    status: Literal['unsupported']
-
+Checkpoint = TypedDict('Checkpoint', {'step': int, 'attempts': List[Attempt],
+    'stock': List[StockRow], 'gl': List[GlRow], 'documents': List[Document],
+    'status': Literal['unsupported']}, total=False)
 
 Case = TypedDict('Case', {'case': str, 'method': str,
     'status': Literal['complete', 'unsupported'], 'reason': Optional[str],
     'initial': Checkpoint, 'checkpoints': List[Checkpoint]}, total=False)
-
 
 StockDump = TypedDict('StockDump', {
     'format': Literal['norn.stock-dump/1'], 'engine': Literal['norn', 'erpnext'],
