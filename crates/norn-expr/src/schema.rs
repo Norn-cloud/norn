@@ -310,10 +310,10 @@ impl Schema {
     ) -> Result<norn_ir::RuntimeValue, Violation> {
         use norn_ir::{Decimal, RuntimeValue};
         match (self, value) {
-            (Self::Decimal(_site), RuntimeValue::String(text)) => {
+            (Self::Decimal(_), RuntimeValue::String(text)) => {
                 let decimal = Decimal::parse(&text)
                     .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
-                let decoded = RuntimeValue::Number(decimal.clone());
+                let decoded = RuntimeValue::Number(decimal);
                 let value = Value::try_from(&decoded)
                     .map_err(|e| Violation::new(path, e.to_string()))?;
                 self.check(&value, path)?;
