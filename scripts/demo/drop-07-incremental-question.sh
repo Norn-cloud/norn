@@ -5,8 +5,9 @@ drop_main "$@"
 if [[ ! -f crates/norn-cell/tests/incremental_question.rs ]]; then
   printf 'not yet: #497 (incremental question evaluation)\n'; exit 1
 fi
-export PROPincremental_question_RNG_SEED=21320261103
-printf 'Generated-input seed: %s\n' "$PROPincremental_question_RNG_SEED"
+python3 -c 'import sys; sys.version_info >= (3, 9) or sys.exit("Python 3.9 or newer is required")'
+export PROPTEST_RNG_SEED=21320261103 PROPTEST_RNG_ALGORITHM=cc
+printf 'Generated-input seed: %s; algorithm: %s\n' "$PROPTEST_RNG_SEED" "$PROPTEST_RNG_ALGORITHM"
 binary=$(cargo test --locked -p norn-cell --test incremental_question --no-run --message-format=json \
   | python3 -c 'import json,sys
 paths = [d["executable"] for line in sys.stdin if (d := json.loads(line)).get("reason") == "compiler-artifact" and d.get("target", {}).get("name") == "incremental_question" and d.get("executable")]

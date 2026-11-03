@@ -5,8 +5,9 @@ drop_main "$@"
 if [[ ! -f crates/norn-cell/tests/restatement_activation.rs ]]; then
   printf 'not yet: #497 (governed restatement generations)\n'; exit 1
 fi
-export PROPrestatement_activation_RNG_SEED=21320261103
-printf 'Generated-input seed: %s\n' "$PROPrestatement_activation_RNG_SEED"
+python3 -c 'import sys; sys.version_info >= (3, 9) or sys.exit("Python 3.9 or newer is required")'
+export PROPTEST_RNG_SEED=21320261103 PROPTEST_RNG_ALGORITHM=cc
+printf 'Generated-input seed: %s; algorithm: %s\n' "$PROPTEST_RNG_SEED" "$PROPTEST_RNG_ALGORITHM"
 binary=$(cargo test --locked -p norn-cell --test restatement_activation --no-run --message-format=json \
   | python3 -c 'import json,sys
 paths = [d["executable"] for line in sys.stdin if (d := json.loads(line)).get("reason") == "compiler-artifact" and d.get("target", {}).get("name") == "restatement_activation" and d.get("executable")]
