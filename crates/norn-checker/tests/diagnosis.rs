@@ -173,3 +173,69 @@ proptest! {
         prop_assert_eq!((result.cores, result.corrections), exhaustive(&mut oracle, 4, &editable));
     }
 }
+
+#[test]
+fn jewelry_staffing_closed_world_and_independent_repair() {
+    use norn_checker::consistency::finite::FiniteOracle;
+    use norn_expr::schema::Schema;
+    let people = Schema::String(Some(
+        ["person-a", "person-b", "person-c"]
+            .map(String::from)
+            .into(),
+    ));
+    let schema = Schema::Object {
+        properties: [("first".into(), people.clone()), ("second".into(), people)].into(),
+        required: ["first".into(), "second".into()].into(),
+    };
+    // Exactly two accountable assayers, seller person-a excluded, closed roster a/b.
+    // The finite universe admits person-c only as a proposed roster correction.
+    let predicates = [
+        "first != second",
+        "first != 'person-a' and second != 'person-a'",
+        "first != 'person-c' and second != 'person-c'",
+    ];
+    let mut oracle = FiniteOracle::new(&schema, &predicates).unwrap();
+    assert_eq!(oracle.assignments, 9);
+    let result = diagnose(&mut oracle, 3, &BTreeSet::from([2]), 1000).unwrap();
+    assert_eq!(result.cores, BTreeSet::from([BTreeSet::from([0, 1, 2])]));
+    assert_eq!(result.corrections, BTreeSet::from([BTreeSet::from([2])]));
+    assert_eq!(
+        (result.cores, result.corrections),
+        exhaustive(&mut oracle, 3, &BTreeSet::from([2]))
+    );
+    let corrected = [predicates[0], predicates[1], "true"];
+    assert_eq!(
+        FiniteOracle::new(&schema, &corrected)
+            .unwrap()
+            .check(&BTreeSet::from([0, 1, 2])),
+        Verdict::Sat
+    );
+    assert_eq!(
+        FiniteOracle::new(&Schema::Integer, &[]).err(),
+        Some(norn_checker::table_analysis::Unknown::UnboundedDomain)
+    );
+    let too_many = vec!["true"; 1000];
+    assert_eq!(
+        FiniteOracle::new(&schema, &too_many).err(),
+        Some(norn_checker::table_analysis::Unknown::Limit)
+    );
+}
+
+#[test]
+fn a_backend_that_changes_its_answers_never_publishes_a_core() {
+    struct Flaky(BTreeSet<BTreeSet<usize>>);
+    impl Oracle for Flaky {
+        type Unknown = ();
+        fn check(&mut self, active: &BTreeSet<usize>) -> Verdict<()> {
+            if !active.is_empty() && self.0.insert(active.clone()) {
+                Verdict::Unsat
+            } else {
+                Verdict::Sat
+            }
+        }
+    }
+    assert_eq!(
+        diagnose(&mut Flaky(BTreeSet::new()), 2, &BTreeSet::new(), 1000),
+        Err(Unknown::InconsistentOracle)
+    );
+}
