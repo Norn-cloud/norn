@@ -69,7 +69,7 @@ def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     with response:
         raw = response.read().decode()
         actual = {'status': response.code, 'body': raw, 'session': response.headers.get('Mcp-Session-Id')}
-    envelope = dict(method=method, path=path, origin=headers.get('Origin'), org=headers['Norn-Org'], environment=headers['Norn-Environment'], session=headers.get('Mcp-Session-Id'), protocol=headers['MCP-Protocol-Version'], body=body)
+    envelope = dict(method=method, path=path, headers={k.lower(): v for k, v in headers.items()}, body=body)
     transcript.append([envelope, actual['session'] or 'unused', 1])
     observed.append(actual)
     assert actual['status'] == status, actual

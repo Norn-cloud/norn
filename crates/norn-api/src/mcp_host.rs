@@ -24,7 +24,7 @@ impl Backend for Checker {
         _: RuntimeObject,
     ) -> Result<CallOutput, Refusal> {
         let input: CheckInput = norn_ir::runtime::decode(&RuntimeValue::Object(arguments))
-            .map_err(|e| Refusal::invalid(e.to_string()))?;
+            .map_err(Refusal::invalid)?;
         let report = norn_checker_wasm::check_artifact_set_json(&input.artifacts, &input.context)
             .map_err(|e| Refusal::invalid(e.to_string()))?;
         let value = RuntimeValue::from_json_text(&report).map_err(Refusal::host)?;
@@ -49,16 +49,8 @@ pub struct Request {
     pub method: String,
     /// Exact path without query.
     pub path: String,
-    /// Supplied browser Origin.
-    pub origin: Option<String>,
-    /// Explicit organization.
-    pub org: Option<String>,
-    /// Explicit environment.
-    pub environment: Option<String>,
-    /// Opaque MCP connection identity.
-    pub session: Option<String>,
-    /// Negotiated MCP version.
-    pub protocol: Option<String>,
+    /// Lowercase transport headers; scope and session remain explicit.
+    pub headers: BTreeMap<String, String>,
     /// Original UTF-8 JSON-RPC bytes.
     pub body: String,
 }
@@ -109,14 +101,11 @@ impl Host {
                 session,
             })
         };
-        if r.origin
-            .as_ref()
-            .is_some_and(|v| self.origin.is_empty() || v != &self.origin)
-        {
+        let header = |key: &str| r.headers.get(key).map(String::as_str);
+        if header("origin").is_some_and(|v| self.origin.is_empty() || v != self.origin) {
             return reply(403, String::new(), None);
         }
-        self.scope
-            .admit(r.org.as_deref(), r.environment.as_deref())?;
+        self.scope.admit(header("norn-org"), header("norn-environment"))?;
         if r.path != "/mcp" && r.path != "/catalog" {
             return reply(404, String::new(), None);
         }
@@ -138,46 +127,27 @@ impl Host {
         if r.method != "POST" || r.path != "/mcp" {
             return reply(405, String::new(), None);
         }
-        if r.protocol.as_deref().is_some_and(|v| v != "2025-11-25") {
+        if header("mcp-protocol-version").is_some_and(|v| v != "2025-11-25") {
             return reply(400, String::new(), None);
         }
         self.sessions.retain(|_, (_, expiry)| now < *expiry);
         let source =
             serde_json::from_str::<serde_json::Value>(&r.body).map_err(|e| Refusal::invalid(e.to_string()))?;
-        let initialize = source
-            .get("method")
-            .and_then(serde_json::Value::as_str)
-            == Some("initialize");
-        let id = if let Some(id) = r.session {
-            if !self.sessions.contains_key(&id) {
-                return reply(404, String::new(), None);
-            }
-            id
-        } else if initialize && !nonce.is_empty() {
-            if self.sessions.len() >= 64 {
-                return reply(503, String::new(), None);
-            }
-            nonce.to_owned()
-        } else {
-            return reply(400, String::new(), None);
-        };
-        if !self.sessions.contains_key(&id) {
-            if !initialize {
-                return reply(404, String::new(), None);
-            }
-            if source.pointer("/params/protocolVersion").and_then(serde_json::Value::as_str)
-                != Some("2025-11-25")
-            {
+        let id = header("mcp-session-id").unwrap_or(nonce).to_owned();
+        if header("mcp-session-id").is_none() {
+            if source.get("method").and_then(serde_json::Value::as_str) != Some("initialize") {
                 return reply(400, String::new(), None);
             }
-            if source.get("id").is_none() {
-                return reply(202, String::new(), None);
+            if self.sessions.len() >= 64 || id.is_empty() || self.sessions.contains_key(&id) {
+                return reply(503, String::new(), None);
             }
-            self.sessions.insert(
-                id.clone(),
-                (session(&binding)?, now.saturating_add(300_000)),
-            );
+            if source.pointer("/params/protocolVersion").and_then(serde_json::Value::as_str) != Some("2025-11-25") {
+                return reply(400, String::new(), None);
+            }
+            if source.get("id").is_none() { return reply(202, String::new(), None); }
+            self.sessions.insert(id.clone(), (session(&binding)?, now.saturating_add(300_000)));
         }
+        if !self.sessions.contains_key(&id) { return reply(404, String::new(), None); }
         let (session, _) = self
             .sessions
             .get_mut(&id)

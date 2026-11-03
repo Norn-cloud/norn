@@ -15,11 +15,9 @@ export class Cell {
     }
     const bytes = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    const h = name => request.headers.get(name);
     const reply = JSON.parse(this.host.fetch(JSON.stringify({ method: request.method,
-      path: new URL(request.url).pathname, origin: h('Origin'), org: h('Norn-Org'),
-      environment: h('Norn-Environment'), session: h('Mcp-Session-Id'),
-      protocol: h('MCP-Protocol-Version'), body: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }),
+      path: new URL(request.url).pathname, headers: Object.fromEntries(request.headers),
+      body: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }),
       crypto.randomUUID(), BigInt(Date.now())));
     const headers = { 'Content-Type': 'application/json' };
     if (reply.session) headers['Mcp-Session-Id'] = reply.session;
