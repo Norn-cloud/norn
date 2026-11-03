@@ -6631,14 +6631,14 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_bounded(&cell, &key, 4096).is_err());
         norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_reference(&cell, &key, 4096).is_err());
         let link = norn_kernel::LinkKey::new(norn_kernel::FactKey::new("quality.Measurement", "MEAS-2"), "unused", key.clone());
-        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::QualityEvaluation(_))));
-        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_link_targets(&cell, &key, "unused", 1, 64), Err(CellError::QualityEvaluation(_))));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::SourceIdentityDisputed)));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_link_targets(&cell, &key, "unused", 1, 64), Err(CellError::SourceIdentityDisputed)));
         let mut stale = norn_kernel::CellCommit::empty();
         stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
-        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         let mut written = norn_kernel::CellCommit::empty();
         written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
-        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::SourceIdentityDisputed))));
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
@@ -6881,7 +6881,7 @@ fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
         assert!(matches!(
             norn_kernel::CellHost::commit(&mut cell, written),
             Err(norn_kernel::CommitError::Host(
-                CellError::QualityEvaluation(_)
+                CellError::SourceIdentityDisputed
             ))
         ));
     }
@@ -6939,7 +6939,7 @@ fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering(
         norn_kernel::CellHost::load(&cell, &clean).expect("negative indexed lookup");
         assert!(matches!(
             norn_kernel::CellHost::load(&cell, &disputed),
-            Err(CellError::QualityEvaluation(_))
+            Err(CellError::SourceIdentityDisputed)
         ));
     }
     assert_eq!(
@@ -7063,7 +7063,7 @@ fn assert_interface_dispute_fences(
         assert!(
             matches!(
                 norn_kernel::CellHost::load_link(cell, &link),
-                Err(CellError::QualityEvaluation(_))
+                Err(CellError::SourceIdentityDisputed)
             ),
             "both live and missing interface roots retain quarantine"
         );

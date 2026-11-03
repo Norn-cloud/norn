@@ -139,9 +139,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &norn_kernel::FactKey,
     ) -> Result<(), CellError> {
         if self.source_dispute_at(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)? {
-            return Err(CellError::QualityEvaluation(
-                "core.boundary.import_finding: disputed source identity".into(),
-            ));
+            return Err(CellError::SourceIdentityDisputed);
         }
         Ok(())
     }
