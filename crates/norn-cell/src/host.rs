@@ -1559,6 +1559,7 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
+            Err(GuardedError::Store(CellError::IdentityReuse)) => Err(CommitError::IdentityReuse),
             Err(GuardedError::Store(CellError::IdentityCollision {
                 owner,
                 key,

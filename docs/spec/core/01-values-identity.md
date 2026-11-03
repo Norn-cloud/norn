@@ -57,6 +57,8 @@ ID-STABLE-1 distinguishes authored mutation from observation using the existing 
 
 The authored boundary is shared kernel `check_commit` with its existing sealed per-write observation authority, plus canonical store `FactChange::Create`. Raw actorless `CellStore::commit(CommitBatch)` and `Put` remain trusted embedding primitives, not authored contracts; authored adapters use the checked boundary. Event JSON cannot establish observation authority, and no `FactMutation` flag is introduced. An authenticated provenance/replay binding for raw paths is the separate C2 follow-up #763.
 
+The `version_kani.rs` harness imports the production deletion/successor core over full `u64` versions and live/absent states. Its scope excludes SQL, source authority and complete replay; those require the native correspondence scenarios below.
+
 Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/reference constraints; sampled transport/replay correspondence; generated arithmetic side conditions over the same exact-number semantics. Do not infer universal identity correctness from a hash function.
 
 The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Proptests cover arbitrary `i128` coefficients and `u8` scales. The standalone `verification/canonical-values-v1/decimal_kani.rs` harness imports those production functions directly: normalization uses signed 8-bit coefficients and scales 0–2; multiplier checks use exponents 0–6 plus the overflow boundary 39. These bounded implementation checks do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator. Run each harness on Boat with a 300-second bound; an absent verdict remains unknown.
@@ -123,7 +125,7 @@ Raw-byte duplicates may refuse earlier through the existing physical unique inde
 
 **ID-NORMALIZED-REOPEN-BOUND:** every commit charges the same complete key/row/byte budget as reopen, including unrelated roots; a commit that would make reopening exceed the profile refuses atomically. Stored byte preflight uses `octet_length` before fetching values.
 
-**ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
+**ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent, unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
 
 
 **ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.

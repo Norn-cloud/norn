@@ -1165,6 +1165,18 @@ impl CellModel {
         commit: &LawCommit,
         model: CommitModel<'_, '_>,
     ) -> Result<(), CommitError<Infallible>> {
+        for write in &commit.writes {
+            let key = model.canonical(&write.key);
+            if matches!(write.mutation, FactMutation::Put { .. })
+                && self
+                    .facts
+                    .get(&key)
+                    .is_some_and(|state| state.version != FactVersion::ABSENT)
+                && !self.concrete.contains_key(&key)
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
         let version = |key: &FactKey| {
             self.facts
                 .get(&model.canonical(key))

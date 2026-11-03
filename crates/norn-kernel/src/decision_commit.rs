@@ -1497,6 +1497,9 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-STABLE-1: a deleted identity needs explicit governed restoration.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
     /// ID-UNIQUE-1: commit refused a normalized business-key collision.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {
@@ -1790,6 +1793,7 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
@@ -1841,7 +1845,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::IdentityCollision { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
@@ -1861,6 +1866,7 @@ impl<X> DecisionRefusal<X> {
 
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
             AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },

@@ -7,10 +7,14 @@
     reason = "native identity conformance fixtures"
 )]
 mod common;
-use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, StoreOptions};
+use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, SqliteCell, StoreOptions};
 use norn_ir::{
     ComponentNormalization, IdentityRule, KeyName, KeySpec, Normalization, ObjectTypeDef,
     ObjectTypeName, PropertyId, PropertyType, RuntimeValue,
+};
+use norn_kernel::cell_host::JsonObject;
+use norn_kernel::{
+    CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite, ObservationEvent,
 };
 use norn_testkit::proptest::prelude::*;
 use std::{
@@ -70,6 +74,189 @@ fn batch(scope: &str, world: &str, writes: Vec<FactWriteRow>) -> CommitBatch {
         world: world.into(),
         writes,
         ..CommitBatch::default()
+    }
+}
+
+type IdentityCell = SqliteCell<ObservationEvent, JsonObject, JsonObject>;
+fn identity_cell(path: &std::path::Path) -> IdentityCell {
+    IdentityCell::open(path, model(), StoreOptions::default(), "org_a", |_| {
+        JsonObject::new()
+    })
+    .expect("identity cell")
+}
+fn identity_proposal(
+    cell: &IdentityCell,
+    code: Option<&str>,
+) -> CellCommit<ObservationEvent, JsonObject, JsonObject> {
+    let key = FactKey::new("identity.Child", "stable");
+    let mut commit = CellCommit::empty();
+    commit.writes.push(FactWrite {
+        expected: cell.load(&key).expect("current identity").version,
+        key,
+        mutation: code.map_or(FactMutation::Delete, |code| FactMutation::Put {
+            values: BTreeMap::from([("code".into(), RuntimeValue::from(code))]),
+        }),
+    });
+    commit
+}
+
+/// ID-AUTHORED-RECREATE / ID-TOMBSTONE-REPLAY: native and canonical Creates refuse atomically.
+#[test]
+fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("authored.sqlite");
+    let mut cell = identity_cell(&path);
+    cell.commit(identity_proposal(&cell, Some("original")))
+        .expect("create");
+    cell.commit(identity_proposal(&cell, None)).expect("delete");
+    let proposal = identity_proposal(&cell, Some("changed business key"));
+    let before = cell.store().read().dump().expect("before");
+    for _ in 0..2 {
+        let refusal = cell
+            .commit(proposal.clone())
+            .expect_err("explicit restoration required");
+        assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
+        assert_eq!(refusal.to_string(), norn_checker::IDENTITY_REUSE_MESSAGE);
+        assert_eq!(cell.store().read().dump().expect("unchanged"), before);
+        drop(cell);
+        cell = identity_cell(&path);
+    }
+    drop(cell);
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("raw store");
+    let mut canonical = batch("org_a", "main", Vec::new());
+    canonical.facts = ["fresh", "stable"]
+        .into_iter()
+        .map(|key| norn_ir::FactChange::Create {
+            object_type: "identity.Child".into(),
+            key: key.into(),
+            values: BTreeMap::from([("code".into(), RuntimeValue::from(key))]),
+        })
+        .collect();
+    assert!(matches!(
+        store.commit(&canonical),
+        Err(CellError::IdentityReuse)
+    ));
+    assert_eq!(store.read().dump().expect("canonical refusal"), before);
+    store
+        .commit(&batch(
+            "org_a",
+            "main",
+            vec![put("identity.Child", "stable", "embedding")],
+        ))
+        .expect("raw Put remains an embedding primitive");
+    let committed = store.read().dump().expect("raw committed");
+    let records = (1..=3)
+        .map(|seq| store.export_record(seq).expect("export").expect("record"))
+        .collect::<Vec<_>>();
+    let rebuilt = CellStore::rebuild_export_history(
+        norn_cell::engine::NativeEngine::open_in_memory().expect("engine"),
+        &records,
+        &records[2].hash().expect("retained head"),
+    )
+    .expect("retained embedding prefix");
+    assert_eq!(rebuilt.read().dump().expect("replayed"), committed);
+    let mut rebuilt =
+        IdentityCell::new(rebuilt, "org_a", |_| JsonObject::new()).expect("rebuilt host");
+    rebuilt
+        .commit(identity_proposal(&rebuilt, None))
+        .expect("new authored delete");
+    let replayed = rebuilt.store().read().dump().expect("after delete");
+    assert_eq!(
+        rebuilt
+            .commit(identity_proposal(&rebuilt, Some("new author")))
+            .expect_err("current admission remains strict")
+            .code(),
+        norn_checker::IDENTITY_REUSE
+    );
+    assert_eq!(rebuilt.store().read().dump().expect("unchanged"), replayed);
+    drop(store);
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("reopen raw");
+    assert_eq!(
+        store.read().dump().expect("retained raw semantics"),
+        committed
+    );
+}
+
+fn identity_observation(
+    cell: &IdentityCell,
+    delivery: &str,
+) -> norn_kernel::snapshot_observe::PreparedObservation {
+    use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
+    use norn_kernel::{DecisionTurn, LogicalTime, TypeCatalog, World, load_slice};
+    let definitions = definitions();
+    let catalog = TypeCatalog::new(&definitions);
+    let key = FactKey::new("identity.Child", "stable");
+    let slice = load_slice(cell, [key.clone()]).expect("observation slice");
+    let values = BTreeMap::from([("code".into(), RuntimeValue::from("observed"))]);
+    let provenance = serde_json::from_value(serde_json::json!({
+        "source":{"system":"synthetic", "record":"identity/stable"},
+        "mappingVersion":"fixture.identity@1", "recordedAt":"2026-11-01T00:00:00Z", "sourceFields":["code"]
+    })).expect("source provenance");
+    prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &DecisionTurn {
+            id: delivery.into(),
+            now: LogicalTime::from_millis(0),
+            world: World::Main,
+            consumes: None,
+        },
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &provenance,
+        },
+    )
+    .expect("sealed observed write")
+}
+
+/// ID-OBSERVED-REAPPEAR: observation events alone cannot replace the sealed per-write authority.
+#[test]
+fn observed_reappearance_retains_identity_and_advances_its_version() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("observed.sqlite");
+    let mut cell = identity_cell(&path);
+    let (commit, authority) = identity_observation(&cell, "first").into_parts();
+    cell.commit_observed(commit, authority)
+        .expect("first observation");
+    cell.commit(identity_proposal(&cell, None))
+        .expect("committed deletion");
+    let key = FactKey::new("identity.Child", "stable");
+    let deleted = cell.load(&key).expect("tombstone").version;
+    let (commit, authority) = identity_observation(&cell, "reappear").into_parts();
+    let before = cell.store().read().dump().expect("before reappearance");
+    assert_eq!(
+        cell.commit(commit.clone())
+            .expect_err("event JSON is not authority")
+            .code(),
+        norn_checker::IDENTITY_REUSE
+    );
+    assert_eq!(cell.store().read().dump().expect("unchanged"), before);
+    cell.commit_observed(commit, authority)
+        .expect("source reappearance");
+    let reappeared = cell.load(&key).expect("same identity");
+    assert!(reappeared.exists());
+    assert!(reappeared.version > deleted);
+    let after = cell.store().read().dump().expect("observed state");
+    drop(cell);
+    let cell = identity_cell(&path);
+    assert_eq!(
+        cell.load(&key).expect("retained version").version,
+        reappeared.version
+    );
+    assert_eq!(cell.store().read().dump().expect("stable reopen"), after);
+}
+
+proptest! {
+    #[test]
+    fn observed_version_successor_lifts_retained_deletion(version in 1_u64..u64::MAX) {
+        let deleted = FactVersion(version);
+        prop_assert!(deleted.has_committed_deletion(false));
+        let appeared = deleted.checked_next().expect("bounded successor");
+        prop_assert!(appeared > deleted);
+        prop_assert!(!appeared.has_committed_deletion(true));
+        prop_assert!(!FactVersion::ABSENT.has_committed_deletion(false));
     }
 }
 #[test]
