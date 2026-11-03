@@ -179,7 +179,7 @@ fn scaled_row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWri
     FactWriteRow::Put {
         object_type: TYPE.into(),
         key: id.into(),
-        properties: BTreeMap::from([
+        values: BTreeMap::from([
             ("input".into(), RuntimeValue::from(exact(input, scales[0]))),
             (
                 "recovered".into(),
