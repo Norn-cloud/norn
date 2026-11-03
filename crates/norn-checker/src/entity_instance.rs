@@ -2041,8 +2041,8 @@ mod tests {
             let candidate = effective_property(property(kind));
             proptest::prop_assert!(!candidate.same_contract(&previous));
             proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
-            proptest::prop_assert!(candidate.check_runtime_value_from(&previous,
-                &RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value")).is_ok());
+            let value = RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value");
+            proptest::prop_assert!(candidate.check_runtime_value_from(&previous, &value).is_ok());
         }
     }
 
