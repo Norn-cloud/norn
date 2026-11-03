@@ -21,8 +21,8 @@ test("three systems feed one business model", () => {
 test("a concept states its facts, relationships and parents as declared", () => {
   const holding = catalog.byName.get("canon.Holding")
   expect(holding?.parents).toEqual(["core.Resource"])
-  expect(holding?.relationships.map(({ id, target, many }) => [id, target, many])).toEqual([
-    ["item", "canon.Item", false], ["owner", "canon.Party", false], ["custodian", "canon.Party", false],
+  expect(holding?.relationships.map(({ id, target, count }) => [id, target, count])).toEqual([
+    ["item", "canon.Item", "one"], ["owner", "canon.Party", "at most one"], ["custodian", "canon.Party", "at most one"],
   ])
   const field = (id: string) => holding?.fields.find((candidate) => candidate.id === id)
   expect(field("quantity")?.type).toBe("Exact number, 6 decimal places")

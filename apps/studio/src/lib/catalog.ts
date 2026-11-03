@@ -14,7 +14,8 @@ export interface Relationship {
   readonly id: string
   readonly target: string
   readonly description: string | undefined
-  readonly many: boolean
+  /** How many targets one record may link to: "many", "one", or "at most one" when the link is optional. */
+  readonly count: "many" | "one" | "at most one"
 }
 
 export interface Feed {
@@ -133,7 +134,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       description: def.description ?? ([def.name, title].includes(artifact.name) ? undefined : artifact.name),
       parents,
       fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true })),
-      relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, many: cardinality.to === "many" })),
+      relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,
     })

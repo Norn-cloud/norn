@@ -91,7 +91,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
                 <ul className="space-y-2 text-sm">
                   {concept.relationships.map((relationship) => (
                     <li key={relationship.id}>
-                      <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.many ? "many " : "one "}{link(relationship.target)}
+                      <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}
                       {relationship.description && <p className="text-muted-foreground">{relationship.description}</p>}
                     </li>
                   ))}
@@ -138,7 +138,10 @@ export function SourcesPage() {
         <Systems catalog={catalog} />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <h2 className="text-xl font-semibold">The business model</h2>
-          <Input className="max-w-xs" placeholder="Find a concept" value={search} onChange={(event) => setSearch(event.target.value)} />
+          <label className="grid w-full max-w-xs gap-1 text-sm text-muted-foreground">
+            Find a concept
+            <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+          </label>
         </div>
         {(["concept", "core idea"] as const).map((kind) => (
           <div key={kind} className="space-y-3">
