@@ -660,7 +660,16 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                 f"trusted API program or execution changed: {step.get('name')}")
     public = yaml.load(source, Loader=WorkflowLoader)
     ledger = public["jobs"].get("rights-revocation", {})
-    require({k: v for k, v in ledger.items() if k != "steps"} == {'name': 'Record durable rights revocations', 'if': "github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))", 'permissions': {'contents': 'read', 'statuses': 'write'}, 'concurrency': {'group': 'rights-revocation-${{ github.event.issue.number }}', 'cancel-in-progress': False}, 'runs-on': 'ubuntu-24.04', 'timeout-minutes': 5},
+    expected_ledger = {
+        "name": "Record durable rights revocations",
+        "if": ("github.event_name == 'issue_comment' && github.event.issue.pull_request && "
+               "(contains(github.event.comment.body, '/revoke-rights') || "
+               "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))"),
+        "permissions": {"contents": "read", "statuses": "write"},
+        "concurrency": {"group": "rights-revocation-${{ github.event.issue.number }}", "cancel-in-progress": False},
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+    }
+    require({k: v for k, v in ledger.items() if k != "steps"} == expected_ledger,
             "revocation recording must be base-owned and never superseded")
     require(len(ledger.get("steps", [])) == 1, "missing durable revocation writer")
     api_step(ledger["steps"][0])
@@ -673,6 +682,10 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                     '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json" '
                     f'--head "{head}" --repository "${{{{ github.repository }}}}"')
         steps = job["steps"]
+        allowed_job = {"permissions", "if", "concurrency", "runs-on", "timeout-minutes", "steps"}
+        if text == source:
+            allowed_job |= {"name", "needs"}
+        require(set(job) == allowed_job, "trusted validation cannot override its execution environment")
         checks = [step for step in steps if step.get("run", "").strip() == expected]
         require(len(checks) == 1 and set(checks[0]) == {"name", "run"}
                 and not job.get("env") and not workflow.get("env")

@@ -1791,7 +1791,7 @@ def rights_workflow_canaries() -> None:
         else:
             raise AssertionError("accepted uncovered merge-group rights")
     for which in ("pr", "group"):
-        for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env",
+        for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env", "container",
                          "success-reporter", "wrong-head", "disabled-reporter", "reporter-token",
                          "latest-history", "missing-history"):
             public = yaml.safe_load(source)
@@ -1806,6 +1806,7 @@ def rights_workflow_canaries() -> None:
             elif mutation == "workflow-shell": document["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
             elif mutation == "working-directory": validator["working-directory"] = "candidate"
             elif mutation == "validator-env": validator["env"] = {"PATH": "candidate/bin"}
+            elif mutation == "container": job["container"] = "untrusted.invalid/skip-validation:latest"
             elif mutation == "success-reporter": reporter["with"]["script"] = reporter["with"]["script"].replace("'${{ job.status }}' === 'success' ? 'success' : 'failure'", "'success'")
             elif mutation == "wrong-head": reporter["with"]["script"] = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}" if which == "pr" else "${{ github.event.workflow_run.head_sha }}", "wrong-head")
             elif mutation == "disabled-reporter": reporter["if"] = "false"
