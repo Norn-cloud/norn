@@ -736,6 +736,7 @@ fn cp1(
             "deliver",
         )
         .unwrap();
+    state(&cell, "Exchange", "DELIVERY", "posted");
     exact(&cell, "Leg", "DELIVERY-COGS", "amount", cost);
     exact(
         &cell,
