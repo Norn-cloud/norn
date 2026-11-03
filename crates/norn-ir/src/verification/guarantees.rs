@@ -18,9 +18,9 @@ pub enum GuaranteesFormat {
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum GuaranteeVerdict {
     /// All eligible goals pass within the explicitly retained bounds.
-    BoundedPass,
+    BoundedPass {},
     /// An actual checked counterexample refutes a generated goal.
-    Refuted,
+    Refuted {},
     /// No qualified result is available.
     Unknown {
         /// Concrete unsupported, stale, failed or unavailable boundary.
@@ -34,11 +34,11 @@ pub enum GuaranteeVerdict {
 pub enum GuaranteeLevel {
     /// Exhaustive search over the pinned finite profile.
     #[serde(rename = "exhaustive-finite/bounded")]
-    ExhaustiveFiniteBounded,
+    ExhaustiveFiniteBounded {},
     /// Evidence of actual runtime enforcement, when separately supplied.
-    RuntimeEnforced,
+    RuntimeEnforced {},
     /// Evidence of observed reference parity, when separately supplied.
-    ParityTested,
+    ParityTested {},
     /// No evidence at this level is available.
     Unknown {
         /// Concrete reason, rather than an inferred guarantee.
@@ -204,7 +204,7 @@ mod tests {
             json!({"kind":"proved"}),
             json!({"kind":"bounded-pass","reason":"extra"}),
         ] {
-            assert!(serde_json::from_value::<GuaranteeVerdict>(value).is_err());
+            assert!(serde_json::from_value::<GuaranteeVerdict>(value.clone()).is_err(), "{value}");
         }
         assert!(serde_json::from_value::<GuaranteeLevel>(json!({"kind":"proved"})).is_err());
         assert_eq!(
