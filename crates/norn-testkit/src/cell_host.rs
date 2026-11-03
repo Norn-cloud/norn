@@ -1915,6 +1915,9 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(match error {
         CommitError::Law { key, reason } => CommitError::Law { key, reason },
+        CommitError::IdentityCollision { owner, key } => {
+            CommitError::IdentityCollision { owner, key }
+        }
         CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
         CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
         CommitError::NotPending { consumed } => CommitError::NotPending { consumed },
