@@ -153,3 +153,19 @@ reaches authored law; containing packs retain pins; runtime enforcement remains
 separate from proof; Arabic and data-only French render through the locale map;
 missing locale refuses; reordering inputs preserves the explanation; historical
 receipt verification remains unchanged.
+
+## Generated bounded creation profile (#565)
+
+**PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
+a selected create-only writer, ordered derivations, preconditions, stored defaults
+and a pointwise predicate law. One empty store, singleton object identity and
+explicit finite decimal input intervals bound the claim. Unsupported constructs
+leave each affected goal unknown with a reason. Exact scales and units come from
+effective declarations; unlike interpretations and inexact literals refuse.
+
+Initialization is vacuous over the empty store. Writer preservation checks the
+proposal before law enforcement; non-vacuity needs a reachable law-satisfying
+witness. Neither a generated module nor structural correspondence discharges a
+goal: only an independently pinned backend result supplies bounded evidence.
+Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
+decimal correspondence and unsupported expression/inexact literal refusal.
