@@ -1,5 +1,4 @@
 {
-  "sha256": "64bc821ffca0715df042120acb9254d385600a37997323b41f33c52648a6ac05",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
@@ -13,5 +12,6 @@
     }
   ],
   "notices": [],
-  "connector": null
+  "connector": null,
+  "sha256": "8bf96ebfeffb758d3e2411469ff2248307ffb18405a6f3bbcdee9dac7cd392cc"
 }
