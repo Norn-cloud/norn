@@ -28,6 +28,8 @@ pub struct ExplainReport {
     pub scope: ScopeRef,
     /// Whole-set invalidation inventory, not a minimal field-level influence claim.
     pub closure: DefinitionCatalog,
+    /// Declared ontology correspondences; their law transport is unproved.
+    pub interpretations: Vec<ExplainInterpretation>,
     pub writers: Vec<LawWriter>,
     pub reads: Vec<SliceDeclaration>,
     pub direct_effects: Vec<WritesRow>,
@@ -70,6 +72,15 @@ pub struct ExplainUnknown {
     pub footprint: String,
     pub reason: String,
     pub fix: String,
+}
+
+/// Pinned existing ontology-link data, without promoting correspondence to law proof.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExplainInterpretation {
+    pub declaration: crate::definition_catalog::ArtifactKey,
+    pub link: crate::business_pack::OntologyLinkRoot,
+    pub proof: ExplainProof,
 }
 
 /// The existing reviewed slots, rendered through the selected wording locale map.

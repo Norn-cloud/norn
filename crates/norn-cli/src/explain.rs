@@ -184,6 +184,10 @@ fn render(report: &ExplainReport) -> String {
             effect.target.member.id()
         ));
     }
+    for interpretation in &report.interpretations {
+        lines.push(format!("Interpretation {}@{}: {}@{} -> {}@{}; law transport unknown", interpretation.declaration.artifact_id, interpretation.declaration.version, interpretation.link.from_pack.pack_id, interpretation.link.from_pack.version, interpretation.link.to_pack.pack_id, interpretation.link.to_pack.version));
+        for edge in &interpretation.link.correspondences { lines.push(format!("  {} -> {}", edge.from_term_id, edge.to_term_ids.join(", "))); }
+    }
     for law in &report.laws {
         lines.push(format!(
             "Law {}: proof unknown; enforcement {}",

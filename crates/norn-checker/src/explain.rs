@@ -84,7 +84,18 @@ pub fn explain(
     )
     .map_err(closure_error)?;
     let starts = subject_starts(&target, &catalog);
-    let laws = explain_laws(&pool, kind, &target, &catalog, &closure, &goals)?;
+    let mut laws = explain_laws(&pool, kind, &target, &catalog, &closure, &goals)?;
+    let interpretations = declared_interpretations(&pool)?;
+    for law in &mut laws {
+        for interpretation in &interpretations {
+            law.why_unknown.push(ExplainUnknown {
+                writer: None,
+                footprint: format!("interpretation:{}@{}", interpretation.declaration.artifact_id, interpretation.declaration.version),
+                reason: "Ontology correspondence is declared; a checked law-interpretation path is not established.".into(),
+                fix: "Bind the law and correspondence to a generated preservation obligation and supply checked interpretation evidence.".into(),
+            });
+        }
+    }
     let reads = if kind == ExplainKind::Action {
         decode::<ActionRoot>(&pool, &target)?.slice
     } else {
@@ -107,11 +118,28 @@ pub fn explain(
         target,
         scope: artifact.scope.clone(),
         closure: catalog,
+        interpretations,
         writers: closure.writers.into_iter().collect(),
         reads,
         direct_effects,
         laws,
     })
+}
+
+fn declared_interpretations(pool: &[ArtifactEnvelope]) -> Result<Vec<norn_ir::explain::ExplainInterpretation>, Vec<Diagnostic>> {
+    let mut result = Vec::new();
+    for artifact in pool.iter().filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack) {
+        let pack: norn_ir::BusinessPackRoot = serde_json::from_value(artifact.payload.to_json_value())
+            .map_err(|error| refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string()))?;
+        if let norn_ir::BusinessPackRoot::Link(link) = pack {
+            result.push(norn_ir::explain::ExplainInterpretation {
+                declaration: ArtifactKey { artifact_id: artifact.artifact_id.clone(), version: artifact.version.clone() },
+                link, proof: norn_ir::explain::ExplainProof::Unknown,
+            });
+        }
+    }
+    result.sort_by(|a, b| a.declaration.cmp(&b.declaration));
+    Ok(result)
 }
 
 fn explain_laws(pool: &[ArtifactEnvelope], kind: ExplainKind, target: &MemberRef,
@@ -443,4 +471,63 @@ pub fn render_wording(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "ontology-link projection correspondence fixture")]
+mod interpretation_tests {
+    #[test]
+    fn declared_correspondence_never_becomes_a_checked_law_path() {
+        use serde_json::json;
+        let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": "norn.link.fixture-shop.fixture-canon",
+        "kind": "business_pack",
+        "namespace": "norn.ontology",
+        "name": "Fixture shop to canon",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {},
+        "dependencies": [],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "fixture.ts"},
+        "payload": {
+            "packId": "norn.link.fixture-shop.fixture-canon",
+            "packVersion": "0.1",
+            "packKind": "link",
+            "fromPack": {"packId": "norn.ontology-pack.fixture-shop", "version": "0.1.0"},
+            "toPack": {"packId": "norn.ontology-pack.fixture-canon", "version": "0.1.0"},
+            "correspondences": [
+                {
+                    "correspondenceId": "corr.order",
+                    "fromTermId": "norn.shop.order",
+                    "relation": "subsumed_by",
+                    "toTermIds": ["norn.canon.commitment"],
+                    "justification": "A shop order is a commitment to transfer goods for payment.",
+                    "evidenceRefs": ["source.shop-api", "https://example.com/docs/order"],
+                    "confidenceBasisPoints": 8000,
+                    "reviewedBy": "fixture",
+                    "reviewedAt": "2026-10-30T00:00:00Z"
+                },
+                {
+                    "correspondenceId": "corr.order.outstanding",
+                    "fromTermId": "norn.shop.order.outstanding",
+                    "relation": "derived",
+                    "toTermIds": ["norn.canon.claim.amount", "norn.canon.settlement.amount"],
+                    "justification": "Outstanding is the claim less its settlements.",
+                    "evidenceRefs": ["source.shop-api"],
+                    "confidenceBasisPoints": 6000,
+                    "reviewedBy": "fixture",
+                    "reviewedAt": "2026-10-30T00:00:00Z"
+                }
+            ],
+            "residuals": [
+                {"termId": "norn.shop.order.theme", "reason": "system_specific", "note": "Storefront presentation."}
+            ]
+        }
+    })).expect("existing link fixture");
+        let report = super::declared_interpretations(&[artifact]).expect("project correspondence");
+        assert_eq!(report[0].proof, norn_ir::explain::ExplainProof::Unknown);
+        assert_eq!(report[0].declaration.artifact_id, "norn.link.fixture-shop.fixture-canon");
+        assert_eq!(report[0].link.correspondences[0].from_term_id, "norn.shop.order");
+    }
 }
