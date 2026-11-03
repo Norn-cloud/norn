@@ -472,7 +472,11 @@ pub fn render_wording(
     options: &norn_ir::explain::ExplainOptions,
 ) -> Result<(), Vec<Diagnostic>> {
     let Some(locale) = &options.locale else {
-        return Ok(());
+        return if options.requirements.is_empty() {
+            Ok(())
+        } else {
+            Err(refusal(wording_codes::UNKNOWN_LOCALE, "wording requires a locale from the reviewed locale map"))
+        };
     };
     if options.requirements.is_empty() || report.laws.is_empty() {
         return Err(refusal(
