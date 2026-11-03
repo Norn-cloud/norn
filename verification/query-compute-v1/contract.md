@@ -77,3 +77,32 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 ## G3 receipt-maintained generations
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
+
+## Scrap-yield incremental acceptance
+
+DATA-INCREMENTAL / DATA-RESTATEMENT-DELTA bind QUERY-ENGINE-1,
+COMPUTE-DETERMINISTIC-1 and RESTATE-HISTORY-1 to the unchanged pinned CSV.
+`crates/norn-cell/tests/scrap_yield_incremental.rs` starts without G4, adds
+83.300/85.000 g, and requires K1 totals 294.000/300.000 g, ratio 0.98 and loss
+6.000 g. The K2 correction requires 292.500/300.000 g, ratio 0.975 and loss
+7.500 g: signed recovered delta -1.500 g, input delta zero and loss delta
++1.500 g. Only G2's versioned contribution ID changes; K1 remains reproducible
+after K2 and a real SQLite reopen.
+
+At every receipt and duplicate delivery, both live and knowledge-cutoff IVM
+must equal full recomputation at that exact frontier. Equality covers the
+entire result envelope, including decimal values, member versions, exclusions,
+scope, definitions, mappings and source progress; only the engine label differs.
+Every generated sequence includes insertion, update, deletion, redelivery and
+restart, followed by generated amount, metal and effective-week changes.
+Forward/reverse runs reorder independent identities within each batch and the
+initial fixture, preserving each identity's update order. Their values and
+versioned contribution IDs must agree; their physical ledger hashes may differ.
+This does not qualify arbitrary out-of-order corrections to one identity.
+
+`restatement_activation.rs` also checks these signed deltas and full same-slice
+recomputation after the existing governed atomic activation. The new evidence
+is runtime-enforced scenario assertions plus sampled generated correspondence.
+It adds no evaluator or arithmetic kernel; the existing bounded arithmetic
+Kani harness remains its arithmetic evidence. Synthetic native receipts do not
+qualify mapped-feed authority, training knowledge, OLAP or a demo surface.

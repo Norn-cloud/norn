@@ -14,8 +14,9 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
-mod induction;
 /// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod finite;
+mod induction;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;

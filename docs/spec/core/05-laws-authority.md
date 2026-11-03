@@ -138,8 +138,9 @@ a pre-change checker receipt verifies against its original hash.
 a selected create-only writer, ordered derivations, preconditions, stored defaults
 and a pointwise predicate law. One empty store, singleton object identity and
 explicit finite decimal input intervals bound the claim. Unsupported constructs
-leave each affected goal unknown with a reason. Exact scales and units come from
-effective declarations; unlike interpretations and inexact literals refuse.
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
 
 Initialization is vacuous over the empty store. Writer preservation checks the
 proposal before law enforcement; non-vacuity needs a reachable law-satisfying
@@ -147,5 +148,38 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
+
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
