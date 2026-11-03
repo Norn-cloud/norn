@@ -102,6 +102,7 @@ fn scaled(text: &str, scale: u32) -> Result<i64, String> {
     )?;
     norn_ir::RuntimeValue::from_json_text(text).map_err(|_error| "invalid exact decimal")?;
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let fraction = fraction.trim_end_matches('0');
     let padding = scale
         .checked_sub(u32::try_from(fraction.len()).map_err(|_error| "decimal scale")?)
         .ok_or("inexact decimal literal")?;
