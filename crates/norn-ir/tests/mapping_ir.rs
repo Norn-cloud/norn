@@ -136,3 +136,66 @@ fn vendor_mapping_contract_is_typed_without_changing_generic_wire_shape() {
     invalid["fullSchema"] = serde_json::json!({});
     assert!(serde_json::from_value::<norn_ir::mapping::VendorMappingContract>(invalid).is_err());
 }
+
+fn link_record() -> norn_ir::mapping::MappedRecord {
+    use norn_ir::{LinkId, ObjectTypeName};
+    use norn_ir::mapping::{ActionInvocation, LinkPatch, MappedRecord};
+    let provenance: norn_ir::InstanceProvenance = serde_json::from_value(serde_json::json!({
+        "source":{"system":"synthetic-a","record":"rows/one"},
+        "mappingVersion":"synthetic.mapping@1", "sourceFields":["target"],
+        "transform":"row.target", "recordedAt":"2026-11-03T00:00:00Z"
+    })).expect("provenance");
+    MappedRecord {
+        map: "row".into(), object_type: ObjectTypeName("test.Source".into()), key: "one".into(),
+        invocations: vec![ActionInvocation { action_id: "observe".into(), input: Default::default() }],
+        lifecycle_snapshots: vec![],
+        links: vec![LinkPatch { object_type: ObjectTypeName("test.Source".into()), key: "one".into(),
+            link: LinkId("target".into()), target_type: ObjectTypeName("test.Target".into()),
+            target_key: "two".into(), provenance: provenance.clone() }],
+        cleared_links: vec![LinkId("optional".into())], property_provenance: Default::default(), provenance,
+    }
+}
+
+#[test]
+fn obs_link_identity_retains_explicit_targets_and_nullable_clears() {
+    let record = link_record();
+    let claims = record.link_claims("mapping-bundle:first");
+    assert_eq!(claims.len(), 2);
+    let target = claims.iter().find(|c| c.role.as_str() == "target").expect("target");
+    assert_eq!(target.target.as_ref().expect("explicit endpoint").key, "two");
+    assert_eq!(target.provenance, record.links.first().expect("patch").provenance);
+    let clear = claims.iter().find(|c| c.role.as_str() == "optional").expect("clear");
+    assert!(clear.target.is_none());
+    assert_eq!(clear.provenance.transform.as_deref(), Some("row.optional"));
+    assert_ne!(target.id().expect("id"), clear.id().expect("id"));
+    let mut changed = target.clone();
+    changed.provenance.source.system = "synthetic-b".into();
+    assert_ne!(target.id().expect("id"), changed.id().expect("other source"));
+    changed = target.clone();
+    changed.provenance.mapping_version.0 = "synthetic.mapping@2".into();
+    assert_ne!(target.id().expect("id"), changed.id().expect("other mapping pin"));
+    changed = target.clone();
+    changed.observation_id = "mapping-bundle:second".into();
+    assert_ne!(target.id().expect("id"), changed.id().expect("other observation"));
+    let encoded = serde_json::to_value(target).expect("encode");
+    assert_eq!(serde_json::from_value::<norn_ir::mapping::ObservedLinkClaim>(encoded).expect("decode"), *target);
+}
+
+proptest::proptest! {
+    #[test]
+    fn obs_link_claim_ids_are_order_and_redelivery_independent(
+        targets in proptest::collection::vec("[a-z]{1,12}", 1..20), repeats in 1usize..5,
+    ) {
+        use std::collections::BTreeSet;
+        let mut record = link_record();
+        let template = record.links.first().expect("patch").clone();
+        record.links = targets.into_iter().map(|key| {
+            let mut patch = template.clone(); patch.target_key = key; patch
+        }).collect();
+        let expected: BTreeSet<_> = record.link_claims("observation").iter().map(|c| c.id().expect("id")).collect();
+        record.links.reverse();
+        let repeated: BTreeSet<_> = (0..repeats).flat_map(|_| record.link_claims("observation"))
+            .map(|c| c.id().expect("id")).collect();
+        proptest::prop_assert_eq!(expected, repeated);
+    }
+}

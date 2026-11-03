@@ -692,6 +692,47 @@ pub struct LinkPatch {
     pub provenance: InstanceProvenance,
 }
 
+/// OBS-LINK-CLAIM-1: source evidence about a canonical concept's relation.
+/// A nullable target is an explicit clear, not a missing resolution result.
+/// Claims confer no mutation authority; the observation boundary rechecks pins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObservedLinkClaim {
+    /// Content-addressed observation retaining the raw input and mapping pins.
+    pub observation_id: String,
+    /// Canonical source type produced by the admitted mapping.
+    pub source_type: ObjectTypeName,
+    /// Canonical source key, never a source-system alias.
+    pub source_key: String,
+    /// Relation declared by the canonical source concept.
+    pub role: LinkId,
+    /// Explicit canonical target, or an observed nullable-role clear.
+    pub target: Option<ObservedLinkTarget>,
+    /// Source row, mapping version and exact relation rule.
+    pub provenance: InstanceProvenance,
+}
+
+/// An endpoint emitted by the existing pinned mapping identity resolver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObservedLinkTarget {
+    /// Target type admitted by the relation declaration.
+    pub object_type: ObjectTypeName,
+    /// Canonical target key; its object may not have arrived yet.
+    pub key: String,
+}
+
+impl ObservedLinkClaim {
+    /// Replay-stable evidence identity. Different sources remain distinct claims
+    /// even when their endpoints converge to one canonical relation.
+    ///
+    /// # Errors
+    /// Noncanonical evidence cannot acquire a claim identity.
+    pub fn id(&self) -> Result<String, crate::canonical::CanonicalJsonError> {
+        crate::canonical::domain_hash_hex(b"norn.observed.link.claim.v1\0", self)
+    }
+}
+
 /// What a source delete of one record means under one [`ObjectMap`]
 /// (#3013): the object it removes and, when the map declares `onDelete`
 /// states, the terminal lifecycle states it reaches.
@@ -739,6 +780,36 @@ pub struct MappedRecord {
     pub property_provenance: BTreeMap<PropertyId, InstanceProvenance>,
     /// Where the record came from and its subject rule.
     pub provenance: InstanceProvenance,
+}
+
+impl MappedRecord {
+    /// OBS-LINK-CLAIM-1: retain every declared link output, including clears.
+    /// Endpoint identity and per-rule provenance come from mapping evaluation.
+    #[must_use]
+    pub fn link_claims(&self, observation_id: &str) -> Vec<ObservedLinkClaim> {
+        self.links.iter().map(|patch| ObservedLinkClaim {
+            observation_id: observation_id.to_owned(),
+            source_type: patch.object_type.clone(),
+            source_key: patch.key.clone(),
+            role: patch.link.clone(),
+            target: Some(ObservedLinkTarget {
+                object_type: patch.target_type.clone(),
+                key: patch.target_key.clone(),
+            }),
+            provenance: patch.provenance.clone(),
+        }).chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
+            observation_id: observation_id.to_owned(),
+            source_type: self.object_type.clone(),
+            source_key: self.key.clone(),
+            role: role.clone(),
+            target: None,
+            provenance: {
+                let mut provenance = self.provenance.clone();
+                provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
+                provenance
+            },
+        })).collect()
+    }
 }
 
 impl MappingIr {

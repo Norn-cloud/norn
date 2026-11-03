@@ -183,3 +183,46 @@ Interface-typed governed link targets resolve their concrete identity roots in t
 requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
+
+## Observed canonical relation claims (#823)
+
+- **OBS-LINK-CLAIM-1:** the canonical concept owns its relation. Each admitted
+  MappingIR `maps[].links` entry declares a source-field expression, role and
+  canonical target map or identity binding. Evaluation emits one immutable
+  `ObservedLinkClaim` per non-null output or explicit nullable-role clear.
+  Claim identity includes its retaining observation and complete provenance;
+  delivery order and redelivery do not establish identity. Source aliases
+  remain provenance; they never replace canonical endpoint keys.
+- **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
+  all source claims remain individually addressable provenance. Observation
+  authority is confined to recomputed declared claims. The existing authored
+  relation-ownership check remains in force for authored mutations.
+- **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
+  canonical identity, including targets in the same capture. Target arrival
+  resolves it without source redelivery or an arrival-order assumption. Capture,
+  claims, consumption and cursor advancement share the existing atomic boundary.
+  A declared capture horizon closes pending claims into evidence-bearing findings.
+- **OBS-LINK-CONFLICT-1:** incompatible to-one claims, cardinality or endpoint-type
+  violations become source-conflict findings and quarantine their subjects under
+  OBS-EVIDENCE-1. No source occurrence or contradictory claim is silently discarded.
+  Native proposals violating those laws still refuse without writes.
+
+Unit 1 declares the claim concept and pins the MappingIR output correspondence;
+resolution, convergence and conflict handling require the subsequent runtime units.
+The claim's registry `evidence` scalar contains its canonical serialized typed
+preimage; endpoint columns permit lookup without treating serialized claims as authority.
+
+Named acceptance scenarios:
+
+- **OBS-LINK-DECLARED:** ERPNext, Shopify and Odoo retain every declared role,
+  target type/key and relation-rule provenance from their admitted mappings.
+- **OBS-LINK-IDENTITY:** changing a source, mapping pin, observation or endpoint
+  changes claim identity; repeated evaluation of the same evidence preserves it.
+  A clear and an unresolved explicit target are distinct claims.
+- **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
+  relation produce one edge with three provenance entries.
+- **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
+  the same final canonical links and claim set; reopen/replay retains that state.
+- **OBS-LINK-QUARANTINE:** missing/foreign targets at the declared horizon and
+  contradictory to-one claims retain source facts plus findings; native illegal
+  link writes refuse, and no partial capture or cursor advance is visible.
