@@ -42,6 +42,8 @@ test("typed_question_lowering refuses unknown fields, populations, operators and
   source().replace('operator:"eq"','operator:"le"'),
   source().replace('measure:"demo.yield"','measure:() => "demo.yield"'),
   source().replace('maxAgeMs:5000','maxAgeMs:0'),
+  source().replace('value:"gold"','value:Norn.unsafeZen("gold")'),
+  source().replace('export const Yield =','export default'),
  ]) expect(compile(candidate).ok).toBe(false)
 })
 

@@ -256,6 +256,7 @@ class DefinitionCompiler {
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
+        if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }
@@ -294,6 +295,10 @@ class DefinitionCompiler {
     const questions: Json[] = []
     const names = new Set<string>()
     for (const statement of source.statements) {
+      if (ts.isExportAssignment(statement)) {
+        const call = this.unwrap(statement.expression)
+        if (ts.isCallExpression(call) && this.id(call) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings", call)
+      }
       if (!ts.isVariableStatement(statement)) continue
       for (const declaration of statement.declarationList.declarations) {
         const call = declaration.initializer && this.unwrap(declaration.initializer)
@@ -321,7 +326,9 @@ class DefinitionCompiler {
           const filter = this.closedRecord(node, ["property", "operator", "value"], ["property", "operator", "value"])
           const operator = this.string(filter.get("operator")!)
           if (operator !== "eq" && operator !== "ne") throw new CompileError("core.compute.unsupported_engine", "the qualified compute profile admits Eq/Ne predicates only", node)
-          const value = this.json(filter.get("value")!)
+          const valueNode = filter.get("value")!
+          if (ts.isCallExpression(this.deref(valueNode))) throw new CompileError("NORN-FLOW-LITERAL", "question predicates use scalar literals, not expression escapes", valueNode)
+          const value = this.json(valueNode)
           if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "a question filter requires a scalar literal", node)
           return { property: this.string(filter.get("property")!), operator, value } satisfies Q.QuestionFilter
         })
