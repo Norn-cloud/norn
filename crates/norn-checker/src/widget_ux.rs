@@ -6311,7 +6311,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 Type::Record(name)
             }
             Schema::Array(items) => self.schema_type(items, records).list(),
-            Schema::String(None) | Schema::Decimal(_) => Type::text(),
+            Schema::String(None) => Type::text(),
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
             Schema::Number => Type::Number,
@@ -7458,11 +7458,12 @@ mod decimal_wire_tests {
     use super::*;
 
     #[test]
-    fn action_mapping_accepts_decimal_text_but_not_numeric_wire_values() {
+    fn action_mapping_accepts_decimal_text_but_not_numeric_wire_values() -> Result<(), String> {
+        let schema = Schema::parse_action(&serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).map_err(|e| e.to_string())?, "amount").map_err(|e| e.to_string())?;
         let accepts = |inferred| {
             inferred_matches_schema(
                 &inferred,
-                &Schema::Decimal(2),
+                &schema,
                 None,
                 &mut |_, _| false,
                 "amount",
@@ -7472,5 +7473,6 @@ mod decimal_wire_tests {
         assert!(accepts(InferredType::Const("125.50".to_owned())).is_ok());
         assert!(accepts(InferredType::Number).is_err());
         assert!(accepts(InferredType::Const("1.001".to_owned())).is_err());
+        Ok(())
     }
 }
