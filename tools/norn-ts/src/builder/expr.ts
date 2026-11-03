@@ -22,6 +22,7 @@ import {
   isScalar,
   literalSchema,
   mergeSchemas,
+  acceptsSchema,
   record as recordSchema,
 } from "./schema.ts"
 
@@ -30,7 +31,7 @@ export type LogicalOp = "and" | "or"
 
 export type Expr =
   | { readonly _tag: "Binary"; readonly op: "+" | "-" | "*" | "/" | "%" | "in"; readonly left: Expr; readonly right: Expr }
-  | { readonly _tag: "Call"; readonly fn: "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
+  | { readonly _tag: "Call"; readonly fn: "concat" | "lower" | "upper" | "trim" | "len" | "contains" | "startsWith" | "endsWith" | "dateBefore" | "date" | "timestamp"; readonly args: ReadonlyArray<Expr> }
   | { readonly _tag: "Conditional"; readonly condition: Expr; readonly yes: Expr; readonly no: Expr }
   | { readonly _tag: "Coalesce"; readonly value: Expr; readonly fallback: Expr }
   | { readonly _tag: "Unsafe"; readonly text: string; readonly schema: ValueSchema }
@@ -182,6 +183,12 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
     }
     case "Call": {
       const args = expr.args.map((arg) => typeOf(arg, scope))
+      if (expr.fn === "concat") {
+        if (args.length !== 2 || args[0]?.type !== "array" || args[1]?.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", "concat expects two arrays")
+        const merged = mergeSchemas(args[0].items, args[1].items)
+        if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", merged)
+        return array(merged)
+      }
       if (expr.fn === "len") {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
@@ -263,7 +270,9 @@ export function render(expr: Expr, scope: Scope): string {
   switch (expr._tag) {
     case "Unsafe": return expr.text
     case "Binary": return `${operand(expr.left, scope)} ${expr.op} ${operand(expr.right, scope)}`
-    case "Call": return expr.fn === "dateBefore"
+    case "Call": return expr.fn === "concat"
+      ? `flatten([${expr.args.map((arg) => render(arg, scope)).join(", ")}])`
+      : expr.fn === "dateBefore"
       ? `date(${render(expr.args[0]!, scope)}) < date(${render(expr.args[1]!, scope)})`
       : `${expr.fn}(${expr.args.map((arg) => render(arg, scope)).join(", ")})`
     case "Conditional": return `${operand(expr.condition, scope)} ? ${operand(expr.yes, scope)} : ${operand(expr.no, scope)}`
@@ -287,4 +296,22 @@ export function render(expr: Expr, scope: Scope): string {
 function operand(expr: Expr, scope: Scope): string {
   const text = render(expr, scope)
   return ["Literal", "Ref", "List", "Record", "Call"].includes(expr._tag) ? text : `(${text})`
+}
+
+/** FOLD-OPERANDS: contextual empty arrays retain their declared item schema. */
+export function conforms(expr: Expr, expected: ValueSchema, scope: Scope): boolean {
+  if (expr._tag === "Conditional") return typeOf(expr.condition, scope).type === "boolean" && conforms(expr.yes, expected, scope) && conforms(expr.no, expected, scope)
+  if (expr._tag === "Coalesce") {
+    const value = typeOf(expr.value, scope)
+    const nonnull = Array.isArray(value.type) ? { ...value, type: value.type[0] } as ValueSchema : value
+    return (value.type === "null" || acceptsSchema(expected, nonnull)) && conforms(expr.fallback, expected, scope)
+  }
+  const target = Array.isArray(expected.type) ? { ...expected, type: expected.type[0] } as ValueSchema : expected
+  if (expr._tag === "Literal" && typeof expr.value === "string" && target.type === "string") return target.enum === undefined || target.enum.includes(expr.value)
+  if (expr._tag === "List" && target.type === "array") return expr.items.every(item => conforms(item, target.items, scope))
+  if (expr._tag === "Record" && target.type === "object") {
+    return (target.required ?? []).every(k => expr.fields.some(([name]) => name === k))
+      && expr.fields.every(([k, value]) => target.properties[k] !== undefined && conforms(value, target.properties[k], scope))
+  }
+  return acceptsSchema(expected, typeOf(expr, scope))
 }

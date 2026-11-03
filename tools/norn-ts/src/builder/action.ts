@@ -9,7 +9,7 @@
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import type { ObjectTypeDef } from "./entity.ts"
-import { type EnvelopeOptions, envelope } from "./envelope.ts"
+import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { ObjectSchema } from "./schema.ts"
 import type { SliceDecl } from "./rule.ts"
 
@@ -69,6 +69,7 @@ export type UpsertWriteMode =
   | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
 
 export interface ActionDef {
+  readonly dependencies?: ReadonlyArray<DependencyPin>
   readonly _tag: "Action"
   /** `actionId`; the artifact is `<id>.action` in the id's first namespace segment. */
   readonly id: string
@@ -164,7 +165,7 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
   }
   const artifact = envelope(
-    { kind: "action", artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version, ...(def.synchronousRule ? { dependencies: [{ ...def.synchronousRule, kind: "rule", required: true }] } : {}) },
+    { kind: "action", dependencies: [...pinnedDependencies(def.dependencies, "entity"), ...(def.synchronousRule ? [{ ...def.synchronousRule, kind: "rule", required: true }] : [])], artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
     payload,
     options,
   )

@@ -99,9 +99,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{
-    EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv, check_expression,
-};
+use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
 use norn_ir::{
     ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactKind,
     ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority,
@@ -1608,7 +1606,7 @@ fn owned_row_precondition_findings(
     for precondition in preconditions {
         match Expression::compile(precondition.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, row_env, &Type::Bool) {
+                if let Err(errors) = expression.check_typed(row_env, &Type::Bool) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
@@ -1659,7 +1657,7 @@ fn owned_row_derivation_findings(
         };
         match Expression::compile(source.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, derive_env, &expected) {
+                if let Err(errors) = expression.check_typed(derive_env, &expected) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
