@@ -538,3 +538,41 @@ fn a_refused_relation_is_named() {
         findings[0].message
     );
 }
+
+fn path_concept(equations: serde_json::Value, many: bool) -> norn_ir::ArtifactEnvelope {
+    serde_json::from_value(serde_json::json!({
+        "irVersion":"0.1", "artifactId":"paths.Node.entity", "kind":"entity",
+        "namespace":"paths", "name":"Node", "version":"0.1.0", "lifecycle":"draft",
+        "scope":{"orgId":"org_demo","environmentId":"dev"}, "dependencies":[],
+        "provenance":{"source":"authoring_sdk","sourcePath":"paths.ts"},
+        "payload":{"entityVersion":"2.0", "objectType":{"name":"paths.Node",
+            "links":[{"id":"next","target":"paths.Node","cardinality":{"to":if many {"many"} else {"one"},"from":"many"}}]},
+            "extensions":{"norn.path-equations/1.0.0":equations}}
+    })).unwrap()
+}
+
+#[test]
+fn path_equation_valid_identity_lowers_and_retains_origin() {
+    let concept = path_concept(serde_json::json!([{"id":"identity","left":[],"right":["next"]}]), false);
+    let theory = norn_checker::consistency::lower_path_equations(&[concept]).unwrap();
+    assert!(theory.validate().is_ok());
+    let Dependency::Egd(equation) = &theory.dependencies[0] else { panic!("expected EGD") };
+    assert_eq!(equation.origin.artifact_id.as_deref(), Some("paths.Node.entity"));
+    let facts = vec![Fact { relation:"concept:paths.Node".into(), values:vec![Value::Const("a".into())] },
+        Fact { relation:"link:paths.Node:next".into(), values:vec![Value::Const("a".into()), Value::Const("b".into())] }];
+    assert!(matches!(chase(&theory, &facts, ChaseBudget::default()), Ok(ChaseOutcome::Conflict(_))));
+    assert!(matches!(chase(&theory, &facts[..1], ChaseBudget::default()), Ok(ChaseOutcome::Model(_))));
+}
+
+#[test]
+fn path_equation_unknown_link_many_and_duplicate_id_refuse() {
+    for (equations, many) in [
+        (serde_json::json!([{"id":"missing","left":["missing"],"right":[]}]), false),
+        (serde_json::json!([{"id":"many","left":["next"],"right":[]}]), true),
+        (serde_json::json!([{"id":"same","left":[],"right":[]},{"id":"same","left":[],"right":[]}]), false),
+        (serde_json::json!([{"id":"null","left":null,"right":[]}]), false),
+    ] {
+        let findings = norn_checker::consistency::lower_path_equations(&[path_concept(equations, many)]).unwrap_err();
+        assert_eq!(findings[0].code.as_str(), "consistency.path_equation.invalid");
+    }
+}

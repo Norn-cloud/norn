@@ -502,7 +502,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies"])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -532,6 +532,10 @@ class DefinitionCompiler {
           at: this.at(p.node),
         }
       }),
+      ...(members.has("pathEquations") ? { pathEquations: this.list(members.get("pathEquations")!).map(node => {
+        const m = this.closedRecord(node, ["id", "left", "right"], ["id", "left", "right"])
+        return { id: this.string(m.get("id")!), left: this.list(m.get("left")!).map(x => this.string(x)), right: this.list(m.get("right")!).map(x => this.string(x)) }
+      }) } : {}),
       implements: implementsNode ? this.list(implementsNode).map((x) => this.typeName(x, INTERFACES)) : [],
       links: linksNode ? this.list(linksNode).map((x) => this.link(x)) : [],
       identity: identityNode ? this.list(identityNode).map((x) => this.key(x)) : [],

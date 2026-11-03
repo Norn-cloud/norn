@@ -228,3 +228,87 @@ pub(crate) fn variables(atoms: &[Atom]) -> BTreeSet<&str> {
         })
         .collect()
 }
+
+/// Lower PATH-EQ-1 declarations to shared-root EGDs, retaining their origins.
+/// This validates shape and paths, not preservation through a mapping.
+///
+/// # Errors
+/// Malformed declarations or paths outside the functional concrete-type fragment.
+pub fn lower_path_equations(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+) -> Result<Theory, Vec<crate::Diagnostic>> {
+    use crate::entity_artifacts::{Decoded, decode_v2};
+    use norn_ir::entity::{PATH_EQUATIONS_SLOT, PathEquation};
+    let declarations: Vec<_> = artifacts.iter().filter_map(|artifact| {
+        let Decoded::Root(root) = decode_v2(artifact) else { return None };
+        let norn_ir::EntityRoot::V2(root) = *root else { return None };
+        let value = root.extensions.as_ref()?.get(PATH_EQUATIONS_SLOT)?.clone();
+        Some((artifact, root.object_type.name, value))
+    }).collect();
+    let mut theory = Theory::default();
+    if declarations.is_empty() { return Ok(theory); }
+    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(artifacts);
+    let mut findings = Vec::new();
+    for (artifact, owner, value) in declarations {
+        let origin = RuleOrigin {
+            artifact_id: Some(artifact.artifact_id.clone()),
+            pointer: "/payload/extensions/norn.path-equations~11.0.0".into(),
+        };
+        let result = (|| -> Result<(), String> {
+            let equations: Vec<PathEquation> = serde_json::to_value(&value)
+                .and_then(serde_json::from_value).map_err(|e| e.to_string())?;
+            if equations.len() > 128 { return Err("at most 128 equations per concept".into()); }
+            let mut ids = BTreeSet::new();
+            for equation in equations {
+                if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
+                    return Err("equation IDs must be nonempty and unique".into());
+                }
+                let mut body = vec![Atom {
+                    relation: format!("concept:{owner}"),
+                    terms: vec![Term::Var("root".into())],
+                }];
+                let (left_type, left) = equation_path(&catalog, owner.as_str(), &equation.left, "l", &mut body)?;
+                let (right_type, right) = equation_path(&catalog, owner.as_str(), &equation.right, "r", &mut body)?;
+                if left_type != right_type { return Err("equation endpoint types differ".into()); }
+                theory.dependencies.push(Dependency::Egd(Egd {
+                    id: format!("{}:path-equation:{}", artifact.artifact_id, equation.id),
+                    origin: origin.clone(), body, left, right,
+                }));
+            }
+            Ok(())
+        })();
+        if let Err(message) = result {
+            findings.push(super::finding("consistency.path_equation.invalid", crate::DiagnosticSeverity::Error,
+                message, Some(&origin)));
+        }
+    }
+    if findings.is_empty() { Ok(theory) } else { Err(findings) }
+}
+
+fn equation_path(
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    owner: &str,
+    path: &[String],
+    prefix: &str,
+    body: &mut Vec<Atom>,
+) -> Result<(String, Term), String> {
+    if path.len() > 64 { return Err("path exceeds 64 links".into()); }
+    let mut current = owner.to_owned();
+    let mut term = Term::Var("root".into());
+    for (index, id) in path.iter().enumerate() {
+        let link = catalog.links_for_object_type(&current)
+            .and_then(|links| links.iter().find(|link| link.id.as_str() == id))
+            .ok_or_else(|| format!("unknown path link {current}.{id}"))?;
+        if link.cardinality.to != norn_ir::Multiplicity::One {
+            return Err(format!("path link {current}.{id} is not functional"));
+        }
+        if !matches!(catalog.object_type_named(link.target.as_str()), Some(Ok(_))) {
+            return Err(format!("path target {} is not an available concrete type", link.target));
+        }
+        let next = Term::Var(format!("{prefix}{index}"));
+        body.push(Atom { relation: format!("link:{current}:{id}"), terms: vec![term, next.clone()] });
+        current = link.target.to_string();
+        term = next;
+    }
+    Ok((current, term))
+}

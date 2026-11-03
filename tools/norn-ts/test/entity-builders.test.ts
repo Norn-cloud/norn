@@ -411,3 +411,13 @@ test("acceptReceipt syntax lowers reference and result bindings", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
 })
+
+
+test("path equations compile from concept declarations to typed EntityIR extension data", () => {
+  const file = join(TOOL_ROOT, "fixtures/definitions/acyclic.source.ts")
+  const compiled = compileDefinitions(file, { scope, sourcePath: file })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  expect(compiled.artifacts[0]).toMatchObject({ payload: { extensions: {
+    "norn.path-equations/1.0.0": [{ id: "same_parent", left: ["parent"], right: ["parent"] }],
+  } } })
+}, 30_000)

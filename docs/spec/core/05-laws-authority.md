@@ -161,3 +161,26 @@ PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
 must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
 incomplete source identities are unknown rather than an unbound explanation.
 Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
+
+### Path equations (PATH-EQ-1, #712)
+
+Authors declare `pathEquations: [{ id: "provider", left: ["fulfils", "provider"],
+right: ["provider"] }]` on `Norn.type`. EntityIR retains these declarations in
+`extensions["norn.path-equations/1.0.0"]`. Each path begins at the declaring
+concept, traverses functional forward links, and ends at the same concrete type;
+empty paths denote identity. Missing links, ambiguous interface targets,
+non-functional steps, duplicate IDs and different endpoint types refuse.
+
+PATH-EQ-1 lowers each equation to an existing chase EGD, with one shared root
+variable and equality between the two endpoints. Optional links give conditional
+equality when both paths exist; equations do not assert existence. Inherited
+link contracts resolve through the effective catalog. This declaration/lowering
+unit establishes structural evidence only: mapping preservation requires the
+exchange admission bridge and its separately qualified source/mapping lowering.
+No successful declaration is a preservation proof. The existing exchange search
+is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
+
+Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
+The mapping bridge must additionally reproduce #574's swapped roles, dropped
+join, non-functional mapping and bad composite, plus identity/equivalent-path
+controls without hand-authored EGDs before #712 can close.

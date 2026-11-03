@@ -165,12 +165,15 @@ pub fn check_entity_artifacts(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    let complete: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
+    let path_findings = crate::consistency::lower_path_equations(&complete).err().unwrap_or_default();
     dedupe_findings(
         artifacts
             .iter()
             .flat_map(crate::check_artifact)
             .chain(check_artifact_set_entity_model(artifacts, context))
-            .chain(crate::markings::check_references(artifacts, context.base)),
+            .chain(crate::markings::check_references(artifacts, context.base))
+            .chain(path_findings),
     )
 }
 
