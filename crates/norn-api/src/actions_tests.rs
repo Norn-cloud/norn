@@ -274,9 +274,19 @@ fn stock_receive_commits_replays_and_refuses_before_partial_effects() {
         serde_json::to_string(&replayed.record).unwrap()
     );
     assert_eq!(host.cell().unwrap().store().read().dump().unwrap(), after);
+    let denied = call(&host, "receive", "receive", input.clone(), Some("principal:denied"), 1)
+        .err()
+        .unwrap();
+    assert_eq!(denied.status, 403);
+    assert_eq!(denied.code, "authz.denied");
+    assert_eq!(host.cell().unwrap().store().read().dump().unwrap(), after);
     let mut conflicting = input;
     conflicting["quantity"] = json!(3);
-    assert!(call(&host, "receive", "receive", conflicting, actor, 1).is_err());
+    let refused = call(&host, "receive", "receive", conflicting, actor, 1)
+        .err()
+        .unwrap();
+    assert_eq!(refused.status, 409);
+    assert_eq!(refused.code, "action.idempotency_conflict");
     assert_eq!(host.cell().unwrap().store().read().dump().unwrap(), after);
 }
 

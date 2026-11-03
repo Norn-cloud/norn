@@ -218,7 +218,7 @@ writer footprints, not a proof of application conservation or approval policy.
 
 `txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen`
 composes the same catalog in typed Rust with the existing `ActionQuantityEffect`.
-Full artifact-set admission precedes execution. A final link-cardinality refusal
+The synchronous action rule is admitted before execution. A final link-cardinality refusal
 leaves every SQLite table unchanged, including quantity heads, postings, outbox
 and the reservation timer, before and after reopen. Success commits the facts,
 both links, quantity posting, command intent and reservation-timer cancellation;
