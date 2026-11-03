@@ -67,7 +67,6 @@ pub enum NormUnknown {
     /// A source has no selected authority order.
     MissingAuthority,
     /// The finite model exceeds the admitted bound.
-    /// Finite analysis ceiling exceeded.
     Limit,
     /// The derived strict preference relation contains a cycle.
     Cycle,

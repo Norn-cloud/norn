@@ -324,6 +324,7 @@ fn malformed_binding_and_budget_exhaustion_remain_unknown() {
             diagnose_declared_order(&norms, &origins, &[Company; 2], &edges, 2, budget).is_err()
         );
     }
-    let duplicate = std::array::from_fn(|_| origins.first().cloned().unwrap_or_default());
+    let duplicate: [RuleOrigin; 2] =
+        std::array::from_fn(|_| origins.first().cloned().unwrap_or_default());
     assert!(diagnose_declared_order(&norms, &duplicate, &[Company; 2], &[], 2, 100).is_err());
 }

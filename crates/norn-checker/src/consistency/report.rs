@@ -240,6 +240,19 @@ fn type_pin(value: &norn_canonical::JsonValue) -> serde_json::Value {
     }
 }
 
+/// Shared exact-source projection for diagnostic-only constraint cores.
+pub(crate) fn core_findings(
+    code: &str,
+    severity: &crate::DiagnosticSeverity,
+    message: &str,
+    origins: &[&super::RuleOrigin],
+) -> Vec<crate::Diagnostic> {
+    origins
+        .iter()
+        .map(|origin| super::finding(code, severity.clone(), message.into(), Some(origin)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -268,17 +281,4 @@ mod tests {
             r#"["norn.diagnosis-schema/1",["object",{"a":["string",["a","b"]],"z":["nullable",["decimal",["object",{"kind":["string","decimal"],"rounding":["string","half_even"],"scale":["number","2"]}]]]},["a","z"]]]"#
         );
     }
-}
-
-/// Shared exact-source projection for diagnostic-only constraint cores.
-pub(crate) fn core_findings(
-    code: &str,
-    severity: &crate::DiagnosticSeverity,
-    message: &str,
-    origins: &[&super::RuleOrigin],
-) -> Vec<crate::Diagnostic> {
-    origins
-        .iter()
-        .map(|origin| super::finding(code, severity.clone(), message.into(), Some(origin)))
-        .collect()
 }
