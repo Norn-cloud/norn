@@ -291,25 +291,6 @@ pub fn clean_merge(root: &Path, previous: &str, pull: &str, merged: &str) -> Res
         .keys()
         .chain(before.keys())
         .chain(incoming.keys())
-        .filter(|p| !p.starts_with(super::provenance::CONTROL))
-    {
-        let record = format!("{}artifacts/{path}.json", super::provenance::CONTROL);
-        if before.get(path) != incoming.get(path)
-            && before.get(&record) != incoming.get(&record)
-            && ((before.get(path) != ancestor.get(path)
-                && incoming.get(&record) != ancestor.get(&record))
-                || (incoming.get(path) != ancestor.get(path)
-                    && before.get(&record) != ancestor.get(&record)))
-        {
-            return Err(format!(
-                "unreviewed payload/rights combination requires renewed review: {path}"
-            ));
-        }
-    }
-    for path in ancestor
-        .keys()
-        .chain(before.keys())
-        .chain(incoming.keys())
         .filter(|p| p.starts_with(super::provenance::CONTROL))
     {
         if before.get(path) != ancestor.get(path)
@@ -353,6 +334,25 @@ pub fn clean_merge(root: &Path, previous: &str, pull: &str, merged: &str) -> Res
         return Err(
             "integration-only content or metadata change requires renewed rights review".into(),
         );
+    }
+    let admitted = tree(root, merged)?;
+    for path in before
+        .keys()
+        .chain(incoming.keys())
+        .filter(|p| !p.starts_with(super::provenance::CONTROL))
+    {
+        let record = format!("{}artifacts/{path}.json", super::provenance::CONTROL);
+        // With differing declarations, retain an already admitted or reviewed
+        // pair. Equal declarations allow independent payload hunks to combine.
+        if before.get(&record) != incoming.get(&record)
+            && ![&before, &incoming].into_iter().any(|side| {
+                side.get(path) == admitted.get(path) && side.get(&record) == admitted.get(&record)
+            })
+        {
+            return Err(format!(
+                "unreviewed payload/rights combination requires renewed review: {path}"
+            ));
+        }
     }
     Ok(())
 }
