@@ -25,6 +25,16 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
+includes its primary target and the declared writer types, including effective
+subtypes. Catalog invocation entry points remain primary targets. Schema
+projection grants no permission: the actual policy, scope and capability grant
+still authorize every current/proposed resource, and the kernel still checks
+the closed writer footprint. Unbound or non-transition actions retain their
+existing target projection. The finite four-type writer domain is checked over
+all subsets with and without a synchronous binding; real PDP cases retain
+wrong-scope, wrong-role, absent-policy and absent-grant refusals.
+
 Generate initialization, non-vacuity, each-writer preservation, mapping totality/identity/unit/transition simulation/law preservation and open-boundary obligations from retained contracts. An empty implementor/domain is not non-vacuity evidence. Every writer introduced by rule, migration, connector or mapping changes the challenge. Missing/unsupported semantics remains unknown; runtime admission refuses safety predicates it cannot actually enforce.
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
