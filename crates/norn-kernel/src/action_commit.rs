@@ -1057,6 +1057,7 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
         &slice.values,
@@ -1271,6 +1272,7 @@ where
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         action,
         &preparation.effective_input,
         &slice.values,
@@ -1745,11 +1747,11 @@ fn row_expression_context<X>(
 }
 
 fn derive_row_values<X>(
+    action: &ActionRoot,
     catalog: &TypeCatalog<'_>,
     collection: &OwnedChildCollection,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     mut proposed: JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<JsonObject, ActionRefusal<X>> {
@@ -1761,6 +1763,24 @@ fn derive_row_values<X>(
             ),
         }));
     }
+    let base_env = catalog
+        .base_expression_environment()
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let excluded = config
+        .derive
+        .keys()
+        .map(|property| property.as_str().to_owned())
+        .collect();
+    let base_env = base_env
+        .bind_self_to_stored_fields(&collection.child_type, &excluded)
+        .map_err(|error| {
+            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                reason: error.to_string(),
+            })
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for (property, expression) in &config.derive {
         let context = row_expression_context::<X>(input, &proposed)?;
         let invalid = |reason| {
@@ -1771,8 +1791,23 @@ fn derive_row_values<X>(
                 ),
             })
         };
-        let evaluated =
-            evaluate_row_expression(expression.as_str(), &context, remaining_fuel, invalid)?;
+        let expected = catalog
+            .expression_environment(&collection.child_type)
+            .ok()
+            .and_then(|env| {
+                env.record(collection.child_type.as_str())
+                    .and_then(|record| record.fields.get(property.as_str()))
+                    .map(|field| field.ty.clone())
+            })
+            .ok_or_else(|| invalid("unknown derived property type".into()))?;
+        let evaluated = evaluate_row_expression(
+            expression.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &expected,
+            invalid,
+        )?;
         let value = expression_value_to_runtime(&evaluated).map_err(invalid)?;
         proposed.insert(property.as_str().to_owned(), value);
     }
@@ -1780,19 +1815,38 @@ fn derive_row_values<X>(
 }
 
 fn check_row_preconditions<X>(
+    action: &ActionRoot,
+    catalog: &TypeCatalog<'_>,
+    child_type: &ObjectTypeName,
     config: &OwnedCollectionAction,
     input: &JsonObject,
-    _current: Option<&JsonObject>,
     proposed: &JsonObject,
     remaining_fuel: &mut u64,
 ) -> Result<(), ActionRefusal<X>> {
     let context = row_expression_context::<X>(input, proposed)?;
+    let base_env = catalog
+        .base_expression_environment()
+        .and_then(|env| {
+            env.bind_self_to_stored_fields(child_type, &BTreeSet::new())
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
+    let env =
+        norn_expr::schema::action_environment(action, Some(&base_env), action.derive.len())
+            .map_err(|reason| ActionRefusal::Decision(DecisionRefusal::InvalidOutput { reason }))?;
     for precondition in &config.preconditions {
         let invalid = |reason| ActionRefusal::PreconditionFailed {
             precondition: precondition.as_str().to_owned(),
             reason: Some(reason),
         };
-        match evaluate_row_expression(precondition.as_str(), &context, remaining_fuel, invalid)? {
+        match evaluate_row_expression(
+            precondition.as_str(),
+            &context,
+            remaining_fuel,
+            &env,
+            &norn_expr::Type::Bool,
+            invalid,
+        )? {
             ExprValue::Bool(true) => {}
             ExprValue::Bool(false) => {
                 return Err(ActionRefusal::PreconditionFailed {
@@ -1818,10 +1872,17 @@ fn evaluate_row_expression<X>(
     source: &str,
     context: &ExprValue,
     remaining_fuel: &mut u64,
+    env: &norn_expr::ZenTypeEnv,
+    expected: &norn_expr::Type,
     invalid: impl Fn(String) -> ActionRefusal<X>,
 ) -> Result<ExprValue, ActionRefusal<X>> {
     let expression = Expression::compile(source).map_err(|error| invalid(error.to_string()))?;
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining_fuel));
+    let attempt = expression.evaluate_admitted_metered(
+        context,
+        EvaluationBudget::new(*remaining_fuel),
+        env,
+        expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     #[expect(
         clippy::wildcard_enum_match_arm,
@@ -2417,6 +2478,7 @@ where
         slice_meter,
     )?;
     preparation.precondition_outcomes = check_action_preconditions(
+        catalog,
         call.action,
         &preparation.effective_input,
         &action_slice.values,
@@ -2774,17 +2836,16 @@ where
                     &FactKey::new(collection.child_type.as_str(), row_id.clone()),
                     &values,
                 )?;
-                let current_values = row_states.get(&key).and_then(|state| state.values.as_ref());
                 let recompute_derived = additions.contains(row_id)
                     || replacements.contains_key(row_id)
                     || order_changed;
                 if recompute_derived {
                     values = derive_row_values::<H::Error>(
+                        call.action,
                         catalog,
                         collection,
                         snapshot_config(&configs, collection_id)?,
                         &preparation.effective_input,
-                        current_values,
                         values,
                         &mut preparation.remaining_fuel,
                     )?;
@@ -2965,13 +3026,21 @@ where
     )?;
     // Do not expose a row guard's outcome until every proposed write has
     // passed authorization. Removed rows use their authorized current state.
-    for ((collection_id, row_id), values) in &guarded_rows {
+    for ((collection_id, _), values) in &guarded_rows {
+        let child_type = &declared
+            .get(collection_id)
+            .ok_or_else(|| {
+                ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                    reason: "unknown owned collection".into(),
+                })
+            })?
+            .child_type;
         check_row_preconditions::<H::Error>(
+            call.action,
+            catalog,
+            child_type,
             snapshot_config(&configs, collection_id)?,
             &preparation.effective_input,
-            row_states
-                .get(&(collection_id.clone(), row_id.clone()))
-                .and_then(|state| state.values.as_ref()),
             values,
             &mut preparation.remaining_fuel,
         )?;
@@ -3208,6 +3277,7 @@ where
         )?;
         let mut receipt_evidence_bytes = preparation.receipt_evidence_bytes;
         let precondition_outcomes = check_action_preconditions(
+            catalog,
             call.action,
             &generated_input,
             &slice.values,
@@ -3336,6 +3406,7 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
     check_action_preconditions(
+        catalog,
         call.action,
         &input,
         &slice.values,
@@ -4024,6 +4095,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4055,6 +4127,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantViolation { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4143,14 +4216,15 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, id, message, outcome) = match error {
+    let (key, owner, version, id, message, outcome) = match error {
         CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
-        } => (key, owner, id, message, outcome),
+        } => (key, owner, version, id, message, outcome),
         error @ (CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4172,6 +4246,7 @@ where
         | CommitError::TraversalLimitExceeded { .. }
         | CommitError::AccountingPosting { .. }
         | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
         | CommitError::InvariantModel { .. }
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
@@ -4181,6 +4256,7 @@ where
     let refusal = DecisionRefusal::InvariantViolation {
         key: key.clone(),
         owner: owner.clone(),
+        version,
         id: id.clone(),
         message: message.clone(),
         outcome: outcome.clone(),
@@ -4233,6 +4309,11 @@ fn check_action_envelope<X>(
 /// expressions remain inert IR until this admitted action is actually
 /// committed; the returned records are then converted by the shared decision
 /// path into `perform` effects in the same commit as the transition.
+struct ActionExpressionContext {
+    value: ExprValue,
+    environment: norn_expr::ZenTypeEnv,
+}
+
 fn build_action_commands<X>(
     action: &ActionRoot,
     input: &JsonObject,
@@ -4252,7 +4333,11 @@ fn build_action_commands<X>(
         .map(|(name, value)| expr_value(value).map(|value| (name.clone(), value)))
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(invalid)?;
-    let context = ExprValue::object([("input", ExprValue::Object(input))]);
+    let context = ActionExpressionContext {
+        value: ExprValue::object([("input", ExprValue::Object(input))]),
+        environment: norn_expr::schema::action_environment(action, None, action.derive.len())
+            .map_err(&invalid)?,
+    };
     action
         .commands
         .iter()
@@ -4348,7 +4433,7 @@ fn action_command_operation_name(operation: ActionCommandOperation) -> &'static 
 fn evaluate_action_expected_modified<X>(
     command_index: usize,
     source: Option<&str>,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     let Some(source) = source else {
@@ -4372,7 +4457,7 @@ fn evaluate_action_expected_modified<X>(
 fn build_action_child_merges<X>(
     command_index: usize,
     command: &ActionCommand,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     if command.child_merges.is_empty() {
@@ -4437,11 +4522,16 @@ fn build_action_child_merges<X>(
 /// Evaluates one action command expression with the input under `input`.
 fn evaluate_action_expression(
     source: &str,
-    context: &ExprValue,
+    context: &ActionExpressionContext,
     remaining_fuel: &mut u64,
 ) -> Result<RuntimeValue, String> {
     let expression = Expression::compile(source).map_err(|error| error.to_string())?;
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining_fuel));
+    let attempt = expression.evaluate_admitted_metered(
+        &context.value,
+        EvaluationBudget::new(*remaining_fuel),
+        &context.environment,
+        &norn_expr::Type::Json,
+    );
     *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
     let evaluated = attempt.result.map_err(|error| error.to_string())?;
     expression_value_to_runtime(evaluated.value())
@@ -4575,8 +4665,10 @@ fn prepare_action_input_inner<'a, X>(
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = profile.turn.fuel_units;
 
-    for derivation in &action.derive {
+    for (index, derivation) in action.derive.iter().enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
+            action,
+            index,
             derivation,
             &effective_input,
             &mut remaining_fuel,
@@ -4612,7 +4704,31 @@ fn prepare_action_input_inner<'a, X>(
     })
 }
 
+fn action_derivation_destination(
+    action: &ActionRoot,
+    derivation: &norn_ir::ActionInputDerivation,
+    env: &norn_expr::ZenTypeEnv,
+) -> norn_expr::Type {
+    let explicit_nullable = action
+        .input_schema
+        .get("properties")
+        .and_then(norn_ir::JsonValue::as_object)
+        .and_then(|fields| fields.get(&derivation.field))
+        .and_then(|schema| norn_expr::schema::Schema::parse(schema, "target").ok())
+        .is_some_and(|schema| matches!(schema, norn_expr::schema::Schema::Nullable(_)));
+    let declared = env
+        .record(norn_expr::env::INPUT_RECORD)
+        .and_then(|record| record.fields.get(&derivation.field))
+        .map_or(norn_expr::Type::Json, |field| field.ty.clone());
+    if !explicit_nullable && let norn_expr::Type::Optional(inner) = declared {
+        return *inner;
+    }
+    declared
+}
+
 fn prepare_action_derivation<X>(
+    action: &ActionRoot,
+    completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
     remaining_fuel: &mut u64,
@@ -4633,7 +4749,20 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+    let env = norn_expr::schema::action_environment(action, None, completed).map_err(|reason| {
+        ActionRefusal::DerivationFailed {
+            field: derivation.field.clone(),
+            expression: derivation.expression.as_str().to_owned(),
+            reason,
+        }
+    })?;
+    let expected = action_derivation_destination(action, derivation, &env);
+    let attempt = expression.evaluate_admitted_metered(
+        &context,
+        EvaluationBudget::new(*remaining_fuel),
+        &env,
+        &expected,
+    );
     *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
     let evaluated = attempt
         .result
@@ -5503,6 +5632,7 @@ fn authorize_slice_type<X>(
 /// Evaluates every declared action precondition over the derived input and the
 /// authorized slice, carrying forward the derivations' remaining fuel.
 fn check_action_preconditions<X>(
+    catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     input: &JsonObject,
     slice: &JsonObject,
@@ -5519,6 +5649,21 @@ fn check_action_preconditions<X>(
             reason: Some(reason),
         }
     })?;
+    let catalog_env = action
+        .slice
+        .first()
+        .map(|entry| catalog.expression_environment(&entry.object_type))
+        .transpose()
+        .map_err(|reason| ActionRefusal::PreconditionFailed {
+            precondition: String::new(),
+            reason: Some(reason),
+        })?;
+    let env =
+        norn_expr::schema::action_environment(action, catalog_env.as_ref(), action.derive.len())
+            .map_err(|reason| ActionRefusal::PreconditionFailed {
+                precondition: String::new(),
+                reason: Some(reason),
+            })?;
     let mut outcomes = Vec::with_capacity(action.preconditions.len());
     for precondition in &action.preconditions {
         let source = precondition.as_str();
@@ -5528,7 +5673,12 @@ fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining_fuel));
+        let attempt = expression.evaluate_admitted_metered(
+            &context,
+            EvaluationBudget::new(*remaining_fuel),
+            &env,
+            &norn_expr::Type::Bool,
+        );
         *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
         let evaluated = attempt
             .result

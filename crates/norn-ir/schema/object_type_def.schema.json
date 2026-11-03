@@ -82,6 +82,10 @@
         "$ref": "#/$defs/Property"
       }
     },
+    "role": {
+      "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+      "$ref": "#/$defs/ConceptRole"
+    },
     "status": {
       "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
       "$ref": "#/$defs/ResourceStatus"
@@ -136,6 +140,21 @@
       "required": [
         "property",
         "steps"
+      ]
+    },
+    "ConceptRole": {
+      "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+      "oneOf": [
+        {
+          "description": "A persistent thing.",
+          "type": "string",
+          "const": "thing"
+        },
+        {
+          "description": "A concept that occurs, runs or terminates in time.",
+          "type": "string",
+          "const": "happening"
+        }
       ]
     },
     "ConstraintClass": {
@@ -766,6 +785,14 @@
               "type": "string",
               "const": "decimal"
             },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
+            },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
               "$ref": "#/$defs/WholeNumber"
@@ -1012,6 +1039,16 @@
             "since"
           ]
         }
+      ]
+    },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
       ]
     },
     "TextFormat": {

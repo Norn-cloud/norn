@@ -100,6 +100,9 @@ use crate::{Expression, Number, UnaryTest};
 
 pub(crate) mod bounds;
 mod cost;
+mod sites;
+mod units;
+use units::{Operand, Operation};
 
 pub use bounds::StructuralLimits;
 
@@ -151,8 +154,15 @@ pub mod codes {
     /// profile's decide fuel budget. The message reports the estimate.
     pub const COST_EXCEEDS_BUDGET: &str = "expr.cost.exceeds_budget";
 
+    /// Mixed, unresolved or unsupported numeric dimensions.
+    pub const UNIT: &str = "core.values.unit_mismatch";
+    /// Informational diagnostic naming the unit inherited by a literal.
+    pub const LITERAL_UNIT: &str = "core.values.literal_unit";
+
     /// Every code, for registries and exhaustiveness tests.
-    pub const ALL: [&str; 19] = [
+    pub const ALL: [&str; 21] = [
+        UNIT,
+        LITERAL_UNIT,
         SYNTAX,
         UNSUPPORTED_CONSTRUCT,
         TYPE_ERROR,
@@ -279,6 +289,9 @@ impl fmt::Display for CostEstimate {
 pub struct CheckedExpression {
     inferred: InferredType,
     cost: CostEstimate,
+    exact: bool,
+    notes: Vec<Diagnostic>,
+    runtime_source: String,
 }
 
 /// Owned source provenance for a bounded, checked expression's construction.
@@ -294,6 +307,24 @@ pub enum ConstructionSource {
 }
 
 impl CheckedExpression {
+    /// VAL-ROUND: source with declared result sites lowered to shared rescale.
+    #[must_use]
+    pub fn runtime_source(&self) -> &str {
+        &self.runtime_source
+    }
+
+    /// VAL-UNIT: informational literal-unit inference evidence.
+    #[must_use]
+    pub fn notes(&self) -> &[Diagnostic] {
+        &self.notes
+    }
+
+    /// VAL-EXACT-1: the expression reads or produces a declared Decimal.
+    #[must_use]
+    pub const fn uses_exact_arithmetic(&self) -> bool {
+        self.exact
+    }
+
     /// The proved type of the result.
     #[must_use]
     pub const fn inferred(&self) -> &InferredType {
@@ -460,8 +491,15 @@ pub fn check_expression_with_root_bounds(
     limits: &ResourceLimitProfile,
     root_bounds: &BTreeMap<String, RootCostBounds>,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, Some(root_bounds))
-        .map(|(checked, _)| checked)
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        limits,
+        Some(root_bounds),
+        true,
+    )
+    .map(|(checked, _)| checked)
 }
 
 /// Checks an expression with the same bounds and grammar as
@@ -480,7 +518,161 @@ pub fn check_expression_with_sources(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
+}
+
+pub(crate) fn check_typed_expression(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<CheckedExpression, Vec<Diagnostic>> {
+    check_expression_with_sources_and_root_bounds(
+        expr,
+        env,
+        expected,
+        &ResourceLimitProfile::norn_limits_v1(),
+        None,
+        true,
+    )
+    .map(|(checked, _)| checked)
+}
+
+/// VAL-EXACT-1: select the exact runtime only for declared reads/results or an explicit site.
+pub(crate) fn requires_exact_profile(expr: &Expression, env: &ZenTypeEnv, expected: &Type) -> bool {
+    if expected_exact_type(expected, env) {
+        return true;
+    }
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    IntelliSense::new().with_ast(expr.source(), false, |ast, metadata| {
+        let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
+        if !bounds::structure(ast, expr.source(), &StructuralLimits::NORN_EXPR_4, limits.slice.max_relation_depth, span).is_empty() { return true; }
+        let mut pending = vec![ast];
+        while let Some(node) = pending.pop() {
+            if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3) { return true; }
+            if let Some(path) = crate::reads::literal_path(node) {
+                if let Some((root, members)) = path.split_first() && let Some(ty) = env.variables().get(root) && read_requires_exact(ty, members, env) { return true; }
+            } else {
+                bounds::children(node, &mut pending);
+            }
+        }
+        false
+    }).unwrap_or(true)
+}
+
+fn read_requires_exact<'a>(mut ty: &'a Type, members: &[String], env: &'a ZenTypeEnv) -> bool {
+    for member in members {
+        while let Type::Optional(inner) | Type::List(inner) = ty {
+            ty = inner;
+        }
+        let Type::Record(name) = ty else {
+            return exact_type(ty);
+        };
+        let Some(field) = env
+            .record(name)
+            .and_then(|record| record.fields.get(member))
+        else {
+            return expected_exact_type(ty, env);
+        };
+        ty = &field.ty;
+    }
+    expected_exact_type(ty, env)
+}
+
+struct AnalysisContext<'a> {
+    source: &'a str,
+    env: &'a ZenTypeEnv,
+    expected: &'a Type,
+    limits: &'a ResourceLimitProfile,
+    root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
+}
+struct Analysis {
+    inferred: Option<InferredType>,
+    diagnostics: Vec<Diagnostic>,
+    span: (u32, u32),
+    cost: Option<u64>,
+    construction: Option<ConstructionSource>,
+    exact: bool,
+    notes: Vec<Diagnostic>,
+    runtime_source: Result<String, String>,
+}
+fn analyze_expression(
+    ast: &Node<'_>,
+    metadata: &AstMetadata,
+    context: &AnalysisContext<'_>,
+) -> Analysis {
+    let AnalysisContext {
+        source,
+        env,
+        expected,
+        limits,
+        root_bounds,
+        exact_enabled,
+    } = *context;
+    let structural = StructuralLimits::NORN_EXPR_4;
+    let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
+    let whole = span(ast);
+    let found = bounds::structure(
+        ast,
+        source,
+        &structural,
+        limits.slice.max_relation_depth,
+        span,
+    );
+    if !found.is_empty() {
+        return Analysis {
+            inferred: None,
+            diagnostics: found,
+            span: whole,
+            cost: None,
+            construction: None,
+            exact: false,
+            notes: Vec::new(),
+            runtime_source: Ok(source.to_owned()),
+        };
+    }
+    let mut checker = Checker::new(env, metadata, None);
+    checker.exact_math = exact_enabled;
+    let expectation = checker.expectation(expected);
+    let found = checker.infer(ast, expectation.as_ref());
+    if exact_enabled && let (Some(found), Some(expected)) = (&found, &expectation) {
+        checker.check_destination(ast, found, expected);
+    }
+    let inferred = found.and_then(|ty| checker.representable(&ty, whole));
+    let cost = (inferred.is_some() && checker.diagnostics.is_empty()).then(|| {
+        cost::Estimator::new(env, &checker.types, limits)
+            .with_root_bounds(root_bounds)
+            .estimate(ast)
+    });
+    let construction = construction_source(ast, metadata, source);
+    let exact = checker.exact || expected_exact_type(expected, env);
+    let runtime_source = if exact_enabled && exact {
+        if checker
+            .types
+            .values()
+            .any(|ty| matches!(ty, T::Number(Operand::Legacy)))
+        {
+            checker.report::<()>(
+                ast,
+                "core.values.inexact",
+                "bare number cannot enter a declared exact site".into(),
+            );
+        }
+        sites::lower(ast, expected, env, metadata, source)
+    } else {
+        Ok(source.to_owned())
+    };
+
+    Analysis {
+        inferred,
+        diagnostics: checker.diagnostics,
+        span: whole,
+        cost,
+        construction,
+        exact,
+        notes: checker.notes,
+        runtime_source,
+    }
 }
 
 fn check_expression_with_sources_and_root_bounds(
@@ -489,6 +681,7 @@ fn check_expression_with_sources_and_root_bounds(
     expected: &Type,
     limits: &ResourceLimitProfile,
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
+    exact_enabled: bool,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
@@ -496,38 +689,46 @@ fn check_expression_with_sources_and_root_bounds(
         return Err(vec![found]);
     }
     let mut intellisense = IntelliSense::new().with_strict(true);
+    let context = AnalysisContext {
+        source,
+        env,
+        expected,
+        limits,
+        root_bounds,
+        exact_enabled,
+    };
     let outcome = intellisense.with_ast(source, false, |ast, metadata| {
-        let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
-        let whole = span(ast);
-        let found = bounds::structure(
-            ast,
-            source,
-            &structural,
-            limits.slice.max_relation_depth,
-            span,
-        );
-        if !found.is_empty() {
-            return (None, found, whole, None, None);
-        }
-        let mut checker = Checker::new(env, metadata, None);
-        let expectation = checker.expectation(expected);
-        let found = checker.infer(ast, expectation.as_ref());
-        let inferred = found.and_then(|ty| checker.representable(&ty, whole));
-        let cost = (inferred.is_some() && checker.diagnostics.is_empty()).then(|| {
-            cost::Estimator::new(env, &checker.types, limits)
-                .with_root_bounds(root_bounds)
-                .estimate(ast)
-        });
-        let construction = construction_source(ast, metadata, source);
-        (inferred, checker.diagnostics, whole, cost, construction)
+        analyze_expression(ast, metadata, &context)
     });
-    let Some((inferred, mut diagnostics, span, cost, construction)) = outcome else {
+    let Some(Analysis {
+        inferred,
+        mut diagnostics,
+        span,
+        cost,
+        construction,
+        exact,
+        notes,
+        runtime_source,
+    }) = outcome
+    else {
         return Err(vec![Diagnostic {
             code: codes::SYNTAX,
             message: "expression does not parse".to_owned(),
             span: (0, 0),
         }]);
     };
+    // Only declared exact sites use error-on-zero division. Plain Number keeps
+    // the legacy nullable division contract in this same checker.
+    if exact_enabled && !exact {
+        return check_expression_with_sources_and_root_bounds(
+            expr,
+            env,
+            expected,
+            limits,
+            root_bounds,
+            false,
+        );
+    }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -538,6 +739,16 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     };
+    let runtime_source = runtime_source.map_err(|message| {
+        vec![Diagnostic {
+            code: "core.values.inexact",
+            message,
+            span,
+        }]
+    })?;
+    if exact_enabled && exact {
+        diagnostics.extend(validate_lowered_source(&runtime_source, span));
+    }
     // Cross-check: zen's strict analysis must not report an error either.
     let root = ZenEnv::new(env).root(None);
     let analysis = intellisense.analyze(source, &root);
@@ -552,8 +763,59 @@ fn check_expression_with_sources_and_root_bounds(
             span,
         }]);
     }
-    let cost = within_budget(cost, limits, span)?;
-    Ok((CheckedExpression { inferred, cost }, construction))
+    let cost = lowered_cost(source, &runtime_source, cost, limits, span)?;
+    Ok((
+        CheckedExpression {
+            inferred,
+            cost,
+            exact,
+            notes,
+            runtime_source,
+        },
+        construction,
+    ))
+}
+
+fn lowered_cost(
+    source: &str,
+    runtime_source: &str,
+    cost: u64,
+    limits: &ResourceLimitProfile,
+    span: (u32, u32),
+) -> Result<CostEstimate, Vec<Diagnostic>> {
+    let quantizers = runtime_source
+        .matches("round((")
+        .count()
+        .saturating_sub(source.matches("round((").count());
+    within_budget(
+        cost.saturating_mul(if runtime_source.contains("== null ? null : round") {
+            2
+        } else {
+            1
+        })
+        .saturating_add(
+            u64::try_from(quantizers)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(8),
+        ),
+        limits,
+        span,
+    )
+}
+
+fn validate_lowered_source(source: &str, span: (u32, u32)) -> Vec<Diagnostic> {
+    let mut parser = IntelliSense::new();
+    parser
+        .with_ast(source, false, |ast, metadata| {
+            exact_admission(ast, metadata, false)
+        })
+        .unwrap_or_else(|| {
+            vec![Diagnostic {
+                code: codes::SYNTAX,
+                message: "lowered exact sites do not parse".into(),
+                span,
+            }]
+        })
 }
 
 fn construction_source(
@@ -894,7 +1156,7 @@ impl<'a> ZenEnv<'a> {
 enum T {
     Null,
     Bool,
-    Number,
+    Number(Operand),
     /// A string; `Some` when its value is one of a known set (enum values,
     /// literals).
     Str(Option<BTreeSet<String>>),
@@ -924,7 +1186,7 @@ impl fmt::Display for T {
         match self {
             Self::Null => f.write_str("null"),
             Self::Bool => f.write_str("bool"),
-            Self::Number => f.write_str("number"),
+            Self::Number(_) => f.write_str("number"),
             Self::Str(None) => f.write_str("string"),
             Self::Str(Some(values)) => write!(f, "string{values:?}"),
             Self::Date => f.write_str("date"),
@@ -946,7 +1208,7 @@ fn optional(ty: T) -> T {
     match ty {
         T::Optional(_) | T::Null => ty,
         other @ (T::Bool
-        | T::Number
+        | T::Number(_)
         | T::Str(_)
         | T::Date
         | T::Timestamp
@@ -970,6 +1232,7 @@ fn join(a: &T, b: &T) -> Option<T> {
             (Some(a), Some(b)) => Some(a.union(b).cloned().collect()),
             _ => None,
         }),
+        (T::Number(a), T::Number(b)) => T::Number(units::join(a, b)?),
         (T::List(a), T::List(b)) => T::List(Box::new(join(a, b)?)),
         (T::Record(Rec::Literal(a)), T::Record(Rec::Literal(b))) => {
             if a.len() != b.len() {
@@ -987,21 +1250,42 @@ fn join(a: &T, b: &T) -> Option<T> {
 }
 
 /// Lowers a declared type at link depth `depth`. `None`: opaque (`json`).
-fn lower(ty: &Type, depth: u32) -> Option<T> {
+fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bool) -> Option<T> {
     Some(match ty {
         Type::Bool => T::Bool,
         Type::Text { .. } | Type::Duration => T::Str(None),
         Type::Timestamp { .. } => T::Timestamp,
         Type::Date => T::Date,
-        Type::Integer | Type::Decimal { .. } | Type::Number => T::Number,
+        Type::Integer => T::Number(Operand::Dimensionless),
+        Type::Number => T::Number(if exact {
+            Operand::Legacy
+        } else {
+            Operand::Dimensionless
+        }),
+        Type::Decimal {
+            unit,
+            currency_source,
+            per_unit,
+            ..
+        } => T::Number(if exact {
+            units::declared(
+                env,
+                owner,
+                unit.as_ref(),
+                currency_source.as_ref(),
+                per_unit.as_ref(),
+            )
+        } else {
+            Operand::Dimensionless
+        }),
         Type::Enum { values } => T::Str(Some(values.iter().cloned().collect())),
         Type::Json => return None,
         Type::Record(name) => T::Record(Rec::Env {
             name: name.clone(),
             depth,
         }),
-        Type::List(item) => T::List(Box::new(lower(item, depth)?)),
-        Type::Optional(item) => optional(lower(item, depth)?),
+        Type::List(item) => T::List(Box::new(lower(item, depth, env, owner, exact)?)),
+        Type::Optional(item) => optional(lower(item, depth, env, owner, exact)?),
     })
 }
 
@@ -1018,9 +1302,12 @@ struct Checker<'a> {
     subject: Option<&'a Type>,
     scopes: Vec<Scope>,
     diagnostics: Vec<Diagnostic>,
+    notes: Vec<Diagnostic>,
     /// The proved type of every inferred node, by address, for the cost
     /// estimate.
     types: HashMap<usize, T>,
+    exact: bool,
+    exact_math: bool,
 }
 
 /// The node inside any number of parentheses.
@@ -1076,7 +1363,10 @@ impl<'a> Checker<'a> {
             subject,
             scopes: Vec::new(),
             diagnostics: Vec::new(),
+            notes: Vec::new(),
             types: HashMap::new(),
+            exact: false,
+            exact_math: false,
         }
     }
 
@@ -1106,7 +1396,13 @@ impl<'a> Checker<'a> {
 
     /// The checker type a site's expected type implies (`None` for `json`).
     fn expectation(&self, expected: &Type) -> Option<T> {
-        lower(expected, self.env.options().max_link_depth)
+        lower(
+            expected,
+            self.env.options().max_link_depth,
+            self.env,
+            None,
+            self.exact_math,
+        )
     }
 
     /// A value that must not be null.
@@ -1120,7 +1416,7 @@ impl<'a> Checker<'a> {
                 ),
             ),
             ty @ (T::Bool
-            | T::Number
+            | T::Number(_)
             | T::Str(_)
             | T::Date
             | T::Timestamp
@@ -1131,9 +1427,135 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn numeric(&mut self, node: &Node<'_>) -> Option<Operand> {
+        match self.value(node, None)? {
+            T::Number(operand) => Some(operand),
+            ty @ (T::Null
+            | T::Bool
+            | T::Str(_)
+            | T::Date
+            | T::Timestamp
+            | T::ParsedDate
+            | T::ParsedTimestamp
+            | T::List(_)
+            | T::Record(_)
+            | T::Optional(_)) => self.report(
+                node,
+                codes::TYPE_ERROR,
+                format!("expected a number, found `{ty}`"),
+            ),
+        }
+    }
+
+    fn numeric_operation(
+        &mut self,
+        node: &Node<'_>,
+        op: Operation,
+        a: &Operand,
+        b: &Operand,
+    ) -> Option<Operand> {
+        let Some((result, inferred)) = units::admit(op, a, b) else {
+            return self.report(
+                node,
+                codes::UNIT,
+                format!("VAL-UNIT / VAL-RATE: {op:?} refuses {a:?} and {b:?}"),
+            );
+        };
+        if let Some(unit) = inferred {
+            self.notes.push(Diagnostic {
+                code: codes::LITERAL_UNIT,
+                message: format!(
+                    "numeric literal inherits {:?} unit {}",
+                    unit.system, unit.code
+                ),
+                span: self.span(node),
+            });
+        }
+        Some(result)
+    }
+
+    fn numeric_binary(&mut self, left: &Node<'_>, right: &Node<'_>, op: Operation) -> Option<T> {
+        let a = self.numeric(left)?;
+        let b = self.numeric(right)?;
+        self.numeric_operation(left, op, &a, &b).map(T::Number)
+    }
+
+    fn check_destination(&mut self, node: &Node<'_>, found: &T, expected: &T) {
+        self.check_destination_at(node, found, expected, 0);
+    }
+
+    fn check_destination_at(&mut self, node: &Node<'_>, found: &T, expected: &T, depth: u32) {
+        if depth > 128 {
+            self.report::<()>(
+                node,
+                codes::BOUND_DEPTH,
+                "destination type nesting exceeds profile".into(),
+            );
+            return;
+        }
+        match (found, expected) {
+            (T::Number(a), T::Number(b)) if !units::destination(a, b) => {
+                self.report::<()>(
+                    node,
+                    codes::UNIT,
+                    format!("numeric destination {b:?} refuses {a:?}"),
+                );
+            }
+            (T::List(a), T::List(b)) | (T::Optional(a), T::Optional(b)) => {
+                self.check_destination_at(node, a, b, depth.saturating_add(1));
+            }
+            (a, T::Optional(b)) if !matches!(a, T::Null) => {
+                self.check_destination_at(node, a, b, depth.saturating_add(1));
+            }
+            (T::Record(Rec::Env { name, depth: links }), expected) => {
+                if let Some(record) = self.env.record(name) {
+                    let fields = record
+                        .fields
+                        .iter()
+                        .filter_map(|(field_name, field)| {
+                            let next = if matches!(
+                                field.source,
+                                FieldSource::Link { .. } | FieldSource::Inverse { .. }
+                            ) {
+                                links.checked_sub(1)?
+                            } else {
+                                *links
+                            };
+                            lower(&field.ty, next, self.env, Some(name), self.exact_math)
+                                .map(|ty| (field_name.clone(), ty))
+                        })
+                        .collect();
+                    self.check_destination_at(
+                        node,
+                        &T::Record(Rec::Literal(fields)),
+                        expected,
+                        depth.saturating_add(1),
+                    );
+                }
+            }
+            (T::Record(Rec::Literal(fields)), T::Record(Rec::Env { name, depth: links })) => {
+                if let Some(record) = self.env.record(name) {
+                    for (field_name, found) in fields {
+                        if let Some(expected) = record.fields.get(field_name).and_then(|field| {
+                            lower(&field.ty, *links, self.env, Some(name), self.exact_math)
+                        }) {
+                            self.check_destination_at(
+                                node,
+                                found,
+                                &expected,
+                                depth.saturating_add(1),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn number(&mut self, node: &Node<'_>) -> Option<()> {
-        match self.value(node, Some(&T::Number))? {
-            T::Number => Some(()),
+        match self.value(node, Some(&T::Number(Operand::Dimensionless)))? {
+            T::Number(_) => Some(()),
             ty @ (T::Null
             | T::Bool
             | T::Str(_)
@@ -1156,7 +1578,7 @@ impl<'a> Checker<'a> {
             T::Str(_) => Some(()),
             ty @ (T::Null
             | T::Bool
-            | T::Number
+            | T::Number(_)
             | T::Date
             | T::Timestamp
             | T::ParsedDate
@@ -1240,7 +1662,7 @@ impl<'a> Checker<'a> {
             T::Timestamp if !date => {}
             actual @ (T::Null
             | T::Bool
-            | T::Number
+            | T::Number(_)
             | T::Date
             | T::Timestamp
             | T::ParsedDate
@@ -1299,7 +1721,7 @@ impl<'a> Checker<'a> {
         match self.value(node, Some(&T::Bool))? {
             T::Bool => Some(()),
             ty @ (T::Null
-            | T::Number
+            | T::Number(_)
             | T::Str(_)
             | T::Date
             | T::Timestamp
@@ -1330,7 +1752,7 @@ impl<'a> Checker<'a> {
             Node::Null => Some(T::Null),
             Node::Bool(_) => Some(T::Bool),
             Node::Number(number) => match number.to_string().parse::<Number>() {
-                Ok(_) => Some(T::Number),
+                Ok(_) => Some(T::Number(Operand::Literal)),
                 Err(err) => self.report(node, codes::TYPE_ERROR, err.to_string()),
             },
             Node::String(text) => Some(T::Str(Some(BTreeSet::from([(*text).to_owned()])))),
@@ -1351,8 +1773,7 @@ impl<'a> Checker<'a> {
                 operator,
             } => match operator {
                 Operator::Arithmetic(ArithmeticOperator::Add | ArithmeticOperator::Subtract) => {
-                    self.number(operand)?;
-                    Some(T::Number)
+                    self.numeric(operand).map(T::Number)
                 }
                 Operator::Logical(LogicalOperator::Not) => {
                     self.boolean(operand)?;
@@ -1490,10 +1911,7 @@ impl<'a> Checker<'a> {
         // erases semantic date/timestamp kinds. Infer non-empty string lists
         // from their elements, then let the final structural assignability
         // check project typed temporal values to JSON strings.
-        let mut element: Option<T> = element_expected
-            .as_ref()
-            .filter(|item| !matches!(item, T::Str(None)))
-            .cloned();
+        let mut element: Option<T> = None;
         let mut failed = false;
         for item in items {
             let Some(ty) = self.value(item, element.as_ref()) else {
@@ -1533,6 +1951,16 @@ impl<'a> Checker<'a> {
             };
             let field_expected = match expected {
                 Some(T::Record(Rec::Literal(fields))) => fields.get(*name).cloned(),
+                Some(T::Record(Rec::Env {
+                    name: record,
+                    depth,
+                })) => self
+                    .env
+                    .record(record)
+                    .and_then(|r| r.fields.get(*name))
+                    .and_then(|field| {
+                        lower(&field.ty, *depth, self.env, Some(record), self.exact_math)
+                    }),
                 _ => None,
             };
             match self.infer(value, field_expected.as_ref()) {
@@ -1569,7 +1997,8 @@ impl<'a> Checker<'a> {
             Some(subject) if name == SUBJECT_VARIABLE => Some(subject),
             _ => self.env.variables().get(name),
         };
-        match declared.map(|ty| lower(ty, depth)) {
+        self.exact |= declared.is_some_and(exact_type);
+        match declared.map(|ty| lower(ty, depth, self.env, None, self.exact_math)) {
             Some(Some(ty)) => Some(ty),
             Some(None) => self.report(node, codes::OPAQUE_READ, format!("`{name}` is opaque")),
             None => self.report(
@@ -1596,7 +2025,7 @@ impl<'a> Checker<'a> {
                 ),
                 T::Null
                 | T::Bool
-                | T::Number
+                | T::Number(_)
                 | T::Str(_)
                 | T::Date
                 | T::Timestamp
@@ -1636,7 +2065,8 @@ impl<'a> Checker<'a> {
                     }
                     FieldSource::Property { .. } | FieldSource::Builtin => depth,
                 };
-                match lower(&field.ty, depth) {
+                self.exact |= exact_type(&field.ty);
+                match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
                     Some(ty) => Some(ty),
                     None => self.report(
                         node,
@@ -1647,7 +2077,7 @@ impl<'a> Checker<'a> {
             }
             other @ (T::Null
             | T::Bool
-            | T::Number
+            | T::Number(_)
             | T::Str(_)
             | T::Date
             | T::Timestamp
@@ -1731,7 +2161,7 @@ impl<'a> Checker<'a> {
             let needle = needle?;
             low.and(high)?;
             return match needle {
-                T::Number => Some(T::Bool),
+                T::Number(_) => Some(T::Bool),
                 ty @ (T::Null
                 | T::Bool
                 | T::Str(_)
@@ -1774,7 +2204,10 @@ impl<'a> Checker<'a> {
                 codes::CONSTANT_COMPARISON,
                 "nothing is an element of the empty list".to_owned(),
             ),
-            (T::Bool, T::Bool) | (T::Number, T::Number) | (T::Str(_), T::Str(_)) => Some(T::Bool),
+            (T::Number(a), T::Number(b)) => self
+                .numeric_operation(node, Operation::Compare, a, b)
+                .map(|_| T::Bool),
+            (T::Bool, T::Bool) | (T::Str(_), T::Str(_)) => Some(T::Bool),
             _ => self.report(
                 node,
                 codes::TYPE_ERROR,
@@ -1787,7 +2220,11 @@ impl<'a> Checker<'a> {
     fn plus(&mut self, left: &Node<'_>, right: &Node<'_>) -> Option<T> {
         match self.value(left, None) {
             Some(T::Str(_)) => self.string(right).map(|()| T::Str(None)),
-            Some(T::Number) => self.number(right).map(|()| T::Number),
+            Some(T::Number(a)) => {
+                let b = self.numeric(right)?;
+                self.numeric_operation(left, Operation::Add, &a, &b)
+                    .map(T::Number)
+            }
             Some(ty) => {
                 self.value(right, None);
                 self.report(
@@ -1821,24 +2258,24 @@ impl<'a> Checker<'a> {
                 self.membership(node, left, right)
             }
             Operator::Arithmetic(ArithmeticOperator::Subtract | ArithmeticOperator::Multiply) => {
-                let l = self.number(left);
-                let r = self.number(right);
-                l.and(r).map(|()| T::Number)
+                self.numeric_binary(
+                    left,
+                    right,
+                    if matches!(operator, Operator::Arithmetic(ArithmeticOperator::Subtract)) {
+                        Operation::Subtract
+                    } else {
+                        Operation::Multiply
+                    },
+                )
             }
-            // The engine returns null on checked_div failure (zero or
-            // quotient overflow). Only a literal of magnitude >= 1 proves
-            // the quotient cannot overflow for every conforming numerator.
             Operator::Arithmetic(ArithmeticOperator::Divide) => {
-                let l = self.number(left);
-                let r = self.number(right);
+                let result = self.numeric_binary(left, right, Operation::Divide)?;
                 let bounded_literal =
                     matches!(right, Node::Number(divisor) if divisor.abs() >= 1.into());
-                l.and(r).map(|()| {
-                    if bounded_literal {
-                        T::Number
-                    } else {
-                        optional(T::Number)
-                    }
+                Some(if bounded_literal || self.exact_math {
+                    result
+                } else {
+                    optional(result)
                 })
             }
             Operator::Logical(LogicalOperator::And | LogicalOperator::Or) => {
@@ -1852,7 +2289,7 @@ impl<'a> Checker<'a> {
                         T::Optional(inner) => *inner,
                         ty @ (T::Null
                         | T::Bool
-                        | T::Number
+                        | T::Number(_)
                         | T::Str(_)
                         | T::Date
                         | T::Timestamp
@@ -1888,7 +2325,7 @@ impl<'a> Checker<'a> {
                         T::Optional(_) => Some(T::Bool),
                         ty @ (T::Null
                         | T::Bool
-                        | T::Number
+                        | T::Number(_)
                         | T::Str(_)
                         | T::Date
                         | T::Timestamp
@@ -1911,8 +2348,10 @@ impl<'a> Checker<'a> {
                         codes::CONSTANT_COMPARISON,
                         format!("`{l}` and `{r}` never share a value"),
                     ),
+                    (T::Number(a), T::Number(b)) => self
+                        .numeric_operation(node, Operation::Compare, a, b)
+                        .map(|_| T::Bool),
                     (T::Bool, T::Bool)
-                    | (T::Number, T::Number)
                     | (T::Str(_), T::Str(_))
                     | (T::Date, T::Date)
                     | (T::Timestamp, T::Timestamp)
@@ -1935,9 +2374,12 @@ impl<'a> Checker<'a> {
                 let r = self.value(right, None);
                 let (l, r) = (l?, r?);
                 match (&l, &r) {
-                    (T::Number, T::Number)
-                    | (T::ParsedDate, T::ParsedDate)
-                    | (T::ParsedTimestamp, T::ParsedTimestamp) => Some(T::Bool),
+                    (T::Number(a), T::Number(b)) => self
+                        .numeric_operation(node, Operation::Compare, a, b)
+                        .map(|_| T::Bool),
+                    (T::ParsedDate, T::ParsedDate) | (T::ParsedTimestamp, T::ParsedTimestamp) => {
+                        Some(T::Bool)
+                    }
                     _ => self.report(
                         node,
                         codes::TYPE_ERROR,
@@ -2002,7 +2444,7 @@ impl<'a> Checker<'a> {
                 self.arity(node, arguments, 2)?;
                 let start = self.parsed_temporal(first?, true);
                 let end = self.parsed_temporal(arguments.get(1)?, true);
-                start.and(end).map(|()| T::Number)
+                start.and(end).map(|()| T::Number(Operand::Dimensionless))
             }
             F::AddDays => {
                 self.arity(node, arguments, 2)?;
@@ -2014,7 +2456,7 @@ impl<'a> Checker<'a> {
                 self.arity(node, arguments, 2)?;
                 let start = self.parsed_temporal(first?, false);
                 let end = self.parsed_temporal(arguments.get(1)?, false);
-                start.and(end).map(|()| T::Number)
+                start.and(end).map(|()| T::Number(Operand::Dimensionless))
             }
             F::AddSeconds => {
                 self.arity(node, arguments, 2)?;
@@ -2025,10 +2467,10 @@ impl<'a> Checker<'a> {
             F::Len => {
                 self.arity(node, arguments, 1)?;
                 match self.value(first?, None)? {
-                    T::Str(_) | T::List(_) => Some(T::Number),
+                    T::Str(_) | T::List(_) => Some(T::Number(Operand::Dimensionless)),
                     ty @ (T::Null
                     | T::Bool
-                    | T::Number
+                    | T::Number(_)
                     | T::Date
                     | T::Timestamp
                     | T::ParsedDate
@@ -2084,7 +2526,7 @@ impl<'a> Checker<'a> {
                     T::List(item) if matches!(item.as_ref(), T::Str(_)) => {}
                     ty @ (T::Null
                     | T::Bool
-                    | T::Number
+                    | T::Number(_)
                     | T::Str(_)
                     | T::Date
                     | T::Timestamp
@@ -2124,8 +2566,27 @@ impl<'a> Checker<'a> {
             }
             F::Abs | F::Floor | F::Ceil => {
                 self.arity(node, arguments, 1)?;
-                self.number(first?)?;
-                Some(T::Number)
+                self.numeric(first?).map(T::Number)
+            }
+            F::Round if arguments.len() == 3 => {
+                self.exact = true;
+                let operand = self.numeric(first?)?;
+                self.string(arguments.get(2)?)?;
+                if !matches!(arguments.get(1), Some(Node::Number(n)) if n.to_string().parse::<u8>().is_ok_and(|n| n <= 18))
+                    || !matches!(
+                        arguments.get(2),
+                        Some(Node::String(
+                            "refuse" | "toward_zero" | "half_even" | "half_away_from_zero"
+                        ))
+                    )
+                {
+                    return self.report(
+                        node,
+                        "core.values.inexact",
+                        "round requires a literal scale 0..18 and mode".to_owned(),
+                    );
+                }
+                Some(T::Number(operand))
             }
             F::Round | F::Trunc => {
                 if arguments.is_empty() || arguments.len() > 2 {
@@ -2135,13 +2596,13 @@ impl<'a> Checker<'a> {
                         "expected 1 or 2 arguments".to_owned(),
                     );
                 }
-                self.number(first?)?;
+                let operand = self.numeric(first?)?;
                 match arguments.get(1) {
-                    None => Some(T::Number),
+                    None => Some(T::Number(operand)),
                     Some(Node::Number(places))
                         if places.to_string().parse::<u8>().is_ok_and(|p| p <= 28) =>
                     {
-                        Some(T::Number)
+                        Some(T::Number(operand))
                     }
                     Some(other) => self.report(
                         other,
@@ -2152,11 +2613,14 @@ impl<'a> Checker<'a> {
             }
             F::Sum => {
                 self.arity(node, arguments, 1)?;
-                match self.value(first?, Some(&T::List(Box::new(T::Number))))? {
-                    T::List(item) if *item == T::Number => Some(T::Number),
+                match self.value(
+                    first?,
+                    Some(&T::List(Box::new(T::Number(Operand::Dimensionless)))),
+                )? {
+                    T::List(item) if matches!(*item, T::Number(_)) => Some(*item),
                     ty @ (T::Null
                     | T::Bool
-                    | T::Number
+                    | T::Number(_)
                     | T::Str(_)
                     | T::Date
                     | T::Timestamp
@@ -2205,7 +2669,7 @@ impl<'a> Checker<'a> {
             T::List(item) => *item,
             ty @ (T::Null
             | T::Bool
-            | T::Number
+            | T::Number(_)
             | T::Str(_)
             | T::Date
             | T::Timestamp
@@ -2235,7 +2699,7 @@ impl<'a> Checker<'a> {
                 list @ T::List(_) => Some(list),
                 ty @ (T::Null
                 | T::Bool
-                | T::Number
+                | T::Number(_)
                 | T::Str(_)
                 | T::Date
                 | T::Timestamp
@@ -2249,7 +2713,9 @@ impl<'a> Checker<'a> {
                 ),
             },
             C::Filter => self.boolean(body).map(|()| T::List(Box::new(element))),
-            C::Count => self.boolean(body).map(|()| T::Number),
+            C::Count => self
+                .boolean(body)
+                .map(|()| T::Number(Operand::Dimensionless)),
             C::All | C::None | C::Some | C::One => self.boolean(body).map(|()| T::Bool),
         };
         self.scopes.pop();
@@ -2262,7 +2728,7 @@ impl<'a> Checker<'a> {
         Some(match ty {
             T::Null => InferredType::Null,
             T::Bool => InferredType::Bool,
-            T::Number => InferredType::Number,
+            T::Number(_) => InferredType::Number,
             T::Date | T::ParsedDate => InferredType::Date,
             T::Timestamp | T::ParsedTimestamp => InferredType::Timestamp,
             T::Str(None) => InferredType::String,
@@ -2292,7 +2758,13 @@ impl<'a> Checker<'a> {
                         }
                         FieldSource::Property { .. } | FieldSource::Builtin => *depth,
                     };
-                    let Some(lowered) = lower(&field.ty, field_depth) else {
+                    let Some(lowered) = lower(
+                        &field.ty,
+                        field_depth,
+                        self.env,
+                        Some(name),
+                        self.exact_math,
+                    ) else {
                         self.diagnostics.push(Diagnostic {
                             code: codes::OPAQUE_READ,
                             message: format!("the result includes the opaque field `{field_name}`"),
@@ -2306,4 +2778,144 @@ impl<'a> Checker<'a> {
             }
         })
     }
+}
+
+pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(), String> {
+    for (name, record) in env
+        .records()
+        .iter()
+        .filter(|(name, _)| name.starts_with(prefix))
+    {
+        for field in record.fields.values() {
+            let mut ty = &field.ty;
+            while let Type::Optional(inner) | Type::List(inner) = ty {
+                ty = inner;
+            }
+            if let Type::Decimal {
+                unit,
+                currency_source,
+                per_unit,
+                ..
+            } = ty
+                && matches!(
+                    units::declared(
+                        env,
+                        Some(name),
+                        unit.as_ref(),
+                        currency_source.as_ref(),
+                        per_unit.as_ref()
+                    ),
+                    Operand::Unresolved
+                )
+            {
+                return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// VAL-EXACT-1: record references are inspected when their members are read.
+fn exact_type(mut ty: &Type) -> bool {
+    while let Type::Optional(inner) | Type::List(inner) = ty {
+        ty = inner;
+    }
+    matches!(ty, Type::Decimal { .. })
+}
+
+fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
+    let mut pending = vec![ty];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if exact_type(ty) {
+            return true;
+        }
+        let mut names = Vec::new();
+        ty.records(&mut names);
+        for name in names {
+            if visited.insert(name.clone())
+                && let Some(record) = env.record(&name)
+            {
+                pending.extend(record.fields.values().map(|field| &field.ty));
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType> {
+    while let Type::Optional(inner) = ty {
+        ty = inner;
+    }
+    let Type::Decimal {
+        scale,
+        unit,
+        rounding,
+        currency_source,
+        per_unit,
+    } = ty
+    else {
+        return None;
+    };
+    Some(norn_ir::PropertyType::Decimal {
+        scale: norn_ir::WholeNumber(*scale),
+        unit: unit.clone(),
+        rounding: Some(*rounding),
+        currency_source: currency_source.clone(),
+        per_unit: per_unit.clone(),
+    })
+}
+
+/// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
+pub(crate) fn exact_admission<'n>(
+    root: &'n Node<'n>,
+    metadata: &AstMetadata,
+    destination: bool,
+) -> Vec<Diagnostic> {
+    let mut pending = vec![(root, destination)];
+    let mut out = Vec::new();
+    while let Some((node, destination)) = pending.pop() {
+        let round = matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() >= 2);
+        let site = destination
+            || matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.len() == 3);
+        let reason = if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Arithmetic(ArithmeticOperator::Divide),
+                ..
+            }
+        ) && !destination
+        {
+            Some("division requires a declared Decimal destination or explicit round site")
+        } else if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn),
+                ..
+            }
+        ) {
+            Some("membership is outside the exact arithmetic profile")
+        } else if matches!(node, Node::FunctionCall { kind, .. } if !(matches!(kind, FunctionKind::Internal(InternalFunction::Len)) || round && site))
+        {
+            Some("function requires an explicit supported exact site")
+        } else if matches!(node, Node::FunctionCall { kind: FunctionKind::Internal(InternalFunction::Round), arguments } if arguments.get(1).is_some_and(|value| matches!(value, Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18))))
+        {
+            Some("round exceeds the exact arithmetic scale bound")
+        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
+            Some("numeric literal exceeds the exact arithmetic scale bound")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            out.push(Diagnostic {
+                code: "core.values.inexact",
+                message: reason.to_owned(),
+                span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
+            });
+        }
+        let mut children = Vec::new();
+        bounds::children(node, &mut children);
+        pending.extend(children.into_iter().map(|child| (child, site)));
+    }
+    out
 }

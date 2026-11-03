@@ -1523,6 +1523,7 @@ dependencies = [
  "norn-checker",
  "norn-ir",
  "norn-kernel",
+ "proptest",
  "serde",
  "serde_json",
  "utoipa",
@@ -1635,6 +1636,7 @@ version = "0.1.0"
 dependencies = [
  "norn-expr",
  "norn-ir",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

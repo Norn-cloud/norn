@@ -621,6 +621,18 @@ impl<'a> Checker<'a> {
             return None;
         };
         let resolved = property.and_then(|id| object.property(id));
+        if resolved.is_some_and(|property| {
+            matches!(
+                &property.kind,
+                EffectiveKind::Base(PropertyType::Decimal {
+                    per_unit: Some(_),
+                    ..
+                })
+            )
+        }) {
+            self.reject(codes::UNSUPPORTED_SEMANTICS, &format!("{at}/measure"));
+            return None;
+        }
         if property.is_some() && resolved.is_none() {
             self.reject(codes::UNKNOWN_PATH, &format!("{at}/measure/property"));
         }
