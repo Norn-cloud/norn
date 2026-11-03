@@ -641,7 +641,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
-        'Persist the rights revocation boundary': ('56f1fb52072000ff37b4cc67d61311bd6aa58acaaecbb8800bbffefec89a94fc', ['script', 'retries'], False, None),
+        'Persist the rights revocation boundary': ('90167cc951cb021f4540c1cbc695a96061b8ea5d95f54b059795893637cb4dd3', ['script', 'retries'], False, None),
         'Record admin approvals of the exact PR head': ('4d0f195b0af388bc465cf06787c72438f136bc8ccd9e8641d8814c7aa8963353', ['script'], True, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
         'Record admin approvals of the queued heads': ('685caef4348d52cb8db996db04146f97c0fcfaceed9cabc61e23bcdad5fa409c', ['script'], True, None),

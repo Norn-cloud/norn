@@ -850,7 +850,7 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         if !status_ids.insert(id)
             || status.get("context").and_then(serde_json::Value::as_str)
                 != Some("rights-revocation")
-            || status.get("state").and_then(serde_json::Value::as_str) != Some("failure")
+            || status.get("state").and_then(serde_json::Value::as_str) != Some("success")
         {
             return Err("invalid durable revocation status".into());
         }

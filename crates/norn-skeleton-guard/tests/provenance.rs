@@ -1497,7 +1497,7 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
     );
     for edited in [false, true] {
         let mut revoked = doc.clone();
-        revoked["pull_requests"][0]["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:00Z"}]);
+        revoked["pull_requests"][0]["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
         if edited {
             revoked["pull_requests"][0]["comments"]
                 .as_array_mut()
@@ -1816,7 +1816,7 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
     let head = "1".repeat(40);
     for edited in [false, true] {
         let mut doc = rights_document(&head, &"2".repeat(40));
-        doc["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:00Z"}]);
+        doc["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
         if edited {
             doc["comments"]
                 .as_array_mut()
@@ -1831,7 +1831,7 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
         doc["comments"].as_array_mut().unwrap().push(renewed);
         assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_ok());
         // A newer status cannot erase the older boundary, and same-second review fails closed.
-        doc["revocations"].as_array_mut().unwrap().push(json!({"id":11,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:01Z"}));
+        doc["revocations"].as_array_mut().unwrap().push(json!({"id":11,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:01Z"}));
         assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
         doc.as_object_mut().unwrap().remove("revocations");
         assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());

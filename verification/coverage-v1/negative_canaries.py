@@ -1746,7 +1746,7 @@ async function collectGroup() {
  // A deleted comment is absent from the live comment API, but not from status history.
  await record({comment:revoke});
  assert.equal(history.filter(s=>s.context==='rights-revocation').length,3);
- assert(history.every(s=>s.sha===head && s.state==='failure'));
+ assert(history.every(s=>s.sha===head && s.state===(s.context==='rights-revocation'?'success':'failure')));
  const evidence = await collectPR();
  assert.equal(evidence.revocations.length,3);
  assert.equal(evidence.comments.length,1);

@@ -241,7 +241,7 @@ jobs:
             const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));
             for (const sha of heads) {
               // Commit statuses are append-only. Read ALL history, never just the latest context.
-              await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'failure',
+              await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'success',
                 context: 'rights-revocation', description: `Rights revoked by comment ${comment.id}` });
               await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'failure',
                 context: 'trusted-policy', description: 'Rights revoked; fresh acknowledgment required' });
