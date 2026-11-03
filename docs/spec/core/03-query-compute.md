@@ -71,6 +71,30 @@ link execution and snapshot evaluation keep their existing refusals.
 **METRIC-MODEL-PARITY** requires every law-derived plan property to retain the
 same native model contract as the original, undeclared ontology.
 
+## Typed question construction (#658, #528)
+
+**QUESTION-LOWER-1:** `Norn.question` is syntax-only construction of the existing
+`QuestionIR`. It names one admitted metric, an object set, direct Eq/Ne
+predicates, direct dimensions, a half-open effective window and live/delayed
+freshness. Its explicit `authorized_objects` population grants no access. The
+host must supply its resolved source/authorization `QueryContext` and use
+ordinary `compute::admit` before
+execution. No SQL, callback, row-time surrogate or alternate evaluator is emitted.
+
+`norn-ts question file.ts` emits standalone candidates, not installable artifacts.
+The ordinary artifact compiler refuses a question rather than silently dropping
+it. Unsupported populations, predicates, unknown members and exhausted compiler
+bounds refuse. Names and ontology/type/unit semantics remain Rust admission's
+responsibility. Other time grains may be constructed but still face the existing
+qualified execution-profile check.
+
+Knowledge-time construction remains refused with `core.compute.unsupported_engine`
+until ASOF-KNOWLEDGE-1 admits the declared AsOf policy through its authenticated
+cutoff seam. No timestamp filter or new QuestionIR field represents that cutoff.
+Named scenario **typed_question_lowering** covers positive lowering, refusal,
+symbol identity, object references and bounded construction. This slice adds
+neither natural-language rendering nor ambiguity interpretation.
+
 ## Evaluation and obligation semantics
 
 1. Resolve the pinned graph and read scope. Materialize bounded complete dependencies, including empty partitions and memberships; pagination cannot stand for a universal domain. Sort by the declared total order before each fold; missing/duplicate final IDs refuse.

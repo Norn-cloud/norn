@@ -133,6 +133,22 @@ declare module "@norn/authoring" {
       readonly __types?: { readonly type: T }
     }
 
+    /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
+    interface QuestionDefinition { readonly _tag: "NornQuestion" }
+    interface QuestionMeta {
+      readonly name: string
+      readonly of: string | TypeDefinition<unknown>
+      readonly where: ReadonlyArray<{ readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      readonly measure: string
+      readonly by: ReadonlyArray<{ readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+      readonly asOf:
+        | { readonly basis: "effective"; readonly from: string; readonly to: string; readonly freshness: { readonly kind: "live" | "delayed"; readonly maxAgeMs: number } }
+        | { readonly basis: "knowledge" }
+      readonly population: { readonly kind: "authorized_objects" }
+    }
+    /** Syntax only: authored modules and callbacks never execute. */
+    function question(meta: QuestionMeta): QuestionDefinition
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}

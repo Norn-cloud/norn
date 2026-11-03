@@ -422,9 +422,44 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
     require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    require(all(jobs[name].get("name", name) == name for name in ("core", "plan", "full", "trusted-policy")),
+    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
+    trusted = jobs["trusted-policy"]
+    require(trusted.get("concurrency") == {
+        "group": "trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}",
+        "cancel-in-progress": True,
+    }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
+    require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
+            "github.event_name == 'pull_request_target' || "
+            "(github.event_name == 'issue_comment' && github.event.issue.pull_request && "
+            "(contains(github.event.comment.body, '/approve-gates') || "
+            "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/approve-gates')))))",
+            "trusted-policy: approval creation, editing and deletion must re-evaluate")
+    trusted_reporter = '''// If resolution failed there is no validated head: look it up again so
+// the failure still replaces any earlier success on that head.
+let sha = '${{ steps.pr.outputs.head_sha }}';
+if (!sha) {
+  const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
+  sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
+}
+await github.rest.repos.createCommitStatus({
+  owner: context.repo.owner,
+  repo: context.repo.repo,
+  sha,
+  state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+  context: 'trusted-policy',
+  description: 'Base-owned policy over candidate data',
+  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+});'''
+    reporters = [step for step in trusted.get("steps", [])
+                 if step.get("name") == "Report trusted policy on the exact PR head"]
+    require(len(reporters) == 1 and reporters[0] == {
+        "name": "Report trusted policy on the exact PR head", "if": "always()",
+        "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
+        "with": {"retries": 3, "script": trusted_reporter + "\n"},
+    }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
