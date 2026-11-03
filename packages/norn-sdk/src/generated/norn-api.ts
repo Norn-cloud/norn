@@ -14,7 +14,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Dispatch under a single definition epoch through the governed kernel.
+         * Transport-neutral action service over one tenant's admitted cell.
+         *     HTTP, MCP and Workers/DO hosts call this same function; only adapters decode
+         *     transport metadata and render the returned receipt or shared refusal.
+         *     The authenticated actor comes from the trusted host, never action input.
+         *     Scope is plain Rust data; the action revision pin is `request.version`.
+         *     Authorization, definition epoch, kernel commit and retry replay stay here.
          * @description # Errors
          *     Scope, policy, revision, argument and kernel refusals change no business state.
          */
@@ -120,6 +125,8 @@ export interface components {
             preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
             /** @description Normalized row operations committed by a parent-and-rows action. */
             rowOperations?: components["schemas"]["NornActionJsonValue"][];
+            /** @description TXN-RULE-1: exact writer closure, action, scope and world identity. */
+            ruleBinding?: string | null;
             /** @description The state it entered. */
             to: string;
             /** @description The fired transition. */

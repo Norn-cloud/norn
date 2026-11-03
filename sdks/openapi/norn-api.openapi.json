@@ -15,7 +15,7 @@
         "tags": [
           "crate::actions"
         ],
-        "summary": "Dispatch under a single definition epoch through the governed kernel.",
+        "summary": "Transport-neutral action service over one tenant's admitted cell.\nHTTP, MCP and Workers/DO hosts call this same function; only adapters decode\ntransport metadata and render the returned receipt or shared refusal.\nThe authenticated actor comes from the trusted host, never action input.\nScope is plain Rust data; the action revision pin is `request.version`.\nAuthorization, definition epoch, kernel commit and retry replay stay here.",
         "description": "# Errors\nScope, policy, revision, argument and kernel refusals change no business state.",
         "operationId": "call_action_in_epoch",
         "parameters": [
@@ -344,6 +344,13 @@
               "$ref": "#/components/schemas/NornActionJsonValue"
             },
             "description": "Normalized row operations committed by a parent-and-rows action."
+          },
+          "ruleBinding": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "TXN-RULE-1: exact writer closure, action, scope and world identity."
           },
           "to": {
             "type": "string",

@@ -1095,6 +1095,32 @@
         "half_away_from_zero"
       ]
     },
+    "SensitivePath": {
+      "description": "A sensitive action sequence on the enclosing object type.",
+      "type": "object",
+      "properties": {
+        "actions": {
+          "description": "Exact action identities in required order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "objectType": {
+          "description": "Must equal the enclosing type, not an arbitrary external target.",
+          "$ref": "#/$defs/ObjectTypeName"
+        },
+        "requireWitness": {
+          "description": "Require concrete availability evidence in addition to separation.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "actions"
+      ]
+    },
     "TextFormat": {
       "description": "Well-known string formats of a `text` property.",
       "oneOf": [
