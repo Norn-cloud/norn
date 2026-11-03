@@ -22,7 +22,7 @@ fn pool() -> Vec<Value> {
             .expect("generated LawIR"),
     );
     let property = norn_ir::PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::default(),
         scale: norn_ir::WholeNumber(3),
         rounding: None,
         unit: Some(norn_ir::UnitRef {
