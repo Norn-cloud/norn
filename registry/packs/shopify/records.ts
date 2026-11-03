@@ -146,7 +146,7 @@ export const Mapping = Norn.mapping({
       target: {type: OrderLine, interface: Commitment},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/OrderLine/' + input.id",
-      properties: [{property: "quantity", value: "input.quantity"}, {property: "unit", value: "input.unit"}, {property: "currency", value: "null"}, {property: "status", value: "'promised'"}, {property: "due_at", value: "input.due_at"}],
+      properties: [{property: "quantity", value: "input.quantity"}, {property: "unit", value: "input.unit"}, {property: "currency", value: "null"}, {property: "status", value: "'promised'"}, {property: "due_at", value: "timestamp(input.due_at)"}],
       links: [{link: "provider", targetMap: "party", key: "input.provider_ref"}, {link: "receiver", targetMap: "party", key: "input.receiver_ref"}, {link: "resource", targetMap: "holding", key: "input.holding_ref"}]
     },
     {
@@ -160,7 +160,7 @@ export const Mapping = Norn.mapping({
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "action", value: "'transfer_ownership'"},
-        {property: "occurred_at", value: "input.occurred_at"}
+        {property: "occurred_at", value: "timestamp(input.occurred_at)"}
       ],
       gaps: [{member: "reverses", reason: "not_in_source", note: "Only completed forward deliveries; returns and corrections require explicit original-event evidence."}],
       links: [

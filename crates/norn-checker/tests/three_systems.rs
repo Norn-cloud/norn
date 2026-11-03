@@ -152,7 +152,15 @@ fn mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic() {
         assert_eq!(first,apply(&mapping,&incremental),"deterministic replay");
         let keys:BTreeSet<_>=first.iter().map(|r|(&r.object_type,&r.key)).collect();
         assert_eq!(keys.len()+1,first.len(),"only deliberate delivery redelivery shares identity");
-        if system!="shopify" { assert_eq!(first.iter().filter(|r|r.map=="posting").count(),2); }
+        if system!="shopify" {
+            let postings:Vec<_>=first.iter().filter(|r|r.map=="posting").collect(); assert_eq!(postings.len(),2);
+            for (row,account,amount) in [(postings[0],"cogs",900),(postings[1],"inventory",-900)] {
+                let input=serde_json::to_value(&row.invocations[0].input).expect("posting values");
+                assert_eq!(input["amount"],json!(amount)); assert_eq!(input["currency"],json!("USD"));
+                assert_eq!(input["book"],json!("demo/stock-usd")); assert_eq!(input["account_role"],json!(account));
+                assert_eq!(row.links[0].target_key,"demo/delivery/1/line/1");
+            }
+        }
     }
 }
 
