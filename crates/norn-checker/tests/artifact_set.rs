@@ -749,6 +749,7 @@ fn parameter_slice_contract_refuses_missing_source() {
         run(&case)
             .iter()
             .any(|finding| finding[1] == "action.validation.invalid_payload"
-                && finding[2].contains("slice") && finding[2].contains("key"))
+                && finding[2].contains("slice")
+                && finding[2].contains("key"))
     );
 }

@@ -192,9 +192,19 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     let mut cell = open();
     let june = rate("june", "0.10", "2026-01-01T00:00:00Z", JUL01);
     let july = rate("july", "0.12", JUL01, "2099-01-01T00:00:00Z");
-    let mut org_rate = rate("org", "0.07", "2025-07-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    let mut org_rate = rate(
+        "org",
+        "0.07",
+        "2025-07-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+    );
     org_rate.insert("environment_id".into(), RuntimeValue::Null);
-    let mut global_rate = rate("global", "0.05", "2025-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    let mut global_rate = rate(
+        "global",
+        "0.05",
+        "2025-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+    );
     global_rate.insert("org_id".into(), RuntimeValue::Null);
     global_rate.insert("environment_id".into(), RuntimeValue::Null);
     let denied = commit_action(
@@ -210,7 +220,12 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     )
     .expect_err("governed configuration");
     assert_eq!(denied.code(), "action.permission_denied");
-    for (id, input) in [("june", june.clone()), ("july", july.clone()), ("org", org_rate.clone()), ("global", global_rate.clone())] {
+    for (id, input) in [
+        ("june", june.clone()),
+        ("july", july.clone()),
+        ("org", org_rate.clone()),
+        ("global", global_rate.clone()),
+    ] {
         commit_action(
             &mut cell,
             &catalog,
@@ -251,8 +266,22 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
     for (id, rate, at, tax, gross, setting) in [
         ("jun30", "0.10", JUN30, 10, 110, "june"),
         ("jul01", "0.12", JUL01, 12, 112, "july"),
-        ("global-fallback", "0.05", "2025-06-30T00:00:00Z", 5, 105, "global"),
-        ("org-fallback", "0.07", "2025-07-01T00:00:00Z", 7, 107, "org"),
+        (
+            "global-fallback",
+            "0.05",
+            "2025-06-30T00:00:00Z",
+            5,
+            105,
+            "global",
+        ),
+        (
+            "org-fallback",
+            "0.07",
+            "2025-07-01T00:00:00Z",
+            7,
+            107,
+            "org",
+        ),
     ] {
         let invocation = call(
             action("demo.tax.post"),
@@ -284,7 +313,12 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
         assert_eq!(recorded(&cell, id), record);
         originals.push((id, invocation.input, record));
     }
-    for (id, mut input) in [("edit-june", june), ("edit-july", july), ("edit-org", org_rate), ("edit-global", global_rate)] {
+    for (id, mut input) in [
+        ("edit-june", june),
+        ("edit-july", july),
+        ("edit-org", org_rate),
+        ("edit-global", global_rate),
+    ] {
         input.insert(
             "value".into(),
             RuntimeValue::from_json_text("0.20").expect("exact"),

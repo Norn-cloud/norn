@@ -9840,7 +9840,7 @@
       ]
     },
     "SettingPayload": {
-      "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue whose JSON type is fixed by `valueType`.",
+      "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue paired with `valueType`. Version 0.2 number settings require exact\ndecimal-string literals; verified retained 0.1 keeps its binary64 JSON\nnumber profile.",
       "type": "object",
       "properties": {
         "effectiveFrom": {
@@ -9878,7 +9878,7 @@
           "$ref": "#/$defs/SettingSupersedes"
         },
         "value": {
-          "description": "Version 0.2 numbers use exact decimal strings; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`.",
+          "description": "Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`.",
           "$ref": "#/$defs/JsonValue"
         },
         "valueType": {

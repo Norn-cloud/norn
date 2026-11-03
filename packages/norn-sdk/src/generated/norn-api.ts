@@ -4845,7 +4845,7 @@ export interface components {
             /** @description The setting version this one replaces. */
             supersedes?: components["schemas"]["NornIrSettingSupersedes"];
             /**
-             * @description Version 0.2 numbers use exact decimal strings; retained 0.1 numbers
+             * @description Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers
              *     keep binary64 JSON numbers. A `json` setting may be `null`.
              */
             value: components["schemas"]["NornIrJsonValue"];
