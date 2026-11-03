@@ -1,6 +1,6 @@
 # cargo nextest run --config-file .config/economist-nextest.toml --profile economist-rehearsal
-# Requires Rust 1.98, nextest 0.9.150, Bun 1.3.14, frozen tools/norn-proofs
-# dependencies and NORN_VERIFICATION_TOOL_ROOT with the pinned backend tools.
+# Requires Rust 1.98 and nextest 0.9.150.
+# Proof screen: not yet #784 / #772; show a recorded model-check result once landed.
 # Focused witnesses from published drops; no drop's complete selection is replaced.
 # Nextest runs setup phases in declaration order and stops on any failed phase.
 # Every test filter has one required name: an empty selection must fail.
@@ -52,14 +52,6 @@ slow-timeout = { period = "120s", terminate-after = 10 }
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-kernel", "--test", "invariant_commit", "-E", "test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."beat-4-native-run-build-generated-proof-backend"]
-command = ["cargo", "build", "--locked", "-p", "norn-checker", "--example", "quint"]
-slow-timeout = { period = "120s", terminate-after = 10 }
-
-[scripts.setup."beat-4-native-run-generated-bounded-counterexample"]
-command = ["bun", "test", "./tools/norn-proofs/check.test.ts", "--test-name-pattern", "^tla_ts_apalache_parity$"]
-slow-timeout = { period = "120s", terminate-after = 10 }
-
 [profile.economist-rehearsal]
 default-filter = "binary_id(norn-kernel::invariant_commit) & test(=law_invariant_runtime_valid_response_admits)"
 test-threads = 1
@@ -81,6 +73,4 @@ setup = [
   "beat-3-native-run-committed-pricing",
   "beat-4-native-run-refused-conservation-transaction",
   "beat-4-native-run-retained-invariant-responses",
-  "beat-4-native-run-build-generated-proof-backend",
-  "beat-4-native-run-generated-bounded-counterexample",
 ]
