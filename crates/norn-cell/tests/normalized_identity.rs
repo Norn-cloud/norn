@@ -250,7 +250,8 @@ fn normalized_uniqueness_retains_resolution_metadata_without_invoking_it() {
     let model = Model::from_definitions(&defs, &[]).expect("existing metadata remains valid");
     assert_eq!(
         model
-            .object_type("identity.Root")
+            .object_types()
+            .find(|definition| definition.name.as_str() == "identity.Root")
             .expect("definition")
             .identity[0]
             .rule
@@ -393,21 +394,24 @@ fn normalized_composite_integer_key_keeps_values_beyond_binary64_precision() {
         .push(PropertyId("ordinal".into()));
     let mut store = CellStore::open_in_memory(Model::from_definitions(&defs, &[]).expect("model"))
         .expect("store");
-    let row = |id: &str, code: &str| {
+    let row = |id: &str, code: &str, ordinal: i64| {
         let mut row = put("identity.Child", id, code);
         if let FactWriteRow::Put { values, .. } = &mut row {
             values.insert(
                 "ordinal".into(),
-                RuntimeValue::from_json_text(i64::MAX.to_string()).expect("exact integer"),
+                RuntimeValue::from_json_text(ordinal.to_string()).expect("exact integer"),
             );
         }
         row
     };
     store
-        .commit(&batch("org_a", "main", vec![row("a", " abc ")]))
+        .commit(&batch("org_a", "main", vec![row("a", " abc ", i64::MAX)]))
         .expect("first");
+    store
+        .commit(&batch("org_a", "main", vec![row("b", "ABC", i64::MAX - 1)]))
+        .expect("adjacent full-range integers stay distinct");
     assert!(matches!(
-        store.commit(&batch("org_a", "main", vec![row("b", "ABC")])),
+        store.commit(&batch("org_a", "main", vec![row("c", "ABC", i64::MAX)])),
         Err(CellError::IdentityCollision { .. })
     ));
 }
