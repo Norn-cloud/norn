@@ -42,6 +42,37 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 Evidence levels remain separate. Lean proof bodies must check the generated theorem with declared axioms and no admitted holes; bounded model results carry bounds. Admission receipts, source reviews and echoed challenges are structural evidence only. Report eligible auto-proof goals solved/total separately from all goals and unknown/refuted counts.
 
+### Exact result identity (PROOF-BIND-1)
+
+The checker-owned `Challenge` supplies `evidence_pins`, `record_evidence` and
+`evidence_identity`; there is no parallel goal type. Pins select an existing
+generated obligation by index and digest and retain the exact challenge digest.
+The record retains the complete challenge: generated statements, full definition
+and writer/mapping closure, unit interpretation, semantics/compiler profile,
+assumptions and assurance requirements. Any source change conservatively
+invalidates identity, including edits outside a narrower semantic dependency set.
+
+The controller supplies tool ID, version and lowercase implementation SHA-256,
+an exact nonempty bounds/fairness JSON object (at most 64 KiB), and a `u64` seed.
+The result is opaque UTF-8 JSON (at most 1 MiB) with its raw SHA-256. Whitespace,
+Unicode spelling and numeric spelling remain significant. The identity check
+also requires the independently retained result digest from the trusted checked
+driver; taking that expected digest from the record under inspection is invalid.
+
+`Current` establishes identity only. It authenticates no tool execution and
+confers no bounded-pass, counterexample, non-vacuity or proof status. The real
+checked driver supplies those results and actual bounds; unsupported generated
+proof assessments remain unknown. A mismatched current pin, malformed record or
+changed payload yields `Unknown` / `core.laws.stale_evidence` (PROOF-STALE), never
+a pass. Replacing both a stored result and its co-located hash still fails the
+independent result pin.
+
+Named identity scenarios: matching pass-shaped and counterexample-shaped payloads
+stay identity-only; writer, unit and mapping edits stale either result kind;
+tool/version/implementation, bounds, seed and goal edits stale evidence; joint
+payload/hash substitution fails; malformed or oversized profiles/results refuse.
+These scenarios do not simulate a solver or claim a completed constitution drop.
+
 ## Named acceptance scenarios
 
 - **LAW-INTERFACE/TRANSITIVE/DIAMOND:** Given direct and transitive implementors, when B2 resolves laws, then retain each origin and one instance per identical substitution; missing subject refuses.

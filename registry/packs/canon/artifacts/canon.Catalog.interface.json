@@ -1,0 +1,41 @@
+{
+  "artifactId": "canon.Catalog.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Catalog metadata, never stock",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "canon.Catalog",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.Catalog.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
