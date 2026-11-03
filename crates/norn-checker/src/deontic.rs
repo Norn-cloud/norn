@@ -127,8 +127,8 @@ pub enum RequirementRefusal {
     InvalidBinding,
     /// A predicate is not Boolean in the supplied environment.
     PredicateType,
-    /// An English or Arabic reviewed template is missing.
-    MissingTemplate,
+    /// A locale map is malformed or incomplete.
+    Wording(&'static str),
 }
 
 impl RequirementRefusal {
@@ -137,9 +137,8 @@ impl RequirementRefusal {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnsupportedTiming => "law.validation.unsupported_temporal",
-            Self::UnsupportedResponse | Self::ModalityMismatch | Self::MissingTemplate => {
-                "law.validation.invalid_document"
-            }
+            Self::UnsupportedResponse | Self::ModalityMismatch => "law.validation.invalid_document",
+            Self::Wording(code) => code,
             Self::InvalidBinding => "law.model.unknown_binding",
             Self::PredicateType => "law.model.predicate_type",
         }
@@ -195,13 +194,7 @@ pub fn check_requirement(
     {
         return Err(R::InvalidBinding);
     }
-    let w = &requirement.wording;
-    if [&w.scope, &w.activation, &w.component, &w.response]
-        .iter()
-        .any(|w| w.en.trim().is_empty() || w.ar.trim().is_empty())
-    {
-        return Err(R::MissingTemplate);
-    }
+    requirement.wording.validate().map_err(R::Wording)?;
     let response = match &law.response {
         LawResponse::Predicate { expression } => Some(expression),
         LawResponse::Invariant {

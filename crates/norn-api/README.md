@@ -37,8 +37,11 @@ host never infers base authority from submitted definitions.
 
 `norn mcp` serves newline-delimited MCP JSON-RPC over stdio. Initialize with
 `protocolVersion: "2025-11-25"`, discover `tools/list`, then invoke `tools/call`.
-Only installed human backends are advertised: currently `norn.check`, whose
-file parameters come from the same CLI argument catalog. It calls the same
+Only installed human backends are advertised: `norn.capabilities` and `norn.check`.
+Their names, descriptions and input schemas come from the human CLI command
+catalog. `norn capabilities` returns the same tool IR, catalog digest and bounded
+pages as MCP discovery; pass `nextCursor` back as `--cursor` to continue. It
+advertises only available operations. `norn.check` calls the same
 checker path as `norn check`; checking never installs definitions. Author typed
 source, compile it using the existing authoring command, and supply the resulting
 artifact/context file paths. The returned checker report retains receipt and
