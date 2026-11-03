@@ -132,21 +132,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &record.object_type,
                 &record.id,
                 Some(record),
-                frontier,
+                frontier.unwrap_or(u64::MAX),
             )?
             .into_iter()
             .filter_map(|(finding, quarantines)| {
                 (quarantines && finding.status == DataQualityFindingStatus::Open).then_some(finding)
             })
             .collect();
-        self.source_dispute_at(world, &record.object_type, &record.id)?;
-        if world == crate::MAIN_WORLD {
-            let mut source = self.source_conflict_findings(&record.object_type, &record.id)?;
-            source.extend(self.identity_findings(&record.object_type, &record.id)?);
-            if frontier.is_some() && !source.is_empty() {
-                return Err(CellError::ComputeRefused("core.world.source_dispute_unqualified"));
+        if self.source_dispute_at(world, &record.object_type, &record.id)? {
+            if frontier.is_some() {
+                return Err(CellError::ComputeRefused(
+                    "core.world.source_dispute_unqualified",
+                ));
             }
-            findings.extend(source);
+            findings.extend(self.source_conflict_findings(&record.object_type, &record.id)?);
+            findings.extend(self.identity_findings(&record.object_type, &record.id)?);
         }
         findings.retain(|f| f.status == DataQualityFindingStatus::Open);
         findings.sort_by(|a, b| a.id.cmp(&b.id));
@@ -160,15 +160,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
-        if let Some(record) = current.as_ref()
-            && self
-                .object_at_version(world, object_type, key, record.version)?
-                .as_ref()
-                != Some(record)
-        {
-            return Err(CellError::UnprovenCorrection);
-        }
-        self.review_findings_at(world, object_type, key, current.as_ref(), None)
+        self.review_findings_at(world, object_type, key, current.as_ref(), u64::MAX)
     }
 
     // DATA-QUARANTINE / ASOF-KNOWLEDGE-1: recovery uses the selected incarnation.
@@ -178,26 +170,26 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
         current: Option<&ObjectRecord>,
-        frontier: Option<u64>,
+        frontier: u64,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
+        if let Some(record) = current
+            && self
+                .object_at_version(world, object_type, key, record.version)?
+                .as_ref()
+                != Some(record)
+        {
+            return Err(CellError::UnprovenCorrection);
+        }
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
         let mut after = 0i64;
         loop {
             let sequences = self.conn.query(
-                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND (?5 IS NULL OR commit_seq <= ?5) ORDER BY seq LIMIT 64"),
-                params![world, object_type, key, after, frontier.map(|f| to_i64(f, "finding frontier")).transpose()?],
+                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND commit_seq <= ?5 ORDER BY seq LIMIT 64"),
+                params![world, object_type, key, after, to_i64(frontier.min(9_007_199_254_740_991), "finding frontier")?],
             )?;
             if sequences.is_empty() {
                 break;
-            }
-            if let Some(record) = current
-                && self
-                    .object_at_version(world, object_type, key, record.version)?
-                    .as_ref()
-                    != Some(record)
-            {
-                return Err(CellError::UnprovenCorrection);
             }
             for values in sequences {
                 let seq: i64 = crate::engine::SqlRow(values).get(0)?;
