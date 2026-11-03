@@ -184,7 +184,16 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
-**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+**PROOF-GUARANTEE-1:** the native binder emits one typed document per law, with
+all generated obligations, exact bound records and typed trace quantities. A
+recording is written only after the complete original/mutant/restored acceptance
+passes; failed runs retain Unknown in their output and produce no recording.
+Runtime and parity links remain explicitly not-yet unless separately supplied.
+Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
+and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
+are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+
+**PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
 generated goal inventory. Unsupported goals keep explicit Unknown reasons.
