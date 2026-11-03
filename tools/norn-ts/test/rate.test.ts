@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import { compileModule } from "../src/compile-stdin.ts"
 import * as E from "../src/builder/entity.ts"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { canonicalJson } from "../src/canonical.ts"
+import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { TOOL_ROOT } from "../src/profile.ts"
 
 const source = (scale: string, currency = '"currency"') => `
 import { Schema } from "effect"
@@ -29,6 +34,18 @@ test("VAL-RATE closed numeric schemas retain exact declarations in a direct call
  }, input => ({facts:[],commands:[{actionId:"quote",currency:"USD",amount:input.slice.rate*input.slice.grams}],timers:[]}))`,{orgId:"org_demo",environmentId:"dev"})
  if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
  expect(result.artifacts[0]).toMatchObject({dependencies:[{artifactId:"core.units",version:"1.0.0",kind:"entity",required:true}],payload:{inputSchema:{properties:{slice:{properties:{rate:{type:"number",nornType:E.rate(6,"currency",{system:"ucum",code:"g"})}}}}},graph:{nodes:expect.arrayContaining([{id:"decision",name:"decision",type:"expressionNode",content:{expressions:expect.any(Array)}}])}}})
+})
+
+test("JEWEL-PRICE native acceptance uses freshly compiled typed declarations", () => {
+ const sourcePath = "tools/norn-ts/fixtures/definitions/jewelry-pricing.source.ts"
+ const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/jewelry-pricing.source.ts"), {
+  scope: {orgId:"org_demo",environmentId:"dev"}, sourcePath,
+ })
+ if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+ expect(result.warnings).toEqual([])
+ const retained = JSON.parse(readFileSync(join(TOOL_ROOT,"fixtures/definitions/jewelry-pricing.ir.json"),"utf8"))
+ expect(canonicalJson(result.artifacts)).toBe(canonicalJson(retained))
+ expect(result.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({kind:"action",payload:expect.objectContaining({derive:[{field:"amount",expression:"input.price_per_g * input.fine_g",inputRequired:false}]})})]))
 })
 
 test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bounds", () => {
