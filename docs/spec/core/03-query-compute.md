@@ -97,3 +97,6 @@ Historical source-dispute overlays remain refused as
 `core.world.source_dispute_unqualified` until their frontier is retained.
 
 Named scenario: `data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm`.
+
+Regression: `quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pins`
+checks that reusing an answer context re-derives pins at the historical frontier.
