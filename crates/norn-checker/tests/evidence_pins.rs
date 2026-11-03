@@ -1,36 +1,101 @@
 //! PROOF-BIND-1 / PROOF-STALE identity correspondence; no solver is simulated.
-#![allow(clippy::expect_used, clippy::indexing_slicing, missing_docs, reason = "evidence identity scenarios")]
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    missing_docs,
+    reason = "evidence identity scenarios"
+)]
+use norn_checker::obligations::evidence::{
+    EvidenceError, EvidenceIdentity, EvidencePins, EvidenceRecord, EvidenceTool, STALE_EVIDENCE,
+};
 use norn_checker::obligations::{ApprovedContract, Challenge, DefinitionSource};
-use norn_checker::obligations::evidence::{EvidenceError, EvidenceIdentity, EvidencePins, EvidenceRecord, EvidenceTool, STALE_EVIDENCE};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 fn pool() -> Vec<Value> {
-    let mut artifacts: Vec<Value> = serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("generated entities");
-    artifacts.extend(serde_json::from_str::<Vec<Value>>(include_str!("../../../fixtures/law-ir/laws.json")).expect("generated LawIR"));
-    let property = norn_ir::PropertyType::Decimal { scale: 3.into(), rounding: None, unit: Some(norn_ir::UnitRef { system: norn_ir::UnitSystem::Ucum, code: "g".into() }), currency_source: None, per_unit: None };
+    let mut artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+            .expect("generated entities");
+    artifacts.extend(
+        serde_json::from_str::<Vec<Value>>(include_str!("../../../fixtures/law-ir/laws.json"))
+            .expect("generated LawIR"),
+    );
+    let property = norn_ir::PropertyType::Decimal {
+        scale: norn_ir::WholeNumber(3),
+        rounding: None,
+        unit: Some(norn_ir::UnitRef {
+            system: norn_ir::UnitSystem::Ucum,
+            code: "g".into(),
+        }),
+        currency_source: None,
+        per_unit: None,
+    };
     let mut mass = artifacts[0]["payload"]["objectType"]["properties"][1].clone();
     mass["id"] = json!("mass");
     mass["type"] = serde_json::to_value(property).expect("Rust-authored quantity type");
-    artifacts[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties").push(mass);
-    let pin = norn_ir::ArtifactDependency { artifact_id: "core.units".into(), kind: norn_ir::ArtifactKind::Entity, version: Some("1.0.0".into()), required: true };
+    artifacts[0]["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .push(mass);
+    let pin = norn_ir::ArtifactDependency {
+        artifact_id: "core.units".into(),
+        kind: norn_ir::ArtifactKind::Entity,
+        version: Some("1.0.0".into()),
+        required: true,
+    };
     artifacts[0]["dependencies"] = serde_json::to_value(vec![pin]).expect("unit dependency");
-    artifacts.push(serde_json::from_str(include_str!("../../../registry/core/artifacts/core.units.json")).expect("retained unit catalog"));
+    artifacts.push(
+        serde_json::from_str(include_str!(
+            "../../../registry/core/artifacts/core.units.json"
+        ))
+        .expect("retained unit catalog"),
+    );
     artifacts
 }
 
 fn challenge(artifacts: &[Value]) -> Challenge {
-    let source = DefinitionSource::parse(&serde_json::to_string(artifacts).expect("exact source"), "[]").expect("parse admitted source");
+    let typed: Vec<norn_ir::ArtifactEnvelope> = artifacts
+        .iter()
+        .map(|a| serde_json::from_value(a.clone()).expect("typed artifact"))
+        .collect();
+    let findings = norn_checker::check_artifact_set(
+        &typed,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "fixture admission: {findings:?}");
+    let source = DefinitionSource::parse(
+        &serde_json::to_string(artifacts).expect("exact source"),
+        "[]",
+    )
+    .expect("parse admitted source");
     let registry = BTreeSet::new();
-    ApprovedContract::approve(&source, &registry, json!({"expression":"norn-zen/6","units":"pinned"}), json!({"host":"single-cell"}), json!({"required":"bounded","checker":"unknown"})).expect("admission")
-        .challenge(&source, &registry).expect("checker-generated goals")
+    ApprovedContract::approve(
+        &source,
+        &registry,
+        json!({"expression":"norn-zen/6","units":"pinned"}),
+        json!({"host":"single-cell"}),
+        json!({"required":"bounded","checker":"unknown"}),
+    )
+    .expect("admission")
+    .challenge(&source, &registry)
+    .expect("checker-generated goals")
 }
 fn tool() -> EvidenceTool {
-    EvidenceTool { id: "test.identity-only".into(), version: "1".into(), implementation_sha256: "a".repeat(64) }
+    EvidenceTool {
+        id: "test.identity-only".into(),
+        version: "1".into(),
+        implementation_sha256: "a".repeat(64),
+    }
 }
 fn pins(challenge: &Challenge, seed: u64) -> EvidencePins {
-    challenge.evidence_pins(0, tool(), r#"{"steps":8,"fairness":[]}"#, seed).expect("generated goal identity")
+    challenge
+        .evidence_pins(0, tool(), r#"{"steps":8,"fairness":[]}"#, seed)
+        .expect("generated goal identity")
 }
 fn stale(challenge: &Challenge, current: &EvidencePins, digest: &str, record: &EvidenceRecord) {
     let identity = challenge.evidence_identity(current, digest, record);
@@ -42,12 +107,26 @@ fn stale(challenge: &Challenge, current: &EvidencePins, digest: &str, record: &E
 fn matching_pass_and_counterexample_payloads_establish_identity_only() {
     let challenge = challenge(&pool());
     let pins = pins(&challenge, 0);
-    for payload in [r#"{"status":"bounded-pass","reachable":true}"#, r#"{"status":"counterexample","trace":[100,99.2]}"#, r#"{"status":"proved"}"#] {
-        let record = challenge.record_evidence(&pins, payload).expect("opaque claim");
+    for payload in [
+        r#"{"status":"bounded-pass","reachable":true}"#,
+        r#"{"status":"counterexample","trace":[100,99.2]}"#,
+        r#"{"status":"proved"}"#,
+    ] {
+        let record = challenge
+            .record_evidence(&pins, payload)
+            .expect("opaque claim");
         assert_eq!(record.result_json, payload);
-        assert_eq!(serde_json::from_str::<Value>(&record.challenge_json).expect("complete challenge"), *challenge.body());
-        assert_eq!(challenge.evidence_identity(&pins, &record.result_sha256, &record), EvidenceIdentity::Current);
-        let decoded: EvidenceRecord = serde_json::from_str(&serde_json::to_string(&record).expect("wire")).expect("round trip");
+        assert_eq!(
+            serde_json::from_str::<Value>(&record.challenge_json).expect("complete challenge"),
+            *challenge.body()
+        );
+        assert_eq!(
+            challenge.evidence_identity(&pins, &record.result_sha256, &record),
+            EvidenceIdentity::Current
+        );
+        let decoded: EvidenceRecord =
+            serde_json::from_str(&serde_json::to_string(&record).expect("wire"))
+                .expect("round trip");
         assert_eq!(decoded, record);
     }
     assert_eq!(EvidenceIdentity::Current.code(), None);
@@ -57,9 +136,17 @@ fn matching_pass_and_counterexample_payloads_establish_identity_only() {
 fn exact_payload_bytes_and_controller_result_digest_cannot_be_substituted() {
     let challenge = challenge(&pool());
     let pins = pins(&challenge, 42);
-    let original = challenge.record_evidence(&pins, r#"{"value":1,"label":"é"}"#).expect("result");
-    for payload in ["{ \"value\":1,\"label\":\"é\"}", r#"{"value":1.0,"label":"é"}"#, "{\"value\":1,\"label\":\"e\u{301}\"}"] {
-        let replacement = challenge.record_evidence(&pins, payload).expect("distinct exact bytes");
+    let original = challenge
+        .record_evidence(&pins, r#"{"value":1,"label":"é"}"#)
+        .expect("result");
+    for payload in [
+        "{ \"value\":1,\"label\":\"é\"}",
+        r#"{"value":1.0,"label":"é"}"#,
+        "{\"value\":1,\"label\":\"e\u{301}\"}",
+    ] {
+        let replacement = challenge
+            .record_evidence(&pins, payload)
+            .expect("distinct exact bytes");
         assert_ne!(replacement.result_sha256, original.result_sha256);
         stale(&challenge, &pins, &original.result_sha256, &replacement);
     }
@@ -71,15 +158,52 @@ fn malformed_profiles_and_absent_generated_goals_refuse() {
     for bounds in ["{}", "[]", "null", "{", r#"{"steps":1,"steps":2}"#] {
         assert!(challenge.evidence_pins(0, tool(), bounds, 0).is_err());
     }
-    assert_eq!(challenge.evidence_pins(u32::MAX, tool(), r#"{"steps":1}"#, 0), Err(EvidenceError::MissingGoal));
-    for bad in [EvidenceTool { id: " ".into(), ..tool() }, EvidenceTool { version: "".into(), ..tool() }, EvidenceTool { implementation_sha256: "A".repeat(64), ..tool() }, EvidenceTool { id: "a".repeat(1_025), ..tool() }] {
-        assert_eq!(challenge.evidence_pins(0, bad, r#"{"steps":1}"#, 0), Err(EvidenceError::Malformed));
+    assert_eq!(
+        challenge.evidence_pins(u32::MAX, tool(), r#"{"steps":1}"#, 0),
+        Err(EvidenceError::MissingGoal)
+    );
+    for bad in [
+        EvidenceTool {
+            id: " ".into(),
+            ..tool()
+        },
+        EvidenceTool {
+            version: String::new(),
+            ..tool()
+        },
+        EvidenceTool {
+            implementation_sha256: "A".repeat(64),
+            ..tool()
+        },
+        EvidenceTool {
+            id: "a".repeat(1_025),
+            ..tool()
+        },
+    ] {
+        assert_eq!(
+            challenge.evidence_pins(0, bad, r#"{"steps":1}"#, 0),
+            Err(EvidenceError::Malformed)
+        );
     }
-    assert_eq!(challenge.evidence_pins(0, tool(), &" ".repeat(65_537), 0), Err(EvidenceError::Limit));
+    assert_eq!(
+        challenge.evidence_pins(0, tool(), &" ".repeat(65_537), 0),
+        Err(EvidenceError::Limit)
+    );
     let pins = pins(&challenge, 0);
-    assert_eq!(challenge.record_evidence(&pins, &" ".repeat(1_048_577)), Err(EvidenceError::Limit));
-    assert_eq!(challenge.record_evidence(&pins, "{"), Err(EvidenceError::Malformed));
-    let mut record = serde_json::to_value(challenge.record_evidence(&pins, "null").expect("opaque JSON")).expect("wire");
+    assert_eq!(
+        challenge.record_evidence(&pins, &" ".repeat(1_048_577)),
+        Err(EvidenceError::Limit)
+    );
+    assert_eq!(
+        challenge.record_evidence(&pins, "{"),
+        Err(EvidenceError::Malformed)
+    );
+    let mut record = serde_json::to_value(
+        challenge
+            .record_evidence(&pins, "null")
+            .expect("opaque JSON"),
+    )
+    .expect("wire");
     record["verified"] = json!(true);
     assert!(serde_json::from_value::<EvidenceRecord>(record).is_err());
 }
@@ -87,15 +211,48 @@ fn malformed_profiles_and_absent_generated_goals_refuse() {
 fn mapping_pool() -> Vec<Value> {
     let mut pool = pool();
     let root = std::env::var_os("NORN_UPSTREAM_FIXTURE_DIR").expect("standard generated fixtures");
-    let core: Vec<Value> = serde_json::from_slice(&std::fs::read(std::path::Path::new(&root).join("core-artifacts.json")).expect("typed compiler output")).expect("artifacts");
-    let mut source = core.iter().find(|a| a["artifactId"] == "toy.contacts.source").expect("generated schema").clone();
+    let core: Vec<Value> = serde_json::from_slice(
+        &std::fs::read(std::path::Path::new(&root).join("core-artifacts.json"))
+            .expect("typed compiler output"),
+    )
+    .expect("artifacts");
+    let mut source = core
+        .iter()
+        .find(|a| a["artifactId"] == "toy.contacts.source")
+        .expect("generated schema")
+        .clone();
     source["artifactId"] = json!("toy.schema");
     source["payload"]["fields"][0]["name"] = json!("id");
-    let typed: norn_ir::ArtifactEnvelope = serde_json::from_value(source.clone()).expect("typed schema");
-    let digest = norn_checker::ArtifactRef::of(&typed).expect("actual source digest").sha256;
-    for mut artifact in core.into_iter().filter(|a| a["artifactId"] != "toy.contacts.source") {
+    let typed: norn_ir::ArtifactEnvelope =
+        serde_json::from_value(source.clone()).expect("typed schema");
+    let digest = norn_checker::ArtifactRef::of(&typed)
+        .expect("actual source digest")
+        .sha256;
+    for mut artifact in core
+        .into_iter()
+        .filter(|a| a["artifactId"] != "toy.contacts.source")
+    {
+        if artifact["artifactId"] == "toy.Row.entity" {
+            artifact["payload"]["objectType"]["implements"] =
+                serde_json::to_value(vec![norn_ir::InterfaceName("toy.Identified".into())])
+                    .expect("Rust-authored implementation");
+            artifact["dependencies"] = serde_json::to_value(vec![norn_ir::ArtifactDependency {
+                artifact_id: "toy.Identified.interface".into(),
+                kind: norn_ir::ArtifactKind::Entity,
+                version: Some("1.0.0".into()),
+                required: true,
+            }])
+            .expect("exact interface dependency");
+        }
         if artifact["artifactId"] == "toy.rows" {
             artifact["payload"]["source"]["sha256"] = json!(digest);
+            artifact["payload"]["maps"][0]["properties"] =
+                serde_json::to_value(vec![norn_ir::mapping::PropertyMap {
+                    property: norn_ir::PropertyId("id".into()),
+                    value: norn_ir::ZenExpression("input.id".into()),
+                    nested: None,
+                }])
+                .expect("Rust-authored property map");
         }
         pool.push(artifact);
     }
