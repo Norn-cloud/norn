@@ -103,6 +103,12 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .legend i.external { background: none; border-style: dashed; }
 .legend i.line { height: 0; width: 20px; border: 0; border-top: 1.5px solid var(--muted); border-radius: 0; vertical-align: middle; background: none; }
 .legend i.line.dashed { border-top-style: dashed; }
+.states { display: flex; gap: .5rem; list-style: none; padding: 0; margin: 0 0 1.5rem; font-size: .875rem; font-weight: 600; }
+.states li { padding: .35rem .9rem; border-radius: 999px; background: var(--neutral-bg); color: var(--muted); }
+.states li.done::after { content: " ✓"; }
+.states li.refused { background: var(--happening-bg); color: var(--warn); }
+.assurance { border-inline-start: 4px solid var(--accent); }
+.exact { font-variant-numeric: tabular-nums; font-weight: 600; }
 details > summary { cursor: pointer; }
 pre { margin: 0; padding: 1.25rem; background: var(--raised); overflow: auto; max-height: 65vh; line-height: 1.6; tab-size: 2; }
 @media (max-width: 640px) {
