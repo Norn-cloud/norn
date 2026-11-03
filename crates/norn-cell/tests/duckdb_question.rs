@@ -154,7 +154,7 @@ fn scaled_row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWri
         values: norn_ir::runtime_object! {
             "input" => exact(input, scales[0]), "recovered" => exact(recovered, scales[1]),
             "loss" => Decimal::from(0i64), "occurred_at" => "2026-10-23T12:00:00Z", "metal" => "gold",
-        },
+        }.as_object().expect("object literal").clone(),
     }
 }
 

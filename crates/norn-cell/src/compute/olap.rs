@@ -13,10 +13,8 @@ fn db<T>(value: duckdb::Result<T>) -> Result<T, CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// QUERY-ENGINE-1: evaluate the same authorized bounded plan using embedded SQL.
-    /// Shared projection supplies identity, predicates and time buckets; SQL aggregates
-    /// exact DECIMAL operands and rounds a ratio once using integer quotient/remainder.
-    /// This analytical result supplies no commit authority or persistent OLAP storage.
+    /// QUERY-ENGINE-1: exact DECIMAL aggregation over the authorized contribution snapshot.
+    /// Results supply no commit authority or persistent OLAP storage.
     /// # Errors
     /// Returns snapshot/refusal errors, or a host SQL engine error on execution failure.
     pub fn evaluate_question_duckdb(
