@@ -13,3 +13,5 @@ pub use clock::{Clock, ManualClock};
 
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// Typed object, link and source-lineage reads for the Data Explorer.
+pub mod objects;

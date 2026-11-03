@@ -1,0 +1,11 @@
+{
+  "objectType": "canon.Item",
+  "id": "demo/item/gold",
+  "scope": "org_demo/dev",
+  "version": 1,
+  "values": {
+    "code": "GOLD",
+    "id": "demo/item/gold",
+    "label": "Gold scrap"
+  }
+}

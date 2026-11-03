@@ -960,6 +960,48 @@
           }
         }
       },
+      "NornInstanceSourceProvenance": {
+        "type": "object",
+        "description": "Where one object version came from: the source record, its document and the\nmapping that produced it. Describes the JSON of\n`norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.",
+        "required": [
+          "bundleDigest",
+          "sourceRecordRef",
+          "documentRef",
+          "documentDigest",
+          "mappingPin",
+          "fieldProvenance"
+        ],
+        "properties": {
+          "bundleDigest": {
+            "type": "string",
+            "description": "Content address of the recomputed mapping bundle."
+          },
+          "documentDigest": {
+            "type": "string",
+            "description": "Digest of the source document payload."
+          },
+          "documentRef": {
+            "$ref": "#/components/schemas/NornIrSourceRecordRef",
+            "description": "A source system and the record's identity in it."
+          },
+          "fieldProvenance": {
+            "type": "object",
+            "description": "Field-level source and rule provenance, by property id.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrInstanceProvenance"
+            }
+          },
+          "mappingPin": {
+            "$ref": "#/components/schemas/NornMappingPin",
+            "description": "The mapping declaration that produced the version."
+          },
+          "sourceRecordRef": {
+            "$ref": "#/components/schemas/NornIrSourceRecordRef",
+            "description": "A source system and the record's identity in it."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrAccessCondition": {
         "oneOf": [
           {
@@ -18224,6 +18266,177 @@
             "type": "integer",
             "format": "int64",
             "description": "The last event sequence number (`0` when empty).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornLinkEdge": {
+        "type": "object",
+        "description": "One live link touching the requested object.",
+        "required": [
+          "sourceType",
+          "link",
+          "source",
+          "targetType",
+          "target",
+          "version"
+        ],
+        "properties": {
+          "link": {
+            "type": "string",
+            "description": "The link id."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source object id."
+          },
+          "sourceType": {
+            "type": "string",
+            "description": "The link's declaring (source) type."
+          },
+          "target": {
+            "type": "string",
+            "description": "The target object id."
+          },
+          "targetType": {
+            "type": "string",
+            "description": "The declared target type."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The link version.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornLinkPage": {
+        "type": "object",
+        "description": "One bounded page of live links touching an object, in both directions.",
+        "required": [
+          "objectType",
+          "id",
+          "items",
+          "hasMore"
+        ],
+        "properties": {
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether more candidate links remain after this page."
+          },
+          "id": {
+            "type": "string",
+            "description": "The requested object's identity."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornLinkEdge"
+            },
+            "description": "Live links on this page."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The requested object's type."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornMappingPin": {
+        "type": "object",
+        "description": "The exact admitted mapping declaration that produced an object version.",
+        "required": [
+          "artifactId",
+          "version",
+          "sha256"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Mapping artifact ID."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Canonical artifact digest."
+          },
+          "version": {
+            "type": "string",
+            "description": "Admitted artifact version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornObjectPage": {
+        "type": "object",
+        "description": "One bounded page of a concept's authoritative objects.",
+        "required": [
+          "objectType",
+          "records",
+          "quarantineCount",
+          "scannedThrough"
+        ],
+        "properties": {
+          "objectType": {
+            "type": "string",
+            "description": "The concept read; records may be of its subtypes."
+          },
+          "quarantineCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Candidates on this page held back by open quarantining findings.",
+            "minimum": 0
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornObjectRecord"
+            },
+            "description": "Authoritative records on this page."
+          },
+          "scannedThrough": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The last scanned identity: the next page starts after it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornObjectRecord": {
+        "type": "object",
+        "description": "One object as the cell stores it, at its current version.",
+        "required": [
+          "objectType",
+          "id",
+          "scope",
+          "version",
+          "values"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object's identity."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "scope": {
+            "type": "string",
+            "description": "The tenant scope."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every stored property by property id; decimals are exact JSON number tokens.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The owner version (`+1` per write).",
             "minimum": 0
           }
         },
