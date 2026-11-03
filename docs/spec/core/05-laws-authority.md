@@ -117,3 +117,12 @@ unchanged by transport projection versions. Historical receipts still verify.
 Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
+
+### Warning-severity governing laws (LAW-COMMIT-1 / OBS-EVIDENCE-1)
+
+Severity controls display, never governing authority. Every verified governing-law
+failure is integrity-classified: observed facts retain warning evidence and are
+quarantined, while native writes refuse atomically. Non-law quality warnings
+retain their separate quality classification. The named cell scenario
+`warning_severity_governing_law_quarantines_observed_fact` checks native refusal,
+persisted warning/pin, quarantine and recovery after a valid correction.

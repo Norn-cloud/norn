@@ -124,6 +124,7 @@ fn pin(artifact: &ArtifactEnvelope, law: &LawIR) -> Result<DataQualityRuleRef, L
         ),
     })
 }
+/// LAW-COMMIT-1 / OBS-EVIDENCE-1: display severity never relaxes governing authority.
 pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
@@ -139,10 +140,7 @@ pub(crate) fn classify(
             .governing_laws(&ObjectTypeName(law.subject.clone()))
             .is_ok()
         {
-            return match law.severity {
-                LawSeverity::Error => DataQualityRuleClassification::Integrity,
-                LawSeverity::Warning => DataQualityRuleClassification::Quality,
-            };
+            return DataQualityRuleClassification::Integrity;
         }
     }
     DataQualityRuleClassification::Unverified
@@ -195,7 +193,7 @@ pub fn evaluate(
         };
         if let Err(outcome) = result {
             failures.push(LawFailure {
-                refuses_native: law.severity == LawSeverity::Error,
+                refuses_native: true,
                 outcome,
                 rule_ref: pin(artifact, &law)?,
                 severity: match law.severity {
