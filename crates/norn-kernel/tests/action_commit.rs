@@ -4067,8 +4067,9 @@ norn_testkit::proptest::proptest! {
         let manifest = norn_ir::function::Digest(format!("sha256:{}", "b".repeat(64)));
         let unresolved = cell.resolve_accepted_receipt(&reference, &manifest).unwrap().is_none();
         norn_testkit::proptest::prop_assert!(unresolved);
-        let refused = commit_action(&mut cell, &catalog, &request, &Allow).is_err();
-        norn_testkit::proptest::prop_assert!(refused);
+        let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
+        let receipt_refused = matches!(refusal, norn_kernel::ActionRefusal::InvalidInput {field} if field == "receipt");
+        norn_testkit::proptest::prop_assert!(receipt_refused);
         norn_testkit::proptest::prop_assert_eq!(cell.ledger().len(), before);
         request.input.insert("receipt".to_owned(), JsonValue::Object(JsonObject::new()));
         norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
