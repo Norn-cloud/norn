@@ -43,8 +43,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use norn_kernel::CommitError::{
-    AccountingPosting, AtomicDeliveryBoundary, EffectiveValues, LinkReadConflict,
-    UnsupportedLinkRead,
+    AccountingPosting, AtomicDeliveryBoundary, EffectiveValues, UnsupportedLinkRead,
 };
 
 use norn_kernel::cell_host::{
@@ -1977,7 +1976,9 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             expected,
             current,
         },
-        LinkReadConflict { source_key, link } => LinkReadConflict { source_key, link },
+        Error::LinkReadConflict { source_key, link } => {
+            Error::LinkReadConflict { source_key, link }
+        }
         UnsupportedLinkRead { source_key, link } => UnsupportedLinkRead { source_key, link },
         Error::DuplicateLinkRead { source_key, link } => {
             Error::DuplicateLinkRead { source_key, link }
