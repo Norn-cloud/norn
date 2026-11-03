@@ -646,7 +646,7 @@ fn sum_terms(text: &str, depth: u8) -> Option<Vec<PropertyId>> {
 }
 
 #[cfg(test)]
-mod tests {
+mod ontology_derived_measures {
     #![allow(
         clippy::expect_used,
         clippy::indexing_slicing,
