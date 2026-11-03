@@ -276,6 +276,12 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
     let documents: Vec<Value> = serde_json::from_str(include_str!(
         "fixtures/custody-transfer.json"
     )).unwrap();
+    let sources: Vec<_> = documents.iter().cloned().map(norn_ir::RuntimeValue::from_json).collect::<Result<_, _>>().unwrap();
+    let sources = norn_checker::receipt::ReceiptSources::new(&sources, &[]).unwrap();
+    let checked = norn_checker::receipt::check_artifact_set_with_receipt(&sources,
+        &norn_checker::EntityArtifactSetContext {registry: &std::collections::BTreeSet::default(), base: &[], tenant: None},
+        &norn_ir::ResourceLimitProfile::norn_limits_v1()).unwrap();
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let mut definitions: Vec<ObjectTypeDef> = documents.iter()
         .filter_map(|d| d["payload"].get("objectType"))
         .map(|d| serde_json::from_value(d.clone()).unwrap()).collect();
@@ -285,7 +291,7 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
     let rule = SynchronousRule::admit(action.synchronous_rule.clone().unwrap(),
         &serde_json::from_value(documents.iter().find(|d| d["kind"] == "rule").unwrap()["payload"].clone()).unwrap(),
         &BTreeMap::new(), norn_kernel::DecisionBinding {
-            profile_id: "norn-zen/6".into(), environment_hash: "custody-transfer".into(),
+            profile_id: checked.receipt.expr_profile, environment_hash: checked.receipt.type_env.unwrap().sha256,
         }).unwrap();
     let rules = [rule];
     let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
