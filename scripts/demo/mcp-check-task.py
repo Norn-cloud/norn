@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory() as temporary:
         response = json.loads(process.stdout.readline())
         assert response["id"] == sequence, response
         return response["result"]
+    assert request("ping", {}) == {}
     request("initialize", dict(protocolVersion="2025-11-25", capabilities={},
                                clientInfo=dict(name="task-script", version="1")))
     catalog = request("tools/list", dict(limit=1))
@@ -45,6 +46,7 @@ with tempfile.TemporaryDirectory() as temporary:
     context.write_text("{}")
     repaired = request("tools/call", dict(name=tool["name"], arguments=arguments))
     assert repaired["isError"] is False, repaired
+    assert request("ping", {}) == {}
     process.stdin.close()
     assert process.wait(timeout=15) == 0
     print("MCP task: discovered checker, checked admitted definitions, explained repairable refusal")

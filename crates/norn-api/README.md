@@ -62,3 +62,7 @@ Scripted discovery/check/refusal/repair acceptance (not a live-LLM evaluation):
 `python3 scripts/demo/mcp-check-task.py <norn-binary> <compiled-quickstart.json>`.
 Protocol correspondence tests additionally retain a real kernel invariant pin
 and its operands, and prove that an already-redacted refusal stays redacted.
+
+JSON-RPC parameter refusals preserve the validated request ID and use -32602;
+malformed-parameter notifications stay silent. Ping returns an empty result
+before or after initialization and does not unlock tool access.

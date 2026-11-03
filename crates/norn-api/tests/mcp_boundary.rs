@@ -147,3 +147,58 @@ fn exact_arguments_reach_the_backend_and_wire_unchanged() {
     let output=session.handle(r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"exact","arguments":{"mass":12345678901234567890.123456789}}}"#,&mut Echo).unwrap().unwrap();
     assert!(output.contains("12345678901234567890.123456789"));
 }
+
+#[test]
+fn malformed_params_keep_valid_ids_and_notifications_stay_silent() {
+    let mut session = Session::new(vec![tool("a")], "snapshot").unwrap();
+    init(&mut session);
+    for id in [json!(91), json!("request-91")] {
+        for params in [
+            json!(false),
+            json!(["bad"]),
+            json!(null),
+            json!({"limit":"bad"}),
+            json!({"arguments":7}),
+        ] {
+            let result = send(
+                &mut session,
+                &json!({"jsonrpc":"2.0","id":id,"method":"tools/list","params":params}),
+            );
+            assert_eq!(result["id"], id);
+            assert_eq!(result["error"]["code"], -32602);
+            let notification = json!({"jsonrpc":"2.0","method":"tools/call","params":params});
+            assert!(
+                session
+                    .handle(&notification.to_string(), &mut Refusing)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    let invalid = send(
+        &mut session,
+        &json!({"jsonrpc":"1.0","id":"bad-envelope","method":"tools/list"}),
+    );
+    assert!(invalid["id"].is_null());
+    assert_eq!(invalid["error"]["code"], -32600);
+}
+
+#[test]
+fn ping_is_empty_before_and_after_initialization_without_initializing_tools() {
+    let mut session = Session::new(vec![tool("a")], "snapshot").unwrap();
+    let ping = json!({"jsonrpc":"2.0","id":"alive","method":"ping"});
+    let before = send(&mut session, &ping);
+    assert_eq!(before, json!({"jsonrpc":"2.0","id":"alive","result":{}}));
+    let blocked = send(
+        &mut session,
+        &json!({"jsonrpc":"2.0","id":8,"method":"tools/list"}),
+    );
+    assert_eq!(blocked["error"]["code"], -32000);
+    init(&mut session);
+    assert_eq!(send(&mut session, &ping), before);
+    let unknown = send(
+        &mut session,
+        &json!({"jsonrpc":"2.0","id":9,"method":"unknown"}),
+    );
+    assert_eq!(unknown["error"]["code"], -32601);
+}

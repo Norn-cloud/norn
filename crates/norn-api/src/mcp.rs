@@ -36,8 +36,11 @@ struct Request {
     jsonrpc: String,
     id: Option<RuntimeValue>,
     method: String,
-    #[serde(default)]
-    params: Parameters,
+    #[serde(default = "empty_parameters")]
+    params: RuntimeValue,
+}
+fn empty_parameters() -> RuntimeValue {
+    RuntimeValue::Object(RuntimeObject::new())
 }
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,9 +180,23 @@ impl Session {
             )
             .map(Some);
         }
+        let params = match norn_ir::runtime::decode::<Parameters>(&request.params) {
+            Ok(params) => params,
+            Err(_parameter_error) => {
+                return protocol_error(
+                    id,
+                    -32602,
+                    Refusal::invalid("params are malformed; use the advertised object schema"),
+                )
+                .map(Some);
+            }
+        };
+        if request.method == "ping" {
+            return response(id, "result", empty_parameters()).map(Some);
+        }
         if request.method == "initialize" {
             return self
-                .initialize(id, request.params.protocol_version.as_deref())
+                .initialize(id, params.protocol_version.as_deref())
                 .map(Some);
         }
         if !self.initialized {
@@ -190,17 +207,26 @@ impl Session {
             )
             .map(Some);
         }
-        if request.method == "tools/list" {
-            return match self.page(&request.params) {
+        self.dispatch(id, &request.method, params, backend)
+    }
+    fn dispatch(
+        &self,
+        id: RuntimeValue,
+        method: &str,
+        params: Parameters,
+        backend: &mut impl Backend,
+    ) -> Result<Option<String>, Refusal> {
+        if method == "tools/list" {
+            return match self.page(&params) {
                 Ok(page) => response(id, "result", page).map(Some),
                 Err(error) => protocol_error(id, -32602, error).map(Some),
             };
         }
-        if request.method != "tools/call" {
+        if method != "tools/call" {
             return protocol_error(id, -32601, Refusal::invalid("use tools/list or tools/call"))
                 .map(Some);
         }
-        let name = request.params.name.as_deref().unwrap_or_default();
+        let name = params.name.as_deref().unwrap_or_default();
         if !self.tools.iter().any(|tool| tool.name == name) {
             return protocol_error(
                 id,
@@ -209,8 +235,7 @@ impl Session {
             )
             .map(Some);
         }
-        let mut result = match backend.call(name, request.params.arguments, request.params.metadata)
-        {
+        let mut result = match backend.call(name, params.arguments, params.metadata) {
             Ok(output) => output,
             Err(refusal) => CallOutput {
                 value: encode(&refusal)?,
