@@ -221,7 +221,17 @@ pub fn call_action_in_epoch<E: SqlEngine>(
         &invocation,
         &crate::authz::KernelAuthorizer(host.authorizer.as_ref()),
     )
-    .map_err(|error| kernel_refusal(error.refusal()))?;
+    .map_err(|error| {
+        crate::refusal_disclosure::project_refusal(
+            host.authorizer.as_ref(),
+            &crate::authz::RefusalDetailRequest {
+                scope: host.scope(),
+                actor,
+                action_id: &action.action_id,
+            },
+            error.refusal(),
+        )
+    })?;
     Ok(match outcome {
         ActionOutcome::Committed { record, .. } => ActionResponse {
             replayed: false,
@@ -232,10 +242,6 @@ pub fn call_action_in_epoch<E: SqlEngine>(
             record,
         },
     })
-}
-
-fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
-    Refusal::from_kernel(safe, false)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
