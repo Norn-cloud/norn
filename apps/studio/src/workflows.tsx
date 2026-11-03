@@ -4,6 +4,7 @@ import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { words } from "./lib/format.ts"
 import { recordedTransport } from "./lib/transport.ts"
@@ -57,7 +58,7 @@ function Chart({ workflow }: { readonly workflow: Workflow }) {
     }
   }))
   return (
-    <div className="h-80 w-full rounded-lg border">
+    <div className="h-80 w-full rounded-lg border bg-surface-subtle">
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
         <Background />
       </ReactFlow>
@@ -71,7 +72,7 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-xl">{words(workflow.objectType)}: {words(lifecycle.property).toLowerCase()}</CardTitle>
+          <CardTitle className="text-section font-medium">{words(workflow.objectType)}: {words(lifecycle.property).toLowerCase()}</CardTitle>
           <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>
         </div>
         <CardDescription>
@@ -84,7 +85,7 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
       </CardHeader>
       <CardContent className="space-y-6">
         <Chart workflow={workflow} />
-        <Table>
+        <TableCard><Table>
           <TableHeader><TableRow><TableHead>Step</TableHead><TableHead>From → to</TableHead><TableHead>Allowed only when (as declared)</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
           <TableBody>
             {workflow.steps.map(({ transition, actions }) => (
@@ -97,17 +98,17 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
                   {actions.map((action) => (
                     <div key={action.actionId} className="space-y-1">
                       <Button size="sm" variant="outline" disabled>{action.title ?? words(action.actionId)}</Button>
-                      <div className="text-xs text-muted-foreground">Not available yet: the server does not accept actions here yet.</div>
+                      <div className="text-meta text-muted-foreground">Not available yet: the server does not accept actions here yet.</div>
                     </div>
                   ))}
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </Table></TableCard>
         {workflow.laws.length > 0 && (
           <div className="space-y-2">
-            <h3 className="font-medium">Laws that govern it</h3>
+            <h3 className="text-panel font-medium">Laws that govern it</h3>
             <ul className="space-y-2 text-sm">
               {workflow.laws.map((law) => (
                 <li key={law.id} className="rounded-lg border p-3">
@@ -132,7 +133,7 @@ export function WorkflowsPage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Workflows</h1>
+        <h1 className="text-title font-medium">Workflows</h1>
         <p className="max-w-2xl text-muted-foreground">How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it.</p>
       </div>
       {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
