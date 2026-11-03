@@ -8,10 +8,10 @@ use std::{
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::deontic::{
-    DeonticModality, DeonticRule, RequirementText, RequirementTiming, RequirementWording,
-    RuleSourceSpan, StructuredRequirement,
+    DeonticModality, DeonticRule, RequirementTiming, RequirementWording, RuleSourceSpan,
+    StructuredRequirement,
 };
-use norn_ir::requirement_display::{RequirementLocale, RequirementView};
+use norn_ir::requirement_display::RequirementView;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse, ZenExpression};
 use serde_json::json;
 
@@ -29,25 +29,37 @@ fn conservation() -> DemoResult<LawIR> {
     )?)
 }
 
-fn wording() -> RequirementWording {
-    let text = |en: &str, ar: &str| RequirementText {
-        en: en.into(),
-        ar: ar.into(),
-    };
-    RequirementWording {
-        scope: text("Each core conversion", "كل عملية تحويل"),
-        activation: text("At every accepted measurement", "عند كل قياس مقبول"),
-        component: text("Its measurements in one unit", "قياساتها بوحدة واحدة"),
-        response: text(
+fn wording() -> DemoResult<RequirementWording> {
+    let mut wording: RequirementWording =
+        serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))?;
+    for (tag, scope, activation, component, response) in [
+        (
+            "en",
+            "Each core conversion",
+            "At every accepted measurement",
+            "Its measurements in one unit",
             "Input equals output plus recorded loss",
+        ),
+        (
+            "ar",
+            "كل عملية تحويل",
+            "عند كل قياس مقبول",
+            "قياساتها بوحدة واحدة",
             "المدخل يساوي المخرج مع الفاقد المسجل",
         ),
+    ] {
+        let entry = wording.0.get_mut(tag).ok_or("missing declared locale")?;
+        entry.scope = scope.into();
+        entry.activation = activation.into();
+        entry.component = component.into();
+        entry.response = response.into();
     }
+    Ok(wording)
 }
 
 // TARGET #58: structured bilingual authoring still needs a Rust adapter to the compiled TS law.
-fn target_requirement(law: LawIR) -> StructuredRequirement {
-    StructuredRequirement {
+fn target_requirement(law: LawIR) -> DemoResult<StructuredRequirement> {
+    Ok(StructuredRequirement {
         norm: DeonticRule {
             source: RuleSourceSpan {
                 artifact_id: format!("{}.law", law.id),
@@ -62,8 +74,8 @@ fn target_requirement(law: LawIR) -> StructuredRequirement {
             defeated_by: vec![],
         },
         timing: RequirementTiming::EveryCommittedState,
-        wording: wording(),
-    }
+        wording: wording()?,
+    })
 }
 
 fn with_law(types: &[ArtifactEnvelope], law: &LawIR) -> DemoResult<Vec<ArtifactEnvelope>> {
@@ -282,13 +294,13 @@ fn main() -> DemoResult<()> {
         "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
-    let requirement = target_requirement(law.clone());
-    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+    let requirement = target_requirement(law.clone())?;
+    for locale in ["en", "ar"] {
         let view = RequirementView {
             requirement: requirement.clone(),
-            locale,
+            locale: locale.into(),
         };
-        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
+        writeln!(stdout, "{locale:?} direction={}", view.direction()?)?;
         for slot in view.slots()? {
             writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
         }

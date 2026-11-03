@@ -542,6 +542,47 @@
         }
       ]
     },
+    "LocalizedRequirement": {
+      "description": "One complete translation, including every phrase used by the renderer.",
+      "type": "object",
+      "properties": {
+        "activation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "component": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "direction": {
+          "$ref": "#/$defs/TextDirection"
+        },
+        "labels": {
+          "$ref": "#/$defs/RequirementLabels"
+        },
+        "response": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "terms": {
+          "$ref": "#/$defs/RequirementTerms"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "direction",
+        "scope",
+        "activation",
+        "component",
+        "response",
+        "labels",
+        "terms"
+      ]
+    },
     "ProvenanceSource": {
       "type": "string",
       "enum": [
@@ -552,21 +593,130 @@
         "system"
       ]
     },
-    "RequirementText": {
-      "description": "Reviewed English and Arabic display, never executable free prose.",
+    "RequirementLabels": {
+      "description": "Complete display vocabulary; missing fields refuse at decode.",
       "type": "object",
       "properties": {
-        "ar": {
-          "type": "string"
+        "component": {
+          "type": "string",
+          "pattern": "\\S"
         },
-        "en": {
-          "type": "string"
+        "condition": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "exception": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "grade": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "preferences": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "response": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "timing": {
+          "type": "string",
+          "pattern": "\\S"
         }
       },
       "additionalProperties": false,
       "required": [
-        "en",
-        "ar"
+        "scope",
+        "condition",
+        "component",
+        "grade",
+        "timing",
+        "response",
+        "source",
+        "preferences",
+        "exception"
+      ]
+    },
+    "RequirementTerms": {
+      "description": "Complete display vocabulary; missing fields refuse at decode.",
+      "type": "object",
+      "properties": {
+        "application": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "cell": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "commitments": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "company": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "entity": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "everyCommittedState": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "grounding": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "obligation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "pack": {
+          "description": "Required to render a pack-rooted law; other roots never read it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "\\S"
+        },
+        "permission": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "prohibition": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sameCommit": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "company",
+        "application",
+        "cell",
+        "entity",
+        "commitments",
+        "obligation",
+        "permission",
+        "prohibition",
+        "sameCommit",
+        "everyCommittedState",
+        "grounding"
       ]
     },
     "RequirementTiming": {
@@ -585,29 +735,12 @@
       ]
     },
     "RequirementWording": {
-      "description": "Reviewed bilingual templates; identifiers and expressions remain in `norm`.",
+      "description": "LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.\nWording is never executable and does not change the law's semantic identity.",
       "type": "object",
-      "properties": {
-        "activation": {
-          "$ref": "#/$defs/RequirementText"
-        },
-        "component": {
-          "$ref": "#/$defs/RequirementText"
-        },
-        "response": {
-          "$ref": "#/$defs/RequirementText"
-        },
-        "scope": {
-          "$ref": "#/$defs/RequirementText"
-        }
+      "additionalProperties": {
+        "$ref": "#/$defs/LocalizedRequirement"
       },
-      "additionalProperties": false,
-      "required": [
-        "scope",
-        "activation",
-        "component",
-        "response"
-      ]
+      "minProperties": 1
     },
     "RuleByteRange": {
       "type": "object",
@@ -709,6 +842,13 @@
         "norm",
         "timing",
         "wording"
+      ]
+    },
+    "TextDirection": {
+      "type": "string",
+      "enum": [
+        "ltr",
+        "rtl"
       ]
     },
     "ZenExpression": {

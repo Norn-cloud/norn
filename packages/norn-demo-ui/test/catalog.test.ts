@@ -67,9 +67,12 @@ test("structured laws show their deontic grade and reviewed bilingual wording", 
   const [safety] = laws
   if (!safety || safety.kind !== "law" || !("lawVersion" in safety.payload)) throw new Error("Missing safety law fixture")
   const text = { en: "Reviewed <wording>", ar: "صياغة مراجعة" }
+  const locales = JSON.parse(readFileSync(join(root, "fixtures/wording/locales.json"), "utf8"))
+  const wording = Object.fromEntries((["en", "ar"] as const).map((tag) => [tag,
+    { ...locales[tag], scope: text[tag], activation: text[tag], component: text[tag], response: text[tag] }]))
   const structured: Artifact = { ...safety, payload: { requirement: {
     norm: { law: safety.payload, modality: "prohibition", authorityId: "fixture.source", authorityVersion: "1", source: { artifactId: "fixture.source", pointer: "/rules/0" } },
-    timing: "same_commit", wording: { scope: text, activation: text, component: text, response: text },
+    timing: "same_commit", wording,
   } } }
   const page = renderCatalogDocument({ artifacts: [structured] })
   expect(page).toContain('<span class="chip">prohibition</span>')

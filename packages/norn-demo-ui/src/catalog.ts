@@ -297,8 +297,11 @@ function timing(timing: Schemas["NornIrLawTiming"] | undefined): string {
 
 const absent = (what: string): string => `<p class="absent">${escape(what)} not exposed by the server.</p>`
 
-function wording(text: Schemas["NornIrRequirementWording"], lang: "en" | "ar"): string {
-  return `<p>${[text.scope, text.activation, text.component, text.response].map((part) => escape(part[lang])).join(" ")}</p>`
+type Wording = Readonly<Record<string, { readonly scope: string; readonly activation: string; readonly component: string; readonly response: string } | undefined>>
+
+function wording(text: Wording, tag: "en" | "ar"): string | undefined {
+  const entry = text[tag]
+  return entry && `<p>${[entry.scope, entry.activation, entry.component, entry.response].map(escape).join(" ")}</p>`
 }
 
 function lawCard(law: LawArtifact, position: number, catalog: Index): string {
@@ -321,8 +324,8 @@ function lawCard(law: LawArtifact, position: number, catalog: Index): string {
   </dl>
   <h4>Rationale</h4><p class="desc">${escape(payload.rationale)}</p>
   <div class="wording">
-    <div lang="en" dir="ltr"><h4>English wording</h4>${structured ? wording(structured.wording, "en") : absent("Reviewed English wording is")}</div>
-    <div lang="ar" dir="rtl"><h4>الصياغة العربية</h4>${structured ? wording(structured.wording, "ar") : `<p class="absent" lang="en" dir="ltr">Reviewed Arabic wording is not exposed by the server.</p>`}</div>
+    <div lang="en" dir="ltr"><h4>English wording</h4>${(structured && wording(structured.wording, "en")) ?? absent("Reviewed English wording is")}</div>
+    <div lang="ar" dir="rtl"><h4>الصياغة العربية</h4>${(structured && wording(structured.wording, "ar")) ?? `<p class="absent" lang="en" dir="ltr">Reviewed Arabic wording is not exposed by the server.</p>`}</div>
   </div>
 </article>`
 }

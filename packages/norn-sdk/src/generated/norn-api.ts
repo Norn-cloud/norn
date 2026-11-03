@@ -3367,6 +3367,16 @@ export interface components {
         NornIrLocaleText: {
             [key: string]: string;
         };
+        /** @description One complete translation, including every phrase used by the renderer. */
+        NornIrLocalizedRequirement: {
+            activation: string;
+            component: string;
+            direction: components["schemas"]["NornIrTextDirection"];
+            labels: components["schemas"]["NornIrRequirementLabels"];
+            response: string;
+            scope: string;
+            terms: components["schemas"]["NornIrRequirementTerms"];
+        };
         /** @description The records an [`ObjectMap`] reads. */
         NornIrLogicalSource: {
             /** @description The `SourceSchemaIR` dataset id whose records are read. */
@@ -4583,23 +4593,318 @@ export interface components {
         NornIrRelationPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
-        /** @description Reviewed English and Arabic display, never executable free prose. */
-        NornIrRequirementText: {
-            ar: string;
-            en: string;
+        /**
+         * @description The normative grade is separate from the temporal wrapper in `law`.
+         * @enum {string}
+         */
+        NornIrRequirementDeonticModality: "obligation" | "permission" | "prohibition";
+        /**
+         * @description A law template with explicit authority, exceptions and preferences.
+         *     `law.condition`, `law.timing` and `law.response` supply typed slots;
+         *     `law.modality` must agree with the normative grade before law lowering.
+         */
+        NornIrRequirementDeonticRule: {
+            authorityId: string;
+            authorityVersion: string;
+            /** @description Explicit rule identities preferred to this rule; not numeric authority ranking. */
+            defeatedBy?: string[];
+            exceptions?: components["schemas"]["NornIrRequirementRuleException"][];
+            law: components["schemas"]["NornIrRequirementLawIR"];
+            modality: components["schemas"]["NornIrRequirementDeonticModality"];
+            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
+        };
+        /**
+         * @description The only IR `0.1` version literal of the connector, widget, customization,
+         *     policy, derived, and setting roots and of ontology business packs.
+         * @enum {string}
+         */
+        NornIrRequirementIrVersion01: "0.1";
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementLabels: {
+            component: string;
+            condition: string;
+            exception: string;
+            grade: string;
+            preferences: string;
+            response: string;
+            scope: string;
+            source: string;
+            timing: string;
+        };
+        /** @description One protected law; its predicates use the subject's `self` environment. */
+        NornIrRequirementLawIR: {
+            /** @description Optional pointwise activation predicate (not an edge trigger). */
+            condition?: string;
+            /** @description Stable identity, preserved by all authoring faces. */
+            id: string;
+            /**
+             * @description Wire format version.
+             * @enum {string}
+             */
+            lawVersion: "0.1";
+            /** @description Admitted temporal wrapper. */
+            modality: components["schemas"]["NornIrRequirementLawModality"];
+            /** @description Principal or registry owner of changes to this law. */
+            owner: string;
+            /** @description Source and interpretation provenance. */
+            provenance: components["schemas"]["NornIrRequirementLawProvenance"];
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Predicate or exact ontology-bound behavior/invariant identity. */
+            response: components["schemas"]["NornIrRequirementLawResponse"];
+            /** @description Applicability, independent of the artifact's authorization scope. */
+            scope: components["schemas"]["NornIrRequirementLawScope"];
+            /**
+             * @description Reporting severity, independent of proof status.
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** @description Exact ontology object type whose record is bound as `self`. */
+            subject: string;
+            /** @description Optional progress bound. */
+            timing?: components["schemas"]["NornIrRequirementLawTiming"];
+        };
+        /** @description Scoped temporal vocabulary; nested temporal operators have no wire representation. */
+        NornIrRequirementLawModality: {
+            /** @enum {string} */
+            kind: "always";
+        } | {
+            /** @enum {string} */
+            kind: "never";
+        } | {
+            /** @enum {string} */
+            kind: "eventually";
+        } | {
+            /** @enum {string} */
+            kind: "until";
+            /** @description Ordinary ZEN stop predicate. */
+            predicate: string;
+        };
+        /** @description Reviewed law provenance; optional members are absent rather than synthesized nulls. */
+        NornIrRequirementLawProvenance: {
+            /** @description Reviewing/authoring principal. */
+            actorId?: string;
+            /** @description Source timestamp, never read from a clock by this library. */
+            createdAt?: string;
+            /**
+             * @description Existing source taxonomy.
+             * @enum {string}
+             */
+            source: "authoring_sdk" | "agent" | "migration" | "import" | "system";
+            /** @description Original source path or reviewed source document. */
+            sourcePath?: string;
+        };
+        /** @description Response slots resolve to existing ontology definitions. */
+        NornIrRequirementLawResponse: {
+            /** @description Ordinary ZEN text. */
+            expression: string;
+            /** @enum {string} */
+            kind: "predicate";
+        } | {
+            /** @description Stable invariant member id. */
+            invariantId: string;
+            /** @enum {string} */
+            kind: "invariant";
+            /** @description Effective owner object type. */
+            objectType: string;
+        } | {
+            /** @description Artifact id, resolved through a pinned dependency. */
+            artifactId: string;
+            /** @enum {string} */
+            kind: "action";
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            /** @description Exact object type. */
+            objectType: string;
+            /** @description Lifecycle property. */
+            property: string;
+            /** @description Transition member id. */
+            transitionId: string;
+        };
+        /** @description Named application boundary; authorization still comes from the envelope. */
+        NornIrRequirementLawRoot: {
+            id: string;
+            /** @enum {string} */
+            kind: "company";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "app";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "cell";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "entity";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
+        };
+        /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
+        NornIrRequirementLawScope: {
+            /** @description Commitment registry object types, not a new process primitive. */
+            commitments?: string[];
+            /** @description Optional lifecycle-state filter. */
+            lifecycleStates?: components["schemas"]["NornIrRequirementLawStateScope"][];
+            /** @description Nonempty exact type names, including the subject or its ancestors. */
+            objectTypes: string[];
+            /** @description Company/app/cell/entity scope identity; no implicit global default. */
+            root: components["schemas"]["NornIrRequirementLawRoot"];
+        };
+        /**
+         * @description User-facing reporting severity.
+         * @enum {string}
+         */
+        NornIrRequirementLawSeverity: "error" | "warning";
+        /** @description One lifecycle-state selector. */
+        NornIrRequirementLawStateScope: {
+            /** @description Exact object type name. */
+            objectType: string;
+            /** @description Lifecycle property identity. */
+            property: string;
+            /** @description Nonempty admitted state names. */
+            states: string[];
+        };
+        /** @description Progress timing. Exact milliseconds are decimal text, avoiding JS number rounding. */
+        NornIrRequirementLawTiming: {
+            /** @enum {string} */
+            kind: "within";
+            /** @description Positive canonical unsigned milliseconds, bounded by u64. */
+            millis: string;
+        } | {
+            /** @enum {string} */
+            kind: "before_deadline";
+            /** @description Exact timestamp property identity. */
+            property: string;
+        };
+        /** @description One complete translation, including every phrase used by the renderer. */
+        NornIrRequirementLocalizedRequirement: {
+            activation: string;
+            component: string;
+            direction: components["schemas"]["NornIrRequirementTextDirection"];
+            labels: components["schemas"]["NornIrRequirementRequirementLabels"];
+            response: string;
+            scope: string;
+            terms: components["schemas"]["NornIrRequirementRequirementTerms"];
+        };
+        /** @enum {string} */
+        NornIrRequirementProvenanceSource: "authoring_sdk" | "agent" | "migration" | "import" | "system";
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementRequirementLabels: {
+            component: string;
+            condition: string;
+            exception: string;
+            grade: string;
+            preferences: string;
+            response: string;
+            scope: string;
+            source: string;
+            timing: string;
+        };
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementRequirementTerms: {
+            application: string;
+            cell: string;
+            commitments: string;
+            company: string;
+            entity: string;
+            everyCommittedState: string;
+            grounding: string;
+            obligation: string;
+            /** @description Required to render a pack-rooted law; other roots never read it. */
+            pack?: string | null;
+            permission: string;
+            prohibition: string;
+            sameCommit: string;
         };
         /**
          * @description Closed safety fragment. No event activation, clocks, fairness or progress.
          * @enum {string}
          */
-        NornIrRequirementTiming: "every_committed_state" | "same_commit";
-        /** @description Reviewed bilingual templates; identifiers and expressions remain in `norm`. */
-        NornIrRequirementWording: {
-            activation: components["schemas"]["NornIrRequirementText"];
-            component: components["schemas"]["NornIrRequirementText"];
-            response: components["schemas"]["NornIrRequirementText"];
-            scope: components["schemas"]["NornIrRequirementText"];
+        NornIrRequirementRequirementTiming: "every_committed_state" | "same_commit";
+        /**
+         * @description LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
+         *     Wording is never executable and does not change the law's semantic identity.
+         */
+        NornIrRequirementRequirementWording: {
+            [key: string]: components["schemas"]["NornIrRequirementLocalizedRequirement"];
         };
+        NornIrRequirementRuleByteRange: {
+            /** Format: uint32 */
+            end: number;
+            /** Format: uint32 */
+            start: number;
+        };
+        /** @description A reviewed conditional exception. No implicit necessity or legal judgement. */
+        NornIrRequirementRuleException: {
+            condition: components["schemas"]["NornIrRequirementZenExpression"];
+            id: string;
+            source: components["schemas"]["NornIrRequirementRuleSourceSpan"];
+        };
+        /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
+        NornIrRequirementRuleSourceSpan: {
+            artifactId: string;
+            bytes?: components["schemas"]["NornIrRequirementRuleByteRange"] | null;
+            pointer: string;
+        };
+        /** @description Structured authoring over the existing law and normative source model. */
+        NornIrRequirementStructuredRequirement: {
+            norm: components["schemas"]["NornIrRequirementDeonticRule"];
+            timing: components["schemas"]["NornIrRequirementRequirementTiming"];
+            wording: components["schemas"]["NornIrRequirementRequirementWording"];
+        };
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementTerms: {
+            application: string;
+            cell: string;
+            commitments: string;
+            company: string;
+            entity: string;
+            everyCommittedState: string;
+            grounding: string;
+            obligation: string;
+            /** @description Required to render a pack-rooted law; other roots never read it. */
+            pack?: string | null;
+            permission: string;
+            prohibition: string;
+            sameCommit: string;
+        };
+        /** @enum {string} */
+        NornIrRequirementTextDirection: "ltr" | "rtl";
+        /**
+         * @description Closed safety fragment. No event activation, clocks, fairness or progress.
+         * @enum {string}
+         */
+        NornIrRequirementTiming: "every_committed_state" | "same_commit";
+        /**
+         * RequirementView
+         * @description A read-only editor projection carries the original IR, not a parsed sentence.
+         *     UI consumers must honor `direction()` and render text as text, never HTML.
+         */
+        NornIrRequirementView: {
+            locale: string;
+            requirement: components["schemas"]["NornIrRequirementStructuredRequirement"];
+        };
+        /**
+         * @description LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
+         *     Wording is never executable and does not change the law's semantic identity.
+         */
+        NornIrRequirementWording: {
+            [key: string]: components["schemas"]["NornIrLocalizedRequirement"];
+        };
+        /**
+         * @description Source text of one ZEN Expression (the IR's single expression language,
+         *     ruling 2026-09-25 §3): a decision-table cell, switch condition, expression
+         *     assignment, or action precondition.
+         *
+         *     Stored verbatim; parsing and type checking belong to `norn-expr` and
+         *     `norn-checker`.
+         */
+        NornIrRequirementZenExpression: string;
         /**
          * @description Why a source term has no correspondence (norn-platform#2986; lead
          *     ruling 2026-10-31 for `non_conforming`).
@@ -5463,6 +5768,8 @@ export interface components {
              */
             transformRef?: string;
         };
+        /** @enum {string} */
+        NornIrTextDirection: "ltr" | "rtl";
         /**
          * @description Well-known string formats of a `text` property.
          * @enum {string}

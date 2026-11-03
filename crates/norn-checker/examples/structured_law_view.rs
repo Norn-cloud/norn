@@ -5,7 +5,7 @@ use std::{
 };
 
 use norn_checker::{ArtifactRef, diagnostics_to_json};
-use norn_ir::requirement_display::{RequirementLocale, RequirementView};
+use norn_ir::requirement_display::RequirementView;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, deontic::StructuredLaw};
 use serde_json::{Value, json};
 
@@ -17,17 +17,17 @@ fn project(artifact: &ArtifactEnvelope) -> Result<Value, Box<dyn Error>> {
         serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value())?)?;
     let pin = ArtifactRef::of(artifact)?;
     let mut views = Vec::new();
-    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+    for locale in law.requirement.wording.0.keys() {
         let view = RequirementView {
             requirement: law.requirement.clone(),
-            locale,
+            locale: locale.clone(),
         };
         let slots: Vec<_> = view
             .slots()?
             .into_iter()
             .map(|s| json!({"id":s.id,"label":s.label,"text":s.text}))
             .collect();
-        views.push(json!({"locale":locale,"direction":view.direction(),"slots":slots}));
+        views.push(json!({"locale":locale,"direction":view.direction()?,"slots":slots}));
     }
     Ok(
         json!({"authority":"projection_only", "admission":"unverified",
@@ -69,12 +69,24 @@ mod tests {
         *law.get_mut("modality").ok_or("modality")? =
             json!({"kind":if grade == "prohibition" { "never" } else { "always" }});
         *law.pointer_mut("/scope/root/kind").ok_or("root kind")? = json!(root);
-        let text = json!({"en":"Reviewed fixture wording", "ar":"صياغة اختبار مراجعة"});
-        artifact.as_object_mut().ok_or("envelope")?.insert("payload".into(), json!({"requirement":{
-            "norm":{"law":law,"modality":grade,"authorityId":source,"authorityVersion":"1",
-                "source":{"artifactId":source,"pointer":"/rules/0"}},
-            "timing":"same_commit", "wording":{"scope":text,"activation":text,"component":text,"response":text}
-        }}));
+        let mut wording: Value =
+            serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))?;
+        for (tag, pack) in [("en", "pack"), ("ar", "حزمة")] {
+            *wording
+                .pointer_mut(&format!("/{tag}/terms"))
+                .and_then(Value::as_object_mut)
+                .ok_or("locale terms")?
+                .entry("pack")
+                .or_insert(Value::Null) = json!(pack);
+        }
+        artifact.as_object_mut().ok_or("envelope")?.insert(
+            "payload".into(),
+            json!({"requirement":{
+                "norm":{"law":law,"modality":grade,"authorityId":source,"authorityVersion":"1",
+                    "source":{"artifactId":source,"pointer":"/rules/0"}},
+                "timing":"same_commit", "wording":wording
+            }}),
+        );
         Ok(serde_json::from_value(artifact)?)
     }
 
@@ -95,8 +107,9 @@ mod tests {
                     .map(|s| s.get("id").cloned())
                     .collect()
             };
+            assert_eq!(views.len(), 2);
             assert_eq!(views.first().and_then(ids), views.get(1).and_then(ids));
-            for (view, empty) in views.iter().zip(["none", "لا يوجد"]) {
+            for view in views {
                 let preferences = view["slots"]
                     .as_array()
                     .ok_or("slots")?
@@ -107,16 +120,10 @@ mod tests {
                             .is_some_and(|id| id.ends_with("/norm/defeatedBy"))
                     })
                     .ok_or("preferences")?;
-                assert_eq!(preferences["text"], empty);
+                assert_eq!(preferences["text"], "\u{2205}");
+                let expected = if view["locale"] == "ar" { "rtl" } else { "ltr" };
+                assert_eq!(view["direction"], expected);
             }
-            assert_eq!(
-                views.first().and_then(|v| v.get("direction")),
-                Some(&json!("ltr"))
-            );
-            assert_eq!(
-                views.get(1).and_then(|v| v.get("direction")),
-                Some(&json!("rtl"))
-            );
             assert_eq!(projected.get("admission"), Some(&json!("unverified")));
             assert_eq!(
                 projected.get("original"),

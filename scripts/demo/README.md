@@ -9,6 +9,14 @@ bash scripts/demo/run.sh
 
 Catalog inspection: `bash scripts/demo/drop-03-catalog.sh`. The [Drop 3 note](drop-03-catalog.md) describes its bounded reads, actual refusals and uncovered behavior.
 
+Bounded constitution runtime driver: `bash scripts/demo/drop-constitution.sh`.
+It recompiles an authored loss-removal mutation, checks actual native action
+commits/refusals, and binds its finite results to checker-generated goals.
+[MVP-CONSTITUTION](../../docs/spec/acceptance/master-ontology-mvp.md) states the
+77-case domain and open proof boundaries. This driver reports bounded runtime
+conformance and generated runtime counterexamples; generated solver jobs and
+inductive proof remain unknown. It does not upgrade the full rehearsal below.
+
 Declared allocation plans: `bash scripts/demo/drop-04-declared-folds.sh`. The
 [Drop 4 note](drop-04-declared-folds.md) distinguishes exact pure evaluation
 from the pending native cell cycle.
