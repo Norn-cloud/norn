@@ -1,0 +1,476 @@
+{
+  "artifactId": "shopify.three.mapping",
+  "dependencies": [
+    {
+      "artifactId": "shopify.three.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Catalog.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Resource.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Agent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.AgentRole.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Commitment.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.EconomicEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Settlement.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Item.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Holding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Party.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.PartyRole.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.Delivery.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "canon.SettlementObservation.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "shopify synthetic observations to the REA canon",
+  "namespace": "shopify",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "canon.Catalog.interface",
+      "core.Resource.interface",
+      "core.Agent.interface",
+      "core.AgentRole.interface",
+      "core.Commitment.interface",
+      "core.EconomicEvent.interface",
+      "canon.Settlement.interface"
+    ],
+    "maps": [
+      {
+        "id": "item",
+        "ignoredFields": [
+          {
+            "field": "sku",
+            "reason": "Alias only; duplicate SKUs do not establish identity."
+          },
+          {
+            "field": "price",
+            "reason": "Sales price is not stock cost, valuation or a ledger effect."
+          }
+        ],
+        "properties": [
+          {
+            "property": "id",
+            "value": "input.metafield_norn_ref"
+          },
+          {
+            "property": "code",
+            "value": "input.code"
+          },
+          {
+            "property": "label",
+            "value": "input.label"
+          }
+        ],
+        "source": {
+          "dataset": "ProductVariant"
+        },
+        "sourceRecord": "'shopify/demo/ProductVariant/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.Item.entity",
+          "interface": "canon.Catalog.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "stock_cost",
+            "note": "Shopify availability supplies neither original cost, cost currency nor a valuation method. Authoritative stock valuation coverage is incomplete.",
+            "reason": "not_in_source"
+          },
+          {
+            "member": "cost_currency",
+            "note": "Shopify availability supplies neither original cost, cost currency nor a valuation method. Authoritative stock valuation coverage is incomplete.",
+            "reason": "not_in_source"
+          }
+        ],
+        "id": "holding",
+        "links": [
+          {
+            "key": "input.item_ref",
+            "link": "item",
+            "targetMap": "item"
+          },
+          {
+            "key": "input.owner_ref",
+            "link": "owner",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.custodian_ref",
+            "link": "custodian",
+            "targetMap": "party"
+          }
+        ],
+        "properties": [
+          {
+            "property": "resource_code",
+            "value": "input.resource_code"
+          },
+          {
+            "property": "quantity",
+            "value": "input.quantity"
+          },
+          {
+            "property": "unit",
+            "value": "input.unit"
+          },
+          {
+            "property": "currency",
+            "value": "null"
+          },
+          {
+            "property": "valuation_method",
+            "value": "null"
+          },
+          {
+            "property": "location",
+            "value": "input.location"
+          },
+          {
+            "property": "quantity_basis",
+            "value": "'available'"
+          }
+        ],
+        "source": {
+          "dataset": "InventoryLevel"
+        },
+        "sourceRecord": "'shopify/demo/InventoryLevel/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.Holding.entity",
+          "interface": "core.Resource.interface"
+        }
+      },
+      {
+        "id": "party",
+        "ignoredFields": [
+          {
+            "field": "role",
+            "reason": "Mapped separately as an AgentRole; a customer role is not an Agent subtype."
+          }
+        ],
+        "properties": [
+          {
+            "property": "display_name",
+            "value": "input.label"
+          },
+          {
+            "property": "kind",
+            "value": "'organization'"
+          }
+        ],
+        "source": {
+          "dataset": "Customer"
+        },
+        "sourceRecord": "'shopify/demo/Customer/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.Party.entity",
+          "interface": "core.Agent.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "counterparty",
+            "note": "The fixture role is scoped to the demo organisation, not an inferred bilateral legal relationship.",
+            "reason": "not_in_source"
+          }
+        ],
+        "id": "party_role",
+        "ignoredFields": [
+          {
+            "field": "label",
+            "reason": "Agent label is mapped by party."
+          }
+        ],
+        "links": [
+          {
+            "key": "input.metafield_norn_ref",
+            "link": "agent",
+            "targetMap": "party"
+          }
+        ],
+        "properties": [
+          {
+            "property": "role",
+            "value": "input.role"
+          },
+          {
+            "property": "valid_from",
+            "value": "null"
+          },
+          {
+            "property": "valid_to",
+            "value": "null"
+          }
+        ],
+        "source": {
+          "dataset": "Customer"
+        },
+        "sourceRecord": "'shopify/demo/Customer/' + input.id",
+        "subject": "input.metafield_norn_ref + '/role/' + input.role",
+        "target": {
+          "entity": "canon.PartyRole.entity",
+          "interface": "core.AgentRole.interface"
+        }
+      },
+      {
+        "id": "order",
+        "links": [
+          {
+            "key": "input.provider_ref",
+            "link": "provider",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.receiver_ref",
+            "link": "receiver",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.holding_ref",
+            "link": "resource",
+            "targetMap": "holding"
+          }
+        ],
+        "properties": [
+          {
+            "property": "quantity",
+            "value": "input.quantity"
+          },
+          {
+            "property": "unit",
+            "value": "input.unit"
+          },
+          {
+            "property": "currency",
+            "value": "null"
+          },
+          {
+            "property": "status",
+            "value": "'promised'"
+          },
+          {
+            "property": "due_at",
+            "value": "timestamp(input.due_at)"
+          }
+        ],
+        "source": {
+          "dataset": "OrderLine"
+        },
+        "sourceRecord": "'shopify/demo/OrderLine/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.OrderLine.entity",
+          "interface": "core.Commitment.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "reverses",
+            "note": "Only completed forward deliveries; returns and corrections require explicit original-event evidence.",
+            "reason": "not_in_source"
+          }
+        ],
+        "id": "delivery",
+        "ignoredFields": [
+          {
+            "field": "posting_state",
+            "reason": "Only the explicitly posted synthetic export profile is admitted by its closed source code set."
+          }
+        ],
+        "links": [
+          {
+            "key": "input.provider_ref",
+            "link": "provider",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.receiver_ref",
+            "link": "receiver",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.holding_ref",
+            "link": "resource",
+            "targetMap": "holding"
+          },
+          {
+            "key": "input.order_ref",
+            "link": "fulfils",
+            "targetMap": "order"
+          }
+        ],
+        "properties": [
+          {
+            "property": "quantity",
+            "value": "input.quantity"
+          },
+          {
+            "property": "unit",
+            "value": "input.unit"
+          },
+          {
+            "property": "currency",
+            "value": "null"
+          },
+          {
+            "property": "action",
+            "value": "'transfer_ownership'"
+          },
+          {
+            "property": "occurred_at",
+            "value": "timestamp(input.occurred_at)"
+          }
+        ],
+        "source": {
+          "dataset": "FulfillmentLine"
+        },
+        "sourceRecord": "'shopify/demo/FulfillmentLine/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.Delivery.entity",
+          "interface": "core.EconomicEvent.interface"
+        }
+      },
+      {
+        "gaps": [
+          {
+            "member": "event",
+            "note": "Payment/refund report alone does not prove cash resource movement, settlement finality or balanced GL posting.",
+            "reason": "not_in_source"
+          }
+        ],
+        "id": "settlement",
+        "links": [
+          {
+            "key": "input.payer_ref",
+            "link": "payer",
+            "targetMap": "party"
+          },
+          {
+            "key": "input.payee_ref",
+            "link": "payee",
+            "targetMap": "party"
+          }
+        ],
+        "properties": [
+          {
+            "property": "amount",
+            "value": "input.amount"
+          },
+          {
+            "property": "currency",
+            "value": "input.currency"
+          },
+          {
+            "property": "kind",
+            "value": "input.kind"
+          }
+        ],
+        "source": {
+          "dataset": "Transaction"
+        },
+        "sourceRecord": "'shopify/demo/Transaction/' + input.id",
+        "subject": "input.metafield_norn_ref",
+        "target": {
+          "entity": "canon.SettlementObservation.entity",
+          "interface": "canon.Settlement.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "shopify.three.source",
+      "sha256": "0f3b9172611997d6765978334a2a6b7cdd533930299d2194a92bb137dcee5f1d",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/shopify/artifacts/shopify.three.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -24,6 +24,15 @@ pub enum CellError {
     #[error("action.receipt_{0}")]
     ReceiptRefused(&'static str),
 
+    /// OBS-DISPUTE-LOOKUP-1: retry after three unstable source-evidence snapshots.
+    #[error("core.boundary.source_evidence_changed")]
+    SourceEvidenceChanged,
+    /// OBS-EVIDENCE-1: an open source dispute excludes this governed subject.
+    #[error("core.boundary.import_finding: disputed source identity")]
+    SourceIdentityDisputed,
+    /// Core 08 has not retained the source-dispute evidence frontier for this world.
+    #[error("core.world.source_dispute_unqualified")]
+    SourceDisputeWorldUnqualified,
     /// Captured relation/delete output requires a processing profile beyond CP2.
     #[error("unsupported mapping processing profile")]
     UnsupportedMappingProfile,

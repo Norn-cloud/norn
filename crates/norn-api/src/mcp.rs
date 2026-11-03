@@ -217,7 +217,7 @@ impl Session {
         backend: &mut impl Backend,
     ) -> Result<Option<String>, Refusal> {
         if method == "tools/list" {
-            return match self.page(&params) {
+            return match self.catalog(params.cursor.as_deref(), params.limit) {
                 Ok(page) => response(id, "result", page).map(Some),
                 Err(error) => protocol_error(id, -32602, error).map(Some),
             };
@@ -281,12 +281,21 @@ impl Session {
             }))?,
         )
     }
-    fn page(&self, params: &Parameters) -> Result<RuntimeValue, Refusal> {
-        let limit = params.limit.unwrap_or(32);
+    /// Read the same bounded catalog snapshot used by MCP discovery.
+    /// MCP-CATALOG-1: human services and MCP share tool IR, digests and cursors.
+    ///
+    /// # Errors
+    /// Invalid page bounds, malformed cursors, or a changed authority/revision binding.
+    pub fn catalog(
+        &self,
+        cursor: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<RuntimeValue, Refusal> {
+        let limit = limit.unwrap_or(32);
         if !(1..=100).contains(&limit) {
             return Err(Refusal::invalid("limit must be between 1 and 100"));
         }
-        let offset = match &params.cursor {
+        let offset = match cursor {
             None => 0,
             Some(cursor) => {
                 let (digest, index) = cursor

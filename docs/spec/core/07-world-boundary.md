@@ -85,6 +85,20 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
+CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
+OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
+
+FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
+`kind`, `source_version`, `payload_digest` and redaction record for the trusted
+connector/partition plus source/record/event identity, matching the ingress oracle.
+Receipt time, cursor and pipeline metadata do not change source-event content.
+In one capture transaction, preserve the first bundle and retain conflicting raw
+input, pins, diagnostics and a replay-stable `core.boundary.import_finding` in the
+Observed inbox. The conflicting candidate cannot be applied and every affected mapped subject, including the preserved first canonical object, is quarantined from authoritative/governed reads and aggregates (with visible counts), may appear only as `disputed` in label-permitted analytical reads, and is released only by an explicit governed accept-first, accept-second-as-correction or reject review action recorded with its own receipt. Rechecking recomputes
+both admitted bundles; stored finding claims confer no authority. Redelivery and
+restart add no second conflict finding; ordinary corrections do not resolve it.
+Full cursor convergence and conflict capture for ordinary unmapped submissions
+remain follow-up cuts for this CP2 bundle bridge.
 
 ## Perform and recovery semantics
 
@@ -107,6 +121,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 ## Named acceptance scenarios
 
+- **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
@@ -150,3 +165,29 @@ The typed forecast summary uses canonical Norn member names (`table_digest`, `rm
 Approximate report scalars use `{ "encoding": "ieee754-binary64", "value": "<round-trip decimal text>" }`. This preserves finite binary64 diagnostics, including tiny p-values outside the exact business-decimal envelope, without rounding them into business values. Counts/times remain integers; statistical computation stays in norn-metrics.
 
 ANALYTICS-FUNCTION-2 memory limit: Linux process-wide lifetime peak RSS is a conservative upper bound, not per-invocation accounting or sandbox enforcement. Earlier or concurrent allocations may exhaust this bound for a later small invocation; the result is a memory ResourceExhausted receipt, never a successful result. Named scenario: prior_process_rss_peak_refuses_small_forecast. Post-demo per-invocation accounting and receipt-context refresh are tracked in https://github.com/Norn-cloud/norn/issues/508.
+OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
+in-memory subject index only while the native engine's private SQLite change
+counters remain unchanged; local writes, rollbacks and external commits invalidate
+it. Hosts without a connection revision reuse the index only inside the immutable
+commit-guard transaction, rebuilding for each ordinary read. This adds no admitted
+SQL statement or function.
+Rebuilding checks every retained conflict/NFC finding and all mapping contexts
+against their retained definitions before publishing positive or negative
+membership. Later mapping contexts therefore extend an existing dispute.
+No caller claim or persisted membership grants authority. A cold snapshot costs
+one evidence rebuild; each guarded transaction is a cold snapshot, so this profile
+does not bound commit cost independently of retained inbox size. Repeated operands
+use indexed membership without decoding unrelated evidence. Bounded fact/reference
+reads apply their byte budget first.
+
+Indexes built by quality, guard or candidate validation remain transaction-local
+and cannot survive rollback. Native connection revisions are unavailable while
+uncommitted state is visible. A moving evidence revision retries at most three
+complete rebuild attempts; continued movement refuses the retryable
+`core.boundary.source_evidence_changed`, while stable recomputation disagreement
+continues to refuse `core.boundary.bundle_mismatch`.
+
+Interface-typed governed link targets resolve their concrete identity roots in the
+requested world before index lookup. If the identity is absent, every verified
+indexed root for that key is checked conservatively; an interface name never
+causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
