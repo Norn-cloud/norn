@@ -1012,14 +1012,16 @@ fn property_finding_rule_ref(
         ));
     };
     let property = norn_ir::PropertyId(
-        failure.id.as_str().trim_start_matches("$property.").to_owned(),
+        failure
+            .id
+            .as_str()
+            .trim_start_matches("$property.")
+            .to_owned(),
     );
     catalog
         .property_domain_rule_ref(owner, &property)
         .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
-        .ok_or_else(|| {
-            ObservationRefusal::Encoding("property domain is not retained".to_owned())
-        })
+        .ok_or_else(|| ObservationRefusal::Encoding("property domain is not retained".to_owned()))
 }
 
 fn findings_for(
