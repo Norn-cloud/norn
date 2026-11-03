@@ -433,7 +433,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     .high_water(self.world, object_type.as_str(), key)?;
                 let live = self
                     .reader()
-                    .object(self.world, object_type.as_str(), key)?
+                    .root_row(self.world, object_type.as_str(), key)?
                     .is_some();
                 if norn_kernel::FactVersion(version).has_committed_deletion(live) {
                     return Err(CellError::IdentityReuse);

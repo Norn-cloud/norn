@@ -2421,7 +2421,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Commit `batch` atomically as a trusted, actorless embedding primitive.
     /// Authored adapters use the checked kernel boundary; raw Put carries no
-    /// authored/observed authority. Canonical FactChange::Create still refuses reuse.
+    /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
     /// # Errors
     ///

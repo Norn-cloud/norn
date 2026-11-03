@@ -270,6 +270,18 @@ fn id_collision_between_sibling_types_rolls_back_the_complete_commit() {
         ))
         .expect("first identity");
     let before = store.read().dump().expect("before");
+    let mut same_identity = batch("org_a", "main", Vec::new());
+    same_identity.facts.push(norn_ir::FactChange::Create {
+        object_type: ObjectTypeName("identity.Sibling".into()),
+        key: "first".into(),
+        values: BTreeMap::from([("code".into(), RuntimeValue::from("other"))]),
+    });
+    // A live sibling is not a deletion; preserve the existing duplicate-row refusal.
+    assert!(matches!(
+        store.commit(&same_identity),
+        Err(CellError::Sqlite(_))
+    ));
+    assert_eq!(store.read().dump().expect("live sibling refusal"), before);
     let error = store
         .commit(&batch(
             "org_a",
