@@ -134,7 +134,7 @@ struct Artifact {
     /// Derived from the record file path; never a claim inside the record.
     #[serde(skip)]
     path: String,
-    #[serde(default, rename = "sha256")]
+    #[serde(default, rename = "sha256", deserialize_with = "legacy_digest")]
     legacy_sha256: Option<String>,
     origin: Origin,
     category: Category,
@@ -145,6 +145,10 @@ struct Artifact {
     rights_evidence: Vec<FileRef>,
     notices: Vec<FileRef>,
     connector: Option<Connector>,
+}
+
+fn legacy_digest<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(input).map(Some)
 }
 
 struct Source {

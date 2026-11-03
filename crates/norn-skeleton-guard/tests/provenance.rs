@@ -1445,3 +1445,125 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
             .contains("integration-only")
     );
 }
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "exercise the real trusted CLI over synthetic event data"
+)]
+fn trusted_pr_event_and_cli_require_separate_rights_evidence_on_the_inspected_head() {
+    let f = policy_fixture();
+    let base = commit_fixture(&f);
+    let temporary = tempfile::tempdir().unwrap();
+    let trusted = temporary.path().join("base");
+    git_in(
+        &f,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            trusted.to_str().unwrap(),
+            &base,
+        ],
+    );
+    f.write(
+        "crates/norn-ir/src/lib.rs",
+        b"pub enum ArtifactKind { Entity, Law }\n// authored change without a hash refresh\n",
+    );
+    let head = commit_fixture(&f);
+    let evidence = temporary.path().join("rights.json");
+    fs::write(&evidence, rights_document(&head, &base).to_string()).unwrap();
+    let report = norn_skeleton_guard::ci::check_with_rights(
+        f.root(),
+        &trusted,
+        &head,
+        "Norn-cloud/norn",
+        None,
+        &evidence,
+    );
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let binding = report.provenance.binding.unwrap();
+    assert_eq!(binding.head, head);
+    assert_eq!(binding.base, base);
+    assert_eq!(binding.policy, base);
+    assert_eq!(binding.changed_paths, ["crates/norn-ir/src/lib.rs"]);
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args([
+            "ci",
+            "trusted",
+            "--root",
+            f.root().to_str().unwrap(),
+            "--base-root",
+            trusted.to_str().unwrap(),
+            "--head",
+            &head,
+            "--repository",
+            "Norn-cloud/norn",
+            "--rights-evidence",
+            evidence.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let output: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(output["provenance"]["binding"]["head"], head);
+    fs::remove_file(&evidence).unwrap();
+    assert!(
+        !norn_skeleton_guard::ci::run_with_rights(
+            f.root(),
+            &trusted,
+            &head,
+            "Norn-cloud/norn",
+            None,
+            &evidence
+        )
+        .is_empty()
+    );
+    for args in [
+        vec!["ci", "provenance"],
+        vec![
+            "ci",
+            "provenance",
+            "--distribution",
+            "--head",
+            &head,
+            "--repository",
+            "Norn-cloud/norn",
+        ],
+        vec![
+            "ci",
+            "provenance",
+            "--legacy-distribution",
+            "--distribution",
+            "--head",
+            &head,
+        ],
+    ] {
+        assert!(
+            !std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+                .args(args)
+                .current_dir(f.root())
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+}
+
+#[test]
+fn legacy_digest_is_optional_but_present_values_keep_the_strict_shape() {
+    for value in [
+        json!(null),
+        json!("wrong"),
+        json!("A".repeat(64)),
+        json!(42),
+    ] {
+        let mut f = Fixture::new();
+        let i = f.add("payload", b"authored content", "code");
+        f.records[i]["sha256"] = value;
+        let head = bind_fixture(&f);
+        assert!(!bound_report(&f, &head).errors().is_empty());
+    }
+}
