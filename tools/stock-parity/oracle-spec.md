@@ -1,9 +1,9 @@
 # ERPNext oracle checkpoint 1
 
 Input is `norn.stock-trace/1` from #215 / #221, with its exact decimal text,
-warehouse aliases and request references. This preparation cut provisions synthetic masters only.
-Output is `norn.stock-readiness/1`; every case is explicitly unsupported until
-serial replay and checkpoint extraction are installed. No parity is claimed.
+warehouse aliases and request references. Serial fresh receipt/delivery traces produce `norn.stock-dump/1`, including
+initial state, every command attempt, stock, raw GL and document statuses.
+Unsupported/incomplete execution never passes. No Norn parity is claimed.
 
 ## Named invariants and correspondence
 
@@ -17,11 +17,11 @@ serial replay and checkpoint extraction are installed. No parity is claimed.
 - **CP1-rest-number-exact:** decimal text becomes exact JSON numbers at the REST
   boundary; response numbers are parsed as Decimal. Neither binary floating
   point conversion nor decimal strings may replace JSON numeric tokens.
-- **CP1-stock-fold (next cut):** receipt 10 at rate 2 produces Q=10,V=20; delivery 3 then
+- **CP1-stock-fold:** receipt 10 at rate 2 produces Q=10,V=20; delivery 3 then
   produces Q=7,V=14, rate=2, deltas (+10,+20),(-3,-6), FIFO queue [[7,2]].
-- **CP1-books (next cut):** receipt debits stock-a 20 / credits SRBNB 20; delivery debits
+- **CP1-books:** receipt debits stock-a 20 / credits SRBNB 20; delivery debits
   COGS 6 / credits stock-a 6. Every checkpoint balances; both documents submit.
-- **CP1-evidence (next cut):** `check_smoke.py` corresponds to number-exact, stock-fold and
+- **CP1-evidence:** `check_smoke.py` corresponds to number-exact, stock-fold and
   books using live REST output. Evidence is sampled behaviour on the pinned
   runtime, not a proof of equivalence. Incomplete execution is unsupported.
 
@@ -45,3 +45,9 @@ serial replay and checkpoint extraction are installed. No parity is claimed.
 
 Remaining contract scenarios and 10b reviewed dispositions are the next unit.
 No result in this checkpoint claims cross-engine parity or race correctness.
+
+- **CP1-FIFO-seven:** `fifo.json` retains cross-layer 2 @ 10 + 3 @ 20, deliver 4
+  (Q=1/V=20), and smoke 10 @ 2, deliver 3 (Q=7/V=14). Seven checkpoints
+  include both initials. Rows come only from REST, never expected trace values.
+- **CP1-timeout-attempt:** accepted attempts survive an unavailable snapshot;
+  its explicit unsupported status cannot masquerade as an empty observation.
