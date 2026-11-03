@@ -1560,8 +1560,8 @@ dependencies = [
 name = "norn-cell"
 version = "0.1.0"
 dependencies = [
- "js-sys",
  "chrono",
+ "js-sys",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
