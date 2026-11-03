@@ -133,13 +133,10 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     let refusal = store.commit(&canonical).expect_err("canonical recreation");
     assert!(matches!(refusal, CellError::IdentityReuse));
     assert_eq!(store.read().dump().expect("canonical refusal"), before);
+    let embedding = put("identity.Child", "stable", "embedding");
     store
-        .commit(&batch(
-            "org_a",
-            "main",
-            vec![put("identity.Child", "stable", "embedding")],
-        ))
-        .expect("raw Put remains an embedding primitive");
+        .commit(&batch("org_a", "main", vec![embedding]))
+        .expect("embedding");
     let committed = store.read().dump().expect("raw committed");
     let records = (1..=3)
         .map(|seq| store.export_record(seq).expect("export").expect("record"))
@@ -154,13 +151,10 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
         .commit(identity_proposal(&rebuilt, None))
         .expect("new authored delete");
     let replayed = rebuilt.store().read().dump().expect("after delete");
-    assert_eq!(
-        rebuilt
-            .commit(identity_proposal(&rebuilt, Some("new author")))
-            .expect_err("current admission remains strict")
-            .code(),
-        norn_checker::IDENTITY_REUSE
-    );
+    let refusal = rebuilt
+        .commit(identity_proposal(&rebuilt, Some("new author")))
+        .expect_err("reuse");
+    assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
     assert_eq!(rebuilt.store().read().dump().expect("unchanged"), replayed);
     drop(store);
     let store = CellStore::open(&path, model(), StoreOptions::default()).expect("reopen raw");
@@ -216,12 +210,10 @@ fn observed_reappearance_retains_identity_and_advances_its_version() {
     let deleted = cell.load(&key).expect("tombstone").version;
     let (commit, authority) = identity_observation(&cell, "reappear").into_parts();
     let before = cell.store().read().dump().expect("before reappearance");
-    assert_eq!(
-        cell.commit(commit.clone())
-            .expect_err("event JSON is not authority")
-            .code(),
-        norn_checker::IDENTITY_REUSE
-    );
+    let refusal = cell
+        .commit(commit.clone())
+        .expect_err("event JSON is not authority");
+    assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
     assert_eq!(cell.store().read().dump().expect("unchanged"), before);
     cell.commit_observed(commit, authority).expect("reappear");
     let reappeared = cell.load(&key).expect("same identity");
