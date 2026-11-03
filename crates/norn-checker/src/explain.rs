@@ -92,7 +92,9 @@ pub fn explain(
     let mut laws = explain_laws(&pool, kind, &target, &catalog, &closure, &goals)?;
     let interpretations = declared_interpretations(&pool)?;
     if laws.len().saturating_mul(interpretations.len()) > 16_384 {
-        return Err(closure_error("interpretation footprints exceed the report budget"));
+        return Err(closure_error(
+            "interpretation footprints exceed the report budget",
+        ));
     }
     for law in &mut laws {
         for interpretation in &interpretations {
