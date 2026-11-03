@@ -1,0 +1,7 @@
+{
+  "code": "function.receipt.output_manifest_mismatch",
+  "message": "the output manifest {digest} does not match the outputs and summary ({computed})",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

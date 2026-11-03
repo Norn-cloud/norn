@@ -1,0 +1,7 @@
+{
+  "code": "widget.interaction.nullable_without_clear",
+  "message": "a field bound to a nullable input cannot be cleared to null (no clear affordance, or always required): {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

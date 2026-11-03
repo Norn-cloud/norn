@@ -1,0 +1,7 @@
+{
+  "code": "ledger.certificate.claim_mismatch",
+  "message": "certificate claims are not in the deterministic checker result",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

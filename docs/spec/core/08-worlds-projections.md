@@ -60,3 +60,11 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 4. **Demo priority:** #69 point-in-time analytical inputs, recorded regression/forecast receipt and publication guards in separate cuts; ANALYSIS-LEAK plus exact beat-6 regression fixture.
 5. Add world/base pin and scenario clock/outcome fixtures; WORLD-FORK against the real evaluator.
 6. Complete subscription cursor/authority reset, then IVM/full-recompute equivalence with 03, then EN/AR explanations over the same result IDs.
+
+## Receipt-bound incarnation evidence
+
+**SNAPSHOT-RECEIPT-1:** every new `WrittenRow` commits its complete canonical incarnation snapshot digest before the producing receipt is hashed, including tombstones and intermediate versions in one atomic batch. Historical reads verify that digest against the authenticated emitting receipt; changing both the snapshot and its co-located hash cannot replace it. Legacy/unbound entries refuse as unproven; no migration derives a trusted commitment from their current mutable contents. Only a private writer can inspect its own not-yet-receipted incarnation inside the atomic commit; it cannot export it as evidence. Named scenarios cover joint snapshot/hash tampering, unbound commitments, receipt substitution, restart and repeated writes/tombstones.
+
+The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
+
+Store format `norn.cell.store/8` requires these receipt commitments. Pre-change `/7` stores, like formats `/2` through `/6`, must be recreated; opening them refuses before history verification. Never derive commitments from mutable legacy rows.

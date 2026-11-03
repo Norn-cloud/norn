@@ -81,6 +81,9 @@
           },
           {
             "$ref": "#/components/schemas/NornArtifactEnvelopeLaw"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeDefinedConcept"
           }
         ],
         "title": "NornArtifactEnvelope",
@@ -92,6 +95,7 @@
             "business_pack": "#/components/schemas/NornArtifactEnvelopeBusinessPack",
             "connector": "#/components/schemas/NornArtifactEnvelopeConnector",
             "customization": "#/components/schemas/NornArtifactEnvelopeCustomization",
+            "defined_concept": "#/components/schemas/NornArtifactEnvelopeDefinedConcept",
             "derived": "#/components/schemas/NornArtifactEnvelopeDerived",
             "entity": "#/components/schemas/NornArtifactEnvelopeEntity",
             "law": "#/components/schemas/NornArtifactEnvelopeLaw",
@@ -256,6 +260,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeCustomization"
+      },
+      "NornArtifactEnvelopeDefinedConcept": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "defined_concept"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrDefinedConceptPayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeDefinedConcept"
       },
       "NornArtifactEnvelopeDerived": {
         "allOf": [
@@ -1299,7 +1329,7 @@
       },
       "NornIrActionCreateLink": {
         "type": "object",
-        "description": "Add an outgoing link alongside an ordinary action's business write.",
+        "description": "Declare a typed link inside the action's checked proposal.",
         "required": [
           "link",
           "targetType",
@@ -1308,11 +1338,15 @@
         "properties": {
           "link": {
             "type": "string",
-            "description": "Link declared on the effect's business object type."
+            "description": "Link declared on the source object type."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrActionLinkSource",
+            "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1)."
           },
           "targetIdField": {
             "type": "string",
-            "description": "Input field naming an existing authorized declared-slice object."
+            "description": "Required input field naming a captured or proposed target."
           },
           "targetType": {
             "type": "string",
@@ -1499,6 +1533,25 @@
         },
         "additionalProperties": false
       },
+      "NornIrActionLinkSource": {
+        "type": "object",
+        "description": "A declared input-key source for a link within one action proposal.",
+        "required": [
+          "objectType",
+          "idField"
+        ],
+        "properties": {
+          "idField": {
+            "type": "string",
+            "description": "Required string input field containing its identity."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Concrete type of an object written by the synchronous closure."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrActionPayload": {
         "type": "object",
         "required": [
@@ -1581,6 +1634,9 @@
             "items": {
               "$ref": "#/components/schemas/NornIrSliceDeclaration"
             }
+          },
+          "synchronousRule": {
+            "$ref": "#/components/schemas/NornIrActionRuleRef"
           },
           "title": {
             "type": "string"
@@ -1740,6 +1796,25 @@
             "description": "Scale expected by the pinned template parameter.",
             "maximum": 9007199254740992,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionRuleRef": {
+        "type": "object",
+        "description": "Closed reference to the admitted synchronous writer of an action.",
+        "required": [
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Exact RuleIR artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version; no latest-version resolution."
           }
         },
         "additionalProperties": false
@@ -1970,6 +2045,13 @@
             "description": "Scoped temporal laws over ZEN predicates.",
             "enum": [
               "law"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "Pure classification over existing base identities.",
+            "enum": [
+              "defined_concept"
             ]
           }
         ]
@@ -2270,6 +2352,18 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrConceptRole": {
+        "type": "string",
+        "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+        "enum": [
+          "thing",
+          "happening"
+        ],
+        "x-enumDescriptions": [
+          "A persistent thing.",
+          "A concept that occurs, runs or terminates in time."
+        ]
       },
       "NornIrConnectorAuth": {
         "oneOf": [
@@ -4094,6 +4188,100 @@
           "policy"
         ]
       },
+      "NornIrDataQualityRuleRef": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "OBS-EVIDENCE-1: preserve the governing law identity and exact definition\npin when imported truth produces a finding rather than a refusal.\nA reference alone does not establish evaluation or enforcement.",
+            "required": [
+              "kind",
+              "artifactId",
+              "lawId",
+              "version"
+            ],
+            "properties": {
+              "artifactId": {
+                "type": "string",
+                "description": "Artifact containing the governing LawIR."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "law"
+                ]
+              },
+              "lawId": {
+                "type": "string",
+                "description": "Stable LawIR identity, independent of its artifact name."
+              },
+              "version": {
+                "type": "string",
+                "description": "Canonical declaration digest, including its scope and predicate."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An EntityIR invariant pinned by artifact version or declaration digest.",
+            "required": [
+              "kind",
+              "owner",
+              "invariantId",
+              "version"
+            ],
+            "properties": {
+              "invariantId": {
+                "type": "string",
+                "description": "The invariant identity within its owner.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invariant"
+                ]
+              },
+              "owner": {
+                "$ref": "#/components/schemas/NornIrInvariantOwner",
+                "description": "The object type or interface that declares this invariant."
+              },
+              "version": {
+                "type": "string",
+                "description": "The pinned declaration version or canonical content digest."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A built-in rule, whose version identifies its predicate semantics.",
+            "required": [
+              "kind",
+              "id",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The globally qualified built-in rule id."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "builtin"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "description": "The built-in rule semantics version."
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "A stable reference to the constraint or rule that produced a finding."
+      },
       "NornIrDatasetKind": {
         "type": "string",
         "description": "What kind of collection a dataset is.",
@@ -4147,6 +4335,36 @@
           "queue"
         ]
       },
+      "NornIrDecideBudget": {
+        "type": "object",
+        "description": "Budget for one warm `decide` (§1 row 1).",
+        "required": [
+          "cpu_p99_micros",
+          "fuel_envelope_micros",
+          "fuel_units"
+        ],
+        "properties": {
+          "cpu_p99_micros": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Target p99 CPU per decision, in microseconds (qualification target;\nnot enforceable by a clock inside the kernel).",
+            "minimum": 0
+          },
+          "fuel_envelope_micros": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The CPU envelope the fuel budget is calibrated against, in\nmicroseconds.",
+            "minimum": 0
+          },
+          "fuel_units": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Deterministic fuel per decision, in Norn ZEN metering units.\nProvisional and uncalibrated until `T3-BUDGET-1`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrDecimalLiteral": {
         "type": "string",
         "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
@@ -4177,6 +4395,58 @@
       "NornIrDefaultValueAnyOf4": {
         "type": "object",
         "additionalProperties": {}
+      },
+      "NornIrDefinedConceptPayload": {
+        "type": "object",
+        "description": "Pack-owned classification; never a writable object store.",
+        "required": [
+          "id",
+          "version",
+          "base",
+          "predicate",
+          "dependencies",
+          "bounds"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Exact type member in an entity artifact required by this artifact."
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/NornIrResourceLimitProfile",
+            "description": "Existing resource vocabulary and units, capped by the admitted profile."
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            },
+            "description": "Exact member dependencies, including other classifications."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/NornIrDefinedConceptPayloadPropertyExtensions"
+          },
+          "id": {
+            "type": "string",
+            "description": "Qualified classification identity, distinct from the base object kind."
+          },
+          "predicate": {
+            "type": "string",
+            "description": "A pure Boolean expression over the authorized base snapshot."
+          },
+          "version": {
+            "type": "string",
+            "description": "Definition version; must match its artifact envelope."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDefinedConceptPayloadPropertyExtensions": {
+        "type": "object",
+        "description": "Reserved versioned extension slots, as on other artifact roots.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
       },
       "NornIrDerivedPayload": {
         "type": "object",
@@ -5285,6 +5555,43 @@
         },
         "additionalProperties": false
       },
+      "NornIrEnvelopeLimits": {
+        "type": "object",
+        "description": "Per-decision envelope caps (§1 row 5).\n\nCounts are `u32` and sizes `u64` so the serialized profile is identical on\nnative and `wasm32` hosts. `norn-kernel`'s `step` enforces the counts; the\nhost checks `max_output_bytes` against the bytes it serializes.",
+        "required": [
+          "max_output_bytes",
+          "max_events",
+          "max_commands",
+          "max_timers"
+        ],
+        "properties": {
+          "max_commands": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum `perform` effects per decision.",
+            "minimum": 0
+          },
+          "max_events": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum events (facts) per decision.",
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum serialized metadata/output bytes per decision.",
+            "minimum": 0
+          },
+          "max_timers": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum timer effects (schedule + cancel) per decision.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrEvidenceRef": {
         "type": "object",
         "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
@@ -5636,7 +5943,7 @@
         ],
         "properties": {
           "rounding": {
-            "$ref": "#/components/schemas/NornIrFoldRounding"
+            "$ref": "#/components/schemas/NornIrRounding"
           },
           "scale": {
             "type": "integer",
@@ -5669,15 +5976,6 @@
         "enum": [
           "string",
           "integer"
-        ]
-      },
-      "NornIrFoldRounding": {
-        "type": "string",
-        "enum": [
-          "refuse",
-          "toward_zero",
-          "half_even",
-          "half_away_from_zero"
         ]
       },
       "NornIrGapReason": {
@@ -5777,6 +6075,36 @@
             "enum": [
               "allAdmittedObjectTypes"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrHelperLimits": {
+        "type": "object",
+        "description": "Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so\nthese only bind a future admission; the helper's fuel is charged to the\nenclosing decision and turn budget.",
+        "required": [
+          "cpu_p99_micros",
+          "aggregate_micros_per_decision",
+          "max_guest_memory_bytes"
+        ],
+        "properties": {
+          "aggregate_micros_per_decision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Aggregate helper CPU per decision, in microseconds.",
+            "minimum": 0
+          },
+          "cpu_p99_micros": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Target p99 CPU per helper call, in microseconds.",
+            "minimum": 0
+          },
+          "max_guest_memory_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum guest memory, in bytes.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -5914,6 +6242,18 @@
               "$ref": "#/components/schemas/NornIrInterfaceProperty"
             },
             "description": "Required properties, in presentation order. Omitted when empty."
+          },
+          "role": {
+            "type": "string",
+            "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+            "enum": [
+              "thing",
+              "happening"
+            ],
+            "x-enumDescriptions": [
+              "A persistent thing.",
+              "A concept that occurs, runs or terminates in time."
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus2",
@@ -6058,6 +6398,49 @@
         "type": "string",
         "description": "Id of an [`Invariant`], unique within its owner's effective invariant\ncontract. Same grammar as a property id ([`MEMBER_ID_PATTERN`]); invariants\nhave their own name space.",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrInvariantOwner": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "An object type or one of its supertypes.",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ]
+              },
+              "name": {
+                "$ref": "#/components/schemas/NornIrObjectTypeName"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An interface implemented by the object type or one of its supertypes.",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "interface"
+                ]
+              },
+              "name": {
+                "$ref": "#/components/schemas/NornIrInterfaceName"
+              }
+            }
+          }
+        ],
+        "description": "Which declaration owns an invariant."
       },
       "NornIrIrVersion01": {
         "type": "string",
@@ -6838,7 +7221,8 @@
             "items": {}
           },
           {
-            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
+            "type": "object",
+            "additionalProperties": {}
           }
         ]
       },
@@ -8285,6 +8669,259 @@
         },
         "additionalProperties": false
       },
+      "NornIrMember": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrMemberOneOf7"
+          }
+        ],
+        "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberOneOf0": {
+        "type": "object",
+        "description": "The artifact as a whole (an action, a decision, a mapping).",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf1": {
+        "type": "object",
+        "description": "An object type or interface.",
+        "required": [
+          "kind",
+          "typeName"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "type"
+            ]
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf2": {
+        "type": "object",
+        "description": "A property of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "property"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "property"
+            ]
+          },
+          "property": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf3": {
+        "type": "object",
+        "description": "A link of a type.",
+        "required": [
+          "kind",
+          "typeName",
+          "link"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "link"
+            ]
+          },
+          "link": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf4": {
+        "type": "object",
+        "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "state"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "state"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf5": {
+        "type": "object",
+        "description": "A declared transition of a type's lifecycle.",
+        "required": [
+          "kind",
+          "typeName",
+          "lifecycle",
+          "transition"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transition"
+            ]
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "transition": {
+            "type": "string"
+          },
+          "typeName": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf6": {
+        "type": "object",
+        "description": "An object map of a mapping.",
+        "required": [
+          "kind",
+          "map"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "object_map"
+            ]
+          },
+          "map": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberOneOf7": {
+        "type": "object",
+        "description": "A law.",
+        "required": [
+          "kind",
+          "law"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "law"
+            ]
+          },
+          "law": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemberRef": {
+        "type": "object",
+        "description": "A member of one exact artifact.",
+        "required": [
+          "artifactId",
+          "version",
+          "member"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "member": {
+            "$ref": "#/components/schemas/NornIrMember"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMemoryLimits": {
+        "type": "object",
+        "description": "Working-memory targets (§1 row 4). Allocation metering is `T3-BUDGET-1`.",
+        "required": [
+          "max_turn_working_bytes",
+          "live_footprint_target_bytes"
+        ],
+        "properties": {
+          "live_footprint_target_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Integrated live-footprint target under the concurrency fixture, in\nbytes.",
+            "minimum": 0
+          },
+          "max_turn_working_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum incremental working allocation per admitted turn, in bytes.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMultiplicity": {
         "type": "string",
         "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
@@ -8637,6 +9274,18 @@
               "$ref": "#/components/schemas/NornIrProperty"
             },
             "description": "Declared properties, in presentation order: new properties, and\nnarrowing overrides of inherited ones (same id). Omitted when empty."
+          },
+          "role": {
+            "type": "string",
+            "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+            "enum": [
+              "thing",
+              "happening"
+            ],
+            "x-enumDescriptions": [
+              "A persistent thing.",
+              "A concept that occurs, runs or terminates in time."
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/NornIrResourceStatus",
@@ -9361,7 +10010,8 @@
               "customization",
               "setting",
               "business_pack",
-              "policy"
+              "policy",
+              "defined_concept"
             ]
           },
           {
@@ -9891,6 +10541,20 @@
               "decimal"
             ]
           },
+          "perUnit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`."
+          },
+          "rounding": {
+            "type": "string",
+            "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+            "enum": [
+              "refuse",
+              "toward_zero",
+              "half_even",
+              "half_away_from_zero"
+            ]
+          },
           "scale": {
             "type": "integer",
             "format": "uint64",
@@ -10184,6 +10848,45 @@
           "No values are kept."
         ]
       },
+      "NornIrRefusalReason": {
+        "type": "object",
+        "title": "RefusalReason",
+        "description": "Structured refusal evidence shared by checker and transport projections.\nDIAG-REASON-1: declaration pins and operands are disclosed as one unit.",
+        "required": [
+          "law",
+          "subject",
+          "values"
+        ],
+        "properties": {
+          "law": {
+            "type": "string",
+            "description": "Stable governing law or invariant identity."
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrDataQualityRuleRef"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exact governing declaration, absent only in historical unpinned reasons."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject of the refused change."
+          },
+          "values": {
+            "type": "object",
+            "description": "Typed operands; disclosure authority is required before projection.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrJsonValue"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRelCondition": {
         "type": "object",
         "description": "Directional `rel(from, role)`.",
@@ -10311,6 +11014,57 @@
           },
           "value": {
             "$ref": "#/components/schemas/NornIrResourceOperand"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrResourceLimitProfile": {
+        "type": "object",
+        "description": "A versioned resource-limit profile (ruling 2026-09-27 §1).\n\nAll values are v1 qualification targets pending measurement.",
+        "required": [
+          "id",
+          "version",
+          "decide",
+          "turn",
+          "slice",
+          "memory",
+          "envelope",
+          "helper"
+        ],
+        "properties": {
+          "decide": {
+            "$ref": "#/components/schemas/NornIrDecideBudget",
+            "description": "One warm `decide`."
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/NornIrEnvelopeLimits",
+            "description": "The per-decision output envelope."
+          },
+          "helper": {
+            "$ref": "#/components/schemas/NornIrHelperLimits",
+            "description": "An inline custom helper, only if D33 ever admits one."
+          },
+          "id": {
+            "type": "string",
+            "description": "Profile family identifier, e.g. `norn.limits`."
+          },
+          "memory": {
+            "$ref": "#/components/schemas/NornIrMemoryLimits",
+            "description": "Working memory."
+          },
+          "slice": {
+            "$ref": "#/components/schemas/NornIrSliceLimits",
+            "description": "The declared input slice."
+          },
+          "turn": {
+            "$ref": "#/components/schemas/NornIrTurnBudget",
+            "description": "The whole synchronous cell turn: one aggregate budget."
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Profile version within the family. Any changed value is a new version.",
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -10524,6 +11278,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRounding": {
+        "type": "string",
+        "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -11707,6 +12471,43 @@
         },
         "additionalProperties": false
       },
+      "NornIrSliceLimits": {
+        "type": "object",
+        "description": "Bounds on the declared input slice (§1 row 3), enforced while reading.",
+        "required": [
+          "max_canonical_bytes",
+          "max_records",
+          "max_relation_depth",
+          "qualification_ceiling_bytes"
+        ],
+        "properties": {
+          "max_canonical_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Maximum canonical input bytes of the slice.",
+            "minimum": 0
+          },
+          "max_records": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum selected records.",
+            "minimum": 0
+          },
+          "max_relation_depth": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Maximum relation depth.",
+            "minimum": 0
+          },
+          "qualification_ceiling_bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The byte ceiling a later, measured profile may raise\n`max_canonical_bytes` to. Informational: never enforced in place of\n`max_canonical_bytes`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrSourceAdapter": {
         "type": "object",
         "description": "The adapter that produced a document.",
@@ -12384,6 +13185,29 @@
         "type": "string",
         "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
         "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "NornIrTurnBudget": {
+        "type": "object",
+        "description": "Budget for one synchronous cell turn (§1 row 2): one aggregate budget that\nevery triggered decision, validation, and helper debits.",
+        "required": [
+          "cpu_p99_micros",
+          "fuel_units"
+        ],
+        "properties": {
+          "cpu_p99_micros": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Target p99 active CPU per turn, in microseconds.",
+            "minimum": 0
+          },
+          "fuel_units": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Deterministic fuel per turn, in Norn ZEN metering units, shared by every\ndecision in the turn. Provisional and uncalibrated until `T3-BUDGET-1`.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrTypeCandidate": {
         "type": "object",
@@ -15201,6 +16025,75 @@
             "description": "Pack, artifact digest and stable law member identity."
           }
         }
+      },
+      "Refusal": {
+        "type": "object",
+        "description": "A refused request.",
+        "required": [
+          "format",
+          "retryable",
+          "reason",
+          "code",
+          "category",
+          "message",
+          "explanation"
+        ],
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/RefusalCategory",
+            "description": "What the caller can do about it (the discriminant SDKs switch on)."
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …)."
+          },
+          "explanation": {
+            "type": "string",
+            "description": "Why, and what would make the request admissible."
+          },
+          "format": {
+            "$ref": "#/components/schemas/RefusalFormat",
+            "description": "Versioned projection; stored checker receipts keep their original bytes."
+          },
+          "message": {
+            "type": "string",
+            "description": "One-line summary."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRefusalReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Engine-defined retryability, false unless explicitly supplied by the engine."
+          }
+        }
+      },
+      "RefusalCategory": {
+        "type": "string",
+        "description": "What the caller can do about a refusal: the kernel refusal taxonomy's\nclosed category set (`norn_kernel::RefusalCategory`).",
+        "enum": [
+          "visibility",
+          "permission",
+          "precondition",
+          "conflict",
+          "invalid",
+          "limit",
+          "internal"
+        ]
+      },
+      "RefusalFormat": {
+        "type": "string",
+        "description": "Version of the public refusal projection, independent of stored receipt formats.",
+        "enum": [
+          "norn/refusal@2"
+        ]
       }
     }
   }

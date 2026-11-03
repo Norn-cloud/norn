@@ -91,3 +91,5 @@ pub use expression::{Expression, ExpressionKind, OpcodeCache};
 pub use isolate::{Isolate, IsolateError};
 pub use scope::Scope;
 pub use variable::Variable;
+
+pub mod scaled;

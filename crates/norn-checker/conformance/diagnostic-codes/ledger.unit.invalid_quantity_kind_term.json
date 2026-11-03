@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.invalid_quantity_kind_term",
+  "message": "quantityKindTermId must be one exact term identity without whitespace or wildcards",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

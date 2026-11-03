@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="${NORN_VERIFICATION_TOOL_ROOT:-$repo_root/target/verification-tools}"
+tool_root="$(realpath -m "$tool_root")"
 download_root="$tool_root/downloads"
 source_root="$tool_root/sources"
 bin_root="$tool_root/bin"
@@ -58,15 +59,57 @@ if [[ ! -x "$opam_binary" ]]; then
     "$opam_binary"
   chmod +x "$opam_binary"
 fi
+printf '%s  %s\n' \
+  "edfca2630c373b44b7ee1c2f81cd8dcf67468d0db57d6c02158de553ac63dbd4" \
+  "$opam_binary" | sha256sum --check --status
 ln -sfn "$opam_binary" "$bin_root/opam"
 
 fstar_archive="$download_root/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz"
+fstar_root="$tool_root/fstar-$FSTAR_VERSION"
+
+clone_pin "https://github.com/cryspen/hax.git" "$HAX_COMMIT" "$source_root/hax"
+clone_pin "https://github.com/AeneasVerif/aeneas.git" "$AENEAS_COMMIT" "$source_root/aeneas"
+
+export CARGO_HOME="$tool_root/cargo"
+export RUSTUP_HOME="$tool_root/rustup"
+export RUSTUP_TOOLCHAIN="$HAX_RUST_TOOLCHAIN"
+export OPAMROOT="$tool_root/opam-root"
+export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
+# OCaml native compilation is memory intensive even with only four CPUs.
+export OPAMJOBS="${OPAMJOBS:-1}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+export OPAMSWITCH="$OPAM_SWITCH"
+receipt="$tool_root/extraction-install.sha256"
+
+installation_digest() {
+  # Bind the recipe (all pins), package inventory, installed code and libraries.
+  # Build/download caches are deliberately excluded; they are never executed.
+  sha256sum < "${BASH_SOURCE[0]}"
+  "$opam_binary" list --installed --short --columns=name,version
+  find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" "$OPAMROOT/$OPAM_SWITCH/share" \
+    "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
+    "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
+    "$fstar_root" -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
+}
+
+if [[ -f "$receipt" ]]; then
+  eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
+  test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
+  test -z "$(git -C "$source_root/aeneas/charon" status --porcelain=v1 --untracked-files=all)"
+  installed_digest="$(installation_digest | sha256sum)"
+  if [[ "$installed_digest" != "$(cat "$receipt")" ]]; then
+    echo "Pinned extraction installation changed; rebuild the snapshot without $receipt" >&2
+    exit 1
+  fi
+  echo "Exact pinned extraction installation verified: $installed_digest"
+  exit 0
+fi
+
 download_verified \
   "https://github.com/FStarLang/FStar/releases/download/v$FSTAR_VERSION/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz" \
   "e8718fad41c51ef212aa6bfd7418796ab5e32f24e490eb0d7bef9357486fa6ab" \
   "$fstar_archive"
 
-fstar_root="$tool_root/fstar-$FSTAR_VERSION"
 fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit 2>/dev/null || true)"
 if [[ -z "$fstar_binary" ]]; then
   mkdir -p "$fstar_root"
@@ -79,14 +122,6 @@ if [[ -z "$fstar_binary" ]]; then
 fi
 ln -sfn "$fstar_binary" "$bin_root/fstar.exe"
 
-clone_pin "https://github.com/cryspen/hax.git" "$HAX_COMMIT" "$source_root/hax"
-clone_pin "https://github.com/AeneasVerif/aeneas.git" "$AENEAS_COMMIT" "$source_root/aeneas"
-
-export CARGO_HOME="$tool_root/cargo"
-export RUSTUP_HOME="$tool_root/rustup"
-export RUSTUP_TOOLCHAIN="$HAX_RUST_TOOLCHAIN"
-export OPAMROOT="$tool_root/opam-root"
-export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
 
 if [[ ! -d "$RUSTUP_HOME/toolchains/$HAX_RUST_TOOLCHAIN" ]]; then
   rustup toolchain install "$HAX_RUST_TOOLCHAIN" \
@@ -112,17 +147,8 @@ fi
 export OPAMSWITCH="$OPAM_SWITCH"
 eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
 
-if [[ ! -x "$CARGO_HOME/bin/cargo-hax" ]] || ! command -v hax-engine >/dev/null 2>&1; then
-  (
-    cd "$source_root/hax"
-    ./setup.sh -j "${NORN_VERIFICATION_BUILD_JOBS:-4}" --no-cleanup
-  )
-fi
-ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
-ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
-hax_engine="$(command -v hax-engine)"
-ln -sfn "$hax_engine" "$bin_root/hax-engine"
-
+# Resolve the complete switch first: adding optional logs dependencies later
+# would rebuild hax-engine a second time.
 "$opam_binary" install --yes \
   logs.0.10.0 \
   ppx_deriving.6.1.3 \
@@ -141,16 +167,25 @@ ln -sfn "$hax_engine" "$bin_root/hax-engine"
   odoc.3.2.1 \
   ppx_deriving_yojson.3.10.0
 
+(
+  cd "$source_root/hax"
+  ./setup.sh -j "$OPAMJOBS" --no-cleanup
+)
+ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
+ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
+hax_engine="$(command -v hax-engine)"
+ln -sfn "$hax_engine" "$bin_root/hax-engine"
+
 if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
-  env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" setup-charon
+  env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" setup-charon
 fi
 test "$(git -C "$source_root/aeneas/charon" rev-parse HEAD)" = a1d989057b50b0429ccd96c5b4c4428b9b218b21
 if [[ -n "$(git -C "$source_root/aeneas/charon" status --porcelain=v1 --untracked-files=all)" ]]; then
   echo "pinned source tree is dirty: $source_root/aeneas/charon" >&2
   exit 1
 fi
-env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas/charon" build-dev
-env -u RUSTUP_TOOLCHAIN make -C "$source_root/aeneas" build-dev
+env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas/charon" build-dev
+env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" build-dev
 ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
 ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
 
@@ -160,6 +195,14 @@ for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/char
     exit 1
   fi
 done
+
+"$fstar_binary" --version | grep -Fx "F* $FSTAR_VERSION"
+test "$("$OPAMROOT/$OPAM_SWITCH/bin/ocamlc" -version)" = 5.4.1
+test "$("$opam_binary" list --installed --short --columns=version hax-engine)" = 0.3.7
+test "$("$source_root/aeneas/bin/aeneas" -version)" = 'aeneas 74a460a2'
+test "$("$source_root/aeneas/charon/bin/charon" version)" = 0.1.240
+installation_digest | sha256sum > "$receipt.tmp"
+mv "$receipt.tmp" "$receipt"
 
 cat <<EOF
 Installed pinned extraction tools under:

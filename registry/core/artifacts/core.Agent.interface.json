@@ -36,7 +36,8 @@
             ]
           }
         }
-      ]
+      ],
+      "role": "thing"
     }
   },
   "provenance": {

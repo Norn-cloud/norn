@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.invalid_time",
+  "message": "The time axis must be a single-valued date or timestamp.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

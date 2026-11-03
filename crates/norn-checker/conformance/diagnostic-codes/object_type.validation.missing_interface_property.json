@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.missing_interface_property",
+  "message": "interface {interface} requires property {property}, which the type neither declares nor inherits",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

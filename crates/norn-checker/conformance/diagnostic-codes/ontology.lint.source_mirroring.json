@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.source_mirroring",
+  "message": "object type {name} mirrors source entity {entity} of {schemaId}: {shared} of its {members} members match the {fields} fields of {entity} by name; model the business concept and map the source onto it",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

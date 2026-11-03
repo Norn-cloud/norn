@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_naming_series",
+  "message": "naming series is invalid: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

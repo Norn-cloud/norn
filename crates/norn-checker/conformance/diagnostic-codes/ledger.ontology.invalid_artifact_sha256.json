@@ -1,0 +1,7 @@
+{
+  "code": "ledger.ontology.invalid_artifact_sha256",
+  "message": "ontology artifactSha256 must be exactly 64 lowercase hexadecimal characters",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

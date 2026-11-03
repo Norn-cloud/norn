@@ -15,7 +15,7 @@ fi
 added="$(jq -rn --argjson old "${base_json}" --slurpfile new "${file}" '
   (($new[0].non_code_literals // []) - ($old.non_code_literals // []))[]')"
 if [[ -n "${added}" ]]; then
-  printf '::error::%s gained entries relative to %s (baseline is shrink-only; register new codes in crates/norn-checker/src/codes.rs):\n%s\n' "${file}" "${base}" "${added}"
+  printf '::error::%s gained entries relative to %s (baseline is shrink-only; register new codes in crates/norn-checker/conformance/diagnostic-codes/):\n%s\n' "${file}" "${base}" "${added}"
   exit 1
 fi
 echo "${file}: no entries added relative to ${base}."

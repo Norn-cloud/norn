@@ -100,7 +100,8 @@
             "name": "iso8601.timestamp"
           }
         }
-      ]
+      ],
+      "role": "happening"
     }
   },
   "provenance": {

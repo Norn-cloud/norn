@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.widens_initial",
+  "message": "initial state {state} is not an initial state of the inherited lifecycle",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ledger.pack.no_accounts",
+  "message": "at least one posting account is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

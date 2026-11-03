@@ -1,0 +1,7 @@
+{
+  "code": "ledger.pack.no_templates",
+  "message": "at least one transaction template is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

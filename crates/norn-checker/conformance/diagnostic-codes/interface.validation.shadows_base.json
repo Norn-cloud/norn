@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.shadows_base",
+  "message": "{name} is an installed base definition, which is read-only",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

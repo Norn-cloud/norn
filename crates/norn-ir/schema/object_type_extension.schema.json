@@ -338,6 +338,14 @@
               "type": "string",
               "const": "decimal"
             },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
+            },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
               "$ref": "#/$defs/WholeNumber"
@@ -523,6 +531,16 @@
       "required": [
         "id",
         "type"
+      ]
+    },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
       ]
     },
     "TextFormat": {

@@ -1,6 +1,8 @@
 name: Public core
+run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request_target:
   # Posting, editing or deleting `/approve-gates` re-runs trusted-policy for that PR.
   issue_comment:
@@ -13,28 +15,38 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-# A newer push to a pull request cancels the run of its older head. Every other
-# event (merge-queue groups, main, the comment and trusted lanes) gets a group
-# of its own, so concurrency never cancels or holds it back.
+# A newer push to a pull request cancels the run of its older head, and a newer
+# push to main cancels the older main run: each main commit was already gated by
+# its merge group, so only the latest main head needs the health/cache run.
+# Every other event (merge-queue groups, the comment and trusted lanes) gets a
+# group of its own, so workflow-level concurrency never cancels or holds it
+# back. The trusted-policy job has a separate per-PR/issue group that can
+# cancel an older trusted-policy run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
         if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
         run: |
-          df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-          df -h
+          set -euo pipefail
+          minimum=$((12 * 1024 * 1024))
+          available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+          df -h /
+          if [ "$(available)" -lt "$minimum" ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          fi
+          df -h /
+          [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -62,15 +74,19 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}
+      # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/norn-interop
+          key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - run: bash scripts/ci/core.sh cheap
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
   # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-  # Tests narrow on pull requests (the affected packages' tests), the full
-  # set in the merge queue and on main.
+  # Pull requests and merge groups use affected plans; main runs the full set.
   plan:
-    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -81,33 +97,45 @@ jobs:
           fetch-depth: 0
       - id: plan
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
-          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE"); else plan=$(bash scripts/ci/core.sh plan); fi
+          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+          plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"
   test:
-    needs: plan
-    if: fromJSON(needs.plan.outputs.plan).shard[0] != null
+    name: bundle (${{ matrix.bundle.id }})
+    needs: [core, plan]
+    if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
+      NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
       NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
-    timeout-minutes: 60
+      NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
+      PLAN: ${{ needs.plan.outputs.plan }}
+      BUNDLE_ID: ${{ matrix.bundle.id }}
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    timeout-minutes: 110
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}
+        bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}
     steps:
       - name: Reclaim runner disk space
         if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
         run: |
-          df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-          df -h
+          set -euo pipefail
+          minimum=$((12 * 1024 * 1024))
+          available() { df -Pk / | awk 'NR == 2 {print $4}'; }
+          df -h /
+          if [ "$(available)" -lt "$minimum" ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          fi
+          df -h /
+          [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -135,97 +163,55 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
-      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
-        with:
-          tool: nextest@0.9.150
-      - run: bash scripts/ci/core.sh test ${{ matrix.shard }}
-  phase:
-    needs: plan
-    if: fromJSON(needs.plan.outputs.plan).phase[0] != null
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
-    timeout-minutes: 110
-    strategy:
-      fail-fast: false
-      matrix:
-        phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
-      # Shrink-only baselines compare against the commit this one lands on
-      # (main for a manual run).
-      NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
-    steps:
-      - name: Reclaim runner disk space
-        if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
-        run: |
-          df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
-          df -h
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
-        with:
-          toolchain: 1.98.0
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.3.14
-      # Compiler outputs (sccache on the Actions cache: runs read the scopes of
-      # their own ref, its base and main, and write only their own), the Cargo
-      # home with registry and installed tools (saved only by main) and Bun's
-      # package store.
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          version: v0.19.0
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          cache-targets: false
-          # Phases that `cargo install` pinned tools keep their own Cargo home,
-          # so the saved bin directory holds those tools.
-          shared-key: cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}
+      # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock') }}
+          path: ~/.cache/norn-interop
+          key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: nextest@0.9.150
-      - run: bash scripts/ci/core.sh ${{ matrix.phase }}
-  # The single required verdict: every planned job ran and passed, and outside
-  # pull requests the plan was the full one. A cancelled pull request run ends
-  # without it, so the run that superseded it never waits behind a verdict job
-  # in the runner queue. Every other cancelled run still writes failure, and
-  # the merge queue's own run must pass the full plan.
+      - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
   full:
-    needs: [core, plan, test, phase]
+    needs: [core, plan, test]
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
-      !(cancelled() && github.event_name == 'pull_request')
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}
+      !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
+    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:
       - env:
           EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft || false }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
           PLAN: ${{ needs.plan.outputs.plan }}
           CORE: ${{ needs.core.result }}
           PLANNED: ${{ needs.plan.result }}
           TEST: ${{ needs.test.result }}
-          PHASE: ${{ needs.phase.result }}
         run: |
           set -euo pipefail
+          [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+          jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
+            type == "object" and (.mode == "full" or .mode == "affected") and
+            .base_sha == $base and .head_sha == $head and
+            (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
+            (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
+            (.bundle | type == "array" and length <= 6 and all(.[];
+              type == "object" and (.id | type == "string" and length > 0) and
+              (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
+              (map(.id) | length) == (map(.id) | unique | length)) and
+            ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort)
+          ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
           # A job may be skipped only when the plan gave it nothing to run.
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
           [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
-          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-          ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
-          ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+          [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+          # An affected merge-group plan must keep the always-run phases (core.sh plan).
+          [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+          ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
     # Write access serves only the last step, which removes a failing pull

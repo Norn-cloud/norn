@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.link_override_target_mismatch",
+  "message": "link {link} overrides the one {owner} declares with a target that is not {target} or a narrowing of it; an override may only narrow",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

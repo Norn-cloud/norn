@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.flow_source_map.missing_decision_row",
+  "message": "decision row id {rowId} is not declared by a mapped RuleIR artifact",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

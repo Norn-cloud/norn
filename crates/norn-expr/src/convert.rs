@@ -1,4 +1,4 @@
-//! The only place Norn values meet zen `Variable`s. Nothing here is public.
+//! The only place Norn values meet zen `Variable`s.
 //!
 //! The engine's decimal type is never named: it is reached through
 //! `Variable::Number` inference, so `norn-expr` stays within its SKELETON.md
@@ -24,6 +24,55 @@ pub(crate) fn canonical_engine_number(input: &str) -> Result<String, String> {
         | Variable::Object(_)
         | Variable::Dynamic(_) => Err("engine did not produce a number".to_owned()),
     }
+}
+
+/// VAL-ROUND: quantize at a declared Decimal site using shared scaled arithmetic.
+/// The declaration is the only scale/mode authority. Omission means refuse.
+/// This does not admit an expression or authorize a business mutation.
+///
+/// # Errors
+/// Returns a typed evaluation error for a non-Decimal site, or an invalid-number
+/// error for unsupported scale (above 18), inexact refusal or checked overflow.
+pub fn rescale_decimal(site: &norn_ir::PropertyType, value: &Number) -> Result<Number, ExprError> {
+    let norn_ir::PropertyType::Decimal {
+        scale, rounding, ..
+    } = site
+    else {
+        return Err(ExprError::Evaluation {
+            message: "exact site must be a declared Decimal".to_owned(),
+        });
+    };
+    let invalid = |reason: String| ExprError::InvalidNumber {
+        input: value.as_str().to_owned(),
+        reason,
+    };
+    let profile = scaled_site(scale.0, rounding.unwrap_or(norn_ir::Rounding::Refuse))
+        .map_err(|error| invalid(error.to_string()))?;
+    let parsed = value
+        .as_str()
+        .parse()
+        .map_err(|error| invalid(format!("{error}")))?;
+    let result = profile
+        .rescale(parsed)
+        .map_err(|reason| invalid(reason.to_owned()))?;
+    Ok(Number::from_canonical(result.normalize().to_string()))
+}
+
+pub(crate) fn scaled_site(
+    scale: u64,
+    rounding: norn_ir::Rounding,
+) -> Result<zen_expression::scaled::ScaledArithmetic, ExprError> {
+    use zen_expression::scaled::{Rounding, ScaledArithmetic};
+    let invalid = |reason: String| ExprError::Evaluation { message: reason };
+    let scale = u32::try_from(scale)
+        .map_err(|error| invalid(format!("unsupported exact-site scale: {error}")))?;
+    let rounding = match rounding {
+        norn_ir::Rounding::Refuse => Rounding::Refuse,
+        norn_ir::Rounding::TowardZero => Rounding::TowardZero,
+        norn_ir::Rounding::HalfEven => Rounding::HalfEven,
+        norn_ir::Rounding::HalfAwayFromZero => Rounding::HalfAwayFromZero,
+    };
+    Ok(ScaledArithmetic { scale, rounding })
 }
 
 /// Converts a Norn value to the engine's form. Strings and keys are

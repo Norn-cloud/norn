@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.untraceable_provenance",
+  "message": "this {source} artifact names no provenance {member}, so its origin cannot be traced",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.computed_key_component",
+  "message": "key component {property} is computed; identity is stored, not derived",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

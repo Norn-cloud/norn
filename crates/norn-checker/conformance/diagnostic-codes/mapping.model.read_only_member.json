@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.read_only_member",
+  "message": "{property} of {objectType} is computed and read-only",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

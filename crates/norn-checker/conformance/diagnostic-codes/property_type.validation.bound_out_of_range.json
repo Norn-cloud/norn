@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.bound_out_of_range",
+  "message": "{member} {bound} is outside the ZEN Expression decimal range: {error}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

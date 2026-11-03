@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.incomplete_provenance",
+  "message": "the provenance of this {source} artifact is missing {members}",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

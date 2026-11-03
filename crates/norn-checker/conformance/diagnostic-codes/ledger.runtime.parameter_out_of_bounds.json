@@ -1,0 +1,7 @@
+{
+  "code": "ledger.runtime.parameter_out_of_bounds",
+  "message": "runtime parameter `{parameterId}` value {value} is outside sealed bounds [{min}, {max}]",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

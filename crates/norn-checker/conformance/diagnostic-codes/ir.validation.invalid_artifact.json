@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.invalid_artifact",
+  "message": "artifact envelope is malformed: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "ledger.pack.no_layers",
+  "message": "at least one declared balance layer is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

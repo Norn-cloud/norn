@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.scale_out_of_range",
+  "message": "decimal scale {scale} exceeds the maximum of {max}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

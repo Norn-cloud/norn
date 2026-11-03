@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.naming_series_target_mismatch",
+  "message": "the action input does not match the target key's naming-series create or update contract",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

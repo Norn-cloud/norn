@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.inadmissible_evidence",
+  "message": "{profile} evidence {member}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

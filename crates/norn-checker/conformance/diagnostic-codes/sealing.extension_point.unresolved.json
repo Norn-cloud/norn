@@ -1,0 +1,7 @@
+{
+  "code": "sealing.extension_point.unresolved",
+  "message": "{operation} references an extension point not exposed by its seal",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

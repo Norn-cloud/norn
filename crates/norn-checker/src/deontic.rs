@@ -173,6 +173,7 @@ pub fn check_requirement(
     {
         return Err(R::ModalityMismatch);
     }
+    let mut exceptions = std::collections::BTreeSet::new();
     let mut ids = [&law.id, &law.owner, &law.subject, root]
         .into_iter()
         .chain([&rule.authority_id, &rule.authority_version])
@@ -182,10 +183,9 @@ pub fn check_requirement(
     if ids.any(|s| s.trim().is_empty())
         || law.scope.object_types.is_empty()
         || !valid_source(&rule.source)
-        || rule
-            .exceptions
-            .iter()
-            .any(|e| e.id.trim().is_empty() || !valid_source(&e.source))
+        || rule.exceptions.iter().any(|e| {
+            e.id.trim().is_empty() || !valid_source(&e.source) || !exceptions.insert(&e.id)
+        })
         || law.scope.lifecycle_states.iter().any(|s| {
             s.object_type.trim().is_empty()
                 || s.property.trim().is_empty()

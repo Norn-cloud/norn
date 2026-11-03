@@ -1,0 +1,7 @@
+{
+  "code": "ledger.identifier.empty",
+  "message": "identifier must be non-empty and contain no surrounding whitespace",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

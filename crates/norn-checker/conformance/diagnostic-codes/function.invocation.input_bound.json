@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.input_bound",
+  "message": "the staged inputs hold {staged} bytes; the manifest admits {bound}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

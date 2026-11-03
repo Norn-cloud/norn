@@ -61,3 +61,24 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 4. B5 generate initialization/writer/non-vacuity statements; B6 generated Quint jobs; B7 exact result binding; B8 scenario/explanation projection, each separately gated.
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
+
+## Shared refusal diagnostics (#517)
+
+**DIAG-REASON-1:** commit and action invariant refusals retain the owning
+object/interface, invariant identity and canonical owner-definition digest in
+`RefusalReason.pin`. Lifecycle reasons pin their built-in semantics version.
+Typed operands share the existing `RuntimeValue` model. Evaluator failure text
+and non-boolean values are represented by outcome categories, not raw values.
+
+**DIAG-REDACT-1:** API `norn/refusal@2` projections require proven disclosure
+authority to expose a reason. Without it, the entire pin, subject and operands
+are absent, and the explanation is fixed. Visibility/internal details remain
+hidden even with a disclosure grant. Retryability defaults to false; only
+engine-defined stale preparation and concurrency paths set it true.
+
+**DIAG-HISTORY-1:** stored receipt formats, diagnostics and content hashes are
+unchanged by transport projection versions. Historical receipts still verify.
+
+Named scenarios: invariant refusal retains a declaration pin through the API;
+unauthorized projections are independent of arbitrary secret operands;
+a pre-change checker receipt verifies against its original hash.

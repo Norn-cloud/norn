@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.invalid_decision_contract",
+  "message": "a decide graph's {schema} declares exactly {members}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

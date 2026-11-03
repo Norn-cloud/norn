@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.member_id_conflict",
+  "message": "{member} {id} takes the id of the {other} on {type}; properties, links, and inverse roles share one member name space",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

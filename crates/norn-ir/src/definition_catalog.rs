@@ -137,12 +137,47 @@ pub enum TypeKind {
 pub struct TypeRow {
     pub at: MemberRef,
     pub kind: TypeKind,
+    /// GRAPH-ROLE-1: the admitted effective role, independent of lifecycle presence.
+    pub role: crate::ConceptRole,
     /// Supertypes: an object type's `extends`, an interface's `extends`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<String>,
     /// Interfaces an object type implements directly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub implements: Vec<String>,
+}
+
+/// The named facet an admitted member contributes to its concept.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ConceptFacet {
+    /// Stored and derived properties.
+    Props,
+    /// Typed participant/resource links.
+    Links,
+    /// Lifecycle states and transitions.
+    States,
+    /// Governed actions with declared effects or writes.
+    Actions,
+    /// Laws attached to the admitted subject.
+    Laws,
+    /// Policies bound through an action's access reference.
+    Policies,
+    /// The action's declared access contract.
+    Access,
+    /// Source mappings observing the concept.
+    Sources,
+}
+
+/// GRAPH-META-1: a read-only facet edge; both ends retain exact member identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConceptFacetRow {
+    pub concept: MemberRef,
+    pub facet: ConceptFacet,
+    pub member: MemberRef,
 }
 
 /// **Property**: one declared property.
@@ -182,6 +217,8 @@ pub struct LinkRow {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransitionRow {
     pub at: MemberRef,
+    /// Declared guards, in semantic order.
+    pub guards: Vec<crate::ZenExpression>,
     pub from: Vec<String>,
     pub to: String,
 }
@@ -311,6 +348,7 @@ pub struct DefinitionCatalog {
     pub format: CatalogFormat,
     pub artifacts: Vec<CatalogArtifact>,
     pub types: Vec<TypeRow>,
+    pub facets: Vec<ConceptFacetRow>,
     pub properties: Vec<PropertyRow>,
     pub links: Vec<LinkRow>,
     pub transitions: Vec<TransitionRow>,

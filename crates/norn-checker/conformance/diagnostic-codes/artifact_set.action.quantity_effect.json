@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.quantity_effect",
+  "message": "the action's quantity effect or its input bindings are invalid: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

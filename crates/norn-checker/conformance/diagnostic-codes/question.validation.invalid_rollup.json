@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.invalid_rollup",
+  "message": "Roll-ups must name selected axes and use an admitted reduction.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

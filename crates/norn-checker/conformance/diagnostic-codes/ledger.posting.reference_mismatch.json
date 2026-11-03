@@ -1,0 +1,7 @@
+{
+  "code": "ledger.posting.reference_mismatch",
+  "message": "posting references do not match the installed pack seal and checker",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

@@ -81,6 +81,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
     EntityRootV2 {
         entity_version: EntityIrVersion::V2_0,
         object_type: ObjectTypeDef {
+            role: None,
             name: ObjectTypeName(v1.object_kind.clone()),
             description: None,
             status: norn_ir::ResourceStatus::default(),

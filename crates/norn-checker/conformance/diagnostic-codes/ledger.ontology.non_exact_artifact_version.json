@@ -1,0 +1,7 @@
+{
+  "code": "ledger.ontology.non_exact_artifact_version",
+  "message": "ontology artifactVersion must be one exact version, not a range or wildcard",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

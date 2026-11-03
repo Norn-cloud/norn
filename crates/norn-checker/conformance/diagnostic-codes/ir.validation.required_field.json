@@ -1,0 +1,7 @@
+{
+  "code": "ir.validation.required_field",
+  "message": "{path} is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

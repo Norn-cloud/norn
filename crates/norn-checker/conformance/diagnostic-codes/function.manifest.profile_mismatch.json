@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.profile_mismatch",
+  "message": "{profile} {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

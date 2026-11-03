@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_computed",
+  "message": "computed expression of {property} is not a ZEN Expression: {error}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

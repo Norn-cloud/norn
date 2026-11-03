@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.io_in_view",
+  "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.resolution.dependency_cycle",
+  "message": "artifacts {artifactIds} depend on each other in a cycle; the set has no installation order",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

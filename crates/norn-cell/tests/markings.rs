@@ -2596,7 +2596,7 @@ fn pre_marking_store_with_public_and_classified_live_facts_is_refused_atomically
     }
     drop(raw);
     assert!(
-        matches!(CellStore::open(&path, model, StoreOptions::default()), Err(CellError::StoreFormat { found, expected }) if found == "norn.cell.store/2" && expected == "norn.cell.store/7")
+        matches!(CellStore::open(&path, model, StoreOptions::default()), Err(CellError::StoreFormat { found, expected }) if found == "norn.cell.store/2" && expected == "norn.cell.store/8")
     );
     let raw = rusqlite::Connection::open(&path).expect("refused file remains readable");
     let tables: i64 = raw

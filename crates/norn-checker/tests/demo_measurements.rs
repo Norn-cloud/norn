@@ -15,21 +15,21 @@ use norn_checker::{
 use norn_ir::{ArtifactEnvelope, RuntimeValue, provenance::UtcTimestamp};
 
 fn compiled() -> CompiledMapping {
+    compile("demo-erpnext", "demo.erpnext.measurements.mapping")
+}
+
+fn compile(pack: &str, mapping_id: &str) -> CompiledMapping {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut artifacts: Vec<ArtifactEnvelope> = [
-        "registry/core/artifacts",
-        "registry/packs/demo-erpnext/artifacts",
+        root.join("registry/core/artifacts"),
+        root.join(format!("registry/packs/{pack}/artifacts")),
     ]
     .iter()
     .flat_map(|dir| {
-        fs::read_dir(root.join(dir))
-            .expect("artifacts")
-            .map(|entry| {
-                serde_json::from_str(
-                    &fs::read_to_string(entry.expect("entry").path()).expect("read"),
-                )
+        fs::read_dir(dir).expect("artifacts").map(|entry| {
+            serde_json::from_str(&fs::read_to_string(entry.expect("entry").path()).expect("read"))
                 .expect("artifact")
-            })
+        })
     })
     .collect();
     artifacts.retain(|a| {
@@ -48,20 +48,145 @@ fn compiled() -> CompiledMapping {
             ]
             .contains(&a.artifact_id.as_str())
     });
-    let source = artifacts
-        .iter()
-        .find(|a| a.artifact_id == "demo.erpnext.measurements.source")
-        .expect("source");
     let mapping = artifacts
         .iter()
-        .find(|a| a.artifact_id == "demo.erpnext.measurements.mapping")
+        .find(|a| a.artifact_id == mapping_id)
         .expect("mapping");
+    let value = serde_json::to_value(mapping).expect("JSON");
+    let source = artifacts
+        .iter()
+        .find(|a| Some(a.artifact_id.as_str()) == value["payload"]["source"]["schemaId"].as_str())
+        .expect("source");
     assert_eq!(
         serde_json::to_value(mapping).expect("JSON")["payload"]["source"]["sha256"].as_str(),
         Some(ArtifactRef::of(source).expect("hash").sha256.as_str())
     );
     compile_mapping_artifact(mapping, &artifacts, &[])
         .unwrap_or_else(|d| panic!("admission: {d:#?}"))
+}
+
+#[test]
+fn d1b_shipment_identity_converges_with_independent_evidence() {
+    let erp = compile("demo-commerce", "demo.erpnext.identity.mapping");
+    let shopify = compile("demo-commerce", "demo.shopify.identity.mapping");
+    let recorded = UtcTimestamp("2026-10-26T00:00:00Z".into());
+    let delivery = SourceDocument::from_json(
+        "Delivery Note",
+        r#"{
+        "name":"SYN-DN-001", "custom_shipment_ref":"demo/shipment/SYN-001"
+    }"#,
+        None,
+    )
+    .expect("delivery");
+    let fulfillment = SourceDocument::from_json(
+        "Fulfillment",
+        r#"{
+        "id":"SYN-FULFILLMENT-001", "custom_shipment_ref":"demo/shipment/SYN-001"
+    }"#,
+        None,
+    )
+    .expect("fulfillment");
+    let a = erp
+        .apply(std::slice::from_ref(&delivery), &recorded)
+        .expect("ERP mapping");
+    let b = shopify
+        .apply(std::slice::from_ref(&fulfillment), &recorded)
+        .expect("Shopify mapping");
+    assert_eq!(a.len(), 1);
+    assert_eq!(b.len(), 1);
+    assert_eq!(
+        (&a[0].object_type, &a[0].key),
+        (&b[0].object_type, &b[0].key)
+    );
+    assert_eq!(a[0].key, "demo/shipment/SYN-001");
+    assert_ne!(a[0].provenance.source, b[0].provenance.source);
+    assert_ne!(
+        a[0].provenance.mapping_version,
+        b[0].provenance.mapping_version
+    );
+    assert!(a[0].links.is_empty() && b[0].links.is_empty());
+    assert_eq!(
+        b,
+        shopify
+            .apply(&[fulfillment], &recorded)
+            .expect("Shopify first/replay")
+    );
+    assert_eq!(
+        a,
+        erp.apply(&[delivery], &recorded)
+            .expect("ERP second/replay")
+    );
+}
+
+#[test]
+fn d1b_catalog_not_holding_and_unresolved_references() {
+    let erp = compile("demo-commerce", "demo.erpnext.identity.mapping");
+    let shopify = compile("demo-commerce", "demo.shopify.identity.mapping");
+    let recorded = UtcTimestamp("2026-10-26T00:00:00Z".into());
+    let item = SourceDocument::from_json(
+        "Item",
+        r#"{
+        "name":"SYN-ITEM", "item_code":"SHARED-SKU", "custom_catalog_ref":"demo/catalog/GOLD"
+    }"#,
+        None,
+    )
+    .expect("item");
+    let variant = SourceDocument::from_json(
+        "ProductVariant",
+        r#"{
+        "id":"SYN-VARIANT", "sku":"SHARED-SKU", "custom_catalog_ref":"demo/catalog/SILVER"
+    }"#,
+        None,
+    )
+    .expect("variant");
+    let a = erp.apply(&[item], &recorded).expect("catalog item");
+    let b = shopify
+        .apply(&[variant], &recorded)
+        .expect("catalog variant");
+    assert_eq!(a[0].object_type.as_str(), "demo.commerce.CatalogEntry");
+    assert_eq!(a[0].object_type, b[0].object_type);
+    assert_ne!(a[0].key, b[0].key, "same SKU cannot resolve identity");
+    assert_eq!(
+        a[0].invocations[0].input.len(),
+        2,
+        "id and objectId only; no Holding quantity"
+    );
+    for (reference, code) in [
+        ("", "mapping.runtime.invalid_record"),
+        (
+            ",\"custom_shipment_ref\":null",
+            "mapping.runtime.invalid_record",
+        ),
+        (
+            ",\"custom_shipment_ref\":\"\"",
+            "mapping.runtime.invalid_key",
+        ),
+        (
+            ",\"custom_shipment_ref\":[\"A\",\"B\"]",
+            "mapping.runtime.invalid_record",
+        ),
+    ] {
+        for (mapping, dataset, field) in [
+            (&shopify, "Fulfillment", "id"),
+            (&erp, "Delivery Note", "name"),
+        ] {
+            let document = SourceDocument::from_json(
+                dataset,
+                &format!("{{\"{field}\":\"SYN-UNRESOLVED\"{reference}}}"),
+                None,
+            )
+            .expect("raw evidence");
+            let findings = mapping
+                .apply(&[document], &recorded)
+                .expect_err("unresolved reference");
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].code, code);
+            assert_eq!(
+                findings[0].span,
+                Some(norn_checker::Span::pointer("/documents/0"))
+            );
+        }
+    }
 }
 
 fn row(week: i64, batch: i64, role: &str, fine_milligrams: i64, purity: &str) -> SourceDocument {

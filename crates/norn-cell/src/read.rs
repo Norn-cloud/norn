@@ -1135,6 +1135,8 @@ pub(crate) fn decode_row(
     Ok(values)
 }
 
+pub(crate) type PendingDigests = BTreeMap<(String, String, u64), String>;
+
 /// Committed-state reads over one engine, including its active commit
 /// transaction when called during a commit.
 #[derive(Debug, Clone, Copy)]
@@ -1142,6 +1144,7 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) conn: &'a E,
     model: &'a Model,
     quantity_boundary: Option<crate::quantity::FormatBoundary>,
+    pub(crate) pending_digests: Option<(u64, &'a PendingDigests)>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1217,7 +1220,18 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             conn,
             model,
             quantity_boundary: None,
+            pending_digests: None,
         }
+    }
+
+    /// Writer-owned preimages support internal event validation, never evidence export.
+    pub(crate) const fn with_pending_digests(
+        mut self,
+        commit: u64,
+        digests: &'a PendingDigests,
+    ) -> Self {
+        self.pending_digests = Some((commit, digests));
+        self
     }
 
     pub(crate) const fn with_quantity_boundary(
@@ -2903,6 +2917,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 object_type: object_type.to_owned(),
                 key: key.to_owned(),
                 version,
+                snapshot_sha256: None,
             });
         }
         if written.is_empty() {

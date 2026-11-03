@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.extension_of_local_type",
+  "message": "extension target {type} is defined in the same layer; declare its properties on the type itself",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

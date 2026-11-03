@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.unknown_mapping_target",
+  "message": "the mapping targets {target}, which the artifact set and the installed base do not declare",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

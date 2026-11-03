@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.unreachable_state",
+  "message": "state {state} is not reachable from an initial state",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "function.invocation.manifest_mismatch",
+  "message": "the command names manifest {manifest}, but the admitted manifest is {admitted}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.invalid_on_delete",
+  "message": "onDelete {state} of {property} is not a terminal state of {objectType}'s lifecycle",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

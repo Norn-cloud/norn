@@ -1,0 +1,7 @@
+{
+  "code": "action.validation.invalid_payload",
+  "message": "ActionIR payload is invalid at {path}: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.decision.fact_literal_outside_schema",
+  "message": "the literal {member} {value} is not admitted by the facts item schema's {member} enum {admitted}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

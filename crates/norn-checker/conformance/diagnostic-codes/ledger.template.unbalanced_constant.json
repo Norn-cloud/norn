@@ -1,0 +1,7 @@
+{
+  "code": "ledger.template.unbalanced_constant",
+  "message": "template `{templateId}` has constant residual {residual} for unit `{unitId}` layer `{layer}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

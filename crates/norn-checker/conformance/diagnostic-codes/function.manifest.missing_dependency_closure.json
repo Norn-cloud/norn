@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.missing_dependency_closure",
+  "message": "the transitive dependency/asset closure is required",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

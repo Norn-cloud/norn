@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.duplicate_instance",
+  "message": "instance ID must be unique in the retained scoped graph",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

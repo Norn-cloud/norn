@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.invalid_extension_namespace",
+  "message": "extension namespace {namespace} must be one lower-case alphanumeric segment ([a-z][a-z0-9]*)",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

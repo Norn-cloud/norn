@@ -1,0 +1,7 @@
+{
+  "code": "source_schema.validation.profile_counts",
+  "message": "profile measures are inconsistent: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

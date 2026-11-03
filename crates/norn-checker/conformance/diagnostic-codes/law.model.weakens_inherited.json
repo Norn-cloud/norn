@@ -1,0 +1,7 @@
+{
+  "code": "law.model.weakens_inherited",
+  "message": "existing law identities cannot be replaced; tightening adds a conjunctive identity",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

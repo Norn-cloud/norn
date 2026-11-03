@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.undeclared_effect_write",
+  "message": "the effect program may write {objectKind} ({change}), but the write set does not declare it",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

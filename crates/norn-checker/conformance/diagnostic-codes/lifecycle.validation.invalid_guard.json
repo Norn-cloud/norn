@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.validation.invalid_guard",
+  "message": "guard {index} of transition {id} is not a ZEN Expression: {error}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

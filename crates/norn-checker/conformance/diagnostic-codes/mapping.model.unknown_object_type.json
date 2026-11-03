@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unknown_object_type",
+  "message": "{entity} is not an entity artifact defining an available object type",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

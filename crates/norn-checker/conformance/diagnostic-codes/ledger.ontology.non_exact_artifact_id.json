@@ -1,0 +1,7 @@
+{
+  "code": "ledger.ontology.non_exact_artifact_id",
+  "message": "ontology artifactId must be one exact identity without whitespace or wildcards",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

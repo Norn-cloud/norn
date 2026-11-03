@@ -1,0 +1,7 @@
+{
+  "code": "ledger.pack.unsupported_ir_version",
+  "message": "unsupported ledger pack IR version `{irVersion}`; expected `{expected}`",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

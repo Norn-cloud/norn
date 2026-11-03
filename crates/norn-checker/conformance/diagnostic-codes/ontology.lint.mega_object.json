@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.mega_object",
+  "message": "object type {name} declares {count} properties and links, more than {max}; split it into the concepts it combines",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.lifecycle_rule_shape",
+  "message": "map {id} lifecycle {property} must specify exactly one of state or transition",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

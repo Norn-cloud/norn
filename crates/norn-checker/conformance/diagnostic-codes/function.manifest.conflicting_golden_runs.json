@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.conflicting_golden_runs",
+  "message": "golden runs produced {count} different output digests; the key is quarantined",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

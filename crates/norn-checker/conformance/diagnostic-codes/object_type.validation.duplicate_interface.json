@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.duplicate_interface",
+  "message": "interface {interface} is listed twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.redundant_key",
+  "message": "key {key} has the same components, normalization, and match policy as key {other}; component order does not change uniqueness",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

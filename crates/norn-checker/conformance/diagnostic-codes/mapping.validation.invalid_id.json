@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_id",
+  "message": "map id {id} is not a member id",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

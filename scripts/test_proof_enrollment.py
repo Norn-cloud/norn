@@ -4,7 +4,11 @@
 import copy
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -79,7 +83,7 @@ class EnrollmentTests(unittest.TestCase):
         source = module.FORMAL_WORKFLOW.read_text()
         module.validate_workflow_integrity([])
         workflow = module.yaml.load(source, Loader=module.WorkflowLoader)
-        for job in ("core", "test", "phase"):
+        for job in ("core", "test"):
             for mutation in ("extra", "reordered", "missing", "changed", "unconditional", "event-only", "runner-only"):
                 with self.subTest(job=job, mutation=mutation), tempfile.TemporaryDirectory() as directory:
                     candidate = copy.deepcopy(workflow)
@@ -102,6 +106,34 @@ class EnrollmentTests(unittest.TestCase):
                     path.write_text(module.yaml.safe_dump(candidate, sort_keys=False))
                     with self.assertRaisesRegex(module.InvalidCoverage, "preparation actions and inputs must match the approved contract"):
                         module.validate_workflow_integrity([], formal_path=path)
+
+    def test_plan_workflow_contract_is_exact(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        workflow = module.yaml.load(module.FORMAL_WORKFLOW.read_text(), Loader=module.WorkflowLoader)
+        for mutation in ("ref", "depth", "credentials", "extra-step", "base", "head", "command", "verdict"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                candidate = copy.deepcopy(workflow)
+                steps = candidate["jobs"]["plan"]["steps"]
+                if mutation == "ref":
+                    steps[0]["with"]["ref"] = "main"
+                elif mutation == "depth":
+                    steps[0]["with"]["fetch-depth"] = 1
+                elif mutation == "credentials":
+                    steps[0]["with"]["persist-credentials"] = True
+                elif mutation == "extra-step":
+                    steps.insert(0, {"run": "echo unexpected"})
+                elif mutation in {"base", "head"}:
+                    steps[-1]["env"]["BASE" if mutation == "base" else "HEAD_SHA"] = "HEAD~1"
+                elif mutation == "command":
+                    steps[-1]["run"] = steps[-1]["run"].replace(' "$HEAD_SHA"', "")
+                else:
+                    candidate["jobs"]["full"]["steps"][0]["run"] += "exit 0\n"
+                path = Path(directory) / "workflow.yml"
+                path.write_text(module.yaml.safe_dump(candidate, sort_keys=False))
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_workflow_integrity([], formal_path=path)
 
     def test_missing_generic_obligation_rejected_by_actual_coverage_validator(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
@@ -139,6 +171,144 @@ class EnrollmentTests(unittest.TestCase):
             candidate = {"subsystems": [{"id": "accounting-pack", "sourceFiles": ["crates/toy/src/accounting.rs"], "obligations": ["INV-ACC-JOURNAL-BALANCED"]}]}
             with self.assertRaisesRegex(ValueError, "full domain runtime/Lean/Quint gate enrollment required"):
                 validate(root, candidate, self.gates)
+
+
+class AffectedPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        members = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["members"]
+        for manifest in [ROOT / "Cargo.toml", *(ROOT / m / "Cargo.toml" for m in members)]:
+            target = self.root / manifest.relative_to(ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(manifest, target)
+        gate = self.root / "crates/norn-skeleton-guard/src/ci/mod.rs"
+        gate.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / gate.relative_to(self.root), gate)
+        self.git("init", "-q")
+        self.git("config", "user.name", "synthetic")
+        self.git("config", "user.email", "synthetic@example.invalid")
+        self.base = self.commit("README.md")
+        self.full = self.plan()
+
+    def git(self, *args):
+        return subprocess.check_output(["git", *args], cwd=self.root, text=True).strip()
+
+    def commit(self, path):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a") as output:
+            output.write("\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "synthetic change")
+        return self.git("rev-parse", "HEAD")
+
+    def plan(self, *args):
+        return json.loads(subprocess.check_output(
+            ["bash", str(ROOT / "scripts/ci/core.sh"), "plan", *args],
+            cwd=self.root, text=True))
+
+    def test_combined_group_diff_and_explicit_head(self):
+        first = self.commit("crates/norn-cell/src/lib.rs")
+        head = self.commit("crates/norn-expr/src/lib.rs")
+        self.commit(".github/workflows/synthetic.yml")
+        combined = self.plan("--affected", self.base, head)
+        self.assertEqual(combined["mode"], "affected")
+        self.assertIn("heavy-1", combined["shard"])
+        self.assertIn("heavy-3", combined["shard"])
+        self.assertEqual(combined["rest_shards"], 3)
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy"])
+        self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
+        self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
+
+    def test_unknown_and_sensitive_paths_force_exact_full_suite(self):
+        paths = [".github/workflows/synthetic.yml", "Cargo.lock",
+                 "rust-toolchain.toml", "verification/kernel-l1/lean-toolchain",
+                 "scripts/ci/core.sh", "verification/coverage-v1/validate.py",
+                 "crates/norn-skeleton-guard/src/ci/mod.rs", "unknown/path"]
+        for path in paths:
+            with self.subTest(path=path):
+                base = self.git("rev-parse", "HEAD")
+                self.commit(path)
+                plan = self.plan("--affected", base)
+                self.assertEqual({k: v for k, v in plan.items() if k != "reason"},
+                                 {k: v for k, v in self.full.items() if k != "reason"})
+
+    def test_markdown_only_keeps_policy_and_provenance(self):
+        self.commit("docs/synthetic.md")
+        plan = self.plan("--affected", self.base)
+        self.assertEqual(plan["shard"], ["rest-1"])
+        self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
+        self.assertEqual(plan["packages"], "norn-skeleton-guard")
+        self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
+        self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
+
+    def test_bundle_inventory_is_exact_and_deterministic(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        expected = ["test/" + value for value in self.full["shard"]]
+        expected += ["phase/" + value for value in self.full["phase"]]
+        self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
+        self.assertGreaterEqual(len(self.full["bundle"]), 4)
+        self.assertLessEqual(len(self.full["bundle"]), 6)
+        self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
+        reordered = copy.deepcopy(self.full)
+        reordered["shard"].reverse()
+        reordered["phase"].reverse()
+        packed = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(reordered)], text=True))
+        self.assertEqual(packed["bundle"], self.full["bundle"])
+        subprocess.run(command + ["bundle-check", json.dumps(packed)], check=True, timeout=10)
+        for mutate in (
+            lambda p: p.pop("bundle"),
+            lambda p: p["bundle"][0]["tasks"].pop(),
+            lambda p: p["bundle"][0]["tasks"].append(p["bundle"][0]["tasks"][0]),
+            lambda p: p["bundle"].append(copy.deepcopy(p["bundle"][0])),
+            lambda p: p["bundle"].reverse(),
+            lambda p: p["phase"].append("unknown-phase"),
+            lambda p: p.update(mode="unknown"),
+        ):
+            broken = copy.deepcopy(self.full)
+            mutate(broken)
+            for args in (["bundle-check", json.dumps(broken)], ["bundle", json.dumps(broken), "b0"]):
+                result = subprocess.run(command + args, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+        result = subprocess.run(command + ["bundle", json.dumps(self.full), "missing"], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        incomplete = copy.deepcopy(self.full)
+        incomplete["phase"].remove("guards")
+        result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_bundle_executor_logs_success_and_propagates_failure(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
+        plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        tools = self.root / "cargo-home" / "bin"
+        tools.mkdir(parents=True)
+        cargo = tools / "cargo"
+        cargo.write_text('''#!/usr/bin/env python3
+import json, os, sys
+if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
+    sys.exit(23)
+args = sys.argv[1:]
+if args == ["nextest", "--version"]:
+    print("cargo-nextest 0.9.150 (synthetic)")
+elif "list" in args:
+    expression = args[args.index("-E") + 1] if "-E" in args else None
+    matches = expression is None or ("generated_accepted_expressions_are_total_and_typed" in expression and not expression.startswith("not ("))
+    print(json.dumps({"rust-suites": {"synthetic": {"testcases": {"only": {"filter-match": {"status": "matches" if matches else "mismatch"}}}}}}))
+else:
+    sys.exit("unexpected synthetic Cargo invocation")
+''')
+        cargo.chmod(0o755)
+        for fail in ("0", "1"):
+            environment = {**os.environ, "CARGO_HOME": str(tools.parent),
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
+            result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 23 if fail == "1" else 0, result.stderr)
+            verdict = "failure" if fail == "1" else "success"
+            self.assertEqual(result.stdout.count(f"task=phase/test-shards result={verdict}"), 1)
 
 
 class CoverageLayoutTests(unittest.TestCase):

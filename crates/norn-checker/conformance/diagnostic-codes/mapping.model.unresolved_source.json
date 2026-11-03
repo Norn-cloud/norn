@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.unresolved_source",
+  "message": "source schema {schemaId} version {version} is not a source_schema artifact of the set or the base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

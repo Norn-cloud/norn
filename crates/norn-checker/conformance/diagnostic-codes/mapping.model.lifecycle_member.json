@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.lifecycle_member",
+  "message": "{property} of {objectType}: a lifecycle property changes only through a lifecycle rule",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

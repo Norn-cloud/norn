@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.duplicate_member",
+  "message": "record member {member} is declared twice",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

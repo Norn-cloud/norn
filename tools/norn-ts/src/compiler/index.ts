@@ -445,7 +445,7 @@ export class SyntaxCompiler {
       if (ts.isConditionalExpression(e)) return B.X.conditional(this.data(e.condition, env), this.data(e.whenTrue, env), this.data(e.whenFalse, env))
       if (ts.isCallExpression(e)) {
         const id = this.id(e)
-        if (id === "@norn/authoring#Norn.evaluate" && this.subDecision) return this.subDecision(e, this.data(e.arguments[1]!, env))
+        if ((id === "@norn/authoring#Norn.evaluate" || id === "@norn/authoring#Norn.orderedFold") && this.subDecision) return this.subDecision(e, this.data(e.arguments[1]!, env))
         if (id === "@norn/authoring#Norn.unsafeZen") {
           const text = this.scalar(e.arguments[0]!)
           if (typeof text !== "string" || !e.typeArguments?.[0]) throw new CompileError("NORN-FLOW-TYPE", "unsafeZen<T> requires its declared result type and literal ZEN text", e)
@@ -461,6 +461,7 @@ export class SyntaxCompiler {
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text
           const args = e.arguments.map((a) => this.data(a, env))
+          if (name === "concat") return B.X.call("concat", receiver, ...args)
           if (name === "includes") {
             const t = this.checker.getTypeAtLocation(e.expression.expression)
             return this.checker.isArrayType(t) || this.checker.isTupleType(t) ? B.X.binary("in", args[0]!, receiver) : B.X.call("contains", receiver, ...args)

@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.interface_property_widens_nullability",
+  "message": "property {property} is nullable, but interface {interface} requires a value",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

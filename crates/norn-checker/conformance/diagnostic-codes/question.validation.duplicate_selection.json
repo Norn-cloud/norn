@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.duplicate_selection",
+  "message": "Metric and dimension selections must be unique.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

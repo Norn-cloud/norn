@@ -150,11 +150,12 @@ pub struct ResolvedArtifactSet<'a> {
 #[must_use]
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
-        Action, BusinessPack, Connector, Customization, Derived, Entity, Law, Mapping, Policy,
-        Relation, Rule, Setting, SourceSchema, Widget,
+        Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Law,
+        Mapping, Policy, Relation, Rule, Setting, SourceSchema, Widget,
     };
     match from {
         Entity => matches!(to, Entity),
+        DefinedConcept => matches!(to, Entity | DefinedConcept),
         Relation => matches!(to, Entity | Relation),
         Derived => matches!(to, Entity | Relation | Derived),
         Setting => matches!(to, Entity | Relation | Setting),
@@ -301,8 +302,8 @@ pub fn resolve_artifact_set<'a>(
 /// per-artifact findings followed by the resolution findings, without set
 /// checks. Findings identical in `(code, artifactId, pointer)` are reported
 /// once; UI-law findings also distinguish their messages so each action effect
-/// at a render site remains visible. An empty result means the set resolves and
-/// is valid.
+/// at a render site remains visible. The set is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes remain available.
 #[must_use]
 pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
@@ -377,7 +378,15 @@ pub fn check_artifact_set(
         findings
             .into_iter()
             .chain(layout_findings)
-            .chain(unit_findings),
+            .chain(unit_findings)
+            .chain(crate::defined_concepts::check_cycles(
+                &normalized_artifacts,
+                &normalized_base,
+            ))
+            .chain(crate::defined_concepts::check_admission(
+                &normalized_artifacts,
+                &normalized_context,
+            )),
     )
 }
 
@@ -648,6 +657,7 @@ const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::SourceSchema => ArtifactKind::SourceSchema,
         PackArtifactKind::Mapping => ArtifactKind::Mapping,
         PackArtifactKind::Law => ArtifactKind::Law,
+        PackArtifactKind::DefinedConcept => ArtifactKind::DefinedConcept,
     }
 }
 
@@ -763,6 +773,7 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::SourceSchema => "source_schema",
         ArtifactKind::Mapping => "mapping",
         ArtifactKind::Law => "law",
+        ArtifactKind::DefinedConcept => "defined_concept",
     }
 }
 

@@ -7,11 +7,17 @@ Run on Boat/CI from a clean checkout with Rust 1.98, Bun and frozen authoring de
 bash scripts/demo/run.sh
 ```
 
+Catalog inspection: `bash scripts/demo/drop-03-catalog.sh`. The [Drop 3 note](drop-03-catalog.md) describes its bounded reads, actual refusals and uncovered behavior.
+
+Declared allocation plans: `bash scripts/demo/drop-04-declared-folds.sh`. The
+[Drop 4 note](drop-04-declared-folds.md) distinguishes exact pure evaluation
+from the pending native cell cycle.
+
 Fallback status: **checker-admitted / refused; obligations generated; runtime execution not yet (#341 #342 #343)**.
 
 The default exits successfully only when the current admission demonstration succeeds; it always says INCOMPLETE. `--require-complete` exits 1 while required beats are missing. Unexpected compile/check failures stop execution. No tenant, external integration or stock/books state is manufactured. The script has no output fixtures or mocked adapters.
 
-CURRENT: `jewelry.source.ts` declares a small measurement schema and lifecycle, not a complete REA implementation. `Norn.law` in the same TypeScript source authors the conservation law; the Rust example reads that compiled artifact and invokes the existing checker and obligation generator. Its IR mutations are negative conformance probes, not business-law definitions. It prints admitted definitions, EN/AR reviewed wording slots, exact generated challenge/assessments, an actual invalid-binding refusal and a protected-law-edit refusal. A law admission, transition-frame assessment or goal inventory is not runtime enforcement, a generated solver counterexample or a proof. The local approval object is example-only and grants no deployment authority. The reviewed Arabic uses the accounting term **مُرحَّلة** for posted. Structured bilingual authoring is still **TARGET ([#58](https://github.com/Norn-cloud/norn/issues/58))**: only its wording adapter remains in Rust. EN/AR controlled rendering remains #322; no parallel renderer is implemented here.
+CURRENT: `jewelry.source.ts` declares a small measurement schema and lifecycle, not a complete REA implementation. `Norn.law` in the same TypeScript source authors the conservation law; the Rust example reads that compiled artifact and invokes the existing checker and obligation generator. Its IR mutations are negative conformance probes, not business-law definitions. It prints admitted definitions, EN/AR reviewed wording slots, exact generated challenge/assessments, an actual invalid-binding refusal and a protected-law-edit refusal. A law admission, transition-frame assessment or goal inventory is not runtime enforcement, a generated solver counterexample or a proof. The local approval object is example-only and grants no deployment authority. The reviewed Arabic uses the accounting term **مُرحَّلة** for posted. Structured bilingual authoring is still **TARGET ([#58](https://github.com/Norn-cloud/norn/issues/58))**: only its wording adapter remains in Rust. EN/AR controlled rendering now calls the real RequirementView over that same compiled law, with locale direction and stable slot IDs. This is display, not solver evidence; no parallel renderer is implemented here.
 
 The [gap matrix](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6559837435) is the checkpoint record. [Acceptance](../../docs/spec/acceptance/jewelry-demo.md) pins the transaction cycle; [data acceptance](../../docs/spec/acceptance/data-engineering.md) is being reconciled to scrap yield in #353. The rehearsal never substitutes the post-demo inventory fixture.
 

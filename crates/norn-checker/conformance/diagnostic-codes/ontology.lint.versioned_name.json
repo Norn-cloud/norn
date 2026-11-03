@@ -1,0 +1,7 @@
+{
+  "code": "ontology.lint.versioned_name",
+  "message": "{kind} {name} carries the version or copy marker {marker}; version the artifact, not the name",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T3"
+}

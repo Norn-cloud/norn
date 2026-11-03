@@ -7,7 +7,11 @@ use std::{
 
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
-use norn_ir::deontic::{RequirementText, RequirementWording};
+use norn_ir::deontic::{
+    DeonticModality, DeonticRule, RequirementText, RequirementTiming, RequirementWording,
+    RuleSourceSpan, StructuredRequirement,
+};
+use norn_ir::requirement_display::{RequirementLocale, RequirementView};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse};
 use serde_json::json;
 
@@ -30,6 +34,27 @@ fn target_wording() -> RequirementWording {
             "Input fine mass equals output fine mass plus recorded fine-metal loss",
             "كتلة المعدن الخالص الداخلة تساوي مجموع كتلته الخارجة وكتلة الفاقد المُسجَّل منه",
         ),
+    }
+}
+
+// TARGET #58: structured bilingual authoring still needs a Rust adapter to the compiled TS law.
+fn target_requirement(law: LawIR) -> StructuredRequirement {
+    StructuredRequirement {
+        norm: DeonticRule {
+            source: RuleSourceSpan {
+                artifact_id: format!("{}.law", law.id),
+                pointer: "/payload".into(),
+                bytes: None,
+            },
+            authority_id: law.owner.clone(),
+            authority_version: "0.1.0".into(),
+            law,
+            modality: DeonticModality::Obligation,
+            exceptions: vec![],
+            defeated_by: vec![],
+        },
+        timing: RequirementTiming::EveryCommittedState,
+        wording: target_wording(),
     }
 }
 
@@ -92,7 +117,7 @@ fn main() -> DemoResult<()> {
         tenant: None,
     };
     let diagnostics = check_artifact_set(&artifacts, &context);
-    if !diagnostics.is_empty() {
+    if diagnostics.iter().any(norn_checker::Diagnostic::is_error) {
         return Err(format!("admission: {diagnostics:?}").into());
     }
     writeln!(
@@ -102,14 +127,20 @@ fn main() -> DemoResult<()> {
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
     writeln!(
         stdout,
-        "TARGET (#58): reviewed EN/AR wording for {} (not the pending #322 renderer):",
+        "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
         law.id
     )?;
-    writeln!(
-        stdout,
-        "{}",
-        serde_json::to_string_pretty(&target_wording())?
-    )?;
+    let requirement = target_requirement(law);
+    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+        let view = RequirementView {
+            requirement: requirement.clone(),
+            locale,
+        };
+        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
+        for slot in view.slots()? {
+            writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
+        }
+    }
     let authority = ApprovedContract::approve(
         &exact,
         &registry,
@@ -137,7 +168,7 @@ fn main() -> DemoResult<()> {
         "CURRENT: protected-law edit refused: LawChanged (challenge boundary only)"
     )?;
     let refused = check_artifact_set(&refusal_probe(&artifacts, "self.missing == 1")?, &context);
-    if refused.is_empty() {
+    if !refused.iter().any(norn_checker::Diagnostic::is_error) {
         return Err("invalid property binding was admitted".into());
     }
     writeln!(stdout, "CURRENT: invalid law diagnostics: {refused:?}")?;

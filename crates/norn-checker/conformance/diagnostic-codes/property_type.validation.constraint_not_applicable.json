@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.constraint_not_applicable",
+  "message": "constraint {member} does not apply to a {kind} property",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

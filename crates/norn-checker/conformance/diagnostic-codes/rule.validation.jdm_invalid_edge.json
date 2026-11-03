@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_invalid_edge",
+  "message": "edge {edgeId} {problem}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

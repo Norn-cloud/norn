@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.ordered_fold_invalid",
+  "message": "ordered-fold declaration violates the typed, ordered, bounded structural contract",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

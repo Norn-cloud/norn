@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unreachable_node",
+  "message": "node {nodeId} {problem}; every node of a decision graph lies on a path from input to output",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

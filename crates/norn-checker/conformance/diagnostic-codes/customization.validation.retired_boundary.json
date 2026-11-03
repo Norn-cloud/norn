@@ -1,0 +1,7 @@
+{
+  "code": "customization.validation.retired_boundary",
+  "message": "executable boundary \"{boundary}\" is retired: inline custom execution is not admitted; move the code into a pool Function invoked through perform",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

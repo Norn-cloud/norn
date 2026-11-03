@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.tenant_interface",
+  "message": "interface {name} is declared by a tenant layer; interfaces are registry definitions a tenant implements, never authors",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

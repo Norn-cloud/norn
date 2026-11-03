@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.invalid_document",
+  "message": "the document is not a MappingIR document: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -13,6 +13,7 @@ use zen_expression::variable::Variable;
 pub struct Decision {
     content: Arc<GraphContent>,
     loader: DynamicLoader,
+    contracts: Option<Arc<dyn crate::nodes::DecisionContracts>>,
 }
 
 impl From<GraphContent> for Decision {
@@ -20,6 +21,7 @@ impl From<GraphContent> for Decision {
         Self {
             content: value.into(),
             loader: Arc::new(NoopLoader),
+            contracts: None,
         }
     }
 }
@@ -29,6 +31,7 @@ impl From<Arc<GraphContent>> for Decision {
         Self {
             content: value,
             loader: Arc::new(NoopLoader),
+            contracts: None,
         }
     }
 }
@@ -36,6 +39,11 @@ impl From<Arc<GraphContent>> for Decision {
 impl Decision {
     pub fn with_loader(mut self, loader: DynamicLoader) -> Self {
         self.loader = loader;
+        self
+    }
+
+    pub fn with_contracts(mut self, contracts: Arc<dyn crate::nodes::DecisionContracts>) -> Self {
+        self.contracts = Some(contracts);
         self
     }
 
@@ -87,6 +95,7 @@ impl Decision {
             iteration: 0,
             extensions: NodeHandlerExtensions {
                 loader: self.loader.clone(),
+                contracts: self.contracts.clone(),
                 compiled_cache: self.content.compiled_cache.clone(),
                 ..Default::default()
             },

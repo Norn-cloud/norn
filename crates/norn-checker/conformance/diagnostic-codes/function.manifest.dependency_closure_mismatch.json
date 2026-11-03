@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.dependency_closure_mismatch",
+  "message": "the dependency closure {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

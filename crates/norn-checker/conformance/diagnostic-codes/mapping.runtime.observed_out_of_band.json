@@ -1,0 +1,7 @@
+{
+  "code": "mapping.runtime.observed_out_of_band",
+  "message": "the observed lifecycle snapshot from {source} for {objectType}/{key}.{property} ({from} -> {to}) has no unique shortest declared path; mappingVersion={mappingVersion}, observedAt={observedAt}, reason={reason}",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T6"
+}

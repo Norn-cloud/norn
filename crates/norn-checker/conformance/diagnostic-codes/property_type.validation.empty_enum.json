@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.empty_enum",
+  "message": "enum declares no values",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.validation.incomplete_entitlement_snapshot",
+  "message": "entitlement mappings require every source and join dataset in the complete snapshot",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

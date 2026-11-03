@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unresolved_sub_decision",
+  "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

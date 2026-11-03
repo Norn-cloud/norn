@@ -283,7 +283,9 @@ fn structured_nested_bindings_must_identify_real_slots() {
         states: vec!["posted".into()],
     });
     let wire = serde_json::to_value(r).expect("typed fixture");
+    let exception = wire.pointer("/norm/exceptions/0").expect("exception");
     for (pointer, value) in [
+        ("/norm/exceptions", json!([exception, exception])),
         ("/norm/law/owner", json!("")),
         ("/norm/law/scope/root/id", json!("")),
         ("/norm/law/scope/objectTypes/0", json!(" ")),
@@ -304,5 +306,145 @@ fn structured_nested_bindings_must_identify_real_slots() {
             check_requirement(&invalid, &requirement_env()),
             Err(R::InvalidBinding)
         );
+        if pointer == "/norm/exceptions" {
+            let view = norn_ir::requirement_display::RequirementView {
+                requirement: invalid,
+                locale: norn_ir::requirement_display::RequirementLocale::Ar,
+            };
+            assert!(view.slots().is_err());
+        }
+    }
+}
+
+#[allow(clippy::expect_used, reason = "typed physics corpus fixture")]
+fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [&str; 4]) {
+    use norn_ir::deontic::{RequirementText, RequirementTiming};
+    let text = |en: &str, ar: &str| RequirementText {
+        en: en.into(),
+        ar: ar.into(),
+    };
+    let columns: [&str; 12] = row
+        .split('\t')
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("twelve typed slots");
+    let [
+        id,
+        scope_en,
+        scope_ar,
+        component_en,
+        component_ar,
+        expression,
+        en,
+        ar,
+        prohibited,
+        when_en,
+        when_ar,
+        condition,
+    ] = columns;
+    let prohibited = prohibited.parse::<bool>().expect("grade flag");
+    let mut r = requirement();
+    r.norm.law.id = format!("core.{id}");
+    r.norm.law.condition = Some(norn_ir::ZenExpression(condition.into()));
+    r.norm.law.rationale = en.into();
+    r.norm.authority_id = "core.physics".into();
+    r.norm.source.artifact_id = "core.physics.conformance".into();
+    r.norm.source.pointer = format!("/requirements/{id}");
+    r.norm.source.bytes = None;
+    r.norm.law.subject = "conformance.RequirementContext".into();
+    r.norm.law.scope.object_types = vec![r.norm.law.subject.clone()];
+    r.norm.law.scope.root = norn_ir::LawRoot::App("physics-conformance".into());
+    r.norm.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression(expression.into()),
+    };
+    if prohibited {
+        r.norm.modality = DeonticModality::Prohibition;
+        r.norm.law.modality = LawModality::Never {};
+    }
+    if prohibited || id == "commitment" {
+        r.timing = RequirementTiming::EveryCommittedState;
+    }
+    r.wording.scope = text(scope_en, scope_ar);
+    r.wording.component = text(component_en, component_ar);
+    r.wording.response = text(en, ar);
+    r.wording.activation = text(when_en, when_ar);
+    (r, [expression, en, ar, condition])
+}
+
+#[test]
+fn core_physics_bilingual_views_round_trip_one_semantic_target() {
+    use norn_expr::{EntityDefinitions, EnvOptions, Type, ZenTypeEnv};
+    use norn_ir::requirement_display::{RequirementLocale as L, RequirementView};
+    use std::collections::BTreeMap;
+    // Bounded, partitioned authoring inputs; not aggregate-law admission or preservation.
+    let corpus = include_str!("../../../docs/platform/structured-physics.tsv");
+    assert_eq!(corpus.lines().count(), 8);
+    let mut fields = BTreeMap::new();
+    for name in "external loss available held funded".split_whitespace() {
+        fields.insert(name.into(), Type::Number);
+    }
+    for name in "committed ledgerCommitted proposed wasTerminal terminal custodyChanged ownershipTransfer correctionCommitted consumed produced recorded open custodyRecorded edited deleted linked inverse"
+        .split_whitespace()
+    {
+        fields.insert(name.into(), Type::Bool);
+    }
+    for name in ["ownerBefore", "ownerAfter"] {
+        fields.insert(name.into(), Type::text());
+    }
+    for name in ["inputs", "outputs"] {
+        fields.insert(name.into(), Type::List(Box::new(Type::Number)));
+    }
+    let env = ZenTypeEnv::from_artifact_set(&EntityDefinitions::default(), EnvOptions::default())
+        .expect("env")
+        .bind_input(fields)
+        .expect("typed corpus inputs");
+    for row in corpus.lines() {
+        let (mut r, [expression, en, ar, condition]) = physics_requirement(row);
+        assert!(r.norm.law.id != "core.history" || condition == "true");
+        norn_checker::deontic::check_requirement(&r, &env).expect("closed corpus");
+        let mut ids = Vec::new();
+        for locale in [L::En, L::Ar] {
+            let view = RequirementView {
+                requirement: r.clone(),
+                locale,
+            };
+            let slots = view.slots().expect("safety display");
+            assert!(slots.iter().any(|s| s.text.contains(expression)));
+            let activation = slots.get(1).expect("activation");
+            assert!(activation.id.ends_with("/condition") && activation.text.contains(condition));
+            let response = slots
+                .iter()
+                .find(|s| s.id.ends_with("/response"))
+                .expect("response slot");
+            let expected = if locale == L::Ar { ar } else { en };
+            assert!(response.text.contains(expected));
+            assert!(slots.iter().all(|s| s.id.starts_with(&r.norm.law.id)));
+            assert_eq!(
+                view.direction(),
+                if locale == L::Ar { "rtl" } else { "ltr" }
+            );
+            ids.push(slots.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
+            let encoded = serde_json::to_string(&view).expect("view wire");
+            let decoded: RequirementView = serde_json::from_str(&encoded).expect("view decode");
+            assert_eq!(decoded, view);
+        }
+        assert_eq!(ids.first(), ids.get(1));
+        r.norm.law.condition = Some(norn_ir::ZenExpression(
+            "input.ownerBefore == 'x\u{2069}'".into(),
+        ));
+        norn_checker::deontic::check_requirement(&r, &env).expect("typed bidi literal");
+        let mut view = RequirementView {
+            requirement: r,
+            locale: L::Ar,
+        };
+        let slots = view.slots().expect("escaped controls");
+        let activation = slots
+            .iter()
+            .find(|s| s.id.ends_with("/condition"))
+            .expect("activation");
+        assert!(activation.text.contains("\\u{2069}"));
+        assert_eq!(activation.text.matches('\u{2069}').count(), 1);
+        view.requirement.norm.law.modality = LawModality::Eventually {};
+        assert_eq!(view.slots(), Err("law.validation.unsupported_temporal"));
     }
 }

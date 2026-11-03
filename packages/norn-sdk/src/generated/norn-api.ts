@@ -26,7 +26,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -96,6 +96,18 @@ export interface components {
              * @enum {string}
              */
             kind: "customization";
+        };
+        /** NornArtifactEnvelopeDefinedConcept */
+        NornArtifactEnvelopeDefinedConcept: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "defined_concept";
+            payload: components["schemas"]["NornIrDefinedConceptPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "defined_concept";
         };
         /** NornArtifactEnvelopeDerived */
         NornArtifactEnvelopeDerived: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -527,11 +539,13 @@ export interface components {
         NornIrActionCompensation: {
             actionId: string;
         };
-        /** @description Add an outgoing link alongside an ordinary action's business write. */
+        /** @description Declare a typed link inside the action's checked proposal. */
         NornIrActionCreateLink: {
-            /** @description Link declared on the effect's business object type. */
+            /** @description Link declared on the source object type. */
             link: string;
-            /** @description Input field naming an existing authorized declared-slice object. */
+            /** @description Optional source written by the same synchronous proposal (TXN-ATOMIC-1). */
+            source?: components["schemas"]["NornIrActionLinkSource"];
+            /** @description Required input field naming a captured or proposed target. */
             targetIdField: string;
             /** @description Fixed concrete target type. */
             targetType: string;
@@ -625,6 +639,13 @@ export interface components {
              */
             inputRequired?: boolean;
         };
+        /** @description A declared input-key source for a link within one action proposal. */
+        NornIrActionLinkSource: {
+            /** @description Required string input field containing its identity. */
+            idField: string;
+            /** @description Concrete type of an object written by the synchronous closure. */
+            objectType: string;
+        };
         NornIrActionPayload: {
             access?: components["schemas"]["NornIrAccessRef"];
             actionId: string;
@@ -644,6 +665,7 @@ export interface components {
             quantityEffect?: components["schemas"]["NornIrActionQuantityEffect"];
             scopeRequired: string[];
             slice?: components["schemas"]["NornIrSliceDeclaration"][];
+            synchronousRule?: components["schemas"]["NornIrActionRuleRef"];
             title?: string;
             uiEffects?: components["schemas"]["NornIrActionUiEffects"];
             writes?: components["schemas"]["NornIrActionWrite"][];
@@ -716,6 +738,13 @@ export interface components {
              */
             scale: number;
         };
+        /** @description Closed reference to the admitted synchronous writer of an action. */
+        NornIrActionRuleRef: {
+            /** @description Exact RuleIR artifact identity. */
+            artifactId: string;
+            /** @description Exact artifact version; no latest-version resolution. */
+            version: string;
+        };
         /**
          * @description Versioned, closed declarations for UI-facing effects that cannot be
          *     inferred from an action's commands, write set, or idempotency flag.
@@ -778,7 +807,7 @@ export interface components {
             required: boolean;
             version?: string | null;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law";
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -889,6 +918,11 @@ export interface components {
         NornIrCompositionPackRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description Semantic role of an ordinary concept, independent of lifecycle presence.
+         * @enum {string}
+         */
+        NornIrConceptRole: "thing" | "happening";
         /** @description How the connector authenticates to its source. Secrets are references only. */
         NornIrConnectorAuth: components["schemas"]["NornIrConnectorAuthOneOf0"] | components["schemas"]["NornIrConnectorAuthOneOf1"] | components["schemas"]["NornIrConnectorAuthOneOf2"];
         NornIrConnectorAuthOneOf0: {
@@ -1524,6 +1558,33 @@ export interface components {
          * @enum {string}
          */
         NornIrCustomizationTargetKind: "entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "business_pack" | "policy";
+        /** @description A stable reference to the constraint or rule that produced a finding. */
+        NornIrDataQualityRuleRef: {
+            /** @description Artifact containing the governing LawIR. */
+            artifactId: string;
+            /** @enum {string} */
+            kind: "law";
+            /** @description Stable LawIR identity, independent of its artifact name. */
+            lawId: string;
+            /** @description Canonical declaration digest, including its scope and predicate. */
+            version: string;
+        } | {
+            /** @description The invariant identity within its owner. */
+            invariantId: string;
+            /** @enum {string} */
+            kind: "invariant";
+            /** @description The object type or interface that declares this invariant. */
+            owner: components["schemas"]["NornIrInvariantOwner"];
+            /** @description The pinned declaration version or canonical content digest. */
+            version: string;
+        } | {
+            /** @description The globally qualified built-in rule id. */
+            id: string;
+            /** @enum {string} */
+            kind: "builtin";
+            /** @description The built-in rule semantics version. */
+            version: string;
+        };
         /**
          * @description What kind of collection a dataset is.
          * @enum {string}
@@ -1545,6 +1606,27 @@ export interface components {
          * @enum {string}
          */
         NornIrDeadLetterRoute: "ledger" | "queue";
+        /** @description Budget for one warm `decide` (§1 row 1). */
+        NornIrDecideBudget: {
+            /**
+             * Format: uint64
+             * @description Target p99 CPU per decision, in microseconds (qualification target;
+             *     not enforceable by a clock inside the kernel).
+             */
+            cpu_p99_micros: number;
+            /**
+             * Format: uint64
+             * @description The CPU envelope the fuel budget is calibrated against, in
+             *     microseconds.
+             */
+            fuel_envelope_micros: number;
+            /**
+             * Format: uint64
+             * @description Deterministic fuel per decision, in Norn ZEN metering units.
+             *     Provisional and uncalibrated until `T3-BUDGET-1`.
+             */
+            fuel_units: number;
+        };
         /**
          * @description An exact decimal number written as a JSON string: an optional `-`, an
          *     integer part without leading zeros, and an optional fraction
@@ -1563,6 +1645,26 @@ export interface components {
         NornIrDefaultValue: boolean | number | string | unknown[] | components["schemas"]["NornIrDefaultValueAnyOf4"];
         NornIrDefaultValueAnyOf4: {
             [key: string]: unknown;
+        };
+        /** @description Pack-owned classification; never a writable object store. */
+        NornIrDefinedConceptPayload: {
+            /** @description Exact type member in an entity artifact required by this artifact. */
+            base: components["schemas"]["NornIrMemberRef"];
+            /** @description Existing resource vocabulary and units, capped by the admitted profile. */
+            bounds: components["schemas"]["NornIrResourceLimitProfile"];
+            /** @description Exact member dependencies, including other classifications. */
+            dependencies: components["schemas"]["NornIrMemberRef"][];
+            extensions?: components["schemas"]["NornIrDefinedConceptPayloadPropertyExtensions"];
+            /** @description Qualified classification identity, distinct from the base object kind. */
+            id: string;
+            /** @description A pure Boolean expression over the authorized base snapshot. */
+            predicate: string;
+            /** @description Definition version; must match its artifact envelope. */
+            version: string;
+        };
+        /** @description Reserved versioned extension slots, as on other artifact roots. */
+        NornIrDefinedConceptPayloadPropertyExtensions: {
+            [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         NornIrDerivedPayload: {
             calc: components["schemas"]["NornIrCalcExpr"];
@@ -2021,6 +2123,35 @@ export interface components {
             value: string;
         };
         /**
+         * @description Per-decision envelope caps (§1 row 5).
+         *
+         *     Counts are `u32` and sizes `u64` so the serialized profile is identical on
+         *     native and `wasm32` hosts. `norn-kernel`'s `step` enforces the counts; the
+         *     host checks `max_output_bytes` against the bytes it serializes.
+         */
+        NornIrEnvelopeLimits: {
+            /**
+             * Format: uint32
+             * @description Maximum `perform` effects per decision.
+             */
+            max_commands: number;
+            /**
+             * Format: uint32
+             * @description Maximum events (facts) per decision.
+             */
+            max_events: number;
+            /**
+             * Format: uint64
+             * @description Maximum serialized metadata/output bytes per decision.
+             */
+            max_output_bytes: number;
+            /**
+             * Format: uint32
+             * @description Maximum timer effects (schedule + cancel) per decision.
+             */
+            max_timers: number;
+        };
+        /**
          * @description A content-addressed reference to evidence (raw metadata, a profile
          *     query result, a sample file).
          */
@@ -2154,7 +2285,7 @@ export interface components {
          *     division and implicit rounding do not implement this contract.
          */
         NornIrFoldArithmetic: {
-            rounding: components["schemas"]["NornIrFoldRounding"];
+            rounding: components["schemas"]["NornIrRounding"];
             /**
              * Format: uint32
              * @description Quantity-ledger-compatible exact scaled integers; at most 18 places.
@@ -2171,8 +2302,6 @@ export interface components {
         };
         /** @enum {string} */
         NornIrFoldOrderKind: "string" | "integer";
-        /** @enum {string} */
-        NornIrFoldRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description Why a target member is not mapped.
          * @enum {string}
@@ -2207,6 +2336,28 @@ export interface components {
         NornIrGenericTargetSelectorOneOf0: {
             /** @enum {string} */
             kind: "allAdmittedObjectTypes";
+        };
+        /**
+         * @description Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so
+         *     these only bind a future admission; the helper's fuel is charged to the
+         *     enclosing decision and turn budget.
+         */
+        NornIrHelperLimits: {
+            /**
+             * Format: uint64
+             * @description Aggregate helper CPU per decision, in microseconds.
+             */
+            aggregate_micros_per_decision: number;
+            /**
+             * Format: uint64
+             * @description Target p99 CPU per helper call, in microseconds.
+             */
+            cpu_p99_micros: number;
+            /**
+             * Format: uint64
+             * @description Maximum guest memory, in bytes.
+             */
+            max_guest_memory_bytes: number;
         };
         /**
          * @description HTTP method of a paginated resource.
@@ -2278,6 +2429,11 @@ export interface components {
             name: string;
             /** @description Required properties, in presentation order. Omitted when empty. */
             properties?: components["schemas"]["NornIrInterfaceProperty"][];
+            /**
+             * @description Declared concept role; omission inherits, then defaults to `thing`.
+             * @enum {string}
+             */
+            role?: "thing" | "happening";
             /** @description The definition's resource status. Omitted means `active`. */
             status?: components["schemas"]["NornIrResourceStatus2"];
         };
@@ -2364,6 +2520,16 @@ export interface components {
          *     have their own name space.
          */
         NornIrInvariantId: string;
+        /** @description Which declaration owns an invariant. */
+        NornIrInvariantOwner: {
+            /** @enum {string} */
+            kind: "object";
+            name: components["schemas"]["NornIrObjectTypeName"];
+        } | {
+            /** @enum {string} */
+            kind: "interface";
+            name: components["schemas"]["NornIrInterfaceName"];
+        };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
          *     policy, derived, and setting roots and of ontology business packs.
@@ -2606,7 +2772,9 @@ export interface components {
         };
         /** @constant */
         NornIrJsonFalse: false;
-        NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
+        NornIrJsonValue: null | boolean | number | string | unknown[] | {
+            [key: string]: unknown;
+        };
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
         };
@@ -3252,6 +3420,85 @@ export interface components {
             kind: "null";
         };
         /**
+         * @description A member of a definition. Names are the IR's own: an object type or
+         *     interface name, a property, link, lifecycle-property, or transition id,
+         *     an object-map id, a law id.
+         */
+        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        /** @description The artifact as a whole (an action, a decision, a mapping). */
+        NornIrMemberOneOf0: {
+            /** @enum {string} */
+            kind: "artifact";
+        };
+        /** @description An object type or interface. */
+        NornIrMemberOneOf1: {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        };
+        /** @description A property of a type. */
+        NornIrMemberOneOf2: {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        };
+        /** @description A link of a type. */
+        NornIrMemberOneOf3: {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        };
+        /** @description A state of a type's lifecycle (a value of its lifecycle property). */
+        NornIrMemberOneOf4: {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        };
+        /** @description A declared transition of a type's lifecycle. */
+        NornIrMemberOneOf5: {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        };
+        /** @description An object map of a mapping. */
+        NornIrMemberOneOf6: {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        };
+        /** @description A law. */
+        NornIrMemberOneOf7: {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
+        /** @description A member of one exact artifact. */
+        NornIrMemberRef: {
+            artifactId: string;
+            member: components["schemas"]["NornIrMember"];
+            version: string;
+        };
+        /** @description Working-memory targets (§1 row 4). Allocation metering is `T3-BUDGET-1`. */
+        NornIrMemoryLimits: {
+            /**
+             * Format: uint64
+             * @description Integrated live-footprint target under the concurrency fixture, in
+             *     bytes.
+             */
+            live_footprint_target_bytes: number;
+            /**
+             * Format: uint64
+             * @description Maximum incremental working allocation per admitted turn, in bytes.
+             */
+            max_turn_working_bytes: number;
+        };
+        /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
          * @enum {string}
          */
@@ -3440,6 +3687,11 @@ export interface components {
              *     narrowing overrides of inherited ones (same id). Omitted when empty.
              */
             properties?: components["schemas"]["NornIrProperty"][];
+            /**
+             * @description Declared concept role; omission inherits, then defaults to `thing`.
+             * @enum {string}
+             */
+            role?: "thing" | "happening";
             /**
              * @description The definition's resource status. Omitted means `active` (the
              *     canonical form omits it).
@@ -3760,7 +4012,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
         /** @description Artifact kinds a composition pack may contain (not `derived`). */
-        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "source_schema" | "mapping" | "law";
+        NornIrPackArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "defined_concept") | "source_schema" | "mapping" | "law";
         /** @description One exact artifact version in a composition pack. */
         NornIrPackArtifactRef: {
             artifactId: string;
@@ -3988,6 +4240,13 @@ export interface components {
             currencySource?: components["schemas"]["NornIrDimensionPath"];
             /** @enum {string} */
             kind: "decimal";
+            /** @description VAL-RATE: currency per this unit, distinct from a quantity's `unit`. */
+            perUnit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+             * @enum {string}
+             */
+            rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
             /**
              * Format: uint64
              * @description Fraction digits every value is held at (`2` for cents). At most 28,
@@ -4111,6 +4370,23 @@ export interface components {
          * @enum {string}
          */
         NornIrRedaction: "none" | "masked" | "hashed" | "withheld";
+        /**
+         * RefusalReason
+         * @description Structured refusal evidence shared by checker and transport projections.
+         *     DIAG-REASON-1: declaration pins and operands are disclosed as one unit.
+         */
+        NornIrRefusalReason: {
+            /** @description Stable governing law or invariant identity. */
+            law: string;
+            /** @description Exact governing declaration, absent only in historical unpinned reasons. */
+            pin?: components["schemas"]["NornIrDataQualityRuleRef"] | null;
+            /** @description Subject of the refused change. */
+            subject: string;
+            /** @description Typed operands; disclosure authority is required before projection. */
+            values: {
+                [key: string]: components["schemas"]["NornIrJsonValue"];
+            };
+        };
         /** @description Directional `rel(from, role)`. */
         NornIrRelCondition: {
             from: components["schemas"]["NornIrRelEndpoint"];
@@ -4160,6 +4436,32 @@ export interface components {
             name: string;
             op: components["schemas"]["NornIrResourceCompareOp"];
             value: components["schemas"]["NornIrResourceOperand"];
+        };
+        /**
+         * @description A versioned resource-limit profile (ruling 2026-09-27 §1).
+         *
+         *     All values are v1 qualification targets pending measurement.
+         */
+        NornIrResourceLimitProfile: {
+            /** @description One warm `decide`. */
+            decide: components["schemas"]["NornIrDecideBudget"];
+            /** @description The per-decision output envelope. */
+            envelope: components["schemas"]["NornIrEnvelopeLimits"];
+            /** @description An inline custom helper, only if D33 ever admits one. */
+            helper: components["schemas"]["NornIrHelperLimits"];
+            /** @description Profile family identifier, e.g. `norn.limits`. */
+            id: string;
+            /** @description Working memory. */
+            memory: components["schemas"]["NornIrMemoryLimits"];
+            /** @description The declared input slice. */
+            slice: components["schemas"]["NornIrSliceLimits"];
+            /** @description The whole synchronous cell turn: one aggregate budget. */
+            turn: components["schemas"]["NornIrTurnBudget"];
+            /**
+             * Format: uint32
+             * @description Profile version within the family. Any changed value is a new version.
+             */
+            version: number;
         };
         /** @description Resource ceilings of a customization executable. */
         NornIrResourceLimits: {
@@ -4232,6 +4534,11 @@ export interface components {
         NornIrRoleCondition: {
             anyOf: string[];
         };
+        /**
+         * @description FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.
+         * @enum {string}
+         */
+        NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
@@ -4637,6 +4944,31 @@ export interface components {
             /** @description The link id, declared on that entry's type or a supertype. */
             link: string;
         };
+        /** @description Bounds on the declared input slice (§1 row 3), enforced while reading. */
+        NornIrSliceLimits: {
+            /**
+             * Format: uint64
+             * @description Maximum canonical input bytes of the slice.
+             */
+            max_canonical_bytes: number;
+            /**
+             * Format: uint32
+             * @description Maximum selected records.
+             */
+            max_records: number;
+            /**
+             * Format: uint32
+             * @description Maximum relation depth.
+             */
+            max_relation_depth: number;
+            /**
+             * Format: uint64
+             * @description The byte ceiling a later, measured profile may raise
+             *     `max_canonical_bytes` to. Informational: never enforced in place of
+             *     `max_canonical_bytes`.
+             */
+            qualification_ceiling_bytes: number;
+        };
         /** @description The adapter that produced a document. */
         NornIrSourceAdapter: {
             /** @description Adapter name (`norn.importers.frappe`). */
@@ -4952,6 +5284,23 @@ export interface components {
          *     property id ([`MEMBER_ID_PATTERN`]).
          */
         NornIrTransitionId: string;
+        /**
+         * @description Budget for one synchronous cell turn (§1 row 2): one aggregate budget that
+         *     every triggered decision, validation, and helper debits.
+         */
+        NornIrTurnBudget: {
+            /**
+             * Format: uint64
+             * @description Target p99 active CPU per turn, in microseconds.
+             */
+            cpu_p99_micros: number;
+            /**
+             * Format: uint64
+             * @description Deterministic fuel per turn, in Norn ZEN metering units, shared by every
+             *     decision in the turn. Provisional and uncalibrated until `T3-BUDGET-1`.
+             */
+            fuel_units: number;
+        };
         /** @description A candidate normalized type and who asserted it. */
         NornIrTypeCandidate: {
             /**
@@ -5912,6 +6261,33 @@ export interface components {
             /** @description Pack, artifact digest and stable law member identity. */
             inherited_from: components["schemas"]["NornInheritedLawOrigin"];
         };
+        /** @description A refused request. */
+        Refusal: {
+            /** @description What the caller can do about it (the discriminant SDKs switch on). */
+            category: components["schemas"]["RefusalCategory"];
+            /** @description Stable machine code (`scope.denied`, `lifecycle.validation.undeclared_write`, …). */
+            code: string;
+            /** @description Why, and what would make the request admissible. */
+            explanation: string;
+            /** @description Versioned projection; stored checker receipts keep their original bytes. */
+            format: components["schemas"]["RefusalFormat"];
+            /** @description One-line summary. */
+            message: string;
+            reason: components["schemas"]["NornIrRefusalReason"] | null;
+            /** @description Engine-defined retryability, false unless explicitly supplied by the engine. */
+            retryable: boolean;
+        };
+        /**
+         * @description What the caller can do about a refusal: the kernel refusal taxonomy's
+         *     closed category set (`norn_kernel::RefusalCategory`).
+         * @enum {string}
+         */
+        RefusalCategory: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+        /**
+         * @description Version of the public refusal projection, independent of stored receipt formats.
+         * @enum {string}
+         */
+        RefusalFormat: "norn/refusal@2";
     };
     responses: never;
     parameters: never;

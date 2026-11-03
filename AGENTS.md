@@ -77,9 +77,9 @@ rewrite other entries. The subsystem id is its directory name.
 
 ## Changes and merging
 
-- **Small PRs.** One reviewable unit per PR, about 400 changed lines of
-  non-generated code at most, open for hours rather than days. Split larger
-  work into units that each merge on their own.
+- **Coherent PRs.** One coherent feature or fix per PR, with no line cap,
+  open for hours rather than days. Don't split work into stacked PRs just to
+  keep them small; stack only when a layer has to merge first.
 - **Merge bar.** Every required check is green on the exact head being merged,
   review is approved and no findings are open. Never bypass branch protection,
   skip or weaken a gate, or grow an allowlist to get green.

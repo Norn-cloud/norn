@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.inadmissible_key_kind",
+  "message": "key component {property} is {kind}, which has no canonical equality",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

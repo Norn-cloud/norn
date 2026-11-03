@@ -1,0 +1,7 @@
+{
+  "code": "ledger.unit.scale_out_of_range",
+  "message": "unit precision {precision} exceeds maximum {max}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "mapping.model.link_target_mismatch",
+  "message": "link {link} of {objectType} targets {target}, which does not admit {produced}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

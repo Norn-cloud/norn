@@ -1,0 +1,7 @@
+{
+  "code": "core.composition.unresolved_pin",
+  "message": "instance reference must resolve to an exact scoped pack pin",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

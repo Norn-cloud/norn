@@ -1,0 +1,7 @@
+{
+  "code": "mapping.runtime.invalid_key",
+  "message": "map {map}: {expression} yielded {value}, not a non-empty string",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}
