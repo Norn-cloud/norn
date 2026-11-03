@@ -1709,6 +1709,8 @@ def evidence_inventory_canaries() -> None:
 
 
 def rights_recovery_evidence(head: str, base: str, group_head: str) -> dict:
+    if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (head, base, group_head)):
+        raise ValueError("full lowercase commit identities required")
     public = yaml.safe_load((ROOT / ".github/workflows/ci-policy.yml").read_text())
     group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
     def program(job: dict, name: str) -> str:
@@ -1857,7 +1859,7 @@ def rights_workflow_canaries() -> None:
     for which in ("pr", "group"):
         for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env", "container",
                          "success-reporter", "wrong-head", "disabled-reporter", "reporter-token",
-                         "latest-history", "missing-history"):
+                         "latest-history", "missing-history", "collector-failure"):
             public = yaml.safe_load(source)
             group = yaml.safe_load(merge)
             document = public if which == "pr" else group
@@ -1865,7 +1867,8 @@ def rights_workflow_canaries() -> None:
             validator = next(step for step in job["steps"] if "--rights-evidence" in step.get("run", ""))
             reporter = next(step for step in job["steps"] if step.get("name", "").startswith("Report trusted policy"))
             collector = next(step for step in job["steps"] if step.get("name", "").startswith("Record admin approvals"))
-            if mutation == "shell": validator["shell"] = "/usr/bin/true {0}"
+            if mutation == "collector-failure": collector["continue-on-error"] = True
+            elif mutation == "shell": validator["shell"] = "/usr/bin/true {0}"
             elif mutation == "job-shell": job["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
             elif mutation == "workflow-shell": document["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
             elif mutation == "working-directory": validator["working-directory"] = "candidate"
