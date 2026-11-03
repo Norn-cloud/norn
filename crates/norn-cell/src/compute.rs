@@ -134,6 +134,20 @@ pub struct QueryResult {
 }
 
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
+/// ASOF-KNOWLEDGE-1: compare exact instants without truncating sub-millisecond bounds.
+fn asof_matches(at: &UtcTimestamp, millis: u64) -> bool {
+    let Ok(seconds) = i64::try_from(millis.div_euclid(1000)) else {
+        return false;
+    };
+    let Some(nanos) = millis
+        .rem_euclid(1000)
+        .checked_mul(1_000_000)
+        .and_then(|n| u32::try_from(n).ok())
+    else {
+        return false;
+    };
+    norn_expr::temporal::timestamp_ordering_key(at.as_str()) == Ok((seconds, nanos))
+}
 fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
@@ -188,8 +202,11 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
-            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
-                return Err(refused(UNSUPPORTED_ENGINE));
+            if let FreshnessPolicy::AsOf { at } = &plan.question().freshness {
+                let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+                if !asof_matches(at, point.recorded_at.as_millis()) {
+                    return Err(refused("core.compute.stale_input"));
+                }
             }
             self.check_question_model(plan)?;
             let mut revision = self.verified_head()?;
@@ -433,9 +450,9 @@ pub(crate) fn finish(
     let (mut stale, mut aged) = (false, false);
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
-            max_age_ms.0
+            Some(max_age_ms.0)
         }
-        FreshnessPolicy::AsOf { .. } => return Err(refused(UNSUPPORTED_ENGINE)),
+        FreshnessPolicy::AsOf { .. } => None,
     };
     for (source, partitions) in &context.source_cursors {
         complete &= !partitions.is_empty();
@@ -448,8 +465,8 @@ pub(crate) fn finish(
                 Some(w) => {
                     complete &= w.complete && &w.observed == consumed && w.heartbeat_ms.is_some();
                     let lag = w.heartbeat_ms.and_then(|at| context.now_ms.checked_sub(at));
-                    stale |= lag.is_none_or(|lag| lag > age);
-                    aged |= lag.is_some_and(|lag| lag > 0);
+                    stale |= lag.is_none_or(|lag| age.is_some_and(|age| lag > age));
+                    aged |= age.is_some() && lag.is_some_and(|lag| lag > 0);
                 }
                 None => complete = false,
             }
@@ -484,6 +501,17 @@ pub(crate) fn finish(
 #[allow(clippy::expect_used, reason = "bounded delta property assertions")]
 mod tests {
     use super::*;
+    proptest::proptest! {
+        #[test]
+        fn asof_instants_match_exact_millisecond_coordinates(offset in 0u32..86_400_000) {
+            let millis=1_792_972_800_000u64.checked_add(u64::from(offset)).expect("bounded timestamp");
+            let stamp=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp").to_rfc3339_opts(chrono::SecondsFormat::Millis,true);
+            let at=UtcTimestamp(stamp);
+            proptest::prop_assert!(asof_matches(&at,millis));
+            proptest::prop_assert!(!asof_matches(&at,millis.checked_add(1).expect("bounded successor")));
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn delta_retraction_restores_exact_totals(values in proptest::collection::vec(proptest::option::of(proptest::num::i32::ANY), 0..100)) {
