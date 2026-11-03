@@ -39,6 +39,10 @@ Generate initialization, non-vacuity, each-writer preservation, mapping totality
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
 
+**LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
+
+**LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
@@ -151,8 +155,10 @@ and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
 
-Qualification is restricted to integer/Boolean states, one worker, nonempty
-initialization, a drained queue and declared state cardinality on success. A
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
 conservative arithmetic bound must fit signed 32-bit integers; this is not a
 claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
 come from the pinned compiler JAR. The constitution profile excludes caller loss
@@ -160,3 +166,5 @@ and zero output. Named acceptance: original pass, omitted derivation refutation,
 restored model/Challenge/pass, stale evidence Unknown; the seven other generated
 obligations remain individually unknown. Source inspection and parity qualify
 this bounded fragment only, not general translator or model-checker soundness.
+
+**LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
