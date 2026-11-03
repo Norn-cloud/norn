@@ -843,7 +843,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::AtomicBoundary { .. } => "core.txn.atomic_boundary",
+            Self::AtomicBoundary { .. } => norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE,
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
             Self::Conflict { .. } => "commit.conflict",

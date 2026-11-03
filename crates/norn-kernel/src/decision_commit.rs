@@ -1658,7 +1658,7 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::AtomicBoundary { .. } => "core.txn.atomic_boundary",
+            Self::AtomicBoundary { .. } => norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE,
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
