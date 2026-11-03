@@ -564,6 +564,12 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    if commit.writes.iter().any(|write| {
+        write.key.object_type.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            && !authorization.is_some_and(|a| a.authorizes_write(write))
+    }) {
+        return Err(CommitError::ObservationAuthorization);
+    }
     if authorization.is_none()
         && commit
             .writes

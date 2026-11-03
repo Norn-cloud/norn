@@ -190,13 +190,13 @@ pub enum ObservationRefusal {
     Overflow,
 }
 
-/// Durable authority over one observed output's outgoing relations.
-/// Mapping versions may advance within the same admitted mapping identity.
+/// Retained source namespace protecting authored mutations of observed outputs.
+/// Canonical observed claims converge without acquiring this namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ObservedSourceOwner {
     /// The source system admitted by this mapping. Individual source records
-    /// carry lineage; the mapping declaration owns the relation namespace.
+    /// carry lineage; this marker protects the retained authored namespace.
     pub source_system: String,
     /// The mapping artifact identity, without its version suffix.
     pub mapping: String,
@@ -1473,6 +1473,39 @@ pub fn prepare_observed_snapshot(
         },
         authorization,
     })
+}
+
+/// OBS-LINK-CLAIM-1: retain a claim as an ordinary observed registry object.
+/// The mapping boundary authenticates the claim against its retained bundle.
+///
+/// # Errors
+/// Invalid claim identity/properties or ordinary observation preparation failure.
+pub fn prepare_observed_link_claim_snapshot(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    claim: &norn_ir::mapping::ObservedLinkClaim,
+) -> Result<PreparedObservation, ObservationRefusal> {
+    let key = FactKey::new(
+        norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+        claim
+            .id()
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?,
+    );
+    let values = claim
+        .values()
+        .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+    prepare_observed_snapshot(
+        catalog,
+        slice,
+        turn,
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &claim.provenance,
+        },
+    )
 }
 
 fn effective_observed_values(

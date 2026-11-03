@@ -152,7 +152,7 @@ fn link_record() -> norn_ir::mapping::MappedRecord {
         key: "one".into(),
         invocations: vec![ActionInvocation {
             action_id: "observe".into(),
-            input: Default::default(),
+            input: std::collections::BTreeMap::new(),
         }],
         lifecycle_snapshots: vec![],
         links: vec![LinkPatch {
@@ -164,7 +164,7 @@ fn link_record() -> norn_ir::mapping::MappedRecord {
             provenance: provenance.clone(),
         }],
         cleared_links: vec![LinkId("optional".into())],
-        property_provenance: Default::default(),
+        property_provenance: std::collections::BTreeMap::new(),
         provenance,
     }
 }
@@ -191,6 +191,17 @@ fn obs_link_identity_retains_explicit_targets_and_nullable_clears() {
         .find(|c| c.role.as_str() == "optional")
         .expect("clear");
     assert!(clear.target.is_none());
+    let values = clear.values().expect("registry projection");
+    assert!(values.get("target_type").expect("target type").is_null());
+    assert!(values.get("target_key").expect("target key").is_null());
+    let projected: norn_ir::mapping::ObservedLinkClaim = serde_json::from_str(
+        values
+            .get("evidence")
+            .and_then(norn_ir::RuntimeValue::as_str)
+            .expect("preimage"),
+    )
+    .expect("typed preimage");
+    assert_eq!(&projected, clear);
     assert_eq!(clear.provenance.transform.as_deref(), Some("row.optional"));
     assert_ne!(target.id().expect("id"), clear.id().expect("id"));
     let mut changed = target.clone();

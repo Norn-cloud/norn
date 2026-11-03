@@ -713,6 +713,9 @@ pub struct ObservedLinkClaim {
     pub provenance: InstanceProvenance,
 }
 
+/// Registry concept used for immutable, ordinary claim snapshots.
+pub const OBSERVED_LINK_CLAIM_TYPE: &str = "norn.ObservedLinkClaim";
+
 /// An endpoint emitted by the existing pinned mapping identity resolver.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -724,6 +727,30 @@ pub struct ObservedLinkTarget {
 }
 
 impl ObservedLinkClaim {
+    /// Project the typed claim into its registry-declared scalar properties.
+    ///
+    /// # Errors
+    /// Serialization of the complete evidence preimage failed.
+    pub fn values(&self) -> Result<crate::RuntimeObject, serde_json::Error> {
+        let text = |value: &str| crate::RuntimeValue::from(value);
+        let nullable = |value: Option<&str>| value.map_or(crate::RuntimeValue::Null, text);
+        Ok(crate::RuntimeObject::from([
+            ("observation_id".into(), text(&self.observation_id)),
+            ("source_type".into(), text(self.source_type.as_str())),
+            ("source_key".into(), text(&self.source_key)),
+            ("role".into(), text(self.role.as_str())),
+            (
+                "target_type".into(),
+                nullable(self.target.as_ref().map(|t| t.object_type.as_str())),
+            ),
+            (
+                "target_key".into(),
+                nullable(self.target.as_ref().map(|t| t.key.as_str())),
+            ),
+            ("evidence".into(), text(&serde_json::to_string(self)?)),
+        ]))
+    }
+
     /// Replay-stable evidence identity. Different sources remain distinct claims
     /// even when their endpoints converge to one canonical relation.
     ///

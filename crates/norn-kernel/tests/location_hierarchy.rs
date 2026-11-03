@@ -698,10 +698,17 @@ fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership()
     use norn_ir::mapping::{ObservedLinkClaim, ObservedLinkTarget};
     use norn_ir::{LinkId, ObjectTypeName};
     use norn_kernel::{FactExpectation, ObservationAuthorization, ObservationEvent, TypeCatalog};
-    let types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([
+    let mut types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([
         {"name":"test.Source", "links":[{"id":"target","target":"test.Target","cardinality":{"to":"one","from":"many"}}]},
         {"name":"test.Target"}
     ])).expect("types");
+    let declaration: Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/norn.ObservedLinkClaim.entity.json"
+    ))
+    .expect("claim declaration");
+    types.push(
+        serde_json::from_value(declaration["payload"]["objectType"].clone()).expect("claim type"),
+    );
     let catalog = TypeCatalog::new(types.iter());
     let mut cell: MemoryCell<ObservationEvent, JsonObject, JsonObject> =
         MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
@@ -732,6 +739,43 @@ fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership()
         }),
         provenance,
     };
+    let claim_key = FactKey::new(
+        norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+        claim.id().expect("claim id"),
+    );
+    let turn = norn_kernel::DecisionTurn {
+        id: claim.observation_id.clone(),
+        now: norn_kernel::LogicalTime::EPOCH,
+        world: norn_kernel::World::Main,
+        consumes: None,
+    };
+    let slice = norn_kernel::load_slice(&cell, [claim_key.clone()]).expect("slice");
+    let (prepared, authorization) =
+        norn_kernel::snapshot_observe::prepare_observed_link_claim_snapshot(
+            &catalog, &slice, &turn, &claim,
+        )
+        .expect("claim snapshot")
+        .into_parts();
+    cell.commit_observed(prepared, authorization)
+        .expect("claim stored atomically");
+    assert_eq!(
+        cell.load(&claim_key).expect("claim").values,
+        Some(claim.values().expect("projection"))
+    );
+    let forged = CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE, "forged"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: claim.values().expect("projection"),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    assert!(matches!(
+        cell.commit(forged),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
     let read = FactExpectation {
         key: source.clone(),
         expected: FactVersion(1),
