@@ -361,8 +361,12 @@ mod pdp {
     }
 
     fn pdp() -> Pdp {
+        pdp_for("alice")
+    }
+
+    fn pdp_for(subject: &str) -> Pdp {
         let grant = CapabilityGrant {
-            subject_id: "alice".to_owned(),
+            subject_id: subject.to_owned(),
             actor_kind: ActorKind::User,
             agent_session_id: None,
             scope: Some(scope()),
@@ -404,6 +408,141 @@ mod pdp {
             binding: None,
             delegation: Delegation::Direct,
         }
+    }
+
+    fn delegation_fixture() -> (crate::DelegationSnapshot, AccessRequest) {
+        use crate::{DelegationGrant, DelegationSnapshot, GrantPin};
+        use std::collections::BTreeSet;
+        let mut request = approve(&["approver"], true);
+        let mut issuer = request.principal.clone();
+        issuer.subject_id = "accountable-user".into();
+        let mut middle = issuer.clone();
+        middle.subject_id = "agent".into();
+        middle.actor_kind = ActorKind::Agent;
+        middle.agent_session_id = Some("session-1".into());
+        let root = DelegationGrant {
+            pin: GrantPin {
+                id: "root".into(),
+                generation: 1,
+            },
+            parent: None,
+            issuer,
+            recipient: middle.clone(),
+            accountable_person: "person-1".into(),
+            scope: scope(),
+            capabilities: BTreeSet::from([request.capability.clone()]),
+            actions: BTreeSet::from([request.action_id.clone()]),
+            resources: BTreeSet::from([(
+                request.resource.object_type.clone(),
+                request.resource.id.clone(),
+            )]),
+            expires_at: 100,
+            remaining_budget: 10,
+        };
+        let mut leaf = root.clone();
+        leaf.pin.id = "leaf".into();
+        leaf.parent = Some(root.pin.clone());
+        leaf.issuer = middle;
+        leaf.recipient = request.principal.clone();
+        leaf.expires_at = 90;
+        leaf.remaining_budget = 5;
+        request.delegation = Delegation::Chain(vec![root.pin.clone(), leaf.pin.clone()]);
+        let snapshot = DelegationSnapshot {
+            grants: BTreeMap::from([("root".into(), root), ("leaf".into(), leaf)]),
+            generations: BTreeMap::from([("root".into(), 1), ("leaf".into(), 1)]),
+            now: 10,
+            cost: 1,
+        };
+        (snapshot, request)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn delegation_budget_and_expiry_are_exact(cost in 0u64..16, now in 0u64..120) {
+            let (mut snapshot, request) = delegation_fixture();
+            snapshot.cost = cost;
+            snapshot.now = now;
+            proptest::prop_assert_eq!(pdp_for("accountable-user").with_delegation_snapshot(snapshot).decide(&request).is_allow(), cost > 0 && cost <= 5 && now < 90);
+        }
+    }
+
+    #[test]
+    fn delegation_chain_requires_attenuation_and_current_parent() {
+        let (snapshot, mut request) = delegation_fixture();
+        let allowed = pdp_for("accountable-user").with_delegation_snapshot(snapshot.clone());
+        assert_eq!(allowed.decide(&request), PdpDecision::Allow);
+        assert_eq!(allowed.accountable_person(&request), Some("person-1"));
+        assert!(!pdp().decide(&request).is_allow());
+        for cost in 1..=12 {
+            let mut current = snapshot.clone();
+            current.cost = cost;
+            assert_eq!(
+                pdp_for("accountable-user")
+                    .with_delegation_snapshot(current)
+                    .decide(&request)
+                    .is_allow(),
+                cost <= 5
+            );
+        }
+        for case in 0..20 {
+            let mut bad = snapshot.clone();
+            let leaf = bad.grants.get_mut("leaf").expect("leaf");
+            match case {
+                0 => {
+                    bad.generations.insert("root".into(), 2);
+                }
+                1 => {
+                    bad.grants.remove("root");
+                }
+                2 => leaf.parent.as_mut().expect("fixture pin").generation = 2,
+                3 => leaf.parent = None,
+                4 => leaf.issuer.subject_id = "forged".into(),
+                5 => leaf.recipient.agent_session_id = Some("other-session".into()),
+                6 => leaf.accountable_person = "other-person".into(),
+                7 => leaf.scope.tenant = Some("other-tenant".into()),
+                8 => {
+                    leaf.capabilities.insert("extra".into());
+                }
+                9 => {
+                    leaf.actions.insert("extra".into());
+                }
+                10 => {
+                    leaf.resources.insert(("other.Type".into(), "extra".into()));
+                }
+                11 => leaf.expires_at = 101,
+                12 => leaf.remaining_budget = 11,
+                13 => bad.now = 90,
+                14 => bad.cost = 6,
+                15 => bad.cost = 0,
+                16 => leaf.recipient = leaf.issuer.clone(),
+                17 => {
+                    let pin = leaf.pin.clone();
+                    bad.grants.get_mut("root").expect("fixture pin").parent = Some(pin);
+                }
+                18 => leaf.pin.generation = 2,
+                _ => {
+                    leaf.capabilities.clear();
+                }
+            }
+            let denied = pdp_for("accountable-user").with_delegation_snapshot(bad);
+            assert_eq!(
+                denied.decide(&request),
+                PdpDecision::Deny(DenyReason::Delegation),
+                "case {case}"
+            );
+            assert_eq!(denied.accountable_person(&request), None);
+        }
+        let mut direct = request.clone();
+        direct.delegation = Delegation::Direct;
+        assert!(
+            !allowed.decide(&direct).is_allow(),
+            "chain authority cannot become direct authority"
+        );
+        request.principal.roles.clear();
+        assert!(
+            !allowed.decide(&request).is_allow(),
+            "delegation cannot replace Cedar access"
+        );
     }
 
     fn marking_pdp() -> Pdp {

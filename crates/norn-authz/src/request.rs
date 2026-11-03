@@ -265,13 +265,13 @@ pub struct ResourceInput {
     pub attributes: BTreeMap<String, AttrValue>,
 }
 
-/// The delegation slot of the AND rule. Until Biscuit lands (ruling
-/// 2026-08-27 §7, sequenced last) only a direct principal passes; any
-/// presented token denies.
+/// Delegation selects trusted snapshot entries; token text never grants authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Delegation {
     /// The principal acts directly (no delegated token).
     Direct,
+    /// Ordered root-to-leaf pins resolved only against the trusted PDP snapshot.
+    Chain(Vec<crate::delegation::GrantPin>),
     /// A Biscuit token was presented. Denied until Biscuit verification exists.
     Biscuit(String),
 }

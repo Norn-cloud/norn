@@ -117,3 +117,20 @@ unchanged by transport projection versions. Historical receipts still verify.
 Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
+
+### Trusted delegation snapshots (AUTH-ATTENUATE-1 / AUTH-REVOKE)
+
+The PDP accepts root-to-leaf grant pins only against the host-authenticated
+`DelegationSnapshot`. Each immutable row binds issuer, recipient subject/kind/
+session and accountable person separately. Each hop retains its exact parent,
+scope and accountable person, narrows capability/action/resource sets, and never
+extends expiry or remaining budget. Missing/stale/cyclic chains refuse. The
+leaf matches `PrincipalInput`; the capability gate checks the root issuer while
+Cedar checks the acting leaf. No independent direct leaf grant is minted; choosing
+Direct cannot bypass ancestor revocation. Both conjuncts remain mandatory. Unverified token text remains denied.
+
+Commit/dispatch hosts must reconstruct the snapshot from current grant generations,
+logical time and budget, serializing authorization with consumption. A cached PDP
+is not current authority or a budget reservation. The named scenario
+`delegation_chain_requires_attenuation_and_current_parent` covers admission,
+attenuation, revocation, expiry, budget and independent accountable identity.

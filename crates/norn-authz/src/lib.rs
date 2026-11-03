@@ -16,9 +16,9 @@
 //!    the whole document with a stable [`AuthzCode`]. Only compiled policies
 //!    are admitted; there is no entry point for hand-written Cedar.
 //! 3. **Decide** ([`Pdp`], T5-AZ-3 #2578): the AND rule — capability grants
-//!    ([`CapabilityGrant`], compiled to Cedar with `norn-engine`'s exact-match
-//!    semantics) ∧ the Biscuit slot ([`Delegation`]; any token denies until
-//!    Biscuit lands) ∧ the admitted [`ValidatedPolicySet`]. Any error
+//!    ([`CapabilityGrant`], compiled to Cedar with exact-match
+//!    semantics) ∧ trusted attenuated delegation ([`Delegation`]; unverified
+//!    tokens deny) ∧ the admitted [`ValidatedPolicySet`]. Any error
 //!    denies. The kernel calls it through `norn_kernel::authz`.
 //!
 //! # Where the PDP runs
@@ -31,6 +31,7 @@
 
 mod admit;
 mod base;
+mod delegation;
 mod diag;
 mod entitlement;
 mod grants;
@@ -43,6 +44,7 @@ pub use norn_ir::access;
 
 pub use admit::ValidatedPolicySet;
 pub use base::{AuthzSchema, NORN_BASE_SCHEMA};
+pub use delegation::{DelegationGrant, DelegationSnapshot, GrantPin};
 pub use diag::{AuthzCode, AuthzDiagnostic, AuthzError};
 pub use entitlement::{
     EntitlementDenialReason, EntitlementEvaluation, EntitlementMatch, EntitlementRowEvaluation,
