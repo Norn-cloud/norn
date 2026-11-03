@@ -187,14 +187,13 @@ fn query() -> DefinitionsQuery {
         version: None,
     }
 }
-fn call(
+fn request(
     host: &DevHost<NativeEngine>,
     action: &str,
     key: &str,
     input: Value,
-    actor: Option<&str>,
     version: u64,
-) -> Result<ActionResponse, Refusal> {
+) -> ActionRequest {
     let installed = host
         .cell()
         .unwrap()
@@ -213,17 +212,22 @@ fn call(
         .1
         .action_id
         .clone();
-    call_action_in_epoch(
-        host,
-        &query(),
-        actor,
-        ActionRequest {
-            action_id: id,
-            input: serde_json::from_value(input).unwrap(),
-            idempotency_key: key.into(),
-            version,
-        },
-    )
+    ActionRequest {
+        action_id: id,
+        input: serde_json::from_value(input).unwrap(),
+        idempotency_key: key.into(),
+        version,
+    }
+}
+fn call(
+    host: &DevHost<NativeEngine>,
+    action: &str,
+    key: &str,
+    input: Value,
+    actor: Option<&str>,
+    version: u64,
+) -> Result<ActionResponse, Refusal> {
+    call_action_in_epoch(host, &query(), actor, request(host, action, key, input, version))
 }
 #[test]
 fn stock_receive_commits_replays_and_refuses_before_partial_effects() {
