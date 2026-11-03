@@ -362,6 +362,10 @@ fn two_deliveries_of_four_against_five_commit_exactly_one_stock_and_books() {
             let delivery = cell.load(&FactKey::new("fixture.RaceDelivery", id)).unwrap().values.unwrap();
             assert_eq!(delivery.get("status"), Some(&status.into()));
         }
+        for (id, expected) in [(winning, true), (losing, false)] {
+            let link = LinkKey::new(FactKey::new("fixture.RaceDelivery", id), "holding", holding.clone());
+            assert_eq!(cell.load_link(&link).unwrap().exists(), expected);
+        }
         let (legs, complete) = cell.store().read().root_rows("main", "fixture.RaceLeg", 4).unwrap();
         assert!(complete);
         assert_eq!(legs.len(), 2);
