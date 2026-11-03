@@ -1,0 +1,194 @@
+{
+  "profile": "synthetic-erpnext-three/1",
+  "capability": "synthetic_snapshot_incremental",
+  "snapshotWatermark": 10,
+  "productionCdc": false,
+  "snapshot": [
+    {
+      "dataset": "Party",
+      "record": {
+        "name": "SYN-ERPNEXT-owner",
+        "custom_norn_ref": "demo/party/owner",
+        "label": "Owner",
+        "role": "owner"
+      }
+    },
+    {
+      "dataset": "Party",
+      "record": {
+        "name": "SYN-ERPNEXT-custodian",
+        "custom_norn_ref": "demo/party/custodian",
+        "label": "Custodian",
+        "role": "custodian"
+      }
+    },
+    {
+      "dataset": "Party",
+      "record": {
+        "name": "SYN-ERPNEXT-customer",
+        "custom_norn_ref": "demo/party/customer",
+        "label": "Customer",
+        "role": "customer"
+      }
+    },
+    {
+      "dataset": "Item",
+      "record": {
+        "name": "SYN-ERPNEXT-item",
+        "custom_norn_ref": "demo/item/gold",
+        "code": "GOLD",
+        "label": "Gold scrap",
+        "sku": "SHARED-SKU",
+        "price": 150
+      }
+    },
+    {
+      "dataset": "Warehouse Lot Balance",
+      "record": {
+        "name": "SYN-ERPNEXT-holding-north",
+        "custom_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 200,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian",
+        "stock_cost": 9000,
+        "cost_currency": "USD",
+        "valuation_method": "moving_average"
+      }
+    },
+    {
+      "dataset": "Warehouse Lot Balance",
+      "record": {
+        "name": "SYN-ERPNEXT-holding-south",
+        "custom_norn_ref": "demo/holding/owner/south/gold",
+        "resource_code": "GOLD",
+        "quantity": 200,
+        "unit": "g",
+        "location": "south",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian",
+        "stock_cost": 9000,
+        "cost_currency": "USD",
+        "valuation_method": "moving_average"
+      }
+    },
+    {
+      "dataset": "Sales Order Item",
+      "record": {
+        "name": "SYN-ERPNEXT-order",
+        "custom_norn_ref": "demo/order/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "due_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold"
+      }
+    }
+  ],
+  "incremental": [
+    {
+      "sequence": 11,
+      "operation": "upsert",
+      "dataset": "Delivery Note Item",
+      "record": {
+        "name": "SYN-ERPNEXT-delivery",
+        "custom_norn_ref": "demo/delivery/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "occurred_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold",
+        "order_ref": "demo/order/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 11,
+      "operation": "upsert",
+      "dataset": "Delivery Note Item",
+      "record": {
+        "name": "SYN-ERPNEXT-delivery",
+        "custom_norn_ref": "demo/delivery/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "occurred_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold",
+        "order_ref": "demo/order/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 12,
+      "operation": "upsert",
+      "dataset": "Warehouse Lot Balance",
+      "record": {
+        "name": "SYN-ERPNEXT-holding-north",
+        "custom_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 180,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian",
+        "stock_cost": 8100,
+        "cost_currency": "USD",
+        "valuation_method": "moving_average"
+      }
+    },
+    {
+      "sequence": 13,
+      "operation": "upsert",
+      "dataset": "GL Entry",
+      "record": {
+        "name": "SYN-ERPNEXT-gl-cogs",
+        "custom_norn_ref": "demo/posting/cogs",
+        "account_code": "cogs",
+        "amount": 900,
+        "currency": "USD",
+        "book": "demo/stock-usd",
+        "account_role": "cogs",
+        "event_ref": "demo/delivery/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 14,
+      "operation": "upsert",
+      "dataset": "GL Entry",
+      "record": {
+        "name": "SYN-ERPNEXT-gl-inventory",
+        "custom_norn_ref": "demo/posting/inventory",
+        "account_code": "inventory",
+        "amount": -900,
+        "currency": "USD",
+        "book": "demo/stock-usd",
+        "account_role": "inventory",
+        "event_ref": "demo/delivery/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 15,
+      "operation": "upsert",
+      "dataset": "Payment Entry",
+      "record": {
+        "name": "SYN-ERPNEXT-settlement",
+        "custom_norn_ref": "demo/settlement/1",
+        "amount": 150,
+        "currency": "USD",
+        "kind": "payment",
+        "payer_ref": "demo/party/customer",
+        "payee_ref": "demo/party/owner"
+      }
+    }
+  ]
+}
