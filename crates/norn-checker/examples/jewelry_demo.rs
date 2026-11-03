@@ -107,8 +107,11 @@ fn main() -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
-    let exact = DefinitionSource::parse(&input, "[]")?;
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    artifacts.push(serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))?);
+    let exact = source(&artifacts)?;
     let law = authored_law(&artifacts)?;
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
