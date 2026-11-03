@@ -77,6 +77,8 @@ fn fixture() -> Fixture {
         scale: WholeNumber(3),
         unit: None,
         currency_source: None,
+        per_unit: None,
+        rounding: None,
     };
     holding.links = vec![Link {
         id: LinkId("tags".into()),
