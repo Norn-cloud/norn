@@ -5,7 +5,17 @@ use super::QuestionPlan;
 /// Version of the interpreted algebraic rules.
 pub const SEMANTICS: &str = "norn.ivm-algebra/1";
 /// Runtime correspondence cannot be inferred from the bilinear equation.
-pub const JOIN_RUNTIME: &str = "QuestionPlan does not admit joins";
+pub const JOIN_RUNTIME: Correspondence =
+    Correspondence::Unknown("QuestionPlan does not admit joins");
+
+/// Runtime evidence is separate from equation checking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Correspondence {
+    /// Generated native harness comparisons, not universal proof.
+    Sampled,
+    /// Missing implementation correspondence with its explicit reason.
+    Unknown(&'static str),
+}
 
 /// Closed homomorphisms; these are mathematical operations, not user assertions.
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +127,7 @@ pub struct QuestionCertificate<'a> {
     /// Rounded ratios are recomputed from maintained totals, not homomorphisms.
     pub finalizer: &'static str,
     /// Evidence ceiling for the unchanged native correspondence harness.
-    pub runtime: &'static str,
+    pub runtime: Correspondence,
 }
 
 /// Reconstruct only the operators admitted today; never accept a caller's plan.
@@ -144,7 +154,7 @@ pub fn question(plan: &QuestionPlan) -> QuestionCertificate<'_> {
         plan,
         algebraic: check(&operators, true),
         finalizer: "shared finalizer correspondence is sampled, including rounded ratios and zero divisors",
-        runtime: "sampled runtime correspondence",
+        runtime: Correspondence::Sampled,
     }
 }
 
@@ -236,6 +246,10 @@ mod tests {
 
     #[test]
     fn undeclared_folds_and_invalid_compositions_stay_unknown() {
+        assert_eq!(
+            JOIN_RUNTIME,
+            Correspondence::Unknown("QuestionPlan does not admit joins")
+        );
         for law in [None, Some(Homomorphism::MonoidSum)] {
             assert!(matches!(
                 check(
