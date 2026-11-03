@@ -937,7 +937,12 @@ fn evaluate_typed_properties(
             let value = values.get(property.id.as_str())?;
             let error = property.check_runtime_value(value).err()?;
             if let norn_checker::entity_instance::InstanceError::Unsupported(reason) = error {
-                return Some(Err(InvariantEvaluationError::InvalidEffectiveValues(reason)));
+                return Some(Err(InvariantEvaluationError::InvalidEffectiveValues(
+                    crate::EffectiveValuesError::Unsupported {
+                        property: property.id.as_str().to_owned(),
+                        feature: reason,
+                    },
+                )));
             }
             Some(Ok({
                 let (kind, reason) = match &property.kind {
