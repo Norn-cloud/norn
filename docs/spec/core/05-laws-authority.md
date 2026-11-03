@@ -168,3 +168,7 @@ obligations remain individually unknown. Source inspection and parity qualify
 this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+## Shared reviewed locale selection
+
+**REVIEWED-LOCALE-1:** laws and question-view consumers use the same reviewed locale-map decoding, completeness validation, BCP 47 syntax and case-insensitive exact selection. Duplicate wire keys or case variants refuse before collection; an incomplete unselected translation refuses too. No fallback is introduced. Existing law wire types, schemas, wording error codes and EN/AR display bytes remain unchanged. Named scenarios: `reviewed_locale_rejects_duplicate_wire_keys_and_incomplete_unselected_entries`, generated `reviewed_locale_selection_is_exact_without_fallback`, and the existing law locale scenarios. This refactoring changes no law or execution semantics.
