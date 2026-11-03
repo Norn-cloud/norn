@@ -145,7 +145,7 @@ impl DelegationSnapshot {
                 .grants
                 .get(&pins.first()?.id)
                 .map(|grant| &grant.issuer),
-            _ => None,
+            Delegation::Chain(_) | Delegation::Biscuit(_) => None,
         }
     }
 
