@@ -290,8 +290,9 @@ declare module "@norn/authoring" {
       }>
       /** Boolean ZEN Expressions over `input` and the declared `slice`. */
       readonly preconditions?: ReadonlyArray<Expression<boolean>>
-      /** Outgoing links to existing objects, each required in the declared slice. */
+      /** Atomic typed links to captured or proposed objects; explicit sources are written by the closure. */
       readonly createLinks?: ReadonlyArray<{
+        readonly source?: { readonly objectType: TypeDefinition<unknown> | string; readonly idField: keyof I["Type"] & string }
         readonly link: string
         readonly targetType: TypeDefinition<unknown> | string
         readonly targetIdField: keyof I["Type"] & string
@@ -304,6 +305,8 @@ declare module "@norn/authoring" {
         readonly name?: Expression<string>
         readonly fields?: { readonly [field: string]: Expression<unknown> }
       }>
+      /** Pinned facts-only synchronous RuleIR writer; execution requires the matching host profile. */
+      readonly synchronousRule?: DecisionDefinition | { readonly artifactId: string; readonly version: string }
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
