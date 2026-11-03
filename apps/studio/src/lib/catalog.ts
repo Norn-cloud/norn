@@ -24,7 +24,8 @@ export type Source =
   | { readonly kind: "fixed"; readonly value: string }
   | { readonly kind: "empty" }
   | { readonly kind: "computed"; readonly expression: string }
-  | { readonly kind: "nested"; readonly dataset: string; readonly field: string; readonly where: string }
+  | { readonly kind: "nested"; readonly dataset: string; readonly collection: string; readonly where: string; readonly value: Source }
+  | { readonly kind: "transition"; readonly expression: string }
   | { readonly kind: "gap"; readonly reason: "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere"; readonly note: string | undefined }
 
 export interface Feed {
@@ -135,10 +136,13 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       const facts = new Map<string, Source[]>()
       const add = (id: string, source: Source) => facts.set(id, [...facts.get(id) ?? [], source])
       for (const { property, value, nested } of map.properties ?? []) {
-        add(property, nested ? { kind: "nested", dataset: nested.dataset, field: nested.field, where: nested.where } : sourceOf(value))
+        add(property, nested ? { kind: "nested", dataset: nested.dataset, collection: nested.field, where: nested.where, value: sourceOf(value) } : sourceOf(value))
       }
       for (const { link, key } of map.links ?? []) add(link, sourceOf(key))
-      for (const { property, state } of map.lifecycles ?? []) if (state !== undefined) add(property, sourceOf(state))
+      for (const { property, state, transition } of map.lifecycles ?? []) {
+        if (state !== undefined) add(property, sourceOf(state))
+        else if (transition !== undefined) add(property, { kind: "transition", expression: transition })
+      }
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", reason, note }])
       feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
     }

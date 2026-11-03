@@ -77,7 +77,8 @@ function SourceCell({ source }: { readonly source: Source | undefined }) {
     case "fixed": return <span>always “{source.value.replaceAll("_", " ")}”</span>
     case "empty": return <span className="text-muted-foreground">left empty</span>
     case "computed": return <code className="text-xs">{source.expression}</code>
-    case "nested": return <span title={`where ${source.where}`}><code className="text-xs">{source.field}</code> <span className="text-muted-foreground">of {source.dataset}</span></span>
+    case "nested": return <span title={`${source.collection} rows where ${source.where}`}><SourceCell source={source.value} /> <span className="text-muted-foreground">in each {source.dataset} row</span></span>
+    case "transition": return <span><span className="text-muted-foreground">from transition </span><code className="text-xs">{source.expression}</code></span>
     case "gap": return <Badge variant="outline" title={source.note}>{GAP[source.reason]}</Badge>
   }
 }
@@ -87,7 +88,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
   const gaps = new Map<string, { readonly system: string; readonly reason: string; readonly note: string; readonly facts: string[] }>()
   for (const { system, facts } of concept.feeds) for (const [fact, [source]] of facts) {
     if (source?.kind !== "gap" || source.note === undefined) continue
-    const key = `${system}\u0000${source.note}`
+    const key = `${system}\u0000${source.reason}\u0000${source.note}`
     const gap = gaps.get(key) ?? { system, reason: GAP[source.reason], note: source.note, facts: [] }
     gap.facts.push(fact.replaceAll("_", " "))
     gaps.set(key, gap)

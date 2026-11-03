@@ -48,12 +48,13 @@ test("repeated links, nested rows, lifecycle states and gap reasons keep what is
     { kind: "entity", artifactId: "demo.Thing.entity", name: "Thing", payload: { entityVersion: "2.0", objectType: { name: "demo.Thing", properties: [] } } },
     { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-odoo" } } },
     { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.Thing.entity" }, links: [{ link: "party", key: "input.a" }, { link: "party", key: "input.b" }],
-      properties: [{ property: "amount", value: "row.amount", nested: { dataset: "Lines", field: "amount", where: "row.kind == 'gold'" } }],
-      lifecycles: [{ property: "status", state: "input.state" }], gaps: [{ member: "cost", reason: "deferred" }] }] } },
+      properties: [{ property: "amount", value: "input.amount", nested: { dataset: "Lines", field: "lines", where: "row.kind == 'gold'" } }],
+      lifecycles: [{ property: "status", state: "input.state" }, { property: "phase", transition: "input.event" }], gaps: [{ member: "cost", reason: "deferred" }] }] } },
   ] as unknown as readonly Artifact[]
   const facts = catalogOf(artifacts).byName.get("demo.Thing")?.feeds[0]?.facts
   expect(facts?.get("party")).toEqual([{ kind: "field", field: "a" }, { kind: "field", field: "b" }])
-  expect(facts?.get("amount")).toEqual([{ kind: "nested", dataset: "Lines", field: "amount", where: "row.kind == 'gold'" }])
+  expect(facts?.get("amount")).toEqual([{ kind: "nested", dataset: "Lines", collection: "lines", where: "row.kind == 'gold'", value: { kind: "field", field: "amount" } }])
+  expect(facts?.get("phase")).toEqual([{ kind: "transition", expression: "input.event" }])
   expect(facts?.get("status")).toEqual([{ kind: "field", field: "state" }])
   expect(facts?.get("cost")).toEqual([{ kind: "gap", reason: "deferred", note: undefined }])
 })
