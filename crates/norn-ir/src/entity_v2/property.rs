@@ -255,7 +255,15 @@ impl PropertyType {
     pub const fn additivity(&self) -> &PropertyAdditivity {
         match self {
             Self::Integer { additivity } | Self::Decimal { additivity, .. } => additivity,
-            _ => &PropertyAdditivity::Undeclared,
+            Self::Text { .. }
+            | Self::Boolean { .. }
+            | Self::Timestamp { .. }
+            | Self::Date { .. }
+            | Self::Duration { .. }
+            | Self::Enum { .. }
+            | Self::Record { .. }
+            | Self::JsonExt { .. }
+            | Self::Ref { .. } => &PropertyAdditivity::Undeclared,
         }
     }
 
