@@ -156,13 +156,13 @@ pub fn derive_metric_space(
                 &sources,
                 &time_path,
             ));
-        }
-        if candidates.len() > 16_384 {
-            return Err(vec![crate::property_types::error(
-                codes::COMPLEXITY_LIMIT,
-                "Derived metric space exceeds 16384 candidates".to_owned(),
-                Span::pointer("/metrics"),
-            )]);
+            if candidates.len() > 16_384 {
+                return Err(vec![crate::property_types::error(
+                    codes::COMPLEXITY_LIMIT,
+                    "Derived metric space exceeds 16384 candidates".to_owned(),
+                    Span::pointer("/metrics"),
+                )]);
+            }
         }
     }
     candidates.sort_by(|left, right| left.definition.name.cmp(&right.definition.name));
