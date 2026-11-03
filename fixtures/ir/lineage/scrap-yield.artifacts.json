@@ -1,1 +1,336 @@
-[{"artifactId":"demo.LineageRow.interface","dependencies":[],"irVersion":"0.1","kind":"entity","lifecycle":"draft","name":"Mapped scrap source row","namespace":"demo","payload":{"entityVersion":"2.0","interface":{"name":"demo.LineageRow","properties":[{"id":"id","type":{"kind":"text"}}]}},"provenance":{"source":"authoring_sdk","sourcePath":"tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"},"scope":{"environmentId":"dev","orgId":"org_demo"},"version":"0.1.0"},{"artifactId":"demo.Conversion.entity","dependencies":[],"irVersion":"0.1","kind":"entity","lifecycle":"draft","name":"Synthetic scrap conversion","namespace":"demo","payload":{"entityVersion":"2.0","objectType":{"identity":[{"name":"primary","properties":["id"]}],"implements":["demo.LineageRow"],"name":"demo.Conversion","properties":[{"id":"id","type":{"kind":"text"}},{"id":"input","type":{"kind":"decimal","scale":3,"unit":{"code":"g","system":"ucum"}}},{"id":"recovered","type":{"kind":"decimal","scale":3,"unit":{"code":"g","system":"ucum"}}},{"id":"loss","type":{"kind":"decimal","scale":3,"unit":{"code":"g","system":"ucum"}}},{"id":"occurred_at","type":{"kind":"timestamp","timezone":"utc"}},{"id":"metal","type":{"kind":"text"}}]}},"provenance":{"source":"authoring_sdk","sourcePath":"tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"},"scope":{"environmentId":"dev","orgId":"org_demo"},"version":"0.1.0"},{"artifactId":"demo.scrap.source","dependencies":[],"irVersion":"0.1","kind":"source_schema","lifecycle":"draft","name":"Synthetic scrap feed","namespace":"demo","payload":{"adapter":{"name":"synthetic-scrap","version":"0.1.0"},"datasets":[{"id":"conversions","kind":"table","nativeName":"conversions"}],"fields":[{"dataset":"conversions","name":"id","nativeType":"text","ordinal":0,"required":true,"typeCandidate":{"origin":"declared","type":"string"}},{"dataset":"conversions","name":"source_row","nativeType":"text","ordinal":1,"required":true,"typeCandidate":{"origin":"declared","type":"string"}},{"dataset":"conversions","name":"input","nativeType":"decimal grams","ordinal":2,"required":true,"typeCandidate":{"origin":"declared","type":"decimal"}},{"dataset":"conversions","name":"recovered","nativeType":"decimal grams","ordinal":3,"required":true,"typeCandidate":{"origin":"declared","type":"decimal"}},{"dataset":"conversions","name":"loss","nativeType":"decimal grams","ordinal":4,"required":true,"typeCandidate":{"origin":"declared","type":"decimal"}},{"dataset":"conversions","name":"occurred_at","nativeType":"datetime","ordinal":5,"required":true,"typeCandidate":{"origin":"declared","type":"datetime"}},{"dataset":"conversions","name":"metal","nativeType":"text","ordinal":6,"required":true,"typeCandidate":{"origin":"declared","type":"string"}}],"format":"norn.source-schema/1","observedAt":"2026-10-26T00:00:00Z","rawMetadata":{"sha256":"0000000000000000000000000000000000000000000000000000000000000000","uri":"evidence://synthetic/scrap-yield"},"source":{"instance":"demo","system":"synthetic-erpnext"}},"provenance":{"source":"authoring_sdk","sourcePath":"tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"},"scope":{"environmentId":"dev","orgId":"org_demo"},"version":"0.1.0"},{"artifactId":"demo.scrap.mapping","dependencies":[{"artifactId":"demo.scrap.source","kind":"source_schema","required":true,"version":"0.1.0"},{"artifactId":"demo.LineageRow.interface","kind":"entity","required":true,"version":"0.1.0"},{"artifactId":"demo.Conversion.entity","kind":"entity","required":true,"version":"0.1.0"}],"irVersion":"0.1","kind":"mapping","lifecycle":"draft","name":"Pinned scrap source mapping","namespace":"demo","payload":{"extensions":{"norn.mapping.generic/1.0.0":{"parity":"unqualified"}},"format":"norn.mapping/1","interfaces":["demo.LineageRow.interface"],"maps":[{"id":"conversion","properties":[{"property":"id","value":"input.id"},{"property":"input","value":"input.input"},{"property":"recovered","value":"input.recovered"},{"property":"loss","value":"input.loss"},{"property":"occurred_at","value":"timestamp(input.occurred_at)"},{"property":"metal","value":"input.metal"}],"source":{"dataset":"conversions"},"sourceRecord":"input.source_row","subject":"input.id","target":{"entity":"demo.Conversion.entity","interface":"demo.LineageRow.interface"}}],"source":{"schemaId":"demo.scrap.source","sha256":"0000000000000000000000000000000000000000000000000000000000000000","version":"0.1.0"}},"provenance":{"source":"authoring_sdk","sourcePath":"tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"},"scope":{"environmentId":"dev","orgId":"org_demo"},"version":"0.1.0"}]
+[
+  {
+    "artifactId": "demo.LineageRow.interface",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Mapped scrap source row",
+    "namespace": "demo",
+    "payload": {
+      "entityVersion": "2.0",
+      "interface": {
+        "name": "demo.LineageRow",
+        "properties": [
+          {
+            "id": "id",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "demo.Conversion.entity",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "entity",
+    "lifecycle": "draft",
+    "name": "Synthetic scrap conversion",
+    "namespace": "demo",
+    "payload": {
+      "entityVersion": "2.0",
+      "objectType": {
+        "identity": [
+          {
+            "name": "primary",
+            "properties": [
+              "id"
+            ]
+          }
+        ],
+        "implements": [
+          "demo.LineageRow"
+        ],
+        "name": "demo.Conversion",
+        "properties": [
+          {
+            "id": "id",
+            "type": {
+              "kind": "text"
+            }
+          },
+          {
+            "id": "input",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "g",
+                "system": "ucum"
+              }
+            }
+          },
+          {
+            "id": "recovered",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "g",
+                "system": "ucum"
+              }
+            }
+          },
+          {
+            "id": "loss",
+            "type": {
+              "kind": "decimal",
+              "scale": 3,
+              "unit": {
+                "code": "g",
+                "system": "ucum"
+              }
+            }
+          },
+          {
+            "id": "occurred_at",
+            "type": {
+              "kind": "timestamp",
+              "timezone": "utc"
+            }
+          },
+          {
+            "id": "metal",
+            "type": {
+              "kind": "text"
+            }
+          }
+        ]
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "demo.scrap.source",
+    "dependencies": [],
+    "irVersion": "0.1",
+    "kind": "source_schema",
+    "lifecycle": "draft",
+    "name": "Synthetic scrap feed",
+    "namespace": "demo",
+    "payload": {
+      "adapter": {
+        "name": "synthetic-scrap",
+        "version": "0.1.0"
+      },
+      "datasets": [
+        {
+          "id": "conversions",
+          "kind": "table",
+          "nativeName": "conversions"
+        }
+      ],
+      "fields": [
+        {
+          "dataset": "conversions",
+          "name": "id",
+          "nativeType": "text",
+          "ordinal": 0,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "string"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "source_row",
+          "nativeType": "text",
+          "ordinal": 1,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "string"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "input",
+          "nativeType": "decimal grams",
+          "ordinal": 2,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "decimal"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "recovered",
+          "nativeType": "decimal grams",
+          "ordinal": 3,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "decimal"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "loss",
+          "nativeType": "decimal grams",
+          "ordinal": 4,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "decimal"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "occurred_at",
+          "nativeType": "datetime",
+          "ordinal": 5,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "datetime"
+          }
+        },
+        {
+          "dataset": "conversions",
+          "name": "metal",
+          "nativeType": "text",
+          "ordinal": 6,
+          "required": true,
+          "typeCandidate": {
+            "origin": "declared",
+            "type": "string"
+          }
+        }
+      ],
+      "format": "norn.source-schema/1",
+      "observedAt": "2026-10-26T00:00:00Z",
+      "rawMetadata": {
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "uri": "evidence://synthetic/scrap-yield"
+      },
+      "source": {
+        "instance": "demo",
+        "system": "synthetic-erpnext"
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "artifactId": "demo.scrap.mapping",
+    "dependencies": [
+      {
+        "artifactId": "demo.scrap.source",
+        "kind": "source_schema",
+        "required": true,
+        "version": "0.1.0"
+      },
+      {
+        "artifactId": "demo.LineageRow.interface",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      },
+      {
+        "artifactId": "demo.Conversion.entity",
+        "kind": "entity",
+        "required": true,
+        "version": "0.1.0"
+      }
+    ],
+    "irVersion": "0.1",
+    "kind": "mapping",
+    "lifecycle": "draft",
+    "name": "Pinned scrap source mapping",
+    "namespace": "demo",
+    "payload": {
+      "extensions": {
+        "norn.mapping.generic/1.0.0": {
+          "parity": "unqualified"
+        }
+      },
+      "format": "norn.mapping/1",
+      "interfaces": [
+        "demo.LineageRow.interface"
+      ],
+      "maps": [
+        {
+          "id": "conversion",
+          "properties": [
+            {
+              "property": "id",
+              "value": "input.id"
+            },
+            {
+              "property": "input",
+              "value": "input.input"
+            },
+            {
+              "property": "recovered",
+              "value": "input.recovered"
+            },
+            {
+              "property": "loss",
+              "value": "input.loss"
+            },
+            {
+              "property": "occurred_at",
+              "value": "timestamp(input.occurred_at)"
+            },
+            {
+              "property": "metal",
+              "value": "input.metal"
+            }
+          ],
+          "source": {
+            "dataset": "conversions"
+          },
+          "sourceRecord": "input.source_row",
+          "subject": "input.id",
+          "target": {
+            "entity": "demo.Conversion.entity",
+            "interface": "demo.LineageRow.interface"
+          }
+        }
+      ],
+      "source": {
+        "schemaId": "demo.scrap.source",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "version": "0.1.0"
+      }
+    },
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts"
+    },
+    "scope": {
+      "environmentId": "dev",
+      "orgId": "org_demo"
+    },
+    "version": "0.1.0"
+  }
+]
