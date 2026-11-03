@@ -7289,3 +7289,17 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
         );
     }
 }
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(12))]
+    #[test]
+    fn warning_law_invalid_observations_never_enter_authority(fraction in 1u16..1000) {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut cell = purity_quality_host_with_severity(&directory.path().join("warning.sqlite"), "warning");
+        capture_purity(&mut cell, "warning-generated", &format!("1.{fraction:03}"));
+        norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("authority").is_none());
+        let findings = cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
+        norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+        norn_testkit::proptest::prop_assert_eq!(findings[0].severity, norn_ir::DataQualitySeverity::Warning);
+    }
+}
