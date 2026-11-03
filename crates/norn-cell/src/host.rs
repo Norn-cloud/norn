@@ -1446,6 +1446,9 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
+            Err(GuardedError::Store(CellError::IdentityCollision { owner, key })) => {
+                Err(CommitError::IdentityCollision { owner, key })
+            }
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }

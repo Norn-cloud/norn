@@ -284,3 +284,40 @@ proptest! {
         prop_assert_eq!(store.read().dump().expect("after"), before);
     }
 }
+
+#[test]
+fn normalized_key_refusal_keeps_its_machine_code_through_the_cell_host() {
+    use norn_kernel::{
+        CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite, Refusable,
+    };
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    store
+        .commit(&batch(
+            "org_a",
+            "main",
+            vec![put("identity.Child", "first", " abc ")],
+        ))
+        .expect("first");
+    let mut cell = norn_cell::SqliteCell::<RuntimeValue, RuntimeValue, RuntimeValue>::new(
+        store,
+        "org_a",
+        |command| command.payload.clone(),
+    )
+    .expect("host");
+    let before = cell.store().read().dump().expect("before");
+    let error = cell
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("identity.Sibling", "second"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: BTreeMap::from([("code".into(), RuntimeValue::from("ABC"))]),
+                },
+            }],
+            ..CellCommit::default()
+        })
+        .expect_err("collision");
+    assert_eq!(error.code(), "core.identity.collision");
+    assert!(!error.refusal().retryable);
+    assert_eq!(cell.store().read().dump().expect("after"), before);
+}
