@@ -4,13 +4,13 @@ import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
-test("decimal action arguments lower to exact text wire contracts", () => {
+test("decimal action arguments retain exact types for transport projection", () => {
   const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/decimal-input.source.ts"), {
     scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "decimal-input.source.ts",
   })
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts[1]).toMatchObject({ payload: { inputSchema: {
-    properties: { amount: { type: "decimal", scale: 2 } },
+    properties: { amount: { type: "number", nornType: { kind: "decimal", scale: 2 } } },
   } } })
   if (checker) {
     const admission = checker.checkArtifactSet(result.artifacts)
