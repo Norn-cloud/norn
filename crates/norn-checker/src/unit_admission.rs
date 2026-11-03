@@ -149,6 +149,7 @@ fn visit(
         | PropertyType::Duration { .. }
         | PropertyType::Enum { .. }
         | PropertyType::JsonExt { .. }
+        | PropertyType::DecimalBinding { .. }
         | PropertyType::Ref { .. } => {}
     }
 }
