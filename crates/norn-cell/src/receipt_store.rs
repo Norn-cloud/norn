@@ -735,7 +735,11 @@ mod tests {
     fn exercise_receipt_action(member: &str, accepts: bool) {
         exercise_receipt_action_with_destination(member, accepts, true);
     }
-    fn exercise_receipt_action_with_destination(member: &str, accepts: bool, has_destination: bool) {
+    fn exercise_receipt_action_with_destination(
+        member: &str,
+        accepts: bool,
+        has_destination: bool,
+    ) {
         use norn_kernel::{
             ActionCall, ActionOutcome, DecisionTurn, TypeCatalog, World, commit_action,
         };
@@ -786,7 +790,9 @@ mod tests {
             let error =
                 commit_action(&mut cell, &catalog, &request, &ActionAllow).expect_err("refusal");
             if !has_destination {
-                assert!(matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "receipt"));
+                assert!(
+                    matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "receipt")
+                );
             } else if member == "confidence" {
                 assert!(
                     matches!(error, norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { ref reason }) if reason.contains("receipt result property confidence"))

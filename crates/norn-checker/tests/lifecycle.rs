@@ -135,9 +135,11 @@ fn every_lifecycle_code_has_a_negative_fixture() {
             .any(|(code, _)| code == codes::INVALID_GUARD_DIAGNOSTIC)
     );
     covered.insert(codes::INVALID_GUARD_DIAGNOSTIC.to_owned());
-    assert!(run(&guard_diagnostic_override(), &[], None)
-        .iter()
-        .any(|(code, _)| code == codes::INHERITED_GUARD_DIAGNOSTIC));
+    assert!(
+        run(&guard_diagnostic_override(), &[], None)
+            .iter()
+            .any(|(code, _)| code == codes::INHERITED_GUARD_DIAGNOSTIC)
+    );
     covered.insert(codes::INHERITED_GUARD_DIAGNOSTIC.to_owned());
     let files = std::fs::read_dir(format!("{FIXTURES}/lifecycles/invalid"))
         .expect("fixture directory")
