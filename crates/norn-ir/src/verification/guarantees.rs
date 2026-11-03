@@ -24,6 +24,8 @@ pub enum GuaranteeVerdict {
     /// No qualified result is available.
     Unknown {
         /// Concrete unsupported, stale, failed or unavailable boundary.
+        #[serde(deserialize_with = "nonblank_reason")]
+        #[schemars(regex(pattern = r"\S"))]
         reason: String,
     },
 }
@@ -42,6 +44,8 @@ pub enum GuaranteeLevel {
     /// No evidence at this level is available.
     Unknown {
         /// Concrete reason, rather than an inferred guarantee.
+        #[serde(deserialize_with = "nonblank_reason")]
+        #[schemars(regex(pattern = r"\S"))]
         reason: String,
     },
 }
@@ -70,7 +74,7 @@ pub enum GuaranteeReference {
 pub struct GuaranteeScalar {
     /// Signed integer text; never a binary64 quantity.
     #[serde(with = "integer_text")]
-    #[schemars(with = "String", regex(pattern = r"^-?(0|[1-9][0-9]*)$"))]
+    #[schemars(schema_with = "integer_text::schema")]
     pub coefficient: i64,
     /// Fractional decimal digits from the declaration.
     pub scale: u32,
@@ -175,8 +179,34 @@ pub fn guarantees_document_schema() -> schemars::Schema {
     schemars::schema_for!(GuaranteesDocument)
 }
 
+fn nonblank_reason<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    if text.trim().is_empty() {
+        return Err(serde::de::Error::custom("nonblank Unknown reason required"));
+    }
+    Ok(text)
+}
+
 mod integer_text {
     use serde::{Deserialize, Deserializer, Serializer};
+    pub(super) fn schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Each branch fixes the first digit below the bound, retaining the prefix.
+        fn magnitude(maximum: u64) -> String {
+            let digits = maximum.to_string();
+            let mut alternatives = vec!["[1-9][0-9]{0,17}".to_owned(), digits.clone()];
+            for (index, digit) in digits.bytes().enumerate() {
+                let lower = if index == 0 { b'1' } else { b'0' };
+                if digit > lower {
+                    alternatives.push(format!("{}[{}-{}][0-9]{{{}}}",
+                        &digits[..index], char::from(lower), char::from(digit - 1),
+                        digits.len() - index - 1));
+                }
+            }
+            format!("({})", alternatives.join("|"))
+        }
+        schemars::json_schema!({"type": "string", "pattern": format!("^(0|{}|-{})$",
+            magnitude(i64::MAX.unsigned_abs()), magnitude(i64::MIN.unsigned_abs()))})
+    }
     pub(super) fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&value.to_string())
     }
@@ -225,6 +255,9 @@ mod tests {
             json!("1.25"),
             json!("+1"),
             json!("01"),
+            json!("-0"),
+            json!("9223372036854775808"),
+            json!("-9223372036854775809"),
         ] {
             assert!(
                 serde_json::from_value::<GuaranteeScalar>(
@@ -232,6 +265,20 @@ mod tests {
                 )
                 .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn unknown_reasons_refuse_empty_and_whitespace() {
+        for reason in ["", " ", "\t\n", "\u{2003}"] {
+            let value = json!({"kind":"unknown", "reason":reason});
+            assert!(serde_json::from_value::<GuaranteeVerdict>(value.clone()).is_err());
+            assert!(serde_json::from_value::<GuaranteeLevel>(value).is_err());
+        }
+        for coefficient in [i64::MIN, i64::MAX] {
+            let value = GuaranteeScalar { coefficient, scale: 0, unit: None };
+            assert_eq!(serde_json::from_slice::<GuaranteeScalar>(
+                &serde_json::to_vec(&value).expect("encode")).expect("decode"), value);
         }
     }
 
