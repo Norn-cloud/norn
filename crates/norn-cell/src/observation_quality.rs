@@ -186,7 +186,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         loop {
             let sequences = self.conn.query(
                 &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND commit_seq <= ?5 ORDER BY seq LIMIT 64"),
-                params![world, object_type, key, after, to_i64(frontier.min(i64::MAX as u64), "finding frontier")?],
+                params![world, object_type, key, after, to_i64(frontier.min(9_007_199_254_740_991), "finding frontier")?],
             )?;
             if sequences.is_empty() {
                 break;
