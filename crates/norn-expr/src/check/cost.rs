@@ -594,7 +594,7 @@ impl<'a, 'n> Estimator<'a, 'n> {
     /// The fewest canonical bytes a value of `ty` takes.
     fn min_bytes(ty: &T) -> u64 {
         match ty {
-            T::Number => 1,
+            T::Number(_) => 1,
             T::Null | T::Bool => 4,
             T::Str(Some(values)) => {
                 2_u64.saturating_add(values.iter().map(|v| len64(v.len())).min().unwrap_or(0))
@@ -641,7 +641,7 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 val.size = val.size.at_least_one();
                 val
             }
-            T::Null | T::Bool | T::Number => Val::scalar(),
+            T::Null | T::Bool | T::Number(_) => Val::scalar(),
             T::Str(Some(values)) => Val {
                 size: Lin::constant(values.iter().map(|v| len64(v.len())).max().unwrap_or(0)),
                 origin,

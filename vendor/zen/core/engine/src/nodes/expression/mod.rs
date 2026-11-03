@@ -34,15 +34,28 @@ impl NodeHandler for ExpressionNodeHandler {
                 continue;
             }
 
-            let value =
-                isolate
-                    .run_standard(&expression.value)
-                    .with_node_context(&ctx, |error| {
-                        format!(
-                            r#"Failed to evaluate expression: "{}": {error}"#,
-                            expression.value
-                        )
-                    })?;
+            let binding = ctx.extensions.contracts.as_ref().and_then(|contracts| {
+                contracts.expression(&ctx.id, &expression.key, &expression.value)
+            });
+            isolate.set_meter(ctx.extensions.meter.as_ref().map(|meter| {
+                if binding.as_ref().is_some_and(|b| b.exact) {
+                    meter.with_exact_arithmetic(None)
+                } else {
+                    meter.clone()
+                }
+            }));
+            let value = isolate
+                .run_standard(
+                    binding
+                        .as_ref()
+                        .map_or(expression.value.as_ref(), |b| b.source.as_str()),
+                )
+                .with_node_context(&ctx, |error| {
+                    format!(
+                        r#"Failed to evaluate expression: "{}": {error}"#,
+                        expression.value
+                    )
+                })?;
             ctx.trace(|trace| {
                 trace.insert(
                     Rc::from(&*expression.key),

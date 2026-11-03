@@ -40,7 +40,7 @@ test.skipIf(!checker)("the Rust checker admits every registry pack and link", ()
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
   const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
-  const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json"]
+  const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))

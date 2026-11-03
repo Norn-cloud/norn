@@ -9,6 +9,7 @@
  * slots, and decision contracts are all written in it, and the Rust checker
  * validates every one; nothing here is a second type authority.
  */
+import type { PropertyType } from "./entity.ts"
 import type { Json } from "../canonical.ts"
 
 export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema
@@ -20,6 +21,7 @@ export interface StringSchema {
 
 export interface ScalarSchema {
   readonly type: "integer" | "number" | "boolean" | "null"
+  readonly nornType?: Extract<PropertyType, {readonly kind: "decimal"}>
 }
 
 export interface ArraySchema {
@@ -99,7 +101,12 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
     if (a.enum === undefined || b.enum === undefined) return text()
     return text([...new Set([...a.enum, ...b.enum])])
   }
-  if (isNumeric(a) && isNumeric(b)) return a.type === b.type ? a : number
+  if (isNumeric(a) && isNumeric(b)) {
+    const exactA = "nornType" in a ? a.nornType : undefined
+    const exactB = "nornType" in b ? b.nornType : undefined
+    if (exactA !== undefined || exactB !== undefined) return JSON.stringify(exactA) === JSON.stringify(exactB) ? a : `${path}: different exact numeric contracts`
+    return a.type === b.type ? a : number
+  }
   if (a.type !== b.type) return `${path}: ${a.type} and ${b.type} have no closed union`
   if (a.type === "array" && b.type === "array") {
     const items = mergeSchemas(a.items, b.items, `${path}[]`)
@@ -131,6 +138,13 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
 
 /** The closed record with no members. */
 export const emptyRecord: ObjectSchema = record({})
+
+/** Retain the exact declaration when choosing the bounded expression profile. */
+export function hasExact(schema: ValueSchema): boolean {
+  if ("nornType" in schema && schema.nornType !== undefined) return true
+  if ("properties" in schema) return Object.values(schema.properties).some(hasExact)
+  return "items" in schema && hasExact(schema.items)
+}
 
 /** FOLD-OPERANDS: every value admitted by actual also satisfies expected. */
 export function acceptsSchema(expected: ValueSchema, actual: ValueSchema): boolean {

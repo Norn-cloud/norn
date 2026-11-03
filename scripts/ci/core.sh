@@ -78,6 +78,8 @@ run_phase() {
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck)
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
+      python3 verification/coverage-v1/negative_canaries.py --workflow-contract
+      python3 scripts/ci/frontier.py self-test
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
       cargo xtask ci policy

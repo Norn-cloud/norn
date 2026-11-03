@@ -1,6 +1,6 @@
 // expect: NORN-FLOW-SCHEMA-PROJECTION
-// Exact decimals are EntityIR property types; closed schemas have no exact decimal yet.
+// Closed exact sites refuse a scale above the bounded arithmetic profile.
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
-export const Input = Schema.Struct({ amount: Norn.decimal(2) })
+export const Input = Schema.Struct({ amount: Norn.decimal(19) })

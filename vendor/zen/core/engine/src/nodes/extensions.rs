@@ -30,7 +30,18 @@ impl NodeHandlerExtensions {
 }
 
 /// Exact host-owned schemas at every sub-decision boundary.
+/// One host-checked binding; execution remains in the shared expression VM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpressionContract {
+    pub source: String,
+    pub exact: bool,
+}
+
 pub trait DecisionContracts: std::fmt::Debug + Send + Sync {
+    fn expression(&self, _node: &str, _key: &str, _source: &str) -> Option<ExpressionContract> {
+        None
+    }
+
     fn check(
         &self,
         key: &str,
