@@ -155,9 +155,15 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
         &limits,
     )
     .map(drop)
-    .map_err(|error| match error {
-        norn_checker::ReceiptError::UnsupportedReceiptVersion { .. } => context_unavailable(),
-        other => Refusal::host(other),
+    .map_err(|error| {
+        if matches!(
+            &error,
+            norn_checker::ReceiptError::UnsupportedReceiptVersion { .. }
+        ) {
+            context_unavailable()
+        } else {
+            Refusal::host(error)
+        }
     })
 }
 fn context_unavailable() -> Refusal {
