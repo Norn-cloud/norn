@@ -164,18 +164,12 @@ Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown
 
 ### Conditional declared normative order (#737, first cut)
 
-`diagnose_declared_order` checks an explicitly supplied exhaustive grounding of
-one common action/subject. LAW-RETAIN-1 / OVERLAY-MONOTONE-1 prohibit declared
-lower-to-higher overrides, including inactive or exception-masked overrides.
-Opposing rules whose effective masks overlap must be comparable by a declared
-strict order within a layer; cross-layer clashes always diagnose. The layer mapping is trusted policy, not inferred from authority names.
-CD diagnosis returns irreducible rule-index cores with original source locations;
-all rules are protected and no relaxation is authorized. Limits or malformed
-bindings are unknown, without partial cores. Legacy superior/posterior/specificity
-defeats intersecting those cores emit `consistency.normative.legacy_resolution`
-notes; existing admission behaviour stays unchanged pending #767's owner ruling.
-
-Named scenarios: declared-priority deletion refuses; same-grade cycle and
-self-cycle diagnose exact members; company override refuses even when excepted;
-three nonconflicting layers admit conditionally; transitivity, disjoint masks,
-permutation, malformed bindings and budget exhaustion are checked. DeonticIR lowering, fulfilment, CTD, Datalog, proof and runtime admission remain unknown.
+LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `diagnose_declared_order` checks trusted exhaustive
+masks for one action/subject. Declared priorities must be acyclic. Opposing pairs
+need declared comparability within a layer; cross-layer clashes always diagnose.
+Lower-to-higher overrides refuse even when inactive/excepted. CD returns exact
+protected cores and source locations; limits/malformed inputs remain unknown.
+Legacy defeat discrepancies emit `consistency.normative.legacy_resolution` (#767).
+Scenarios cover priority deletion, exact cycles, override, valid three-layer stack,
+transitivity, disjoint masks, permutation and unknowns. Admission stays unchanged;
+DeonticIR lowering, fulfilment, CTD, Datalog and proof are outside this cut.

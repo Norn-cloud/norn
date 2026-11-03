@@ -279,6 +279,6 @@ pub(crate) fn core_findings(
 ) -> Vec<crate::Diagnostic> {
     origins
         .iter()
-        .map(|origin| super::finding(code, severity, message.into(), Some(origin)))
+        .map(|origin| super::finding(code, severity.clone(), message.into(), Some(origin)))
         .collect()
 }

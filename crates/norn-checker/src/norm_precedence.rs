@@ -67,6 +67,7 @@ pub enum NormUnknown {
     /// A source has no selected authority order.
     MissingAuthority,
     /// The finite model exceeds the admitted bound.
+    /// Finite analysis ceiling exceeded.
     Limit,
     /// The derived strict preference relation contains a cycle.
     Cycle,
@@ -224,10 +225,15 @@ fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> 
 /// Trusted constitution layers, highest first; no domain laws live in the checker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConstitutionLayer {
+    /// Highest declared normative layer.
     Religious,
+    /// National or jurisdictional law.
     Legal,
+    /// Industry standards.
     Industry,
+    /// Company policy.
     Company,
+    /// Lowest declared preference layer.
     Preference,
 }
 
@@ -243,9 +249,13 @@ pub struct DeclaredOrderReport {
 /// No normative conclusion was established.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclaredOrderUnknown {
+    /// Finite analysis ceiling exceeded.
     Limit,
+    /// Grounding is malformed or unsupported.
     Grounding(NormUnknown),
+    /// Layer, edge or exact source binding is invalid.
     InvalidBinding,
+    /// CD diagnosis did not complete; no partial cores.
     Diagnosis(crate::consistency::diagnosis::Unknown<std::convert::Infallible>),
 }
 
@@ -296,10 +306,8 @@ fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet
 /// resolve opposing rules. An absent edge never acquires an implicit tie-break.
 ///
 /// This first cut checks trusted exhaustive masks for one common action/subject,
-/// not arbitrary DeonticIR. Callers must preserve source scope and explicit
-/// exceptions when grounding; CTD, temporal or Datalog applicability is unknown
-/// until a supported lowering supplies such a grounding. The layer mapping and
-/// edges are trusted policy inputs, never inferred from authority names.
+/// not DeonticIR lowering. Preserve scope and explicit exceptions when grounding;
+/// CTD, temporal and Datalog applicability remain unknown. Layers/edges are trusted.
 ///
 /// # Errors
 /// Returns unknown on malformed grounding, missing/duplicate sources, invalid
@@ -372,8 +380,21 @@ pub fn diagnose_declared_order(
         diagnostics.extend(core_findings("consistency.normative.conflict", crate::DiagnosticSeverity::Error,
             &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
     }
-    // Use the original implementation on the same catalog, not an approximation.
-    // Notes identify exact legacy defeats intersecting a diagnosed pair/core.
+    diagnostics.extend(legacy_notes(norms, contexts, origins, &diagnosis));
+    Ok(DeclaredOrderReport {
+        diagnosis,
+        diagnostics,
+    })
+}
+
+fn legacy_notes(
+    norms: &[GroundedNorm],
+    contexts: usize,
+    origins: &[crate::consistency::RuleOrigin],
+    diagnosis: &crate::consistency::diagnosis::Diagnosis,
+) -> Vec<crate::Diagnostic> {
+    use crate::consistency::report::core_findings;
+    let mut diagnostics = Vec::new();
     if let Ok(legacy) = check_norm_precedence(norms, contexts) {
         let mut noted = BTreeSet::new();
         for context in legacy {
@@ -391,8 +412,5 @@ pub fn diagnose_declared_order(
             }
         }
     }
-    Ok(DeclaredOrderReport {
-        diagnosis,
-        diagnostics,
-    })
+    diagnostics
 }
