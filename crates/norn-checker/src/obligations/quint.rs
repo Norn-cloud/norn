@@ -49,7 +49,11 @@ fn emit(model: &CreateRelation) -> String {
             )
         })
         .collect();
-    let guards: Vec<_> = model.guards.iter().map(|guard| guard.as_str()).collect();
+    let guards: Vec<_> = model
+        .guards
+        .iter()
+        .map(norn_ir::ZenExpression::as_str)
+        .collect();
     let condition = model.condition.as_str();
     let response = model.response.as_str();
     let initial = variables
