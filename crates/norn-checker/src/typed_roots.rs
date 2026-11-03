@@ -1405,6 +1405,9 @@ fn is_action_member_name(value: &str) -> bool {
 /// profile's types. An object is opaque because `ZenTypeEnv::input_only` has
 /// no nested-record declarations; an unknown type fails closed.
 pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
+    if let Ok(Some(ty)) = norn_expr::schema::decimal_expression_type(schema) {
+        return Some(ty);
+    }
     let schema = schema.as_object()?;
     let type_value = schema.get("type")?;
     if let Some(members) = type_value.as_array() {
@@ -1430,7 +1433,15 @@ pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
         return None;
     }
     match type_value.as_string()? {
-        "string" => Some(Type::text()),
+        "string" => match schema.get("enum").and_then(JsonValue::as_array) {
+            Some(values) => Some(Type::enumeration(
+                values
+                    .iter()
+                    .map(JsonValue::as_string)
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            None => Some(Type::text()),
+        },
         "integer" => Some(Type::Integer),
         "number" => Some(Type::Number),
         "boolean" => Some(Type::Bool),
@@ -1619,6 +1630,30 @@ pub fn validate_rule_ir_v2_payload(
             "payload.defaults",
             artifact_id,
         ));
+    }
+    if let Ok(text) = serde_json::to_string(payload)
+        && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text)
+    {
+        match norn_expr::graph::bind(&root) {
+            Err(reason) => diagnostics.push(invalid_diagnostic(
+                "core.values.inexact",
+                reason,
+                "payload.graph",
+                artifact_id,
+            )),
+            Ok(bindings) => {
+                for note in bindings.into_iter().flat_map(|binding| binding.notes) {
+                    let mut diagnostic =
+                        invalid_diagnostic(note.code, note.message, "payload.graph", artifact_id);
+                    diagnostic.severity = if note.code == "core.values.literal_unit" {
+                        norn_ir::DiagnosticSeverity::Info
+                    } else {
+                        norn_ir::DiagnosticSeverity::Error
+                    };
+                    diagnostics.push(diagnostic);
+                }
+            }
+        }
     }
     reject_rule_side_effect_fields(payload, diagnostics, artifact_id);
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);
@@ -3749,7 +3784,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_fold_declarations_fail_closed_before_execution_support() {
+    fn ordered_fold_declarations_admit_only_the_supported_closed_profile() {
         let mut rule = rule_with_sub_decision();
         let fold = json!({
             "semanticsVersion": "1.0",
@@ -3765,15 +3800,25 @@ mod tests {
             "arithmetic": {"scale": 0, "rounding": "refuse"}
         });
         rule["payload"]["graph"]["nodes"][4]["content"]["orderedFold"] = fold;
+        rule["payload"]["graph"]["nodes"][4]["content"]["inputField"] = json!("slice.items");
         let actual = findings(rule.clone());
-        assert!(
-            has(
-                &actual,
-                "rule.validation.ordered_fold_unsupported",
+        assert!(actual.is_empty(), "{actual:?}");
+        // FOLD-ORDER-1: collection selection is mandatory and explicit.
+        for selector in [None, Some(json!("")), Some(json!("  "))] {
+            let mut bad = rule.clone();
+            let content = bad["payload"]["graph"]["nodes"][4]["content"]
+                .as_object_mut()
+                .unwrap();
+            content.remove("inputField");
+            if let Some(selector) = selector {
+                content.insert("inputField".into(), selector);
+            }
+            assert!(has(
+                &findings(bad),
+                "rule.validation.ordered_fold_invalid",
                 "payload.graph.nodes[4].content.orderedFold"
-            ),
-            "{actual:?}"
-        );
+            ));
+        }
         for (member, invalid) in [
             ("maxItems", json!(0)),
             ("maxAccumulatorBytes", json!(0)),

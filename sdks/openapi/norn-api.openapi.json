@@ -4403,57 +4403,6 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
-      "NornIrDeonticModality": {
-        "type": "string",
-        "description": "The normative grade is separate from the temporal wrapper in `law`.",
-        "enum": [
-          "obligation",
-          "permission",
-          "prohibition"
-        ]
-      },
-      "NornIrDeonticRule": {
-        "type": "object",
-        "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
-        "required": [
-          "law",
-          "modality",
-          "authorityId",
-          "authorityVersion",
-          "source"
-        ],
-        "properties": {
-          "authorityId": {
-            "type": "string"
-          },
-          "authorityVersion": {
-            "type": "string"
-          },
-          "defeatedBy": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Explicit rule identities preferred to this rule; not numeric authority ranking."
-          },
-          "exceptions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrRuleException"
-            }
-          },
-          "law": {
-            "$ref": "#/components/schemas/NornIrLawIR"
-          },
-          "modality": {
-            "$ref": "#/components/schemas/NornIrDeonticModality"
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrDerivedPayload": {
         "type": "object",
         "required": [
@@ -4557,76 +4506,6 @@
             "type": "string",
             "description": "The terminal property.",
             "pattern": "^[a-z][a-z0-9_]*$"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrEffectiveLawInstance": {
-        "type": "object",
-        "title": "EffectiveLawInstance",
-        "description": "LAW-INSTANCE-CONTRACT-1: an application of a law retains its original\nidentity, concrete subject, attachment and complete origin paths.\nThis projection is not a new law or evidence of preservation.",
-        "required": [
-          "law",
-          "lawDigest",
-          "subject",
-          "subjectDigest",
-          "attachment",
-          "origin",
-          "paths",
-          "instancePaths",
-          "bindings"
-        ],
-        "properties": {
-          "attachment": {
-            "$ref": "#/components/schemas/NornIrLawRoot",
-            "description": "Declared governing boundary, including retained pack/app attachments."
-          },
-          "bindings": {
-            "type": "object",
-            "description": "Explicit typed member substitutions; no rewritten child LawIR.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/NornIrMemberRef"
-            }
-          },
-          "instancePaths": {
-            "type": "array",
-            "items": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/NornIrPackInstanceRef"
-              }
-            },
-            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
-          },
-          "law": {
-            "$ref": "#/components/schemas/NornIrMemberRef",
-            "description": "Original law artifact/version and stable law member ID."
-          },
-          "lawDigest": {
-            "type": "string",
-            "description": "Norn1 identity of the unchanged law artifact."
-          },
-          "origin": {
-            "$ref": "#/components/schemas/NornIrMemberRef",
-            "description": "Original governed concept/interface/container identity."
-          },
-          "paths": {
-            "type": "array",
-            "items": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/NornIrMemberRef"
-              }
-            },
-            "description": "Every inheritance, containment or mapping path; a diamond retains all."
-          },
-          "subject": {
-            "$ref": "#/components/schemas/NornIrMemberRef",
-            "description": "Concrete implementing type, independently pinned."
-          },
-          "subjectDigest": {
-            "type": "string",
-            "description": "Norn1 identity of that concrete type artifact."
           }
         },
         "additionalProperties": false
@@ -6019,7 +5898,7 @@
         ],
         "properties": {
           "rounding": {
-            "$ref": "#/components/schemas/NornIrFoldRounding"
+            "$ref": "#/components/schemas/NornIrRounding"
           },
           "scale": {
             "type": "integer",
@@ -6052,15 +5931,6 @@
         "enum": [
           "string",
           "integer"
-        ]
-      },
-      "NornIrFoldRounding": {
-        "type": "string",
-        "enum": [
-          "refuse",
-          "toward_zero",
-          "half_even",
-          "half_away_from_zero"
         ]
       },
       "NornIrGapReason": {
@@ -6438,26 +6308,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "NornIrInterpretationFormat": {
-        "type": "string",
-        "description": "Only the interpretation wire format decodes here.",
-        "enum": [
-          "norn.interpretation/1"
-        ],
-        "x-enumDescriptions": [
-          "First interpretation contract."
-        ]
-      },
-      "NornIrInterpretationRole": {
-        "type": "string",
-        "description": "A law interpretation is neither source evidence nor term correspondence.",
-        "enum": [
-          "law_interpretation"
-        ],
-        "x-enumDescriptions": [
-          "Subject to contract totality and preservation obligations."
-        ]
       },
       "NornIrInvariant": {
         "type": "object",
@@ -7371,133 +7221,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrLawIR": {
-        "type": "object",
-        "description": "One protected law; its predicates use the subject's `self` environment.",
-        "required": [
-          "lawVersion",
-          "id",
-          "owner",
-          "severity",
-          "rationale",
-          "provenance",
-          "scope",
-          "subject",
-          "modality",
-          "response"
-        ],
-        "properties": {
-          "condition": {
-            "type": "string",
-            "description": "Optional pointwise activation predicate (not an edge trigger)."
-          },
-          "id": {
-            "type": "string",
-            "description": "Stable identity, preserved by all authoring faces."
-          },
-          "lawVersion": {
-            "type": "string",
-            "description": "Wire format version.",
-            "enum": [
-              "0.1"
-            ]
-          },
-          "modality": {
-            "$ref": "#/components/schemas/NornIrLawModality",
-            "description": "Admitted temporal wrapper."
-          },
-          "owner": {
-            "type": "string",
-            "description": "Principal or registry owner of changes to this law."
-          },
-          "provenance": {
-            "$ref": "#/components/schemas/NornIrLawProvenance",
-            "description": "Source and interpretation provenance."
-          },
-          "rationale": {
-            "type": "string",
-            "description": "Reviewed explanation."
-          },
-          "response": {
-            "$ref": "#/components/schemas/NornIrLawResponse",
-            "description": "Predicate or exact ontology-bound behavior/invariant identity."
-          },
-          "scope": {
-            "$ref": "#/components/schemas/NornIrLawScope",
-            "description": "Applicability, independent of the artifact's authorization scope."
-          },
-          "severity": {
-            "type": "string",
-            "description": "Reporting severity, independent of proof status.",
-            "enum": [
-              "error",
-              "warning"
-            ],
-            "x-enumDescriptions": [
-              "Violations require attention.",
-              "Advisory law."
-            ]
-          },
-          "subject": {
-            "type": "string",
-            "description": "Exact ontology object type whose record is bound as `self`."
-          },
-          "timing": {
-            "$ref": "#/components/schemas/NornIrLawTiming",
-            "description": "Optional progress bound."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrLawInterpretationIr": {
-        "type": "object",
-        "description": "Typed interpretation contract. Admission refuses until conformance exists.",
-        "required": [
-          "format",
-          "role",
-          "sourceLayer",
-          "targetLayer",
-          "members"
-        ],
-        "properties": {
-          "format": {
-            "type": "string",
-            "description": "Closed format discriminator.",
-            "enum": [
-              "norn.interpretation/1"
-            ],
-            "x-enumDescriptions": [
-              "First interpretation contract."
-            ]
-          },
-          "members": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrMemberInterpretation"
-            },
-            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
-          },
-          "role": {
-            "type": "string",
-            "description": "Explicit semantic role.",
-            "enum": [
-              "law_interpretation"
-            ],
-            "x-enumDescriptions": [
-              "Subject to contract totality and preservation obligations."
-            ]
-          },
-          "sourceLayer": {
-            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
-            "description": "Layer whose contract must be preserved."
-          },
-          "targetLayer": {
-            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
-            "description": "Layer interpreting that contract."
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrLawModality": {
         "oneOf": [
           {
@@ -7926,26 +7649,6 @@
             "type": "string",
             "enum": [
               "entity"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrLawRootOneOf4": {
-        "type": "object",
-        "description": "Exact retained composition-pack boundary.",
-        "required": [
-          "kind",
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "pack"
             ]
           }
         },
@@ -8678,71 +8381,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingIr": {
-        "type": "object",
-        "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
-        "required": [
-          "format",
-          "source",
-          "interfaces",
-          "maps"
-        ],
-        "properties": {
-          "entitlements": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrEntitlementMap"
-            },
-            "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset."
-          },
-          "extensions": {
-            "$ref": "#/components/schemas/NornIrMappingIrPropertyExtensions"
-          },
-          "format": {
-            "type": "string",
-            "description": "The format tag.",
-            "enum": [
-              "norn.mapping/1"
-            ],
-            "x-enumDescriptions": [
-              "`norn.mapping/1`."
-            ]
-          },
-          "identityBindings": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrIdentityBinding"
-            },
-            "description": "Explicit exact bindings from external account ids to canonical\nprincipals. This is a reviewed mapping configuration table, separate\nfrom source metadata; an empty table refuses principal resolution."
-          },
-          "interfaces": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Artifact ids of the `entity` artifacts defining the interfaces the\nmapping covers: every map targets one of them."
-          },
-          "maps": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NornIrObjectMap"
-            },
-            "description": "The object maps, in evaluation order."
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrSourceBinding",
-            "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash."
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrMappingIrPropertyExtensions": {
-        "type": "object",
-        "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrJsonValue"
-        }
-      },
       "NornIrMappingPayload": {
         "oneOf": [
           {
@@ -9141,29 +8779,6 @@
           }
         ],
         "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
-      },
-      "NornIrMemberInterpretation": {
-        "type": "object",
-        "description": "One interpretation between exact catalog members, never a coverage claim.",
-        "required": [
-          "source",
-          "target"
-        ],
-        "properties": {
-          "source": {
-            "$ref": "#/components/schemas/NornIrMemberRef",
-            "description": "Source type, property, link, lifecycle state or transition identity."
-          },
-          "target": {
-            "$ref": "#/components/schemas/NornIrMemberRef",
-            "description": "Corresponding target identity, resolved within the pinned target layer."
-          },
-          "transform": {
-            "type": "string",
-            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
-          }
-        },
-        "additionalProperties": false
       },
       "NornIrMemberOneOf0": {
         "type": "object",
@@ -10990,34 +10605,6 @@
         },
         "additionalProperties": false
       },
-      "NornIrPropertyTypeOneOf10PropertySchema": {
-        "type": "object",
-        "additionalProperties": {
-          "$ref": "#/components/schemas/NornIrJsonValue"
-        }
-      },
-      "NornIrPropertyTypeOneOf11": {
-        "type": "object",
-        "description": "The shared property type (local or registry) with this name.",
-        "required": [
-          "kind",
-          "name"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "ref"
-            ]
-          },
-          "name": {
-            "type": "string",
-            "description": "The referenced [`PropertyTypeDef`] name.",
-            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrPropertyTypeOneOf2": {
         "type": "object",
         "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
@@ -11034,6 +10621,20 @@
             "type": "string",
             "enum": [
               "decimal"
+            ]
+          },
+          "perUnit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`."
+          },
+          "rounding": {
+            "type": "string",
+            "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+            "enum": [
+              "refuse",
+              "toward_zero",
+              "half_even",
+              "half_away_from_zero"
             ]
           },
           "scale": {
@@ -11432,60 +11033,6 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
-      "NornIrRequirementText": {
-        "type": "object",
-        "description": "Reviewed English and Arabic display, never executable free prose.",
-        "required": [
-          "en",
-          "ar"
-        ],
-        "properties": {
-          "ar": {
-            "type": "string"
-          },
-          "en": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrRequirementTiming": {
-        "type": "string",
-        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
-        "enum": [
-          "every_committed_state",
-          "same_commit"
-        ],
-        "x-enumDescriptions": [
-          "Condition and response are evaluated at every applicable committed state.",
-          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
-        ]
-      },
-      "NornIrRequirementWording": {
-        "type": "object",
-        "description": "Reviewed bilingual templates; identifiers and expressions remain in `norm`.",
-        "required": [
-          "scope",
-          "activation",
-          "component",
-          "response"
-        ],
-        "properties": {
-          "activation": {
-            "$ref": "#/components/schemas/NornIrRequirementText"
-          },
-          "component": {
-            "$ref": "#/components/schemas/NornIrRequirementText"
-          },
-          "response": {
-            "$ref": "#/components/schemas/NornIrRequirementText"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/NornIrRequirementText"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrResidualReason": {
         "type": "string",
         "description": "Why a source term has no correspondence (norn-platform#2986; lead\nruling 2026-10-31 for `non_conforming`).",
@@ -11810,25 +11357,15 @@
         },
         "additionalProperties": false
       },
-      "NornIrRuleByteRange": {
-        "type": "object",
-        "required": [
-          "start",
-          "end"
-        ],
-        "properties": {
-          "end": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "start": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
+      "NornIrRounding": {
+        "type": "string",
+        "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+        "enum": [
+          "refuse",
+          "toward_zero",
+          "half_even",
+          "half_away_from_zero"
+        ]
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -12172,27 +11709,6 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
-      "NornIrRuleException": {
-        "type": "object",
-        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
-        "required": [
-          "id",
-          "condition",
-          "source"
-        ],
-        "properties": {
-          "condition": {
-            "$ref": "#/components/schemas/NornIrZenExpression"
-          },
-          "id": {
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
-          }
-        },
-        "additionalProperties": false
-      },
       "NornIrRuleHitPolicyV1": {
         "type": "string",
         "description": "RuleIR v1 hit policy.",
@@ -12416,33 +11932,6 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
-      },
-      "NornIrRuleSourceSpan": {
-        "type": "object",
-        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
-        "required": [
-          "artifactId",
-          "pointer"
-        ],
-        "properties": {
-          "artifactId": {
-            "type": "string"
-          },
-          "bytes": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornIrRuleByteRange"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "pointer": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
       },
       "NornIrRuleTrigger": {
         "oneOf": [
@@ -13614,40 +13103,6 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
-      },
-      "NornIrStructuredLaw": {
-        "type": "object",
-        "description": "Structured form of a `law` payload. Authority rank and enactment are absent:\nonly the trusted retained enacting instance/layer may supply those inputs.",
-        "required": [
-          "requirement"
-        ],
-        "properties": {
-          "requirement": {
-            "$ref": "#/components/schemas/NornIrStructuredRequirement"
-          }
-        },
-        "additionalProperties": false
-      },
-      "NornIrStructuredRequirement": {
-        "type": "object",
-        "description": "Structured authoring over the existing law and normative source model.",
-        "required": [
-          "norm",
-          "timing",
-          "wording"
-        ],
-        "properties": {
-          "norm": {
-            "$ref": "#/components/schemas/NornIrDeonticRule"
-          },
-          "timing": {
-            "$ref": "#/components/schemas/NornIrRequirementTiming"
-          },
-          "wording": {
-            "$ref": "#/components/schemas/NornIrRequirementWording"
-          }
-        },
-        "additionalProperties": false
       },
       "NornIrTemporalScope": {
         "type": "object",
@@ -16717,6 +16172,566 @@
         "enum": [
           "norn/refusal@2"
         ]
+      },
+      "NornIrDeonticModality": {
+        "type": "string",
+        "description": "The normative grade is separate from the temporal wrapper in `law`.",
+        "enum": [
+          "obligation",
+          "permission",
+          "prohibition"
+        ]
+      },
+      "NornIrDeonticRule": {
+        "type": "object",
+        "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
+        "required": [
+          "law",
+          "modality",
+          "authorityId",
+          "authorityVersion",
+          "source"
+        ],
+        "properties": {
+          "authorityId": {
+            "type": "string"
+          },
+          "authorityVersion": {
+            "type": "string"
+          },
+          "defeatedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit rule identities preferred to this rule; not numeric authority ranking."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRuleException"
+            }
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrLawIR"
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrDeonticModality"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrEffectiveLawInstance": {
+        "type": "object",
+        "title": "EffectiveLawInstance",
+        "description": "LAW-INSTANCE-CONTRACT-1: an application of a law retains its original\nidentity, concrete subject, attachment and complete origin paths.\nThis projection is not a new law or evidence of preservation.",
+        "required": [
+          "law",
+          "lawDigest",
+          "subject",
+          "subjectDigest",
+          "attachment",
+          "origin",
+          "paths",
+          "instancePaths",
+          "bindings"
+        ],
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/NornIrLawRoot",
+            "description": "Declared governing boundary, including retained pack/app attachments."
+          },
+          "bindings": {
+            "type": "object",
+            "description": "Explicit typed member substitutions; no rewritten child LawIR.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            }
+          },
+          "instancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrPackInstanceRef"
+              }
+            },
+            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original law artifact/version and stable law member ID."
+          },
+          "lawDigest": {
+            "type": "string",
+            "description": "Norn1 identity of the unchanged law artifact."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original governed concept/interface/container identity."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "description": "Every inheritance, containment or mapping path; a diamond retains all."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Concrete implementing type, independently pinned."
+          },
+          "subjectDigest": {
+            "type": "string",
+            "description": "Norn1 identity of that concrete type artifact."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrInterpretationFormat": {
+        "type": "string",
+        "description": "Only the interpretation wire format decodes here.",
+        "enum": [
+          "norn.interpretation/1"
+        ],
+        "x-enumDescriptions": [
+          "First interpretation contract."
+        ]
+      },
+      "NornIrInterpretationRole": {
+        "type": "string",
+        "description": "A law interpretation is neither source evidence nor term correspondence.",
+        "enum": [
+          "law_interpretation"
+        ],
+        "x-enumDescriptions": [
+          "Subject to contract totality and preservation obligations."
+        ]
+      },
+      "NornIrLawIR": {
+        "type": "object",
+        "description": "One protected law; its predicates use the subject's `self` environment.",
+        "required": [
+          "lawVersion",
+          "id",
+          "owner",
+          "severity",
+          "rationale",
+          "provenance",
+          "scope",
+          "subject",
+          "modality",
+          "response"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, preserved by all authoring faces."
+          },
+          "lawVersion": {
+            "type": "string",
+            "description": "Wire format version.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrLawModality",
+            "description": "Admitted temporal wrapper."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Principal or registry owner of changes to this law."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/NornIrLawProvenance",
+            "description": "Source and interpretation provenance."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "response": {
+            "$ref": "#/components/schemas/NornIrLawResponse",
+            "description": "Predicate or exact ontology-bound behavior/invariant identity."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrLawScope",
+            "description": "Applicability, independent of the artifact's authorization scope."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Reporting severity, independent of proof status.",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "x-enumDescriptions": [
+              "Violations require attention.",
+              "Advisory law."
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "description": "Exact ontology object type whose record is bound as `self`."
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrLawTiming",
+            "description": "Optional progress bound."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawInterpretationIr": {
+        "type": "object",
+        "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+        "required": [
+          "format",
+          "role",
+          "sourceLayer",
+          "targetLayer",
+          "members"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Closed format discriminator.",
+            "enum": [
+              "norn.interpretation/1"
+            ],
+            "x-enumDescriptions": [
+              "First interpretation contract."
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberInterpretation"
+            },
+            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
+          },
+          "role": {
+            "type": "string",
+            "description": "Explicit semantic role.",
+            "enum": [
+              "law_interpretation"
+            ],
+            "x-enumDescriptions": [
+              "Subject to contract totality and preservation obligations."
+            ]
+          },
+          "sourceLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer whose contract must be preserved."
+          },
+          "targetLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer interpreting that contract."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawRootOneOf4": {
+        "type": "object",
+        "description": "Exact retained composition-pack boundary.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pack"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMappingIr": {
+        "type": "object",
+        "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
+        "required": [
+          "format",
+          "source",
+          "interfaces",
+          "maps"
+        ],
+        "properties": {
+          "entitlements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrEntitlementMap"
+            },
+            "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset."
+          },
+          "extensions": {
+            "$ref": "#/components/schemas/NornIrMappingIrPropertyExtensions"
+          },
+          "format": {
+            "type": "string",
+            "description": "The format tag.",
+            "enum": [
+              "norn.mapping/1"
+            ],
+            "x-enumDescriptions": [
+              "`norn.mapping/1`."
+            ]
+          },
+          "identityBindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrIdentityBinding"
+            },
+            "description": "Explicit exact bindings from external account ids to canonical\nprincipals. This is a reviewed mapping configuration table, separate\nfrom source metadata; an empty table refuses principal resolution."
+          },
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Artifact ids of the `entity` artifacts defining the interfaces the\nmapping covers: every map targets one of them."
+          },
+          "maps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrObjectMap"
+            },
+            "description": "The object maps, in evaluation order."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrSourceBinding",
+            "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMappingIrPropertyExtensions": {
+        "type": "object",
+        "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrMemberInterpretation": {
+        "type": "object",
+        "description": "One interpretation between exact catalog members, never a coverage claim.",
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Source type, property, link, lifecycle state or transition identity."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Corresponding target identity, resolved within the pinned target layer."
+          },
+          "transform": {
+            "type": "string",
+            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyTypeOneOf10PropertySchema": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrJsonValue"
+        }
+      },
+      "NornIrPropertyTypeOneOf11": {
+        "type": "object",
+        "description": "The shared property type (local or registry) with this name.",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ref"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The referenced [`PropertyTypeDef`] name.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRequirementText": {
+        "type": "object",
+        "description": "Reviewed English and Arabic display, never executable free prose.",
+        "required": [
+          "en",
+          "ar"
+        ],
+        "properties": {
+          "ar": {
+            "type": "string"
+          },
+          "en": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRequirementTiming": {
+        "type": "string",
+        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
+        "enum": [
+          "every_committed_state",
+          "same_commit"
+        ],
+        "x-enumDescriptions": [
+          "Condition and response are evaluated at every applicable committed state.",
+          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
+        ]
+      },
+      "NornIrRequirementWording": {
+        "type": "object",
+        "description": "Reviewed bilingual templates; identifiers and expressions remain in `norm`.",
+        "required": [
+          "scope",
+          "activation",
+          "component",
+          "response"
+        ],
+        "properties": {
+          "activation": {
+            "$ref": "#/components/schemas/NornIrRequirementText"
+          },
+          "component": {
+            "$ref": "#/components/schemas/NornIrRequirementText"
+          },
+          "response": {
+            "$ref": "#/components/schemas/NornIrRequirementText"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrRequirementText"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRuleByteRange": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRuleException": {
+        "type": "object",
+        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
+        "required": [
+          "id",
+          "condition",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/NornIrZenExpression"
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrRuleSourceSpan": {
+        "type": "object",
+        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+        "required": [
+          "artifactId",
+          "pointer"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRuleByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrStructuredLaw": {
+        "type": "object",
+        "description": "Structured form of a `law` payload. Authority rank and enactment are absent:\nonly the trusted retained enacting instance/layer may supply those inputs.",
+        "required": [
+          "requirement"
+        ],
+        "properties": {
+          "requirement": {
+            "$ref": "#/components/schemas/NornIrStructuredRequirement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrStructuredRequirement": {
+        "type": "object",
+        "description": "Structured authoring over the existing law and normative source model.",
+        "required": [
+          "norm",
+          "timing",
+          "wording"
+        ],
+        "properties": {
+          "norm": {
+            "$ref": "#/components/schemas/NornIrDeonticRule"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrRequirementTiming"
+          },
+          "wording": {
+            "$ref": "#/components/schemas/NornIrRequirementWording"
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

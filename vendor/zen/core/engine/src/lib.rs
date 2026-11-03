@@ -66,3 +66,5 @@ pub use error::{
 /// Norn `metering`: operation budget used by `Decision::evaluate_metered`.
 pub use zen_expression::meter;
 pub use zen_expression::Variable;
+
+pub use zen_expression::{scaled, Isolate};

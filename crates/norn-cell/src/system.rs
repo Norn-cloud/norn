@@ -426,6 +426,8 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("seq")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/commit" ON "_norn_ledger" ("commit_seq")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_sequence" ON "_norn_ledger" ("world", json_extract("event", '$.fact.id'), "seq", "commit_seq") WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_subject" ON "_norn_ledger" ("world", json_extract("event", '$.fact.subjects[0].objectType'), json_extract("event", '$.fact.subjects[0].key')) WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/quantity_latest" ON "_norn_ledger"
       ("world", json_extract("event", '$.request.ledgerId'), "seq" DESC)
       WHERE json_extract("event", '$.type')='quantity.transition'"#,
