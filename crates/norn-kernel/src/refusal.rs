@@ -365,8 +365,7 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::IdentityCollision { .. }
-            | Self::ReadOnlyWorld
+            Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }
@@ -769,8 +768,7 @@ impl<R: Refusable + fmt::Display> Refusable for StepError<R> {
     fn refusal(&self) -> Refusal {
         match self {
             Self::Rejected(rejection) => rejection.refusal(),
-            Self::IdentityCollision { .. }
-            | Self::ReadOnlyWorld
+            Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. } => Refusal::new(&self.code(), self.category(), self),
         }
