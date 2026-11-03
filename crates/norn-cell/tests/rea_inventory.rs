@@ -53,7 +53,7 @@ impl DerefMut for Cell {
     }
 }
 type Refusal = Box<norn_kernel::ActionRefusal<norn_cell::CellError>>;
-const PREFIX: &str = "jewelry.Cycle";
+const PREFIX: &str = "inventory.Cycle";
 const KNOWN_AT: u64 = 1_793_664_000_000;
 
 struct Fixture {
@@ -307,7 +307,7 @@ impl Fixture {
         let action_id = if name.contains('.') {
             name.to_owned()
         } else {
-            format!("jewelry.cycle.{name}")
+            format!("inventory.cycle.{name}")
         };
         let action = &self.actions[&action_id];
         let call = ActionCall {
