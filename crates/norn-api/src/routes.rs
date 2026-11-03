@@ -170,11 +170,7 @@ fn context_unavailable() -> Refusal {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[allow(
-    clippy::unwrap_used,
-    missing_docs,
-    reason = "authorized read correspondence"
-)]
+#[allow(clippy::unwrap_used, reason = "authorized read correspondence")]
 mod tests {
     use super::*;
     use crate::{
@@ -186,6 +182,7 @@ mod tests {
     use norn_ir::ResourceLimitProfile;
     use std::collections::BTreeSet;
 
+    const SOURCE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
     fn host() -> DevHost<NativeEngine> {
         let scope = CellScope {
             org_id: "org_demo".into(),
@@ -196,14 +193,15 @@ mod tests {
             base: &[],
             tenant: None,
         };
+        let sources = [RuntimeValue::from_json_text(SOURCE).unwrap()];
         let checked = check_artifact_set_with_receipt(
-            &ReceiptSources::new(&[], &[]).unwrap(),
+            &ReceiptSources::new(&sources, &[]).unwrap(),
             &context,
             &ResourceLimitProfile::norn_limits_v1(),
         )
         .unwrap();
         let input = InstalledDefinitionInput {
-            canonical_set: "[]".into(),
+            canonical_set: format!("[{SOURCE}]"),
             registry: vec!["synthetic.library@1.0.0".into()],
             receipt_sha256: checked.receipt.content_sha256().unwrap(),
             admission_receipt: Some(
@@ -266,7 +264,8 @@ mod tests {
         let host = host().with_authorizer(Fixture);
         let before = host.cell().unwrap().store().verified_head().unwrap();
         let result = get_defs(&host, &query(), actor).unwrap();
-        assert!(result.admitted && result.artifacts.is_empty());
+        assert!(result.admitted && result.artifacts.len() == 1);
+        assert_eq!(result.artifacts.first().unwrap().get(), SOURCE.trim());
         assert_eq!(result.registry, ["synthetic.library@1.0.0"]);
         assert!(result.diagnostics.is_none() && result.layout_diagnostics.is_none());
         let installed = installed(&host);
@@ -328,10 +327,7 @@ mod tests {
             assert_eq!(verify(&bad).unwrap_err().code, expected, "{key}");
         }
         let mut bad = installed.clone();
-        bad.canonical_set = format!(
-            "[{}]",
-            include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json")
-        );
+        bad.canonical_set = "[]".into();
         assert_eq!(verify(&bad).unwrap_err().status, 500);
     }
 }
