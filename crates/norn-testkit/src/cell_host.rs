@@ -1916,7 +1916,7 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    use norn_kernel::CommitError::{self as Error, IdentityCollision};
+    use norn_kernel::CommitError::{self as Error, IdentityCollision, TraversalLimitExceeded};
 
     Ok(match error {
         Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
@@ -1990,9 +1990,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
         Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
         EffectiveValues { key, reason } => EffectiveValues { key, reason },
-        Error::TraversalLimitExceeded { key, reason } => {
-            Error::TraversalLimitExceeded { key, reason }
-        }
+        TraversalLimitExceeded { key, reason } => TraversalLimitExceeded { key, reason },
         AccountingPosting { key, reason } => AccountingPosting { key, reason },
         Error::InvariantViolation {
             key,
