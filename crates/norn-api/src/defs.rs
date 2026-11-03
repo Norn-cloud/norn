@@ -23,7 +23,7 @@ impl Admitted {
         let mut exact = Vec::new();
         for source in sources {
             let prepared = prepare_artifact_source(source)
-                .map_err(|_| Refusal::host("invalid retained artifact"))?;
+                .map_err(|_error| Refusal::host("invalid retained artifact"))?;
             if norn_checker::scope_conflict(&scope.as_scope_ref(), &prepared.artifact.scope)
                 .is_some()
             {
