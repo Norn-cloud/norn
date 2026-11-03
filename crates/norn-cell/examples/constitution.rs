@@ -118,7 +118,13 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
     let read = cell.store().read();
     let mut after = read.dump()?;
     let mut unchanged = before.clone();
-    for table in ["_norn_ledger", "_norn_receipt"] {
+    for table in [
+        "_norn_ledger",
+        "_norn_receipt",
+        "_norn_export_journal",
+        "_norn_export_payload",
+        "_norn_payload",
+    ] {
         after.remove(table);
         unchanged.remove(table);
     }
@@ -171,6 +177,21 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
     {
         return Err("refusal audit does not identify the retained conservation invariant".into());
     }
+    let exported = cell
+        .store()
+        .export_record(1)?
+        .ok_or("missing refusal export")?;
+    let expected = norn_cell::CommitBatch {
+        world: "main".into(),
+        scope: "org_demo/dev".into(),
+        logical_time: body.logical_time,
+        events: vec![entry.event.clone()],
+        ..norn_cell::CommitBatch::default()
+    };
+    if exported.receipt != *receipt || exported.entries != ledger || exported.batch != expected {
+        return Err("refusal export contains more than the verified audit event".into());
+    }
+    exported.advance(&norn_cell::export::ExportManifest::default())?;
     let head = read.verify_ledger()?;
     if head.seq != 1 || head.commits != 1 || head.hash != body.ledger_head {
         return Err("refusal audit must be the only committed history".into());
