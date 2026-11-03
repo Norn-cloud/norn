@@ -158,6 +158,7 @@ pub mod codes {
 /// Check every candidate action's effect targets and declared write set over
 /// the resolved set of `artifacts` and the installed `base` (T3). See the
 /// module docs.
+/// Informational notes do not refuse admission; consumers check [`Diagnostic::is_error`].
 #[must_use]
 pub fn check_action_set(
     artifacts: &[ArtifactEnvelope],
