@@ -5,6 +5,8 @@ use norn_api::{
     scope::CellScope,
 };
 use wasm_bindgen::prelude::*;
+#[path = "mcp-workers/backend.rs"]
+mod backend;
 
 /// One configured cell's ephemeral protocol sessions.
 #[wasm_bindgen]
@@ -12,15 +14,18 @@ pub struct McpHost(Host);
 #[wasm_bindgen]
 impl McpHost {
     /// Trusted deployment binding.
+    /// # Errors
+    /// Invalid generated catalog.
     #[wasm_bindgen(constructor)]
-    pub fn new(org: String, environment: String, origin: String) -> Self {
-        Self(Host::new(
+    pub fn new(org: String, environment: String, origin: String) -> Result<Self, JsValue> {
+        Ok(Self(Host::new(
             CellScope {
                 org_id: org,
                 environment_id: environment,
             },
             origin,
-        ))
+            backend::tools().map_err(|e| JsValue::from_str(&e.explanation))?,
+        )))
     }
     /// Preserve the JSON-RPC text across the JS boundary.
     /// # Errors
@@ -28,7 +33,7 @@ impl McpHost {
     pub fn fetch(&mut self, source: &str, nonce: &str, now: u64) -> Result<String, JsValue> {
         let request: Request =
             serde_json::from_str(source).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&self.0.handle(&request, nonce, now))
+        serde_json::to_string(&self.0.handle(&request, nonce, now, &mut backend::Checker))
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }

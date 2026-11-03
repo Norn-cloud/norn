@@ -1,47 +1,13 @@
 //! HOST-WIRE/HOST-SCOPE and MCP-CATALOG-1: bounded single-cell MCP transport.
 use crate::{
-    mcp::{Backend, CallOutput, Session},
+    mcp::{Backend, Session},
     refusal::Refusal,
     scope::CellScope,
 };
-use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
+use norn_ir::McpTool;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Content arguments to the same checker ABI used by the human command.
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct CheckInput {
-    artifacts: String,
-    context: String,
-}
-struct Checker;
-impl Backend for Checker {
-    fn call(
-        &mut self,
-        _: &str,
-        arguments: RuntimeObject,
-        _: RuntimeObject,
-    ) -> Result<CallOutput, Refusal> {
-        let input: CheckInput =
-            norn_ir::runtime::decode(&RuntimeValue::Object(arguments)).map_err(Refusal::invalid)?;
-        let report = norn_checker_wasm::check_artifact_set_json(&input.artifacts, &input.context)
-            .map_err(|e| Refusal::invalid(e.to_string()))?;
-        let value = RuntimeValue::from_json_text(&report).map_err(Refusal::host)?;
-        let admitted =
-            value.as_object().and_then(|v| v.get("admitted")) == Some(&RuntimeValue::Bool(true));
-        Ok(CallOutput {
-            value,
-            is_error: !admitted,
-        })
-    }
-}
-fn session(binding: &str) -> Result<Session, Refusal> {
-    let input_schema =
-        serde_json::to_value(schemars::schema_for!(CheckInput)).map_err(Refusal::host)?;
-    let tool: McpTool = serde_json::from_value(serde_json::json!({"name":"norn.check", "description":"Check artifact-set content through the shared checker; no storage access", "inputSchema":input_schema})).map_err(Refusal::host)?;
-    Session::new(vec![tool], binding)
-}
 /// Transport request; scope is explicit and never inferred from the URL.
 #[derive(Deserialize)]
 pub struct Request {
@@ -66,6 +32,7 @@ pub struct Response {
 }
 /// Trusted single-cell configuration and bounded, ephemeral protocol sessions.
 pub struct Host {
+    tools: Vec<McpTool>,
     scope: CellScope,
     origin: String,
     sessions: BTreeMap<String, (Session, u64)>,
@@ -73,18 +40,19 @@ pub struct Host {
 impl Host {
     /// Construct from trusted deployment configuration, not request headers.
     #[must_use]
-    pub fn new(scope: CellScope, origin: String) -> Self {
+    pub fn new(scope: CellScope, origin: String, tools: Vec<McpTool>) -> Self {
         Self {
+            tools,
             scope,
             origin,
             sessions: BTreeMap::new(),
         }
     }
-    /// Dispatch a request value to the existing Rust Session and checker service.
+    /// Dispatch a request value to the existing Rust Session and backend.
     /// `nonce` comes from platform cryptographic randomness; `now` is host time.
     #[must_use]
-    pub fn handle(&mut self, request: &Request, nonce: &str, now: u64) -> Response {
-        match self.serve(request, nonce, now) {
+    pub fn handle(&mut self, request: &Request, nonce: &str, now: u64, backend: &mut impl Backend) -> Response {
+        match self.serve(request, nonce, now, backend) {
             Ok(reply) => reply,
             Err(refusal) => Response {
                 status: refusal.status,
@@ -93,7 +61,7 @@ impl Host {
             },
         }
     }
-    fn serve(&mut self, r: &Request, nonce: &str, now: u64) -> Result<Response, Refusal> {
+    fn serve(&mut self, r: &Request, nonce: &str, now: u64, backend: &mut impl Backend) -> Result<Response, Refusal> {
         let reply = |status, body, session| {
             Ok(Response {
                 status,
@@ -114,12 +82,12 @@ impl Host {
             return reply(413, String::new(), None);
         }
         let binding = format!(
-            "{}/public-checker/{}",
+            "{}/public/{}",
             self.scope.key(),
             env!("CARGO_PKG_VERSION")
         );
         if r.path == "/catalog" && r.method == "GET" {
-            let body = session(&binding)?
+            let body = Session::new(self.tools.clone(), &binding)?
                 .catalog(None, None)?
                 .canonical_json()
                 .map_err(Refusal::host)?;
@@ -155,7 +123,7 @@ impl Host {
             }
             self.sessions.insert(
                 id.clone(),
-                (session(&binding)?, now.saturating_add(300_000)),
+                (Session::new(self.tools.clone(), &binding)?, now.saturating_add(300_000)),
             );
         }
         if !self.sessions.contains_key(&id) {
@@ -165,7 +133,7 @@ impl Host {
             .sessions
             .get_mut(&id)
             .ok_or_else(|| Refusal::host("session absent"))?;
-        let body = session.handle(&r.body, &mut Checker)?;
+        let body = session.handle(&r.body, backend)?;
         reply(
             if body.is_some() { 200 } else { 202 },
             body.unwrap_or_default(),

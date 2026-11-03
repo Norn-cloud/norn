@@ -5,8 +5,7 @@
     "norn-ir",
     "norn-cell",
     "norn-checker",
-    "norn-kernel",
-    "norn-checker-wasm"
+    "norn-kernel"
   ],
   "dev_only_norn": [],
   "third_party": []

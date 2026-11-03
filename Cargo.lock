@@ -1527,15 +1527,12 @@ dependencies = [
  "http",
  "norn-cell",
  "norn-checker",
- "norn-checker-wasm",
  "norn-ir",
  "norn-kernel",
  "proptest",
- "schemars 1.2.3",
  "serde",
  "serde_json",
  "utoipa",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1625,10 +1622,13 @@ dependencies = [
  "norn-decisions",
  "norn-expr",
  "norn-ir",
+ "schemars 1.2.3",
+ "serde",
  "serde_json",
  "sse-stream",
  "tokio",
  "ureq",
+ "wasm-bindgen",
 ]
 
 [[package]]
