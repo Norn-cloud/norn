@@ -30,6 +30,10 @@ fn refusal(code: &str, message: impl Into<String>) -> Vec<Diagnostic> {
     }]
 }
 
+fn closure_error(error: impl std::fmt::Display) -> Vec<Diagnostic> {
+    refusal(crate::verification::codes::CLOSURE_REFUSED, error.to_string())
+}
+
 /// EXPLAIN-CLOSURE-1: admission precedes projection; identities come from the catalog.
 /// Callers supply a complete authorized definition set, including the installed base.
 /// No object values or authority decisions are loaded by this function.
@@ -41,17 +45,15 @@ pub fn explain(
     kind: ExplainKind,
     id: &str,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
+    if artifacts.len().saturating_add(context.base.len()) > 16_384 {
+        return Err(closure_error("definition count exceeds the graph node budget"));
+    }
     let diagnostics = crate::check_artifact_set(artifacts, context);
     if diagnostics.iter().any(Diagnostic::is_error) {
         return Err(diagnostics);
     }
     let catalog = crate::definition_catalog::project(artifacts, context.base, context.registry)
-        .map_err(|error| {
-            refusal(
-                crate::verification::codes::CLOSURE_REFUSED,
-                error.to_string(),
-            )
-        })?;
+        .map_err(closure_error)?;
     let target = target(&catalog, artifacts, context.base, kind, id)?;
     let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
     let artifact = pool
@@ -73,24 +75,14 @@ pub fn explain(
             max_steps: 1_048_576,
         },
     )
-    .map_err(|error| {
-        refusal(
-            crate::verification::codes::CLOSURE_REFUSED,
-            error.to_string(),
-        )
-    })?;
+    .map_err(closure_error)?;
     let goals = crate::obligations::explain_induction(
         &pool,
         &closure.writers,
         &closure.open_boundaries,
         context.registry,
     )
-    .map_err(|error| {
-        refusal(
-            crate::verification::codes::CLOSURE_REFUSED,
-            error.to_string(),
-        )
-    })?;
+    .map_err(closure_error)?;
     let starts = subject_starts(&target, &catalog);
     let laws = explain_laws(&pool, kind, &target, &catalog, &closure, &goals)?;
     let reads = if kind == ExplainKind::Action {
@@ -181,12 +173,7 @@ fn explain_laws(pool: &[ArtifactEnvelope], kind: ExplainKind, target: &MemberRef
                 .iter()
                 .map(|goal| norn_ir::RuntimeValue::from_json_text(&goal.to_string()))
                 .collect::<Result<_, _>>()
-                .map_err(|error| {
-                    refusal(
-                        crate::verification::codes::CLOSURE_REFUSED,
-                        error.to_string(),
-                    )
-                })?,
+                .map_err(closure_error)?,
             why_unknown,
         });
     }

@@ -148,7 +148,7 @@ fn ambiguous_and_unknown_selectors_are_existing_diagnostics_with_guidance() {
 #[test]
 fn action_direct_effects_are_the_same_catalog_rows() {
     let paths = [
-        "../../registry/core/artifacts/commerce.SalesOrder.entity.json",
+        "../../fixtures/ir/entity-v2/artifact-set/commerce-sales-order.entity.json",
         "../../fixtures/ir/commerce-sales-order-submit-invoice.action.json",
     ];
     let pool: Vec<_> = paths

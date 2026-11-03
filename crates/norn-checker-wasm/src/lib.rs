@@ -997,9 +997,15 @@ pub fn explain_artifact_set_json(
         "concept" => ExplainKind::Concept,
         _ => return Err(invalid("kind", "expected action, law or concept")),
     };
-    let values = parse_array("artifacts", artifacts_json)?;
+    let sources = norn_ir::RuntimeValue::from_json_text(artifacts_json).map_err(|error| invalid("artifacts", error.to_string()))?;
+    let sources = sources.as_array().ok_or_else(|| invalid("artifacts", "expected array"))?;
+    let raw_context = norn_ir::RuntimeValue::from_json_text(context_json).map_err(|error| invalid("context", error.to_string()))?;
+    let base_sources = raw_context.as_object().and_then(|object| object.get("base")).and_then(norn_ir::RuntimeValue::as_array).map(Vec::as_slice).unwrap_or_default();
     let context = parse_context(context_json)?;
-    let base = envelopes_or_invalid("context.base", &context.base)?;
+    if context.limits.as_ref().is_some_and(|limits| *limits != ResourceLimitProfile::norn_limits_v1()) {
+        return Err(invalid("context.limits", "explain uses norn.limits/1 qualification limits"));
+    }
+    let base = explain_sources(base_sources).map_err(|diagnostics| invalid("context.base", diagnostics.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("; ")))?;
     let tenant = context.tenant.as_ref().map(|tenant| TenantLayer {
         tenant_id: &tenant.tenant_id,
         namespace: &tenant.namespace,
@@ -1011,7 +1017,7 @@ pub fn explain_artifact_set_json(
     };
     let options: norn_ir::explain::ExplainOptions = serde_json::from_str(options_json)
         .map_err(|error| invalid("options", error.to_string()))?;
-    let result = decode_envelopes(&values)
+    let result = explain_sources(sources)
         .and_then(|artifacts| norn_checker::explain::explain(&artifacts, &set, kind, id))
         .and_then(|mut report| {
             norn_checker::explain::render_wording(&mut report, &options)?;
@@ -1026,4 +1032,8 @@ pub fn explain_artifact_set_json(
         }
     };
     Ok(response.to_string())
+}
+
+fn explain_sources(sources: &[norn_ir::RuntimeValue]) -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
+    sources.iter().map(|source| norn_checker::layout::prepare_artifact_source(source.clone()).map(|prepared| prepared.artifact)).collect()
 }
