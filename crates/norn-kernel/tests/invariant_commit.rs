@@ -87,13 +87,17 @@ fn link_domain_type(scale: u32, nested: bool, default: Option<Value>) -> ObjectT
 fn decimal_and_record_link_values_and_defaults_refuse_atomically() {
     for nested in [false, true] {
         for use_default in [false, true] {
-            for (number, valid) in [(json!(1.234), true), (json!(1.2345), false)] {
-                let value = if nested {
-                    json!({"amount":number})
-                } else {
-                    number
+            for (text, valid) in [("1.234", true), ("1.2345", false)] {
+                let wrap = |number: Value| {
+                    if nested {
+                        json!({"amount":number})
+                    } else {
+                        number
+                    }
                 };
-                let definition = link_domain_type(3, nested, use_default.then(|| value.clone()));
+                let value = wrap(serde_json::from_str(text).unwrap());
+                let definition =
+                    link_domain_type(3, nested, use_default.then(|| wrap(json!(text))));
                 let mut cell = CommandCell::new(|command| command.payload.clone())
                     .with_types(vec![definition]);
                 let source = FactKey::new("demo.LinkDomain", "source");
@@ -170,8 +174,12 @@ norn_testkit::proptest::proptest! {
         let definitions = [link_domain_type(scale, nested, None)];
         let catalog = TypeCatalog::new(&definitions);
         let source = ObjectTypeName("demo.LinkDomain".into());
-        let value = |scale| {
-            let number = RuntimeValue::Number(norn_ir::Decimal::new(mantissa * 10 + 1, scale));
+        let value = |scale: u32| {
+            let places = usize::try_from(scale).unwrap();
+            let digits = format!("{:0>width$}", mantissa * 10 + 1, width = places + 1);
+            let (whole, fraction) = digits.split_at(digits.len() - places);
+            let text = if scale == 0 { whole.to_owned() } else { format!("{whole}.{fraction}") };
+            let number = RuntimeValue::Number(norn_ir::Decimal::parse(&text).unwrap());
             let reading = if nested { RuntimeValue::Object(BTreeMap::from([("amount".into(), number)])) } else { number };
             BTreeMap::from([("reading".into(), reading)])
         };
@@ -179,6 +187,7 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(catalog.effective_link_values(&source, "related", &value(scale + 1)).is_err());
     }
 }
+
 type ObservationCell = MemoryCell<ObservationEvent, JsonObject, JsonObject>;
 
 fn definitions() -> (Vec<ObjectTypeDef>, Vec<InterfaceDef>) {
