@@ -312,14 +312,15 @@ fn parameter_action() -> Value {
     let mut action = fixture(include_str!(
         "../../../fixtures/ir/retail-reorder.action.json"
     ));
-    action["payload"]["inputSchema"]["properties"]["effectiveAt"] = json!({"type":"string"});
-    action["payload"]["inputSchema"]["required"] =
+    action.pointer_mut("/payload/inputSchema/properties").and_then(Value::as_object_mut)
+        .expect("fixture input properties").insert("effectiveAt".into(), json!({"type":"string"}));
+    *action.pointer_mut("/payload/inputSchema/required").expect("fixture required inputs") =
         json!(["requestId", "skuId", "quantity", "effectiveAt"]);
-    action["payload"]["slice"] = json!([
+    action.get_mut("payload").and_then(Value::as_object_mut).expect("fixture payload").insert("slice".into(), json!([
         {"name":"root", "objectType":"retail.Sku", "key":{"property":{"from":"input","property":"skuId"}}},
         {"name":"rates", "objectType":"retail.Sku", "key":{"link":{"from":"root","link":"rates"}}},
         {"name":"selected", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{"orgId":"org_demo"},{}]}}}
-    ]);
+    ]));
     action
 }
 
