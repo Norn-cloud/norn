@@ -17,7 +17,7 @@ const styles = `
   --bg: #f5f5f7; --surface: #ffffff; --raised: #fbfbfd; --text: #1d1d1f; --muted: #6e6e73;
   --line: #d2d2d7; --hairline: #e8e8ed; --accent: #0066cc; --focus: #0071e3;
   --thing: #0066cc; --thing-bg: #e8f1fb; --happening: #b4530b; --happening-bg: #fdf0e6;
-  --neutral-bg: #f0f0f3; --warn: #b4530b;
+  --neutral-bg: #f0f0f3; --warn: #b4530b; --ok: #1d7d3a; --ok-bg: #e7f5ec;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Noto Sans", "Noto Sans Arabic", sans-serif;
   font-size: 16px; line-height: 1.5; color: var(--text); background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -27,7 +27,7 @@ const styles = `
     --bg: #000000; --surface: #1c1c1e; --raised: #242426; --text: #f5f5f7; --muted: #a1a1a6;
     --line: #3a3a3c; --hairline: #2c2c2e; --accent: #2997ff; --focus: #2997ff;
     --thing: #64b5ff; --thing-bg: #10263d; --happening: #ffa95e; --happening-bg: #3a2414;
-    --neutral-bg: #2c2c2e; --warn: #ffa95e;
+    --neutral-bg: #2c2c2e; --warn: #ffa95e; --ok: #5fd38a; --ok-bg: #12301d;
   }
 }
 * { box-sizing: border-box; }
@@ -108,6 +108,20 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .states li.done::after { content: " ✓"; }
 .states li.refused { background: var(--happening-bg); color: var(--warn); }
 .assurance { border-inline-start: 4px solid var(--accent); }
+.chip.freshness.exact, .chip.freshness.fresh { background: var(--ok-bg); color: var(--ok); }
+.chip.freshness.stale, .chip.freshness.incomplete { background: var(--happening-bg); color: var(--warn); }
+.facts { display: flex; flex-wrap: wrap; gap: .5rem 2rem; list-style: none; margin: 1.25rem 0 .25rem; padding: 0; }
+.facts span { display: block; color: var(--muted); font-size: .75rem; }
+.facts b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.callout { margin: 1rem 0 0; padding: .9rem 1.1rem; border-radius: 12px; background: var(--happening-bg); color: var(--text); }
+.callout h4 { margin: 0 0 .25rem; color: var(--warn); }
+.callout p { margin: 0 0 .5rem; }
+.plain { list-style: none; margin: 0; padding: 0; }
+th.num, td.num { text-align: end; font-variant-numeric: tabular-nums; }
+.answer td.value a { font-weight: 650; }
+.drill { display: none; margin: .75rem 0; padding: 1rem 1.1rem; border: 1px solid var(--accent); border-radius: 12px; scroll-margin-top: 72px; }
+.drill:target { display: block; }
+h5 { font-size: 1rem; font-weight: 600; margin: 0 0 .5rem; }
 .exact { font-variant-numeric: tabular-nums; font-weight: 600; }
 details > summary { cursor: pointer; }
 pre { margin: 0; padding: 1.25rem; background: var(--raised); overflow: auto; max-height: 65vh; line-height: 1.6; tab-size: 2; }

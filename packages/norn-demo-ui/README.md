@@ -25,6 +25,17 @@ read says about its frontier and freshness, and nothing more.
   disclose (DIAG-REDACT-1) and the repair hint stay absent; categories are shown
   as the server sends them. A source that is not the same response refuses to
   render.
+- `renderQuestionBoard({ questions })` (`@norn/demo-ui/questions`): the data
+  app's question board. Each card pairs a typed question (`NornIrQuestion`)
+  with the cell's exact answer (`NornQueryResult`, QUERY-ENGINE-1). It shows
+  every bucket's value beside its numerator and denominator, the answer's
+  freshness, its knowledge revision and source frontier, and any quarantined
+  inputs that make it incomplete. Each value drills through to the object
+  versions it sums. With an answer at an earlier knowledge cutoff
+  (`NornHistoricalQuestionResult`, ASOF-KNOWLEDGE-1), the card lists the
+  buckets whose answer was restated. Decimal text comes from the read's own
+  bytes. Source rows behind an object version are not exposed by the server
+  yet (#776).
 - `renderDefinitionsDocument({ entries })`: the source inspector. Each entry is
   metadata typed from the generated SDK plus the exact JSON source returned by
   the same read; source bytes are preserved as escaped text, including numeric
@@ -32,4 +43,5 @@ read says about its frontier and freshness, and nothing more.
 
 Run `bun install --frozen-lockfile --ignore-scripts --backend copyfile`,
 `bun run typecheck` and `bun test` from this package on Boat. The tests render
-the compiled registry and law fixtures, not hand-written definitions.
+the compiled registry and law fixtures and the cell evaluator's retained
+answers (`fixtures/demo/answers`), not hand-written definitions.

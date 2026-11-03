@@ -1,4 +1,5 @@
 import type { Schemas } from "../../norn-sdk/src/index.ts"
+import { exactSource, member } from "./exact.ts"
 import { escape, renderShell } from "./shell.ts"
 
 type Refusal = Schemas["Refusal"]
@@ -12,89 +13,9 @@ export interface RefusalResponse {
 
 const code = (value: string): string => `<code>${escape(value)}</code>`
 
-const space = (source: string, at: number): number => {
-  while (at < source.length && " \t\n\r".includes(source[at] ?? "")) at += 1
-  return at
-}
-
-const malformed = (): never => { throw new Error("Refusal source is not the JSON of one response") }
-
-/** End offset of the JSON value starting at `at`. */
-function valueEnd(source: string, at: number): number {
-  const first = source[at]
-  if (first === '"') {
-    let index = at + 1
-    while (source[index] !== '"') {
-      if (index >= source.length) malformed()
-      index += source[index] === "\\" ? 2 : 1
-    }
-    return index + 1
-  }
-  if (first === "{" || first === "[") {
-    let depth = 0
-    let index = at
-    do {
-      if (index >= source.length) malformed()
-      const character = source[index]
-      if (character === '"') { index = valueEnd(source, index); continue }
-      if (character === "{" || character === "[") depth += 1
-      if (character === "}" || character === "]") depth -= 1
-      index += 1
-    } while (depth > 0)
-    return index
-  }
-  let index = at
-  while (index < source.length && !",}] \t\n\r".includes(source[index] ?? "")) index += 1
-  return index === at ? malformed() : index
-}
-
-/** Members of the object starting at `at`, as decoded keys and exact value text. */
-function members(source: string, at: number): Map<string, { readonly start: number; readonly text: string }> | undefined {
-  if (source[at] !== "{") return undefined
-  const result = new Map<string, { readonly start: number; readonly text: string }>()
-  let index = space(source, at + 1)
-  while (source[index] !== "}") {
-    if (source[index] !== '"') malformed()
-    const keyEnd = valueEnd(source, index)
-    const key = JSON.parse(source.slice(index, keyEnd)) as string
-    const colon = space(source, keyEnd)
-    if (source[colon] !== ":") malformed()
-    const start = space(source, colon + 1)
-    const end = valueEnd(source, start)
-    result.set(key, { start, text: source.slice(start, end) })
-    index = space(source, end)
-    if (source[index] === ",") index = space(source, index + 1)
-    else if (source[index] !== "}") malformed()
-  }
-  return result
-}
-
-/**
- * Exact operand text from the response bytes: decimals keep their scale
- * (`100.000` stays `100.000`), which a parsed JavaScript number cannot.
- */
-function operandText(source: string): ReadonlyMap<string, string> {
-  const reason = members(source, space(source, 0))?.get("reason")
-  const values = reason && members(source, reason.start)?.get("values")
-  const operands = values && members(source, values.start)
-  if (!operands) throw new Error("Refusal source does not carry the reason's values")
-  return new Map([...operands].map(([key, { text }]) => [key, text]))
-}
-
-/** Structural JSON equality, independent of member order. */
-function same(left: unknown, right: unknown): boolean {
-  if (left === right) return true
-  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false
-  if (Array.isArray(left) !== Array.isArray(right)) return false
-  const leftKeys = Object.keys(left)
-  const rightKeys = Object.keys(right)
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
-    Object.hasOwn(right, key) && same((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]))
-}
-
-function operand(text: string): string {
-  if (text.startsWith('"')) return code(JSON.parse(text) as string)
-  return `<code class="exact">${escape(text)}</code>`
+function operand(value: unknown, exact: string | undefined): string {
+  if (exact !== undefined) return `<code class="exact">${escape(exact)}</code>`
+  return code(typeof value === "string" ? value : JSON.stringify(value))
 }
 
 function pin(value: Pin | null | undefined): string {
@@ -108,13 +29,12 @@ function pin(value: Pin | null | undefined): string {
 
 /** The refused state of a submitted action, with exactly what the server disclosed. */
 function refusedPanel({ refusal, source }: RefusalResponse): string {
-  // The whole source (no trailing text) must be this refusal, field for field.
-  if (!same(JSON.parse(source), refusal)) throw new Error("Refusal source and parsed refusal differ")
+  const exact = exactSource(refusal, source)
   const reason = refusal.reason
   const disclosed = reason
     ? (() => {
-      const exact = operandText(source)
-      const rows = [...exact].map(([name, text]) => `<tr><td>${code(name)}</td><td>${operand(text)}</td></tr>`).join("")
+      const rows = Object.entries(reason.values).map(([name, value]) =>
+        `<tr><td>${code(name)}</td><td>${operand(value, exact.get(`/reason/values/${member(name)}`))}</td></tr>`).join("")
       return `<h4>Governing declaration</h4>${pin(reason.pin)}
 <dl><dt>Reason</dt><dd>${code(reason.law)}</dd><dt>Subject</dt><dd>${code(reason.subject)}</dd></dl>
 ${rows ? `<h4>Values at refusal</h4><div class="scroll"><table><thead><tr><th>Operand</th><th>Exact value</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}`
