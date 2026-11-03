@@ -322,3 +322,13 @@ fn registry_generation_refuses_invalid_entries() {
         );
     }
 }
+
+#[test]
+fn cycle_advice_is_reserved_for_cycle_diagnostics() {
+    for entry in REGISTRY {
+        if entry.fix.is_some_and(|fix| fix.contains("cyclic dependency")) {
+            let detail = entry.code.rsplit('.').next().expect("code detail");
+            assert!(detail == "cycle" || detail.ends_with("_cycle"), "{} has unrelated cycle advice", entry.code);
+        }
+    }
+}

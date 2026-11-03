@@ -107,7 +107,7 @@ pub fn explain(
         }
     }
     let reads = if kind == ExplainKind::Action {
-        decode::<ActionRoot>(&pool, &target)?.slice
+        serde_json::from_value::<ActionRoot>(payload(&pool, &target)?).map_err(document_error)?.slice
     } else {
         Vec::new()
     };
@@ -197,7 +197,7 @@ fn explain_laws(
                     "law index is unavailable",
                 )
             })?;
-        let owned: LawIR = decode(pool, &law.at)?;
+        let owned: LawIR = serde_json::from_value(payload(pool, &law.at)?).map_err(document_error)?;
         let obligations: Vec<_> = goals
             .iter()
             .filter(|goal| {
@@ -239,10 +239,10 @@ fn explain_laws(
     Ok(laws)
 }
 
-fn decode<T: serde::de::DeserializeOwned>(
+fn payload(
     pool: &[ArtifactEnvelope],
     at: &MemberRef,
-) -> Result<T, Vec<Diagnostic>> {
+) -> Result<serde_json::Value, Vec<Diagnostic>> {
     let artifact = pool
         .iter()
         .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)
@@ -252,14 +252,11 @@ fn decode<T: serde::de::DeserializeOwned>(
                 "pinned declaration is missing",
             )
         })?;
-    serde_json::to_value(artifact.payload.to_json_value())
-        .and_then(serde_json::from_value)
-        .map_err(|error| {
-            refusal(
-                crate::verification::codes::INVALID_DOCUMENT,
-                error.to_string(),
-            )
-        })
+    serde_json::to_value(artifact.payload.to_json_value()).map_err(document_error)
+}
+
+fn document_error(error: serde_json::Error) -> Vec<Diagnostic> {
+    refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string())
 }
 
 fn target(

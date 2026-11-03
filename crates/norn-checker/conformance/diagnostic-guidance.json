@@ -145,31 +145,31 @@
   },
   {
     "code": "artifact_set.lifecycle.delete_lifecycle_object",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "no_fix": "This profile forbids deleting lifecycle-managed objects; no admitted deletion alternative is defined."
   },
   {
     "code": "artifact_set.lifecycle.direct_write",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Change lifecycle state through a declared transition instead of a direct property assignment."
   },
   {
     "code": "artifact_set.lifecycle.not_a_lifecycle",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Reference a property with an admitted lifecycle declaration."
   },
   {
     "code": "artifact_set.lifecycle.unconstrained_state",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Constrain creation to the lifecycle property's declared initial-state enum."
   },
   {
     "code": "artifact_set.lifecycle.undeclared_transition_literal",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Use the exact declared transition identity and its admitted source state."
   },
   {
     "code": "artifact_set.lifecycle.unknown_transition",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Reference an existing declared lifecycle property, state or transition with its exact identity."
   },
   {
     "code": "artifact_set.lifecycle.unresolved_lifecycles",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Include the lifecycle declarations and their pinned dependencies before checking the writer."
   },
   {
     "code": "artifact_set.marking.duplicate",
@@ -929,99 +929,99 @@
   },
   {
     "code": "lifecycle.validation.dead_end_state",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "no_fix": "The intended permitted outgoing transition or terminal status requires review of the authored lifecycle."
   },
   {
     "code": "lifecycle.validation.default_not_initial",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Choose a default from the declared initial states."
   },
   {
     "code": "lifecycle.validation.drops_guard",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Restate every inherited guard; append refinements without dropping inherited conditions."
   },
   {
     "code": "lifecycle.validation.duplicate_lifecycle",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },
   {
     "code": "lifecycle.validation.duplicate_state",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },
   {
     "code": "lifecycle.validation.duplicate_transition",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },
   {
     "code": "lifecycle.validation.duplicate_transition_id",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },
   {
     "code": "lifecycle.validation.empty_guard",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Supply a nonblank guard expression with the admitted boolean type."
   },
   {
     "code": "lifecycle.validation.empty_initial",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Declare at least one permitted initial state."
   },
   {
     "code": "lifecycle.validation.empty_transition_source",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Declare at least one valid source state for the transition."
   },
   {
     "code": "lifecycle.validation.invalid_guard",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Repair the guard as a typed boolean expression using admitted properties and operators."
   },
   {
     "code": "lifecycle.validation.invalid_transition_id",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Use a transition id matching [a-z][a-z0-9_]*."
   },
   {
     "code": "lifecycle.validation.path_property_violated",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "no_fix": "A law-preserving route through the required state depends on the authored lifecycle and cannot be inferred automatically."
   },
   {
     "code": "lifecycle.validation.property_computed",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Bind the lifecycle to a stored property whose state changes through declared transitions."
   },
   {
     "code": "lifecycle.validation.property_not_enum",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Declare the lifecycle property as a local enum containing its states."
   },
   {
     "code": "lifecycle.validation.property_nullable",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Make the lifecycle property non-nullable and supply an admitted initial state."
   },
   {
     "code": "lifecycle.validation.self_transition",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Use a declared transition that changes state; remove the self-transition."
   },
   {
     "code": "lifecycle.validation.terminal_has_transition",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Remove the outgoing transition from the declared terminal state."
   },
   {
     "code": "lifecycle.validation.undeclared_write",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Replace the state assignment with a declared transition matching its source and destination."
   },
   {
     "code": "lifecycle.validation.unknown_property",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Reference an existing declared lifecycle property, state or transition with its exact identity."
   },
   {
     "code": "lifecycle.validation.unknown_state",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Reference an existing declared lifecycle property, state or transition with its exact identity."
   },
   {
     "code": "lifecycle.validation.unreachable_state",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "no_fix": "The intended reachability contract must determine whether to connect or remove this state."
   },
   {
     "code": "lifecycle.validation.widens_initial",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Retain only initial states admitted by the inherited lifecycle."
   },
   {
     "code": "lifecycle.validation.widens_transition",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Retain only inherited transitions; a subtype may drop transitions but cannot introduce new ones."
   },
   {
     "code": "mapping.model.expression_type",
@@ -1053,7 +1053,7 @@
   },
   {
     "code": "mapping.model.lifecycle_member",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Change the lifecycle property through a lifecycle mapping rule instead of a member assignment."
   },
   {
     "code": "mapping.model.link_target_mismatch",
@@ -1169,7 +1169,7 @@
   },
   {
     "code": "mapping.validation.lifecycle_rule_shape",
-    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+    "fix": "Specify exactly one of state or transition in the lifecycle mapping rule."
   },
   {
     "code": "mapping.validation.unknown_target_map",
