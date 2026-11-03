@@ -13,7 +13,9 @@ pub struct RequirementView {
     pub locale: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct RequirementSlot {
     /// Law identity plus a stable semantic slot path, independent of locale.
     pub id: String,

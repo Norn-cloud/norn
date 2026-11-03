@@ -206,12 +206,27 @@ fn conformance_directory_matches_the_public_manifest() {
         .map(|entry| entry.expect("entry").path())
         .collect();
     files.sort();
-    let codes: Vec<serde_json::Value> = files
+    let mut codes: Vec<serde_json::Value> = files
         .iter()
         .map(|path| {
             serde_json::from_str(&fs::read_to_string(path).expect("code bytes")).expect("code JSON")
         })
         .collect();
+    let guidance: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../conformance/diagnostic-guidance.json"))
+            .expect("guidance");
+    for code in &mut codes {
+        let guide = guidance
+            .iter()
+            .find(|guide| guide.get("code") == code.get("code"))
+            .expect("registered guidance");
+        let fields = code.as_object_mut().expect("code object");
+        for key in ["fix", "no_fix"] {
+            if let Some(value) = guide.get(key) {
+                fields.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
     assert_eq!(
         codes::conformance_manifest()["codes"],
         serde_json::json!(codes)
@@ -220,9 +235,16 @@ fn conformance_directory_matches_the_public_manifest() {
 
 #[test]
 fn registry_generation_refuses_invalid_entries() {
-    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0"});
+    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0", "fix":"Correct the synthetic declaration"});
     for change in [
         "valid",
+        "no_fix",
+        "missing-guidance",
+        "empty-guidance",
+        "duplicate-guidance",
+        "orphan-guidance",
+        "both-guidance",
+        "blank-guidance",
         "identity",
         "tier",
         "severity",
@@ -235,9 +257,20 @@ fn registry_generation_refuses_invalid_entries() {
         let temp =
             std::env::temp_dir().join(format!("norn-registry-{}-{change}", std::process::id()));
         fs::create_dir(&temp).expect("fixture directory");
-        let path = temp.join("toy.validation.invalid.json");
+        let directory = temp.join("codes");
+        fs::create_dir(&directory).expect("code directory");
+        let path = directory.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
+            "no_fix" => {
+                value.as_object_mut().expect("object").remove("fix");
+                value["no_fix"] = "No supported alternative exists".into();
+            }
+            "missing-guidance" => {
+                value.as_object_mut().expect("object").remove("fix");
+            }
+            "both-guidance" => value["no_fix"] = "Conflicting guidance".into(),
+            "blank-guidance" => value["fix"] = " ".into(),
             "identity" => value["code"] = serde_json::json!("other.validation.invalid"),
             "tier" => value["tier"] = serde_json::json!("T8"),
             "severity" => value["severity"] = serde_json::json!("fatal"),
@@ -248,6 +281,25 @@ fn registry_generation_refuses_invalid_entries() {
             "unknown" => value["extra"] = serde_json::json!(true),
             _ => {}
         }
+        let mut guide = serde_json::json!({"code":"toy.validation.invalid"});
+        for key in ["fix", "no_fix"] {
+            if let Some(v) = value.as_object_mut().expect("object").remove(key) {
+                guide
+                    .as_object_mut()
+                    .expect("guide object")
+                    .insert(key.to_owned(), v);
+            }
+        }
+        let guidance = temp.join("guidance.json");
+        let guides = match change {
+            "empty-guidance" => serde_json::json!([]),
+            "duplicate-guidance" => serde_json::json!([guide, guide]),
+            "orphan-guidance" => {
+                serde_json::json!([guide, {"code":"toy.other.missing", "no_fix":"No matching declaration"}])
+            }
+            _ => serde_json::json!([guide]),
+        };
+        fs::write(&guidance, guides.to_string()).expect("guidance fixture");
         if change == "directory" {
             fs::create_dir(&path).expect("invalid directory");
         } else {
@@ -261,8 +313,29 @@ fn registry_generation_refuses_invalid_entries() {
             };
             fs::write(&path, text).expect("fixture entry");
         }
-        let result = registry_build::generate(&temp);
+        let result = registry_build::generate(&directory, &guidance);
         fs::remove_dir_all(temp).expect("cleanup fixture");
-        assert_eq!(result.is_ok(), change == "valid", "{change}: {result:?}");
+        assert_eq!(
+            result.is_ok(),
+            matches!(change, "valid" | "no_fix"),
+            "{change}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn cycle_advice_is_reserved_for_cycle_diagnostics() {
+    for entry in REGISTRY {
+        if entry
+            .fix
+            .is_some_and(|fix| fix.contains("cyclic dependency"))
+        {
+            let detail = entry.code.rsplit('.').next().expect("code detail");
+            assert!(
+                detail == "cycle" || detail.ends_with("_cycle"),
+                "{} has unrelated cycle advice",
+                entry.code
+            );
+        }
     }
 }

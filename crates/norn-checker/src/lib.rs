@@ -87,6 +87,7 @@ pub mod table_analysis;
 mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
+pub mod explain;
 pub mod law_enrollment;
 pub mod naming_series;
 pub mod norm_precedence;

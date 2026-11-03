@@ -1,6 +1,7 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
 mod eval;
+mod explain;
 mod mcp;
 mod remote;
 use clap::{Parser, Subcommand};
@@ -16,6 +17,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Explain an action, law or concept through the shared checker.
+    Explain(explain::ExplainArgs),
     /// Serve available human operations over bounded MCP stdio.
     Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
@@ -65,6 +68,7 @@ enum Command {
 
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
+        Command::Explain(args) => explain::execute(&args),
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),

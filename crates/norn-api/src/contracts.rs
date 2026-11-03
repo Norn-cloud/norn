@@ -39,6 +39,16 @@ impl Modify for ContractSchemas {
                 "NornIr",
             ))
             .chain(project_schemars_components(
+                norn_ir::explain::explain_options_schema(),
+                "NornIrExplainOptions",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::explain::explain_schema(),
+                "NornIrExplainReport",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::refusal_reason_schema(),
                 "NornIrRefusalReason",
                 "NornIr",
@@ -80,6 +90,64 @@ impl Modify for ContractSchemas {
                 .insert(name, utoipa::openapi::RefOr::T(schema));
         }
     }
+}
+
+/// The versioned explain ABI response shared with CLI and editor consumers.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornExplainResponse {
+    /// Explicit projection version; independent of historical receipt formats.
+    pub format: NornExplainFormat,
+    /// Whether the definitions and selector admitted an explanation.
+    pub admitted: bool,
+    /// Pinned read-only report, absent on a diagnostic response.
+    #[schema(required = true, schema_with = explain_report_schema)]
+    pub report: Option<Value>,
+    /// Existing checker findings with v2 projection metadata.
+    pub diagnostics: Vec<NornCheckerDiagnosticV2>,
+}
+
+/// Explain projection version.
+#[derive(Debug, Clone, Copy, ToSchema)]
+pub enum NornExplainFormat {
+    /// `norn/explain@2`.
+    #[serde(rename = "norn/explain@2")]
+    V2,
+}
+
+/// Additive projection of the existing diagnostic, never a receipt wire replacement.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornCheckerDiagnosticV2 {
+    /// All fields of the historical diagnostic model.
+    #[serde(flatten)]
+    pub finding: NornCheckerDiagnostic,
+    /// Explicit diagnostic projection version.
+    pub format: NornDiagnosticFormat,
+    /// Existing registry tier identifying the producing phase.
+    #[schema(required = true, nullable = true)]
+    pub phase: Option<NornCheckerTier>,
+    /// Source-only checker findings are not automatically retryable.
+    pub retryable: bool,
+    /// Supported author action, when derivable.
+    #[schema(required = true, nullable = true)]
+    pub fix: Option<String>,
+    /// Why a supported repair cannot be inferred safely.
+    #[serde(rename = "no_fix")]
+    #[schema(required = true, nullable = true)]
+    pub no_fix: Option<String>,
+}
+
+/// Diagnostic projection version.
+#[derive(Debug, Clone, Copy, ToSchema)]
+pub enum NornDiagnosticFormat {
+    /// `norn/diagnostic@2`.
+    #[serde(rename = "norn/diagnostic@2")]
+    V2,
+}
+
+fn explain_report_schema() -> Schema {
+    nullable_reference_schema(Ref::from_schema_name("NornIrExplainReport"))
 }
 
 /// The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`).

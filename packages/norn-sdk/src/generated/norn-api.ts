@@ -315,6 +315,18 @@ export interface components {
             pointer: string;
             source: null | components["schemas"]["NornCheckerSourceSpan"];
         };
+        /** @description Additive projection of the existing diagnostic, never a receipt wire replacement. */
+        NornCheckerDiagnosticV2: components["schemas"]["NornCheckerDiagnostic"] & {
+            /** @description Supported author action, when derivable. */
+            fix: string | null;
+            /** @description Explicit diagnostic projection version. */
+            format: components["schemas"]["NornDiagnosticFormat"];
+            /** @description Why a supported repair cannot be inferred safely. */
+            no_fix: string | null;
+            phase: null | components["schemas"]["NornCheckerTier"];
+            /** @description Source-only checker findings are not automatically retryable. */
+            retryable: boolean;
+        };
         /** @description The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`). */
         NornCheckerDiagnostics: {
             /** @description The checker version that produced these findings. */
@@ -347,6 +359,26 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /**
+         * @description Diagnostic projection version.
+         * @enum {string}
+         */
+        NornDiagnosticFormat: "norn/diagnostic@2";
+        /**
+         * @description Explain projection version.
+         * @enum {string}
+         */
+        NornExplainFormat: "norn/explain@2";
+        /** @description The versioned explain ABI response shared with CLI and editor consumers. */
+        NornExplainResponse: {
+            /** @description Whether the definitions and selector admitted an explanation. */
+            admitted: boolean;
+            /** @description Existing checker findings with v2 projection metadata. */
+            diagnostics: components["schemas"]["NornCheckerDiagnosticV2"][];
+            /** @description Explicit projection version; independent of historical receipt formats. */
+            format: components["schemas"]["NornExplainFormat"];
+            report: components["schemas"]["NornIrExplainReport"] | null;
+        };
         /**
          * NornExprTypeEnvRef
          * @description The identity of the ZEN Expression type environment recorded in a checker receipt.
@@ -807,6 +839,11 @@ export interface components {
             required: boolean;
             version?: string | null;
         };
+        /** @description Exact identity of an artifact: one version of one id. */
+        NornIrArtifactKey: {
+            artifactId: string;
+            version: string;
+        };
         NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
@@ -855,6 +892,21 @@ export interface components {
         };
         /** @description An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone. */
         NornIrCalendarDate: string;
+        /** @description One artifact of the projected set. */
+        NornIrCatalogArtifact: {
+            artifactId: string;
+            /** @description Whether the artifact is a candidate (`false`: installed base). */
+            candidate: boolean;
+            kind: components["schemas"]["NornIrArtifactKind"];
+            /** @description Norn1 semantic envelope hash, as in the checker receipt. */
+            sha256: string;
+            version: string;
+        };
+        /**
+         * @description The format tag of a [`DefinitionCatalog`].
+         * @enum {string}
+         */
+        NornIrCatalogFormat: "norn.catalog/1";
         /** @description A closed set of values of one field. */
         NornIrCodeSet: {
             /** @description The dataset id. */
@@ -917,6 +969,17 @@ export interface components {
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
         NornIrCompositionPackRootPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
+        };
+        /**
+         * @description The named facet an admitted member contributes to its concept.
+         * @enum {string}
+         */
+        NornIrConceptFacet: "props" | "links" | "states" | "actions" | "laws" | "policies" | "access" | "sources";
+        /** @description GRAPH-META-1: a read-only facet edge; both ends retain exact member identity. */
+        NornIrConceptFacetRow: {
+            concept: components["schemas"]["NornIrMemberRef"];
+            facet: components["schemas"]["NornIrConceptFacet"];
+            member: components["schemas"]["NornIrMemberRef"];
         };
         /**
          * @description Semantic role of an ordinary concept, independent of lifecycle presence.
@@ -1666,6 +1729,56 @@ export interface components {
         NornIrDefinedConceptPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description The catalog: every relation over one admitted artifact set. See the
+         *     module docs.
+         */
+        NornIrDefinitionCatalog: {
+            artifacts: components["schemas"]["NornIrCatalogArtifact"][];
+            dependsOn: components["schemas"]["NornIrDependsOnRow"][];
+            facets: components["schemas"]["NornIrConceptFacetRow"][];
+            format: components["schemas"]["NornIrCatalogFormat"];
+            laws: components["schemas"]["NornIrLawRow"][];
+            links: components["schemas"]["NornIrLinkRow"][];
+            mappings: components["schemas"]["NornIrMappingRow"][];
+            properties: components["schemas"]["NornIrPropertyRow"][];
+            /** @description States of locally declared lifecycles, including inherited enum properties. */
+            states: components["schemas"]["NornIrMemberRef"][];
+            transitions: components["schemas"]["NornIrTransitionRow"][];
+            types: components["schemas"]["NornIrTypeRow"][];
+            writes: components["schemas"]["NornIrWritesRow"][];
+        };
+        /**
+         * @description The normative grade is separate from the temporal wrapper in `law`.
+         * @enum {string}
+         */
+        NornIrDeonticModality: "obligation" | "permission" | "prohibition";
+        /**
+         * @description A law template with explicit authority, exceptions and preferences.
+         *     `law.condition`, `law.timing` and `law.response` supply typed slots;
+         *     `law.modality` must agree with the normative grade before law lowering.
+         */
+        NornIrDeonticRule: {
+            authorityId: string;
+            authorityVersion: string;
+            /** @description Explicit rule identities preferred to this rule; not numeric authority ranking. */
+            defeatedBy?: string[];
+            exceptions?: components["schemas"]["NornIrRuleException"][];
+            law: components["schemas"]["NornIrLawIR"];
+            modality: components["schemas"]["NornIrDeonticModality"];
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
+        /**
+         * @description Why one artifact depends on another.
+         * @enum {string}
+         */
+        NornIrDependencyVia: "dependency" | "pack_member";
+        /** @description **DependsOn**: one resolved reference between artifacts. */
+        NornIrDependsOnRow: {
+            from: components["schemas"]["NornIrArtifactKey"];
+            to: components["schemas"]["NornIrArtifactKey"];
+            via: components["schemas"]["NornIrDependencyVia"];
+        };
         NornIrDerivedPayload: {
             calc: components["schemas"]["NornIrCalcExpr"];
             extensions?: components["schemas"]["NornIrDerivedPayloadPropertyExtensions"];
@@ -2173,6 +2286,77 @@ export interface components {
          * @enum {string}
          */
         NornIrExecutableBoundary: "trusted_rust" | "capability_rpc";
+        /** @enum {string} */
+        NornIrExplainFormat: "norn/explain@2";
+        /** @description Pinned existing ontology-link data, without promoting correspondence to law proof. */
+        NornIrExplainInterpretation: {
+            declaration: components["schemas"]["NornIrArtifactKey"];
+            link: components["schemas"]["NornIrOntologyLinkRoot"];
+            proof: components["schemas"]["NornIrExplainProof"];
+        };
+        /** ExplainOptions */
+        NornIrExplainOptions: {
+            locale?: string | null;
+            /** @default [] */
+            requirements: components["schemas"]["NornIrStructuredRequirement"][];
+        };
+        /** @enum {string} */
+        NornIrExplainProof: "unknown";
+        /**
+         * ExplainReport
+         * @description EXPLAIN-CLOSURE-1: the entire conservative closure remains pinned and visible.
+         *     Consumers must establish disclosure authority before supplying this catalog.
+         */
+        NornIrExplainReport: {
+            /** @description Whole-set invalidation inventory, not a minimal field-level influence claim. */
+            closure: components["schemas"]["NornIrDefinitionCatalog"];
+            directEffects: components["schemas"]["NornIrWritesRow"][];
+            format: components["schemas"]["NornIrExplainFormat"];
+            /** @description Declared ontology correspondences; their law transport is unproved. */
+            interpretations: components["schemas"]["NornIrExplainInterpretation"][];
+            laws: components["schemas"]["NornIrExplainedLaw"][];
+            reads: components["schemas"]["NornIrSliceDeclaration"][];
+            scope: components["schemas"]["NornIrScopeRef"];
+            target: components["schemas"]["NornIrMemberRef"];
+            writers: components["schemas"]["NornIrLawWriter"][];
+        };
+        /** @description EXPLAIN-UNKNOWN-1: unknowns retain a concrete writer identity or footprint. */
+        NornIrExplainUnknown: {
+            fix: string;
+            footprint: string;
+            reason: string;
+            writer?: components["schemas"]["NornIrLawWriter"] | null;
+        };
+        /** @description The existing reviewed slots, rendered through the selected wording locale map. */
+        NornIrExplainWording: {
+            direction: string;
+            locale: string;
+            sha256: string;
+            slots: components["schemas"]["NornIrRequirementSlot"][];
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
+        NornIrExplainedLaw: {
+            /** @description No solver assumption profile is inferred from source declarations. */
+            assumptions: string[];
+            /** @description Canonical paths from each containing pack to the authored law artifact. */
+            containmentPaths: components["schemas"]["NornIrArtifactKey"][][];
+            declaration: components["schemas"]["NornIrMemberRef"];
+            /** @description The admitted bound invariant enforced by the commit checker. */
+            enforcement?: components["schemas"]["NornIrLawBinding"] | null;
+            /** @description Canonical shortest paths from contributing concepts to the authored subject. */
+            inheritancePaths: components["schemas"]["NornIrMemberRef"][][];
+            law: components["schemas"]["NornIrLawIR"];
+            /** @description Existing source-bound induction statements, without a proof-level promotion. */
+            obligations: components["schemas"]["NornIrJsonValue"][];
+            /**
+             * @description Source-only explanations never invent checked proof evidence.
+             * @enum {string}
+             */
+            proof: "unknown";
+            sourcePath?: string | null;
+            whyUnknown: components["schemas"]["NornIrExplainUnknown"][];
+            wording?: components["schemas"]["NornIrExplainWording"] | null;
+        };
         /**
          * @description The namespace a tenant (or a package) adds members under (`acme`).
          *     Allocated by the registry (T8-REG-4); unique per tenant.
@@ -2804,8 +2988,70 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /** @description The definition a law's response names. */
+        NornIrLawBinding: {
+            /** @enum {string} */
+            kind: "transition";
+            target: components["schemas"]["NornIrMemberRef"];
+        } | {
+            invariant: string;
+            /** @enum {string} */
+            kind: "invariant";
+            owner: components["schemas"]["NornIrMemberRef"];
+        } | {
+            /** @enum {string} */
+            kind: "action";
+            target: components["schemas"]["NornIrMemberRef"];
+        };
+        /** @description One protected law; its predicates use the subject's `self` environment. */
+        NornIrLawIR: {
+            /** @description Optional pointwise activation predicate (not an edge trigger). */
+            condition?: string;
+            /** @description Stable identity, preserved by all authoring faces. */
+            id: string;
+            /**
+             * @description Wire format version.
+             * @enum {string}
+             */
+            lawVersion: "0.1";
+            /** @description Admitted temporal wrapper. */
+            modality: components["schemas"]["NornIrLawModality"];
+            /** @description Principal or registry owner of changes to this law. */
+            owner: string;
+            /** @description Source and interpretation provenance. */
+            provenance: components["schemas"]["NornIrLawProvenance"];
+            /** @description Reviewed explanation. */
+            rationale: string;
+            /** @description Predicate or exact ontology-bound behavior/invariant identity. */
+            response: components["schemas"]["NornIrLawResponse"];
+            /** @description Applicability, independent of the artifact's authorization scope. */
+            scope: components["schemas"]["NornIrLawScope"];
+            /**
+             * @description Reporting severity, independent of proof status.
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            /** @description Exact ontology object type whose record is bound as `self`. */
+            subject: string;
+            /** @description Optional progress bound. */
+            timing?: components["schemas"]["NornIrLawTiming"];
+        };
         /** @description Scoped temporal vocabulary; nested temporal operators have no wire representation. */
-        NornIrLawModality: components["schemas"]["NornIrLawModalityOneOf0"] | components["schemas"]["NornIrLawModalityOneOf1"] | components["schemas"]["NornIrLawModalityOneOf2"] | components["schemas"]["NornIrLawModalityOneOf3"];
+        NornIrLawModality: {
+            /** @enum {string} */
+            kind: "always";
+        } | {
+            /** @enum {string} */
+            kind: "never";
+        } | {
+            /** @enum {string} */
+            kind: "eventually";
+        } | {
+            /** @enum {string} */
+            kind: "until";
+            /** @description Ordinary ZEN stop predicate. */
+            predicate: string;
+        };
         /** @description Response holds at every applicable point. */
         NornIrLawModalityOneOf0: {
             /** @enum {string} */
@@ -2876,7 +3122,33 @@ export interface components {
             sourcePath?: string;
         };
         /** @description Response slots resolve to existing ontology definitions. */
-        NornIrLawResponse: components["schemas"]["NornIrLawResponseOneOf0"] | components["schemas"]["NornIrLawResponseOneOf1"] | components["schemas"]["NornIrLawResponseOneOf2"] | components["schemas"]["NornIrLawResponseOneOf3"];
+        NornIrLawResponse: {
+            /** @description Ordinary ZEN text. */
+            expression: string;
+            /** @enum {string} */
+            kind: "predicate";
+        } | {
+            /** @description Stable invariant member id. */
+            invariantId: string;
+            /** @enum {string} */
+            kind: "invariant";
+            /** @description Effective owner object type. */
+            objectType: string;
+        } | {
+            /** @description Artifact id, resolved through a pinned dependency. */
+            artifactId: string;
+            /** @enum {string} */
+            kind: "action";
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            /** @description Exact object type. */
+            objectType: string;
+            /** @description Lifecycle property. */
+            property: string;
+            /** @description Transition member id. */
+            transitionId: string;
+        };
         /** @description Boolean state predicate. */
         NornIrLawResponseOneOf0: {
             /** @description Ordinary ZEN text. */
@@ -2912,7 +3184,23 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"];
+        NornIrLawRoot: {
+            id: string;
+            /** @enum {string} */
+            kind: "company";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "app";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "cell";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "entity";
+        };
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -2936,6 +3224,20 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        };
+        /**
+         * @description **Law**: one law, its subject, and the definition its response binds,
+         *     each pinned to the artifact that declares it.
+         */
+        NornIrLawRow: {
+            at: components["schemas"]["NornIrMemberRef"];
+            /**
+             * @description The bound transition, invariant, or action; absent for a predicate
+             *     response.
+             */
+            binds?: components["schemas"]["NornIrLawBinding"] | null;
+            /** @description The subject object type. */
+            subject: components["schemas"]["NornIrMemberRef"];
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrLawScope: {
@@ -2963,7 +3265,17 @@ export interface components {
             states: string[];
         };
         /** @description Progress timing. Exact milliseconds are decimal text, avoiding JS number rounding. */
-        NornIrLawTiming: components["schemas"]["NornIrLawTimingOneOf0"] | components["schemas"]["NornIrLawTimingOneOf1"];
+        NornIrLawTiming: {
+            /** @enum {string} */
+            kind: "within";
+            /** @description Positive canonical unsigned milliseconds, bounded by u64. */
+            millis: string;
+        } | {
+            /** @enum {string} */
+            kind: "before_deadline";
+            /** @description Exact timestamp property identity. */
+            property: string;
+        };
         /** @description Relative elapsed duration from activation. */
         NornIrLawTimingOneOf0: {
             /** @enum {string} */
@@ -2977,6 +3289,22 @@ export interface components {
             kind: "before_deadline";
             /** @description Exact timestamp property identity. */
             property: string;
+        };
+        /** @description Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates. */
+        NornIrLawWriter: {
+            /** @description The artifact identity, without delimiter interpretation. */
+            artifactId: string;
+            /** @enum {string} */
+            kind: "artifact";
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            /** @description Effective concrete type. */
+            objectType: string;
+            /** @description Lifecycle property. */
+            property: string;
+            /** @description Declared transition id. */
+            transition: string;
         };
         /** @description Editor state for one semantic artifact. */
         NornIrLayoutArtifactLayout: {
@@ -3130,6 +3458,13 @@ export interface components {
             /** @description Required state on every path to the destination. */
             via: string;
         };
+        /** @description The state set of a lifecycle property. */
+        NornIrLifecycleStates: {
+            initial: string[];
+            /** @description The property's enum values, in presentation order. */
+            states: string[];
+            terminal?: string[];
+        };
         /**
          * LimitProfileRef
          * @description The identity of the limit profile a turn or transition was admitted under,
@@ -3250,6 +3585,12 @@ export interface components {
             /** @description An active term of `fromPack`. */
             termId: string;
         };
+        /** @description **Link**: one declared link. */
+        NornIrLinkRow: {
+            at: components["schemas"]["NornIrMemberRef"];
+            /** @description The linked object type. */
+            target: string;
+        };
         /** @description One linked pack, pinned by its artifact id and exact artifact version. */
         NornIrLinkedPack: {
             packId: string;
@@ -3258,6 +3599,16 @@ export interface components {
         /** @description Locale-keyed user-facing text. */
         NornIrLocaleText: {
             [key: string]: string;
+        };
+        /** @description One complete translation, including every phrase used by the renderer. */
+        NornIrLocalizedRequirement: {
+            activation: string;
+            component: string;
+            direction: components["schemas"]["NornIrTextDirection"];
+            labels: components["schemas"]["NornIrRequirementLabels"];
+            response: string;
+            scope: string;
+            terms: components["schemas"]["NornIrRequirementTerms"];
         };
         /** @description The records an [`ObjectMap`] reads. */
         NornIrLogicalSource: {
@@ -3269,6 +3620,24 @@ export interface components {
              *     Omitted: the dataset's records are read directly.
              */
             nestedIn?: components["schemas"]["NornIrNestedSource"];
+        };
+        /** @description What an object map does for one target member. */
+        NornIrMapRule: {
+            /** @enum {string} */
+            kind: "object";
+        } | {
+            /** @enum {string} */
+            kind: "property";
+        } | {
+            /** @enum {string} */
+            kind: "link";
+        } | {
+            /** @enum {string} */
+            kind: "lifecycle";
+        } | {
+            /** @enum {string} */
+            kind: "gap";
+            reason: components["schemas"]["NornIrGapReason"];
         };
         /**
          * @description The object type an [`ObjectMap`] produces, and the scoped interface it
@@ -3348,6 +3717,18 @@ export interface components {
          * @enum {string}
          */
         NornIrMappingRelation: "exact_match" | "close_match" | "broad_match" | "narrow_match" | "related_match";
+        /** @description **Mapping**: one target member an object map observes, or leaves as a gap. */
+        NornIrMappingRow: {
+            /** @description The source dataset the map reads. */
+            dataset: string;
+            map: components["schemas"]["NornIrMemberRef"];
+            rule: components["schemas"]["NornIrMapRule"];
+            /**
+             * @description The target object type (for [`MapRule::Object`]), or one of its
+             *     properties or links, in the artifact that declares it.
+             */
+            target: components["schemas"]["NornIrMemberRef"];
+        };
         /**
          * @description EntityIR v2 payload of an `entity` artifact that carries data marking
          *     definitions.
@@ -3424,7 +3805,44 @@ export interface components {
          *     interface name, a property, link, lifecycle-property, or transition id,
          *     an object-map id, a law id.
          */
-        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        NornIrMember: {
+            /** @enum {string} */
+            kind: "artifact";
+        } | {
+            /** @enum {string} */
+            kind: "type";
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "property";
+            property: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "link";
+            link: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "state";
+            lifecycle: string;
+            state: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "transition";
+            lifecycle: string;
+            transition: string;
+            typeName: string;
+        } | {
+            /** @enum {string} */
+            kind: "object_map";
+            map: string;
+        } | {
+            /** @enum {string} */
+            kind: "law";
+            law: string;
+        };
         /** @description The artifact as a whole (an action, a decision, a mapping). */
         NornIrMemberOneOf0: {
             /** @enum {string} */
@@ -3772,7 +4190,10 @@ export interface components {
         NornIrOntologyLinkRoot: {
             /** @description Non-empty. */
             correspondences: components["schemas"]["NornIrTermCorrespondence"][];
-            extensions?: components["schemas"]["NornIrOntologyLinkRootPropertyExtensions"];
+            /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
+            extensions?: {
+                [key: string]: components["schemas"]["NornIrJsonValue"];
+            };
             /** @description The pack whose terms are mapped. */
             fromPack: components["schemas"]["NornIrLinkedPack"];
             /** @description In the opaque `norn.link.*` namespace (checker rule). */
@@ -4163,6 +4584,14 @@ export interface components {
             /** @description Property id on the binding's object type. */
             propertyId: string;
         };
+        /** @description **Property**: one declared property. */
+        NornIrPropertyRow: {
+            at: components["schemas"]["NornIrMemberRef"];
+            /** @description Computed from a ZEN Expression: derived and read-only. */
+            computed: boolean;
+            /** @description The states, when a lifecycle of the declaring type owns the property. */
+            lifecycle?: components["schemas"]["NornIrLifecycleStates"] | null;
+        };
         /** @description The value kind of a property, tagged by `kind`. */
         NornIrPropertyType: components["schemas"]["NornIrPropertyTypeOneOf0"] | components["schemas"]["NornIrPropertyTypeOneOf1"] | components["schemas"]["NornIrPropertyTypeOneOf2"] | components["schemas"]["NornIrPropertyTypeOneOf3"] | components["schemas"]["NornIrPropertyTypeOneOf4"] | components["schemas"]["NornIrPropertyTypeOneOf5"] | components["schemas"]["NornIrPropertyTypeOneOf6"] | components["schemas"]["NornIrPropertyTypeOneOf7"] | components["schemas"]["NornIrPropertyTypeOneOf8"] | components["schemas"]["NornIrPropertyTypeOneOf9"] | components["schemas"]["NornIrPropertyTypeOneOf10"];
         /**
@@ -4438,6 +4867,18 @@ export interface components {
          * @enum {string}
          */
         NornIrRequirementIrVersion01: "0.1";
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementLabels: {
+            component: string;
+            condition: string;
+            exception: string;
+            grade: string;
+            preferences: string;
+            response: string;
+            scope: string;
+            source: string;
+            timing: string;
+        };
         /** @description One protected law; its predicates use the subject's `self` environment. */
         NornIrRequirementLawIR: {
             /** @description Optional pointwise activation predicate (not an edge trigger). */
@@ -4652,14 +5093,39 @@ export interface components {
             bytes?: components["schemas"]["NornIrRequirementRuleByteRange"] | null;
             pointer: string;
         };
+        NornIrRequirementSlot: {
+            /** @description Law identity plus a stable semantic slot path, independent of locale. */
+            id: string;
+            label: string;
+            text: string;
+        };
         /** @description Structured authoring over the existing law and normative source model. */
         NornIrRequirementStructuredRequirement: {
             norm: components["schemas"]["NornIrRequirementDeonticRule"];
             timing: components["schemas"]["NornIrRequirementRequirementTiming"];
             wording: components["schemas"]["NornIrRequirementRequirementWording"];
         };
+        /** @description Complete display vocabulary; missing fields refuse at decode. */
+        NornIrRequirementTerms: {
+            application: string;
+            cell: string;
+            commitments: string;
+            company: string;
+            entity: string;
+            everyCommittedState: string;
+            grounding: string;
+            obligation: string;
+            permission: string;
+            prohibition: string;
+            sameCommit: string;
+        };
         /** @enum {string} */
         NornIrRequirementTextDirection: "ltr" | "rtl";
+        /**
+         * @description Closed safety fragment. No event activation, clocks, fairness or progress.
+         * @enum {string}
+         */
+        NornIrRequirementTiming: "every_committed_state" | "same_commit";
         /**
          * RequirementView
          * @description A read-only editor projection carries the original IR, not a parsed sentence.
@@ -4668,6 +5134,13 @@ export interface components {
         NornIrRequirementView: {
             locale: string;
             requirement: components["schemas"]["NornIrRequirementStructuredRequirement"];
+        };
+        /**
+         * @description LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
+         *     Wording is never executable and does not change the law's semantic identity.
+         */
+        NornIrRequirementWording: {
+            [key: string]: components["schemas"]["NornIrLocalizedRequirement"];
         };
         /**
          * @description Source text of one ZEN Expression (the IR's single expression language,
@@ -4805,6 +5278,12 @@ export interface components {
          * @enum {string}
          */
         NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
+        NornIrRuleByteRange: {
+            /** Format: uint32 */
+            end: number;
+            /** Format: uint32 */
+            start: number;
+        };
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
@@ -4893,6 +5372,12 @@ export interface components {
         NornIrRuleDecisionV1OneOf1PropertyDefaultOutput: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description A reviewed conditional exception. No implicit necessity or legal judgement. */
+        NornIrRuleException: {
+            condition: components["schemas"]["NornIrZenExpression"];
+            id: string;
+            source: components["schemas"]["NornIrRuleSourceSpan"];
+        };
         /**
          * @description RuleIR v1 hit policy.
          * @enum {string}
@@ -4976,6 +5461,12 @@ export interface components {
         /** @description Source fields whose values are derived from the decide input. */
         NornIrRuleSourceCommandPropertyFields: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
+        };
+        /** @description Source JSON pointer plus an optional half-open UTF-8 byte range. */
+        NornIrRuleSourceSpan: {
+            artifactId: string;
+            bytes?: components["schemas"]["NornIrRuleByteRange"] | null;
+            pointer: string;
         };
         /** @description A committed ledger event that triggers a `decide` rule (T3-DEC-3, #2671). */
         NornIrRuleTrigger: components["schemas"]["NornIrRuleTriggerOneOf0"] | components["schemas"]["NornIrRuleTriggerOneOf1"] | components["schemas"]["NornIrRuleTriggerOneOf2"] | components["schemas"]["NornIrRuleTriggerOneOf3"] | components["schemas"]["NornIrRuleTriggerOneOf4"];
@@ -5185,7 +5676,21 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf4"] | components["schemas"]["NornIrSliceKeyOneOf5"];
+        NornIrSliceKey: "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | {
+            property: {
+                /** @description The earlier entry's name. */
+                from: string;
+                /** @description The property holding the key. */
+                property: string;
+            };
+        } | {
+            link: {
+                /** @description The earlier (single-object) entry's name. */
+                from: string;
+                /** @description The link id, declared on that entry's type or a supertype. */
+                link: string;
+            };
+        };
         /** @description A text property of an earlier slice entry (a link by key). */
         NornIrSliceKeyOneOf4: {
             property: components["schemas"]["NornIrSliceKeyOneOf4PropertyProperty"];
@@ -5466,6 +5971,12 @@ export interface components {
         NornIrSourceSchemaPayloadPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /** @description Structured authoring over the existing law and normative source model. */
+        NornIrStructuredRequirement: {
+            norm: components["schemas"]["NornIrDeonticRule"];
+            timing: components["schemas"]["NornIrRequirementTiming"];
+            wording: components["schemas"]["NornIrRequirementWording"];
+        };
         /** @description Optional time-dimension declaration for a Derived view. */
         NornIrTemporalScope: {
             mode: components["schemas"]["NornIrTemporalScopeMode"];
@@ -5510,6 +6021,8 @@ export interface components {
              */
             transformRef?: string;
         };
+        /** @enum {string} */
+        NornIrTextDirection: "ltr" | "rtl";
         /**
          * @description Well-known string formats of a `text` property.
          * @enum {string}
@@ -5550,6 +6063,14 @@ export interface components {
          *     property id ([`MEMBER_ID_PATTERN`]).
          */
         NornIrTransitionId: string;
+        /** @description **Transition**: one declared transition. */
+        NornIrTransitionRow: {
+            at: components["schemas"]["NornIrMemberRef"];
+            from: string[];
+            /** @description Declared guards, in semantic order. */
+            guards: components["schemas"]["NornIrZenExpression"][];
+            to: string;
+        };
         /**
          * @description Budget for one synchronous cell turn (§1 row 2): one aggregate budget that
          *     every triggered decision, validation, and helper debits.
@@ -5579,6 +6100,25 @@ export interface components {
              * @enum {string}
              */
             type: "string" | "text" | "integer" | "decimal" | "boolean" | "date" | "datetime" | "time" | "duration" | "json" | "binary" | "reference" | "unknown";
+        };
+        /**
+         * @description What a type row defines.
+         * @enum {string}
+         */
+        NornIrTypeKind: "object_type" | "interface";
+        /** @description **Type**: one object type or interface. */
+        NornIrTypeRow: {
+            at: components["schemas"]["NornIrMemberRef"];
+            /** @description Supertypes: an object type's `extends`, an interface's `extends`. */
+            extends?: string[];
+            /** @description Interfaces an object type implements directly. */
+            implements?: string[];
+            kind: components["schemas"]["NornIrTypeKind"];
+            /**
+             * @description GRAPH-ROLE-1: the admitted effective role, independent of lifecycle presence.
+             * @enum {string}
+             */
+            role: "thing" | "happening";
         };
         /**
          * @description A reference to a unit of measure in a standard unit vocabulary (ruling
@@ -6506,6 +7046,18 @@ export interface components {
          * @enum {string}
          */
         NornIrWriteChange: "created" | "modified" | "deleted";
+        /**
+         * @description How an authored write reaches its target.
+         * @enum {string}
+         */
+        NornIrWriteVia: "fire_transition" | "upsert_object" | "mutate_rows" | "fact_transition" | "fact_set" | "fact_object";
+        /** @description **Writes**: an authored write of a definition member. */
+        NornIrWritesRow: {
+            /** @description A transition, a property, or (for whole-object writes) a type. */
+            target: components["schemas"]["NornIrMemberRef"];
+            via: components["schemas"]["NornIrWriteVia"];
+            writer: components["schemas"]["NornIrMemberRef"];
+        };
         /** @description A Boolean ZEN condition over explicitly named Widget UX inputs. */
         NornIrZenCondition: {
             /** @description ZEN source, type-checked to Boolean by `norn-checker`. */

@@ -48,6 +48,7 @@ pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
+pub mod explain;
 pub mod fact_change;
 pub mod flow_source_map;
 pub mod function;

@@ -1,0 +1,7 @@
+{
+  "code": "law.wording.incomplete_locale",
+  "tier": "T2",
+  "severity": "error",
+  "message": "Reviewed wording locale map was refused: incomplete_locale",
+  "since": "0.2.0"
+}
