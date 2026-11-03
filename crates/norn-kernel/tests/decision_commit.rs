@@ -2395,7 +2395,6 @@ fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
     }
 }
 
-
 /// Reference pagination adapter: a non-final page cannot satisfy a complete-list read.
 struct PagedFoldHost {
     cell: Cell,
@@ -2412,66 +2411,191 @@ impl CellHost for PagedFoldHost {
     fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
         self.cell.load(key)
     }
-    fn load_bounded(&self, key: &FactKey, bytes: u64) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
         self.cell.load_bounded(key, bytes)
     }
     fn load_link(&self, key: &norn_kernel::LinkKey) -> Result<norn_kernel::LinkState, Self::Error> {
         self.cell.load_link(key)
     }
-    fn read_link_targets(&self, source: &FactKey, link: &str, max: usize, bytes: u64) -> Result<Option<Vec<norn_kernel::LinkReadTarget>>, Self::Error> {
+    fn read_link_targets(
+        &self,
+        source: &FactKey,
+        link: &str,
+        max: usize,
+        bytes: u64,
+    ) -> Result<Option<Vec<norn_kernel::LinkReadTarget>>, Self::Error> {
         let targets = self.cell.read_link_targets(source, link, max, bytes)?;
         if let (Some(size), Some(targets)) = (self.page_size, &targets) {
             self.prefix_seen.set(Some(size.min(targets.len())));
-            if size < targets.len() { return Ok(None); }
+            if size < targets.len() {
+                return Ok(None);
+            }
         }
         Ok(targets)
     }
-    fn commit(&mut self, commit: CellCommit<FactEvent, JsonObject, JsonObject>) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
         self.commits += 1;
         self.cell.commit(commit)
     }
-    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> { panic!("enqueue only") }
-    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> { panic!("no observations") }
-    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> { panic!("no timer dispatch") }
-    fn publish(&mut self, _: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> { panic!("no publication") }
+    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
+        panic!("enqueue only")
+    }
+    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> {
+        panic!("no observations")
+    }
+    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> {
+        panic!("no timer dispatch")
+    }
+    fn publish(&mut self, _: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> {
+        panic!("no publication")
+    }
 }
 
 /// FOLD-BOUNDS-1 / QUERY-FRESH-1: no prefix result; empty populations stay fenced.
 #[test]
 fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets() {
     use norn_decisions::{AdmittedDecision, DecisionBinding, evaluate, value_from_runtime};
-    use norn_kernel::{EnvelopeLimits, LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile, load_partition_slice};
+    use norn_kernel::{
+        EnvelopeLimits, LinkKey, LinkMutation, LinkWrite, ResourceLimitProfile,
+        load_partition_slice,
+    };
     use std::collections::BTreeMap;
-    let artifacts: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../norn-decisions/tests/fixtures/typed-ordered-fold.json")).unwrap();
-    let rules: BTreeMap<String, norn_ir::RuleRoot> = artifacts.iter().filter(|a| a["kind"] == "rule").map(|a| (a["artifactId"].as_str().unwrap().into(), serde_json::from_value(a["payload"].clone()).unwrap())).collect();
-    let decision = AdmittedDecision::admit(&rules["example.fold.total.rule"], &BTreeMap::from([("example.fold.step.rule".into(), rules["example.fold.step.rule"].clone())]), DecisionBinding { profile_id: "norn-zen/6".into(), environment_hash: "fold-membership".into() }).unwrap();
-    let mut definition: ObjectTypeDef = serde_json::from_value(artifacts.iter().find_map(|a| a["payload"].get("objectType")).unwrap().clone()).unwrap();
+    let artifacts: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../norn-decisions/tests/fixtures/typed-ordered-fold.json"
+    ))
+    .unwrap();
+    let rules: BTreeMap<String, norn_ir::RuleRoot> = artifacts
+        .iter()
+        .filter(|a| a["kind"] == "rule")
+        .map(|a| {
+            (
+                a["artifactId"].as_str().unwrap().into(),
+                serde_json::from_value(a["payload"].clone()).unwrap(),
+            )
+        })
+        .collect();
+    let decision = AdmittedDecision::admit(
+        &rules["example.fold.total.rule"],
+        &BTreeMap::from([(
+            "example.fold.step.rule".into(),
+            rules["example.fold.step.rule"].clone(),
+        )]),
+        DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: "fold-membership".into(),
+        },
+    )
+    .unwrap();
+    let mut definition: ObjectTypeDef = serde_json::from_value(
+        artifacts
+            .iter()
+            .find_map(|a| a["payload"].get("objectType"))
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
     definition.links.push(serde_json::from_value(json!({"id":"members","target":"example.Accumulation","cardinality":{"from":"many","to":"many"}})).unwrap());
     let definitions = vec![definition];
     let catalog = TypeCatalog::new(&definitions);
     let keys = ["pool", "a", "b", "unrelated"].map(|id| key("example.Accumulation", id));
-    let edge = |target: &FactKey| LinkWrite { key: LinkKey::new(keys[0].clone(), "members", target.clone()), expected: FactVersion::ABSENT, mutation: LinkMutation::Add { values: JsonObject::new() } };
-    for (count, page_size, insert) in [(0, None, false), (0, Some(1), true), (2, None, false), (2, None, true), (2, Some(0), false), (2, Some(1), false)] {
-        let mut host = PagedFoldHost { cell: cell().with_types(definitions.clone()), page_size, prefix_seen: std::cell::Cell::new(None), evaluations: 0, commits: 0 };
-        host.cell.commit(CellCommit { writes: keys.iter().zip([99, 2, 3, 99]).map(|(key, total)| FactWrite { key: key.clone(), expected: FactVersion::ABSENT, mutation: FactMutation::Put { values: record(json!({"id":key.key,"total":total,"count":0})) } }).collect(), links: keys.iter().skip(1).take(count).map(edge).collect(), ..CellCommit::empty() }).unwrap();
+    let edge = |target: &FactKey| LinkWrite {
+        key: LinkKey::new(keys[0].clone(), "members", target.clone()),
+        expected: FactVersion::ABSENT,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    };
+    for (count, page_size, insert) in [
+        (0, None, false),
+        (0, Some(1), true),
+        (2, None, false),
+        (2, None, true),
+        (2, Some(0), false),
+        (2, Some(1), false),
+    ] {
+        let mut host = PagedFoldHost {
+            cell: cell().with_types(definitions.clone()),
+            page_size,
+            prefix_seen: std::cell::Cell::new(None),
+            evaluations: 0,
+            commits: 0,
+        };
+        host.cell
+            .commit(CellCommit {
+                writes: keys
+                    .iter()
+                    .zip([99, 2, 3, 99])
+                    .map(|(key, total)| FactWrite {
+                        key: key.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: FactMutation::Put {
+                            values: record(json!({"id":key.key,"total":total,"count":0})),
+                        },
+                    })
+                    .collect(),
+                links: keys.iter().skip(1).take(count).map(edge).collect(),
+                ..CellCommit::empty()
+            })
+            .unwrap();
         let before = visible(&host.cell, &keys);
         let ledger_before = host.cell.ledger().len();
         let prepared = (|| -> Result<_, DecisionRefusal<Infallible>> {
-            let slice = load_partition_slice(&host, &catalog, [keys[3].clone()], &[(keys[0].clone(), "members".into())], ResourceLimitProfile::norn_limits_v1().slice)?;
+            let slice = load_partition_slice(
+                &host,
+                &catalog,
+                [keys[3].clone()],
+                &[(keys[0].clone(), "members".into())],
+                ResourceLimitProfile::norn_limits_v1().slice,
+            )?;
             let members = &slice.partition_reads()[0].targets;
             assert_eq!(members.len(), count);
-            let items: Vec<_> = members.iter().map(|member| {
-                let values = slice.facts()[&member.key.target].values.as_ref().unwrap();
-                json!({"id":member.key.target.key,"amount":values["total"]})
-            }).collect();
-            let input: RuntimeValue = serde_json::from_value(json!({"items":items,"initial":{"total":0,"count":0,"ids":[],"segments":[]}})).unwrap();
+            let items: Vec<_> = members
+                .iter()
+                .map(|member| {
+                    let values = slice.facts()[&member.key.target].values.as_ref().unwrap();
+                    json!({"id":member.key.target.key,"amount":values["total"]})
+                })
+                .collect();
+            let input: RuntimeValue = serde_json::from_value(
+                json!({"items":items,"initial":{"total":0,"count":0,"ids":[],"segments":[]}}),
+            )
+            .unwrap();
             host.evaluations += 1;
-            let evaluated = evaluate(&decision, &decision.validate_slice(value_from_runtime(&input).unwrap()).unwrap(), &decision.type_event(norn_expr::Value::object([("kind", norn_expr::Value::from("allocate"))])).unwrap(), norn_expr::EvaluationBudget::new(2_000_000)).unwrap();
-            assert_eq!(evaluated.output.commands[0]["state"].as_object().unwrap()["total"], RuntimeValue::from_json_text(if count == 0 { "0" } else { "5" }).unwrap());
-            let prepared = slice.prepare::<Infallible>(&catalog, &turn("fold-membership"), &evaluated.output, &EnvelopeLimits::V1)?;
+            let evaluated = evaluate(
+                &decision,
+                &decision
+                    .validate_slice(value_from_runtime(&input).unwrap())
+                    .unwrap(),
+                &decision
+                    .type_event(norn_expr::Value::object([(
+                        "kind",
+                        norn_expr::Value::from("allocate"),
+                    )]))
+                    .unwrap(),
+                norn_expr::EvaluationBudget::new(2_000_000),
+            )
+            .unwrap();
+            assert_eq!(
+                evaluated.output.commands[0]["state"].as_object().unwrap()["total"],
+                RuntimeValue::from_json_text(if count == 0 { "0" } else { "5" }).unwrap()
+            );
+            let prepared = slice.prepare::<Infallible>(
+                &catalog,
+                &turn("fold-membership"),
+                &evaluated.output,
+                &EnvelopeLimits::V1,
+            )?;
             assert_eq!(prepared.link_reads, slice.partition_reads());
             Ok(prepared)
         })();
+        assert_eq!(host.prefix_seen.get(), page_size.map(|size| size.min(count)));
         if count == 2 && page_size.is_some() {
             assert_eq!(prepared.unwrap_err().code(), "decision.invalid_output");
             assert_eq!(host.prefix_seen.get(), page_size);
@@ -2484,13 +2608,26 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
         }
         let prepared = prepared.unwrap();
         if insert {
-            host.cell.commit(CellCommit { links: vec![edge(&keys[3])], ..CellCommit::empty() }).unwrap();
-            let links_before = host.cell.read_link_targets(&keys[0], "members", 10, 10_000).unwrap();
+            host.cell
+                .commit(CellCommit {
+                    links: vec![edge(&keys[3])],
+                    ..CellCommit::empty()
+                })
+                .unwrap();
+            let links_before = host
+                .cell
+                .read_link_targets(&keys[0], "members", 10, 10_000)
+                .unwrap();
             let ledger_before = host.cell.ledger().len();
             assert!(host.commit(prepared).is_err());
             assert_eq!(visible(&host.cell, &keys), before);
             assert_eq!(host.cell.ledger().len(), ledger_before);
-            assert_eq!(host.cell.read_link_targets(&keys[0], "members", 10, 10_000).unwrap(), links_before);
+            assert_eq!(
+                host.cell
+                    .read_link_targets(&keys[0], "members", 10, 10_000)
+                    .unwrap(),
+                links_before
+            );
             assert!(host.cell.outbox().is_empty());
         } else {
             host.commit(prepared).unwrap();
