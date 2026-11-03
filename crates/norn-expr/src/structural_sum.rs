@@ -148,11 +148,22 @@ mod tests {
         assert!(structural_sum_equality(&"(".repeat(100_000)).is_err());
     }
 
+    #[test]
+    fn structural_sum_keyword_properties_use_literal_members() {
+        assert_eq!(
+            structural_sum_equality("self['true'] == self['false'] + self['null']"),
+            Ok(Some(StructuralSumEquality {
+                total: PropertyId("true".into()),
+                terms: vec![PropertyId("false".into()), PropertyId("null".into())],
+            }))
+        );
+    }
+
     proptest::proptest! {
         #[test]
         fn structural_sum_preserves_generated_terms(a in "[a-z]{1,12}", b in "[a-z]{1,12}", c in "[a-z]{1,12}", wrappers in 0usize..8) {
             proptest::prop_assume!(a != b && a != c && b != c);
-            let source = format!("{}self.{a} == (self.{b} + self.{c}){}", "(".repeat(wrappers), ")".repeat(wrappers));
+            let source = format!("{}self['{a}'] == (self['{b}'] + self['{c}']){}", "(".repeat(wrappers), ")".repeat(wrappers));
             proptest::prop_assert_eq!(structural_sum_equality(&source).ok().flatten(),
                 Some(StructuralSumEquality { total: PropertyId(a), terms: vec![PropertyId(b), PropertyId(c)] }));
         }
