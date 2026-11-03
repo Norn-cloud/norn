@@ -436,8 +436,11 @@
             "type": "string"
           },
           "total_amount": {
-            "scale": 2,
-            "type": "decimal"
+            "nornType": {
+              "kind": "decimal",
+              "scale": 2
+            },
+            "type": "number"
           }
         },
         "required": [
@@ -601,8 +604,11 @@
         "additionalProperties": false,
         "properties": {
           "amount": {
-            "scale": 2,
-            "type": "decimal"
+            "nornType": {
+              "kind": "decimal",
+              "scale": 2
+            },
+            "type": "number"
           },
           "id": {
             "type": "string"
@@ -704,8 +710,11 @@
         "additionalProperties": false,
         "properties": {
           "amount": {
-            "scale": 2,
-            "type": "decimal"
+            "nornType": {
+              "kind": "decimal",
+              "scale": 2
+            },
+            "type": "number"
           },
           "id": {
             "type": "string"
