@@ -299,6 +299,18 @@ impl Model {
         binding_indexes: &[BindingIndexSpec],
         law_artifacts: &[ArtifactEnvelope],
     ) -> Result<Self, CellError> {
+        let model =
+            Self::project_with_binding_indexes(input, interfaces, binding_indexes, law_artifacts)?;
+        crate::identity::validate_model(&model.effective_objects, input.object_types)?;
+        Ok(model)
+    }
+
+    fn project_with_binding_indexes(
+        input: &SqliteDdlInput<'_>,
+        interfaces: &[InterfaceDef],
+        binding_indexes: &[BindingIndexSpec],
+        law_artifacts: &[ArtifactEnvelope],
+    ) -> Result<Self, CellError> {
         let law_artifacts = canonical_law_artifacts(law_artifacts)?;
         let mut schema = project_sqlite_ddl(input)?;
         let defs: BTreeMap<String, &ObjectTypeDef> = input
@@ -568,6 +580,14 @@ impl Model {
         Ok(&self.entry(object_type)?.def)
     }
 
+    pub(crate) fn identity_objects(&self) -> impl Iterator<Item = &EffectiveObjectType> {
+        self.effective_objects.values()
+    }
+
+    pub(crate) fn validate_identity_profile(&self) -> Result<(), CellError> {
+        crate::identity::validate_model(&self.effective_objects, self.object_types())
+    }
+
     pub(crate) fn query_contract(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
         self.effective_objects
             .get(name)
@@ -829,6 +849,21 @@ impl Model {
     /// [`CellError::Projection`] when the snapshot does not project.
     pub fn from_snapshot(snapshot: &ModelDefinitionSnapshot) -> Result<Self, CellError> {
         Self::new_with_binding_indexes(
+            &SqliteDdlInput {
+                object_types: &snapshot.object_types,
+                property_types: &snapshot.property_types,
+            },
+            &snapshot.interfaces,
+            &snapshot.binding_indexes,
+            &snapshot.law_artifacts,
+        )
+    }
+
+    /// ID-NORMALIZED-RETAINED: reconstruct pinned metadata without new admission.
+    pub(crate) fn from_retained_snapshot(
+        snapshot: &ModelDefinitionSnapshot,
+    ) -> Result<Self, CellError> {
+        Self::project_with_binding_indexes(
             &SqliteDdlInput {
                 object_types: &snapshot.object_types,
                 property_types: &snapshot.property_types,

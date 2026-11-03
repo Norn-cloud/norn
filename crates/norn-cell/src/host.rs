@@ -1559,6 +1559,18 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
+            Err(GuardedError::Store(CellError::IdentityCollision {
+                owner,
+                key,
+                conflicts,
+            })) => {
+                let conflicts = Box::new(conflicts.map(|id| FactKey::new(owner.clone(), id)));
+                Err(CommitError::IdentityCollision {
+                    owner,
+                    key,
+                    conflicts,
+                })
+            }
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }

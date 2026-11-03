@@ -5175,23 +5175,33 @@ fn obs_evidence_install_refuses_missing_or_substituted_governing_laws() {
 }
 
 #[test]
-fn law_complete_inherited_and_effective_scopes_refuse_until_b2() {
+fn law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2() {
     let (model, _) = governing_law_input("self.name != 'bad'", 1);
     let mut snapshot = model.definitions_snapshot();
     snapshot.object_types.push(
         serde_json::from_value(json!({"name":"defs.Child", "extends":"defs.Item"})).expect("child"),
     );
     let inherited = Model::from_snapshot(&snapshot).expect("snapshot");
-    let refusal = inherited
+    assert_eq!(
+        inherited
+            .governing_laws("defs.Child")
+            .expect("LAW-INTERFACE-1: the supertype law governs its subtype"),
+        inherited.governing_laws("defs.Item").expect("direct scope")
+    );
+    let mut mixed = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
+    mixed["payload"]["scope"]["objectTypes"] = json!(["defs.Item", "defs.Child"]);
+    let mut mixed_snapshot = snapshot.clone();
+    mixed_snapshot.law_artifacts[0] = serde_json::from_value(mixed).expect("mixed scope");
+    let refusal = Model::from_snapshot(&mixed_snapshot)
+        .expect("model")
         .governing_laws("defs.Child")
-        .expect_err("inherited scope");
+        .expect_err("mixed scope");
     assert!(matches!(refusal, CellError::UnsupportedLawScope { .. }));
     assert!(
         refusal
             .to_string()
             .contains("core.laws.unsupported_semantics")
     );
-    assert!(refusal.to_string().contains("unsupported until B2"));
     let mut artifact = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
     artifact["payload"]["scope"]["root"] = json!({"kind":"app", "id":"defs"});
     snapshot.law_artifacts[0] = serde_json::from_value(artifact).expect("effective scope");
@@ -6480,6 +6490,54 @@ fn host_provision_atomic_retry_preserves_later_installs() {
         store.read().active_definitions_version().expect("active"),
         Some(2)
     );
+}
+
+#[test]
+fn normalized_identity_activation_refuses_other_world_collisions_without_mutation() {
+    let original = model(false);
+    let mut definitions: Vec<_> = original.object_types().cloned().collect();
+    definitions[0].identity.push(norn_ir::KeySpec {
+        name: norn_ir::KeyName("by_name".into()),
+        properties: vec![norn_ir::PropertyId("name".into())],
+        naming_series: None,
+        rule: Some(norn_ir::IdentityRule {
+            match_policy: None,
+            normalize: vec![norn_ir::ComponentNormalization {
+                property: norn_ir::PropertyId("name".into()),
+                steps: vec![
+                    norn_ir::Normalization::Trim,
+                    norn_ir::Normalization::Uppercase,
+                ],
+            }],
+        }),
+    });
+    let candidate = Model::from_definitions(&definitions, &[]).expect("normalized candidate");
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("normalized-v1", 1, &original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("seed");
+    for (id, name, time) in [("a", " abc ", 2), ("b", "ABC", 3)] {
+        let mut write = batch(put_type("defs.Item", id, name, None), time);
+        write.world = "simulation-key".into();
+        store.commit(&write).expect("raw-distinct old keys");
+    }
+    let before = store.read().dump().expect("before");
+    let input = install_input("normalized-v2", 4, &candidate);
+    assert!(matches!(
+        store.check_definitions(&candidate, &input, Some(1)),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after check"), before);
+    assert!(matches!(
+        store.install_definitions(candidate, input, Some(1), "org_demo/dev"),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after install"), before);
 }
 
 norn_testkit::proptest::proptest! {

@@ -108,3 +108,24 @@ VAL-RATE's initial graph binding admits one direct expression node between input
 
 - **VAL-RATE-PRICE:** Given fixed USD, a 15 USD/g rate and 20 g, typed admission/evaluation produces USD 300 at the destination Money scale; a nonzero remainder under Refuse refuses.
 - **VAL-RATE-MISMATCH:** Given USD/g, combining mg, an EUR destination, Rate × Rate or an erased numeric operand refuses; quantity-versus-literal comparison records `core.values.literal_unit` naming g.
+
+ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared normalization order. The shared SQLite transaction checks complete normalized tuples for every admitted declaring root/key across stored scope/world domains before publishing events, effects or a receipt; reopen and definition activation validate all such domains. Original property bytes and opaque IDs are preserved. This profile supports text/enum/integer/boolean tuple components, at most 16 normalization steps per component, and a cumulative scan of 4,096 keys/4,096 rows and 8 MiB of encoded-plus-normalized key and identity data. Unsupported normalized components or incomplete scans refuse. Entity-resolution policies, alias history and identity restoration are separate contracts; this cut does not activate them or prove their safety.
+
+- **ID-NORMALIZED-ATOMIC:** sibling subtypes with raw-distinct but canonically equal keys cannot both commit; a refusal leaves the entire SQLite dump unchanged. Original source spellings remain stored.
+- **ID-NORMALIZED-DOMAINS:** the same normalized tuple may exist in different stored scopes/worlds; a business-key rename preserves the opaque object ID.
+- **ID-NORMALIZED-COMPOSITE:** typed tuple boundaries prevent concatenation collisions; unsupported normalized components and exhausted scan/step bounds refuse.
+
+This cut's evidence is native runtime conformance and generated ASCII input sampling. The unchanged pure normalization helper is reused directly; the new transaction scan depends on SQL and is not a pure bounded Kani target. These tests do not establish alias history, tombstone restoration, arbitrary Unicode normalization correctness or general identity proofs.
+
+The normalized native profile checks candidate activation with reads only as well as inside the install transaction. A normalized key over a newly added component on an occupied table refuses until backfill-aware identity admission exists; an empty new type is permitted. Candidate checks cover all worlds, including worlds other than the install request's world.
+
+Raw-byte duplicates may refuse earlier through the existing physical unique index and retain its existing transport error; the new canonical collision code covers raw-distinct normalized duplicates. Both paths preserve atomicity. This cut does not qualify a new SQL-constraint error taxonomy.
+
+**ID-NORMALIZED-REOPEN-BOUND:** every commit charges the same complete key/row/byte budget as reopen, including unrelated roots; a commit that would make reopening exceed the profile refuses atomically. Stored byte preflight uses `octet_length` before fetching values.
+
+**ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
+
+
+**ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
+
+- **ID-NORMALIZED-RETAINED-LOOKUP-PROVISION:** after upgrading away from a retained profile outside current admission bounds, historical definition lookup preserves its exact metadata/hash, and an identical provisioning retry reopens the current admitted model without adding receipts or changing live facts.
