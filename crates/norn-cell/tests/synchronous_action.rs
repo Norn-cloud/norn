@@ -4,6 +4,7 @@
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "atomic action correspondence fixtures"
 )]
@@ -295,7 +296,8 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
     let movement = FactKey::new("fixture.CustodyMovement", "MOVE");
     let mut seed = CellCommit::empty();
     let seed_rows = [
-        (holding.clone(), json!({"id":"LOT","company":"COMPANY","location":"A","quantity":5,"value":80,"status":"ready"})),
+        (holding.clone(), json!({"id":"LOT","company":"COMPANY","location":"A","quantity":2,"value":20,"status":"ready"})),
+        (FactKey::new("fixture.CustodyHolding", "UNMOVED"), json!({"id":"UNMOVED","company":"COMPANY","location":"A","quantity":3,"value":60,"status":"ready"})),
         (FactKey::new("fixture.CustodyLocation", "A"), json!({"id":"A","company":"COMPANY"})),
         (FactKey::new("fixture.CustodyLocation", "B"), json!({"id":"B","company":"COMPANY"})),
         (FactKey::new("fixture.CustodyLocation", "OTHER"), json!({"id":"OTHER","company":"ANOTHER"})),
@@ -310,6 +312,7 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
             mutation: FactMutation::Put {values: serde_json::from_value(values).unwrap()}});
     }
     cell.commit(seed).unwrap();
+    let unmoved = cell.load(&FactKey::new("fixture.CustodyHolding", "UNMOVED")).unwrap();
     let books = cell.store().read().root_rows("main", "fixture.CustodyAccount", 16).unwrap();
     let book_states: Vec<_> = books.0.iter().map(|(id, _)| cell.load(&FactKey::new("fixture.CustodyAccount", id)).unwrap()).collect();
     assert!(books.1);
@@ -328,12 +331,16 @@ fn same_company_custody_transfer_preserves_quantity_value_and_books() {
     request.input.insert("destination".into(), "B".into());
     commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
     let state = cell.load(&holding).unwrap().values.unwrap();
-    assert_eq!(serde_json::to_value(state).unwrap(), json!({"id":"LOT","company":"COMPANY","location":"B","quantity":5,"value":80,"status":"moved"}));
+    assert_eq!(serde_json::to_value(state).unwrap(), json!({"id":"LOT","company":"COMPANY","location":"B","quantity":2,"value":20,"status":"moved"}));
     assert_eq!(serde_json::to_value(cell.load(&movement).unwrap().values.unwrap()).unwrap(),
-        json!({"id":"MOVE","company":"COMPANY","from":"A","to":"B","quantity":5,"value":80}));
+        json!({"id":"MOVE","company":"COMPANY","from":"A","to":"B","quantity":2,"value":20}));
     for (link, target) in [("holding", holding), ("destination", FactKey::new("fixture.CustodyLocation", "B"))] {
         assert!(cell.load_link(&LinkKey::new(movement.clone(), link, target)).unwrap().exists());
     }
+    assert_eq!(cell.load(&FactKey::new("fixture.CustodyHolding", "UNMOVED")).unwrap(), unmoved);
+    let (holdings, complete) = cell.store().read().root_rows("main", "fixture.CustodyHolding", 4).unwrap();
+    assert!(complete);
+    assert_eq!(holdings.len(), 2);
     // Complete account population, including versions, must be byte-identical.
     assert_eq!(cell.store().read().root_rows("main", "fixture.CustodyAccount", 16).unwrap(), books);
     assert_eq!(books.0.iter().map(|(id, _)| cell.load(&FactKey::new("fixture.CustodyAccount", id)).unwrap()).collect::<Vec<_>>(), book_states);
