@@ -1219,31 +1219,51 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
 
 /// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
-    if let (EffectiveKind::Base(left), EffectiveKind::Base(right)) = (left, right)
-        && left.additivity() != right.additivity()
-    {
-        return false;
+    if let (EffectiveKind::Base(left), EffectiveKind::Base(right)) = (left, right) {
+        if matches!(
+            (left, right),
+            (PropertyType::Record { .. }, PropertyType::Record { .. })
+        ) {
+            return left == right;
+        }
+        if left.additivity() != right.additivity() {
+            return false;
+        }
     }
     same_value_kind(left, right)
 }
 
 fn same_value_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
-        (
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-        ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
-        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
-            (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
-            (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
-                enum_values(left) == enum_values(right)
-            }
-            (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
-            _ => left == right,
-        },
+        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => {
+            same_base_value_kind(left, right)
+        }
         (EffectiveKind::Registry(left), EffectiveKind::Registry(right)) => left == right,
         (EffectiveKind::Unresolved, EffectiveKind::Unresolved) => true,
         _ => false,
+    }
+}
+
+fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
+    match (left, right) {
+        (PropertyType::Decimal { .. }, PropertyType::Decimal { .. }) => {
+            base_kind_narrows(left, right) == Some(true)
+                && base_kind_narrows(right, left) == Some(true)
+        }
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
+        (PropertyType::Record { members: left }, PropertyType::Record { members: right }) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| {
+                    left.id == right.id
+                        && left.constraints == right.constraints
+                        && same_base_value_kind(&left.property_type, &right.property_type)
+                })
+        }
+        (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
+            enum_values(left) == enum_values(right)
+        }
+        (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
+        _ => left == right,
     }
 }
 
@@ -1253,8 +1273,15 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
     else {
         return None;
     };
+    base_kind_narrows(candidate, previous)
+}
+
+fn base_kind_narrows(candidate: &PropertyType, previous: &PropertyType) -> Option<bool> {
     match (candidate, previous) {
         (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => Some(true),
+        (PropertyType::Record { .. }, PropertyType::Record { .. }) => {
+            same_base_value_kind(candidate, previous).then_some(true)
+        }
         (PropertyType::Text { format: candidate }, PropertyType::Text { format: previous }) => {
             match (candidate, previous) {
                 (_, None) => Some(true),
@@ -2003,19 +2030,19 @@ mod tests {
 
     proptest::proptest! {
         #[test]
-        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28) {
-            let kind = if integer { serde_json::json!({"kind":"integer"}) }
+        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28, nested in proptest::bool::ANY) {
+            let mut kind = if integer { serde_json::json!({"kind":"integer"}) }
                 else { serde_json::json!({"kind":"decimal","scale":scale}) };
-            let previous = effective_property(serde_json::json!({"id":"amount","type":kind}));
-            let mut candidate = previous.clone();
-            if let EffectiveKind::Base(PropertyType::Integer { additivity }
-                | PropertyType::Decimal { additivity, .. }) = &mut candidate.kind {
-                *additivity = norn_ir::PropertyAdditivity::Additive {};
-            }
+            let property = |kind| if nested {
+                serde_json::json!({"id":"payload","type":{"kind":"record","members":[{"id":"amount","type":kind}]}})
+            } else { serde_json::json!({"id":"amount","type":kind}) };
+            let previous = effective_property(property(kind.clone()));
+            kind["additivity"] = serde_json::json!({"kind":"additive"});
+            let candidate = effective_property(property(kind));
             proptest::prop_assert!(!candidate.same_contract(&previous));
             proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
             proptest::prop_assert!(candidate.check_runtime_value_from(&previous,
-                &RuntimeValue::from_json_text("1").expect("exact value")).is_ok());
+                &RuntimeValue::from_json_text(if nested { r#"{"amount":1}"# } else { "1" }).expect("exact value")).is_ok());
         }
     }
 
