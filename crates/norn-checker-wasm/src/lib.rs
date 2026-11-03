@@ -1056,7 +1056,9 @@ pub fn explain_artifact_set_json(
             json!({"format":"norn/explain@2", "admitted":false, "report":null, "diagnostics":diagnostics.iter().map(Diagnostic::to_json_v2).collect::<Vec<_>>()})
         }
     };
-    Ok(response.to_string())
+    let bytes = norn_ir::canonical::canonical_json_of(&response)
+        .map_err(|error| invalid("explain", error.to_string()))?;
+    String::from_utf8(bytes).map_err(|error| invalid("explain", error.to_string()))
 }
 
 fn explain_sources(
