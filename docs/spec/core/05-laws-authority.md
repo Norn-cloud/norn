@@ -118,6 +118,22 @@ Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
 
+### Conditional linear certificate kernel (#711)
+
+**CONS-LINEAR-1:** the mathematical coefficient checker verifies every affine
+writer column against the declared rational functional, independently per exact
+scope and unit. Altered weights, malformed matrices and duplicate coordinates or
+writers refuse. Nonzero residuals identify writer, partition and symbolic column;
+unsupported writers and arithmetic/resource limits remain unknown. A residual is
+an algebraic witness, not a reachable runtime counterexample.
+
+This kernel alone establishes no application evidence. Declaration lowering must
+bind the complete writer closure and functional to a generated Challenge before
+its result can discharge a preservation goal. Initialization, non-vacuity and
+open boundaries remain separate obligations. Named kernel scenarios: valid affine
+balance, omitted loss, unit mismatch, cross-book cancellation, substituted/zero
+weights, unsupported writer, malformed shape and exact fractional balance.
+
 ### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
 
 The chase-backed diagnosis profile enumerates irreducible declaration conflicts
