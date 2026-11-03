@@ -5,19 +5,19 @@ export class Cell {
   constructor(ctx, env) { this.host = new McpHost(env.ORG, env.ENVIRONMENT, env.ORIGIN); }
   async fetch(request) {
     const reader = request.body?.getReader();
-    const chunks = []; let size = 0;
+    const bytes = new Uint8Array(1048576); let size = 0;
     if (reader) for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      size += value.byteLength;
-      if (size > 1048576) { await reader.cancel(); return new Response(null, { status: 413 }); }
-      chunks.push(value);
+      if (size + value.byteLength > bytes.length) { await reader.cancel(); return new Response(null, { status: 413 }); }
+      bytes.set(value, size); size += value.byteLength;
     }
-    const bytes = new Uint8Array(size); let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    let body;
+    try { body = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)); }
+    catch { return new Response(null, { status: 400 }); }
     const reply = JSON.parse(this.host.fetch(JSON.stringify({ method: request.method,
       path: new URL(request.url).pathname, headers: Object.fromEntries(request.headers),
-      body: new TextDecoder('utf-8', { fatal: true }).decode(bytes) }),
+      body }),
       crypto.randomUUID(), BigInt(Date.now())));
     const headers = { 'Content-Type': 'application/json' };
     if (reply.session) headers['Mcp-Session-Id'] = reply.session;
