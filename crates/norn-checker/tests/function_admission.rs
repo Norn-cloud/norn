@@ -771,3 +771,28 @@ proptest::proptest! {
         proptest::prop_assert!(!manifest_findings(&host).is_empty());
     }
 }
+
+#[test]
+fn qualified_invocation_world_must_match_its_provenance() {
+    use norn_ir::{
+        cell_id::CellId,
+        cell_reference::{CommitProvenance, QualifiedCommit},
+    };
+    let admitted = admitted("wasm");
+    let mut invocation = invocation("wasm");
+    invocation.provenance_commit = CommitProvenance::Qualified(QualifiedCommit::new(
+        CellId::try_from("00112233445566778899aabbccddeeff".to_owned()).expect("cell"),
+        "main".into(),
+        1207,
+    ));
+    assert!(check_function_invocation(&invocation, &admitted).is_empty());
+    invocation.world = "fork".into();
+    assert!(
+        found_codes(&check_function_invocation(&invocation, &admitted))
+            .contains(codes::PROVENANCE_MISMATCH)
+    );
+    assert!(
+        found_codes(&check_function_invocation(&invocation, &admitted))
+            .contains(codes::PROVENANCE_BOUNDARY_MISMATCH)
+    );
+}

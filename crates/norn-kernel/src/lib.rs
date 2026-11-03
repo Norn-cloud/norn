@@ -68,6 +68,7 @@ pub mod limits;
 pub mod naming_series;
 mod partition_slice;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
+pub mod cell_provenance;
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
 pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
@@ -130,3 +131,8 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+/// Conservative ownership boundary for cell-local atomic execution.
+pub mod execution_profile;
+
+mod profile_ownership;

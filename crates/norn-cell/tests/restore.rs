@@ -618,6 +618,12 @@ async fn wrong_model_scope_bindings_existing_target_and_self_consistent_false_re
     let mut false_receipt = original.clone();
     false_receipt.receipt.body.written[0].version += 1;
     false_receipt.receipt.hash = hash(&false_receipt.receipt.body);
+    false_receipt
+        .portable_receipt
+        .as_mut()
+        .expect("portable envelope")
+        .receipt_hash
+        .clone_from(&false_receipt.receipt.hash);
     let false_export = dir.path().join("false-receipt");
     Exporter::local(&false_export)
         .expect("exporter")

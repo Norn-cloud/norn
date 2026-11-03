@@ -224,6 +224,7 @@ const ALLOW: Authz = Authz { revoked: false };
 
 fn context(policy: ReconcilePolicy) -> ReconcileContext<'static> {
     ReconcileContext {
+        cell: None,
         tenant: TENANT,
         world: "main",
         now: LogicalTime::from_millis(NOW),
@@ -1361,4 +1362,142 @@ norn_testkit::proptest::proptest! {
         let store = ReceiptStore { acceptance: &acceptance, receipt: &case.receipt, state: ReceiptLookup::Accepted };
         norn_testkit::proptest::prop_assert!(matches!(bind_receipt::<ClassificationSummary,_>(&store, &reference), Err(ReceiptBindingError::Mismatch)));
     }
+}
+
+fn check_qualified_receipt_fence(first: u128) {
+    use norn_ir::{
+        cell_id::CellId,
+        cell_reference::{CommitProvenance, QualifiedCommit},
+    };
+    use norn_kernel::receipt_binding::{
+        AcceptedReceiptStore, ReceiptBindingError, ReceiptReference, ReceiptResolution,
+        bind_receipt,
+    };
+    struct ScopedStore<'a> {
+        cell: &'a CellId,
+        acceptance: &'a Acceptance,
+        receipt: &'a FunctionReceipt,
+    }
+    impl AcceptedReceiptStore for ScopedStore<'_> {
+        type Error = Infallible;
+        fn origin_context(&self) -> Option<(&CellId, &str)> {
+            Some((self.cell, "main"))
+        }
+        fn resolve(&self, _: &Digest) -> Result<ReceiptResolution<'_>, Self::Error> {
+            Ok(ReceiptResolution::Accepted {
+                acceptance: self.acceptance,
+                receipt: self.receipt,
+            })
+        }
+    }
+    let a = CellId::try_from(format!("{first:032x}")).expect("cell");
+    let b = CellId::try_from(format!("{:032x}", first ^ 1)).expect("cell");
+    let local = ReconcileContext {
+        cell: Some(&a),
+        ..context(ReconcilePolicy::DEFAULT)
+    };
+    let mut case = case("wasm");
+    assert!(matches!(
+        run_with(&case, &case.receipt, &local, &ALLOW),
+        Reconciliation::Refused(_)
+    ));
+    let legacy = accepted(run_with(
+        &case,
+        &case.receipt,
+        &context(ReconcilePolicy::DEFAULT),
+        &ALLOW,
+    ));
+    let legacy_reference =
+        ReceiptReference::parse(&RuntimeValue::String(legacy.record.receipt.0.clone()))
+            .expect("legacy reference");
+    let modern = ScopedStore {
+        cell: &a,
+        acceptance: &legacy,
+        receipt: &case.receipt,
+    };
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&modern, &legacy_reference),
+        Err(ReceiptBindingError::Mismatch)
+    ));
+    case.dispatched.invocation.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(a.clone(), "main".into(), 1207));
+    case.dispatched = DispatchedCommand::pin(
+        case.dispatched.invocation.clone(),
+        case.dispatched.execution_profile.clone(),
+    )
+    .expect("dispatch");
+    case.receipt.dispatch = case.dispatched.dispatch.clone();
+    let foreign = ReconcileContext {
+        cell: Some(&b),
+        ..local
+    };
+    assert!(matches!(
+        run_with(&case, &case.receipt, &foreign, &ALLOW),
+        Reconciliation::Refused(_)
+    ));
+    let acceptance = accepted(run_with(&case, &case.receipt, &local, &ALLOW));
+    let reference_digest = norn_kernel::cell_provenance::receipt_reference(&acceptance.record)
+        .expect("qualified reference")
+        .expect("portable evidence");
+    let reference =
+        ReceiptReference::parse(&RuntimeValue::String(reference_digest.0)).expect("reference");
+    let mut store = ScopedStore {
+        cell: &a,
+        acceptance: &acceptance,
+        receipt: &case.receipt,
+    };
+    assert!(bind_receipt::<ClassificationSummary, _>(&store, &reference).is_ok());
+    let mut changed_commit = acceptance.clone();
+    changed_commit
+        .record
+        .origin
+        .as_mut()
+        .expect("origin")
+        .commit = 1208;
+    store.acceptance = &changed_commit;
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&store, &reference),
+        Err(ReceiptBindingError::Mismatch)
+    ));
+    store.acceptance = &acceptance;
+    store.cell = &b;
+    assert!(matches!(
+        bind_receipt::<ClassificationSummary, _>(&store, &reference),
+        Err(ReceiptBindingError::Mismatch)
+    ));
+    let mut forged = case.clone();
+    forged.dispatched.invocation.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(b.clone(), "main".into(), 1207));
+    assert!(matches!(
+        run_with(&forged, &forged.receipt, &foreign, &ALLOW),
+        Reconciliation::Refused(_)
+    ));
+}
+
+#[test]
+fn qualified_receipt_cannot_reconcile_or_bind_in_another_cell() {
+    check_qualified_receipt_fence(42);
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn arbitrary_wrong_cell_cannot_satisfy_local_acceptance(cell in norn_testkit::proptest::prelude::any::<u128>()) {
+        check_qualified_receipt_fence(cell);
+    }
+}
+
+#[test]
+fn legacy_acceptance_cannot_produce_a_portable_receipt_reference() {
+    let case = case("wasm");
+    let acceptance = accepted(run_with(
+        &case,
+        &case.receipt,
+        &context(ReconcilePolicy::DEFAULT),
+        &ALLOW,
+    ));
+    assert!(
+        norn_kernel::cell_provenance::receipt_reference(&acceptance.record)
+            .expect("local reference")
+            .is_none()
+    );
 }

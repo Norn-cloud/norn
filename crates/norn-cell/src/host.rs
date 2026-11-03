@@ -440,6 +440,19 @@ impl<E, C, I: Serialize, S: SqlEngine> SqliteCell<E, C, I, S> {
     pub fn inject(&mut self, observed: &Observed<I>) -> Result<bool, CellError> {
         self.store.inject(&observed.id.0, &to_runtime(observed)?)
     }
+
+    /// Ingest a delivery from an authenticated foreign cell. Its observation id
+    /// is qualified in both the inbox and the delivery consumed by the kernel.
+    ///
+    /// # Errors
+    /// Invalid origin reference, unbound target, serialization or storage failure.
+    pub fn inject_foreign(
+        &mut self,
+        reference: &norn_ir::cell_reference::CellReference,
+        observed: &Observed<I>,
+    ) -> Result<bool, CellError> {
+        self.store.inject_foreign(reference, observed)
+    }
 }
 
 /// The store's consumption reference for a kernel one.
@@ -1156,7 +1169,9 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
-    /// Inspect and durably claim the outbox head before external dispatch.
+    /// Inspect and durably claim the outbox head for this bound host's adapter.
+    /// Returned command keys are local; portable transport and foreign provider
+    /// deduplication use [`CellStore::export_command`]'s qualified envelope.
     ///
     /// A restored perform fence takes precedence over both a saved result and
     /// a saved claim. A fresh command is returned only after the claim's

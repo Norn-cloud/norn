@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod boundary_identity;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;
@@ -50,6 +51,7 @@ mod observation_quality;
 pub use observation_quality::AuthoritativePage;
 pub mod model;
 mod payload_storage;
+pub mod portable_receipt;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;

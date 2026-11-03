@@ -1998,7 +1998,7 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
-                let installed = store.install_definitions(
+                let installed = store.install_definitions_with_receipt_mode(
                     Model::from_snapshot(&install.model)?,
                     InstalledDefinitionInput {
                         canonical_set: install.installed.canonical_set.clone(),
@@ -2012,6 +2012,7 @@ impl<E: SqlEngine> CellStore<E> {
                     },
                     Some(install.installed.version.saturating_sub(1)),
                     &record.batch.scope,
+                    record.receipt_mode(),
                 )?;
                 if installed != install.installed {
                     return Err(refused());
@@ -2024,17 +2025,7 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
-                let ((), outcome) = store
-                    .commit_guarded_submitted(
-                        &record.batch,
-                        record.quantity_input.as_ref(),
-                        |_reader| Ok::<(), CellError>(()),
-                        &mut |_point| Ok(()),
-                    )
-                    .map_err(|error| match error {
-                        crate::store::GuardedError::Guard(error)
-                        | crate::store::GuardedError::Store(error) => error,
-                    })?;
+                let outcome = store.replay_commit(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
                 {

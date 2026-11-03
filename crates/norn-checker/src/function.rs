@@ -81,7 +81,11 @@ pub mod codes {
     /// Two pipeline steps share an id.
     pub const DUPLICATE_STEP: &str = "function.manifest.duplicate_step";
 
-    /// A required invocation member is blank.
+    /// Qualified provenance names a different execution world.
+    pub const PROVENANCE_MISMATCH: &str = "function.invocation.provenance_mismatch";
+    /// Canonical Core 07 identity refusal retained alongside the adapter code.
+    pub const PROVENANCE_BOUNDARY_MISMATCH: &str = "core.boundary.identity_mismatch";
+    /// A required invocation field is blank.
     pub const INVOCATION_BLANK_VALUE: &str = "function.invocation.blank_value";
     /// The invocation names a manifest other than the admitted one.
     pub const MANIFEST_MISMATCH: &str = "function.invocation.manifest_mismatch";
@@ -916,6 +920,22 @@ pub fn check_function_invocation(
         out.push(non_canonical(
             codes::INVOCATION_NON_CANONICAL_TEXT,
             "invocation",
+        ));
+    }
+    if invocation
+        .provenance_commit
+        .qualified()
+        .is_some_and(|origin| origin.world != invocation.world)
+    {
+        out.push(error(
+            codes::PROVENANCE_MISMATCH,
+            "qualified provenance world differs from invocation world".to_owned(),
+            at(["provenanceCommit"]),
+        ));
+        out.push(error(
+            codes::PROVENANCE_BOUNDARY_MISMATCH,
+            "qualified provenance world differs from invocation world".to_owned(),
+            at(["provenanceCommit"]),
         ));
     }
     check_inputs(invocation, &mut out);

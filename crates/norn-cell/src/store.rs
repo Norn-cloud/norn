@@ -1746,7 +1746,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
 }
 
 #[derive(Clone, Copy)]
-struct DefinitionInstallContext<'a> {
+pub(crate) struct DefinitionInstallContext<'a> {
     candidate_model: &'a Model,
     input: &'a InstalledDefinitionInput,
     expected_version: Option<u64>,
@@ -2003,7 +2003,7 @@ impl<E: SqlEngine> CellStore<E> {
             .commit_guarded_inner(
                 &batch,
                 Some(installation),
-                None,
+                crate::portable_receipt::JournalInput::current(None),
                 Some(&identity),
                 |_reader| Ok::<(), CellError>(()),
                 &mut |_point| Ok(()),
@@ -2472,7 +2472,14 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, None, None, guard, probe)
+        self.commit_guarded_inner(
+            batch,
+            None,
+            crate::portable_receipt::JournalInput::current(None),
+            None,
+            guard,
+            probe,
+        )
     }
 
     // Only the driver and verified restore can supply pre-materialization input.
@@ -2484,7 +2491,14 @@ impl<E: SqlEngine> CellStore<E> {
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, None, guard, probe)
+        self.commit_guarded_inner(
+            batch,
+            None,
+            crate::portable_receipt::JournalInput::current(submitted),
+            None,
+            guard,
+            probe,
+        )
     }
 
     /// Install an already-admitted projected model and its canonical full
@@ -2499,12 +2513,13 @@ impl<E: SqlEngine> CellStore<E> {
         clippy::needless_pass_by_value,
         reason = "the owned input is retained by the atomic definition-install transaction"
     )]
-    pub fn install_definitions(
+    pub(crate) fn install_definitions_with_receipt_mode(
         &mut self,
         candidate_model: Model,
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
         scope: &str,
+        receipt_mode: crate::portable_receipt::ReceiptMode,
     ) -> Result<InstalledDefinitionSet, CellError> {
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2520,7 +2535,10 @@ impl<E: SqlEngine> CellStore<E> {
         let result = self.commit_guarded_inner(
             &batch,
             Some(install),
-            None,
+            crate::portable_receipt::JournalInput {
+                submitted: None,
+                mode: receipt_mode,
+            },
             None,
             |_reader| Ok::<(), CellError>(()),
             &mut |_point| Ok(()),
@@ -2570,15 +2588,16 @@ impl<E: SqlEngine> CellStore<E> {
         clippy::too_many_lines,
         reason = "the shared atomic commit transaction keeps receipt, ledger and install writes together"
     )]
-    fn commit_guarded_inner<T: Default, X>(
+    pub(crate) fn commit_guarded_inner<T: Default, X>(
         &self,
         batch: &CommitBatch,
         installation: Option<DefinitionInstallContext<'_>>,
-        submitted: Option<&Value>,
+        input: crate::portable_receipt::JournalInput<'_>,
         provisioning: Option<&str>,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
+        let submitted = input.submitted;
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
@@ -2720,6 +2739,7 @@ impl<E: SqlEngine> CellStore<E> {
             let admitted = guard(&reader).map_err(GuardedError::Guard)?;
             let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
             let commit_seq = reader.next_commit_seq()?;
+            crate::portable_receipt::validate_dispatches(&self.conn, effective_batch, commit_seq, input.mode)?;
             let commit_model = installation
                 .as_ref()
                 .map_or(&self.model, |install| install.candidate_model);
@@ -2865,7 +2885,7 @@ impl<E: SqlEngine> CellStore<E> {
                 commit_model,
                 effective_batch,
                 quantity_input,
-                &receipt,
+                crate::portable_receipt::JournalReceipt { receipt: &receipt, mode: input.mode },
                 consumed_input,
                 install_record,
             )?;
