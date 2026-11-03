@@ -7,8 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::UnitRef;
 
+/// Strict mathematical certificates; application evidence requires source binding.
+pub mod certificate;
 /// Untrusted exact equality-feasibility discovery; candidates require checking.
 pub mod discovery;
+/// Algebraic countervaluations without a guard-feasibility claim.
+pub mod witness;
 
 /// A normalized exact rational with bounded representation; never rounded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,7 +261,7 @@ mod tests {
     fn q(n: i64) -> Rational {
         Rational::new(n, 1).unwrap()
     }
-    fn system() -> (Vec<Coordinate>, Vec<Writer>) {
+    pub(super) fn system() -> (Vec<Coordinate>, Vec<Writer>) {
         let coordinates = ["input", "output", "loss"]
             .into_iter()
             .map(|id| Coordinate {
