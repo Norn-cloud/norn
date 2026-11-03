@@ -128,8 +128,12 @@ pub fn conformance_manifest() -> serde_json::Value {
                 "message": entry.message,
                 "since": entry.since,
             });
-            if let Some(fix) = entry.fix { value["fix"] = fix.into(); }
-            if let Some(reason) = entry.no_fix { value["no_fix"] = reason.into(); }
+            if let Some(fix) = entry.fix {
+                value["fix"] = fix.into();
+            }
+            if let Some(reason) = entry.no_fix {
+                value["no_fix"] = reason.into();
+            }
             value
         })
         .collect();
@@ -167,7 +171,11 @@ mod tests {
                 "{} is not lower snake case",
                 entry.code
             );
-            assert!(matches!((entry.fix, entry.no_fix), (Some(fix), None) | (None, Some(fix)) if !fix.trim().is_empty()), "{} lacks actionable guidance or an explicit no_fix reason", entry.code);
+            assert!(
+                matches!((entry.fix, entry.no_fix), (Some(fix), None) | (None, Some(fix)) if !fix.trim().is_empty()),
+                "{} lacks actionable guidance or an explicit no_fix reason",
+                entry.code
+            );
             assert!(!entry.message.is_empty(), "{} has no message", entry.code);
             assert_eq!(lookup(entry.code), Some(entry));
         }

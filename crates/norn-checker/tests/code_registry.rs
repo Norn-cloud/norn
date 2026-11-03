@@ -242,8 +242,13 @@ fn registry_generation_refuses_invalid_entries() {
         let path = temp.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
-            "no_fix" => { value.as_object_mut().expect("object").remove("fix"); value["no_fix"] = "No supported alternative exists".into(); },
-            "missing-guidance" => { value.as_object_mut().expect("object").remove("fix"); },
+            "no_fix" => {
+                value.as_object_mut().expect("object").remove("fix");
+                value["no_fix"] = "No supported alternative exists".into();
+            }
+            "missing-guidance" => {
+                value.as_object_mut().expect("object").remove("fix");
+            }
             "both-guidance" => value["no_fix"] = "Conflicting guidance".into(),
             "blank-guidance" => value["fix"] = " ".into(),
             "identity" => value["code"] = serde_json::json!("other.validation.invalid"),
@@ -271,6 +276,10 @@ fn registry_generation_refuses_invalid_entries() {
         }
         let result = registry_build::generate(&temp);
         fs::remove_dir_all(temp).expect("cleanup fixture");
-        assert_eq!(result.is_ok(), matches!(change, "valid" | "no_fix"), "{change}: {result:?}");
+        assert_eq!(
+            result.is_ok(),
+            matches!(change, "valid" | "no_fix"),
+            "{change}: {result:?}"
+        );
     }
 }

@@ -87,6 +87,7 @@ pub mod table_analysis;
 mod unit_admission;
 mod unit_codes;
 pub use metric::check_metrics_and_questions;
+pub mod explain;
 pub mod law_enrollment;
 pub mod naming_series;
 pub mod norm_precedence;
@@ -146,7 +147,6 @@ pub mod source_schema;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod verification;
-pub mod explain;
 pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};

@@ -63,7 +63,9 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
         }
         let (fix, no_fix) = if guidance_field == "fix" {
             (format!("Some({guidance:?})"), "None".to_owned())
-        } else { ("None".to_owned(), format!("Some({guidance:?})")) };
+        } else {
+            ("None".to_owned(), format!("Some({guidance:?})"))
+        };
 
         let segments: Vec<_> = code.split('.').collect();
         if segments.len() != 3

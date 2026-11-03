@@ -1,15 +1,22 @@
 //! Read-only explanations over the existing catalog and generated obligations.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use crate::definition_catalog::{DefinitionCatalog, MemberRef, WritesRow};
 use crate::{ScopeRef, SliceDeclaration};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ExplainKind { Action, Law, Concept }
+pub enum ExplainKind {
+    Action,
+    Law,
+    Concept,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ExplainFormat { #[serde(rename = "norn/explain@2")] V2 }
+pub enum ExplainFormat {
+    #[serde(rename = "norn/explain@2")]
+    V2,
+}
 
 /// EXPLAIN-CLOSURE-1: the entire conservative closure remains pinned and visible.
 /// Consumers must establish disclosure authority before supplying this catalog.
@@ -38,10 +45,11 @@ pub struct ExplainedLaw {
     pub inheritance_paths: Vec<Vec<MemberRef>>,
     /// Canonical paths from each containing pack to the authored law artifact.
     pub containment_paths: Vec<Vec<crate::definition_catalog::ArtifactKey>>,
-    /// The admitted bound invariant, when this law is enforced at commit.
+    /// Source-only explanations never invent checked proof evidence.
     pub proof: ExplainProof,
     /// No solver assumption profile is inferred from source declarations.
     pub assumptions: Vec<String>,
+    /// The admitted bound invariant enforced by the commit checker.
     pub enforcement: Option<crate::definition_catalog::LawBinding>,
     /// Existing source-bound induction statements, without a proof-level promotion.
     pub obligations: Vec<crate::RuntimeValue>,
@@ -50,7 +58,9 @@ pub struct ExplainedLaw {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ExplainProof { Unknown }
+pub enum ExplainProof {
+    Unknown,
+}
 
 /// EXPLAIN-UNKNOWN-1: unknowns retain a concrete writer identity or footprint.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -82,11 +92,17 @@ pub struct ExplainOptions {
     pub requirements: Vec<crate::deontic::StructuredRequirement>,
 }
 
-pub fn explain_schema() -> schemars::Schema { schemars::schema_for!(ExplainReport) }
+pub fn explain_schema() -> schemars::Schema {
+    schemars::schema_for!(ExplainReport)
+}
 
 /// Disjoint writer identities; artifact ids cannot collide with lifecycle coordinates.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum LawWriter {
     /// A complete admitted behavior artifact (including cascaded/opaque effects).
     Artifact {
@@ -137,4 +153,3 @@ impl LawWriter {
         lengths.saturating_mul(6).saturating_add(128)
     }
 }
-
