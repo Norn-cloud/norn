@@ -29,6 +29,11 @@ impl Modify for ContractSchemas {
                 "NornIrRequirement",
             ))
             .chain(project_schemars_components(
+                norn_ir::verification::guarantees::guarantees_document_schema(),
+                "NornGuaranteesDocument",
+                "NornGuarantees",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",

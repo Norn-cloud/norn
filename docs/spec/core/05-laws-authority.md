@@ -168,3 +168,16 @@ obligations remain individually unknown. Source inspection and parity qualify
 this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+law artifact/version, bounded verdict and evidence level as closed enums,
+Challenge identity, exact bounds JSON, actual tool/result pins and the complete
+generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+Exact trace quantities serialize as canonical integer text with declared scale
+and units; counterexamples and non-vacuity witnesses have distinct kinds.
+Runtime enforcement and application parity links are either independently
+supplied references or explicit `not-yet` values. A typed document is a
+presentation of the checked driver's result, never proof or activation authority.
+Its OpenAPI projection adds new components without modifying existing schemas.
+Named scenarios: exact coefficient roundtrip; unknown requires a reason;
+unknown enum/field, fractional coefficient and invented `proved` level refuse.
