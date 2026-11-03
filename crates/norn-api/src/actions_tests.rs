@@ -48,8 +48,10 @@ impl Authorizer for ResolvedPrincipal {
     }
 }
 fn stock_host() -> DevHost<NativeEngine> {
-    let mut documents: Vec<Value> =
-        serde_json::from_str(include_str!("../../norn-cell/tests/fixtures/rea-inventory.json")).unwrap();
+    let mut documents: Vec<Value> = serde_json::from_str(include_str!(
+        "../../norn-cell/tests/fixtures/rea-inventory.json"
+    ))
+    .unwrap();
     let helpers: Vec<Value> = serde_json::from_str(include_str!(
         "../../norn-decisions/tests/fixtures/jewelry-folds.json"
     ))
