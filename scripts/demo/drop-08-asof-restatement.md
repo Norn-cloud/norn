@@ -2,8 +2,8 @@
 
 Pending main landing of #497; no PR-head run qualifies this drop.
 Run `bash scripts/demo/drop-08-asof-restatement.sh` on clean fetched main with
-Rust 1.98 and Python 3. It prints one native binary SHA-256 and a fixed
-seed, verifies all eight named scenarios exist, and executes them live.
+Rust 1.98 and Python 3.9 or newer. It prints one native binary SHA-256 and a fixed
+seed/ChaCha algorithm, verifies all eight named scenarios exist, and executes them live.
 
 The authenticated fixture retains K1 294/300 = 0.98 and K2
 292.5/300 = 0.975, with loss 6 to 7.5 g and the unchanged denominator.

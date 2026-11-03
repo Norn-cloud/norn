@@ -2,8 +2,8 @@
 
 Pending main landing of #497; no PR-head run qualifies this drop.
 Run `bash scripts/demo/drop-07-incremental-question.sh` on clean fetched main.
-Rust 1.98 and Python 3 are required. The script records one native binary
-SHA-256 and a deterministic generated-input seed, verifies all three named
+Rust 1.98 and Python 3.9 or newer are required. The script records one native binary
+SHA-256 and a fixed generated-input seed and ChaCha algorithm, verifies all three named
 scenarios exist, and runs them through the real cell query/IVM implementation.
 
 The main correspondence property declares 32 generated cases: updates,
