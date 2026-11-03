@@ -59,9 +59,9 @@ mod error;
 mod expression;
 pub mod graph;
 mod reads;
-mod structural_sum;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
+mod structural_sum;
 pub mod temporal;
 mod value;
 
