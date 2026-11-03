@@ -22,6 +22,30 @@ use norn_ir::{
 };
 
 const ACTION_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder.action.json");
+
+#[test]
+fn synchronous_rule_pin_is_closed_and_canonical() {
+    let mut payload = payload_json(ACTION_FIXTURE);
+    payload["synchronousRule"] =
+        serde_json::json!({"artifactId":"demo.effects.rule","version":"1.0.0"});
+    let root: ActionRoot = assert_typed_roundtrip("synchronous rule", &payload);
+    assert_eq!(root.synchronous_rule.unwrap().version, "1.0.0");
+    for invalid in [
+        serde_json::json!(["demo.effects.rule", "1.0.0"]),
+        serde_json::json!(null),
+        serde_json::json!({"artifactId":"r"}),
+        serde_json::json!({"artifactId":"r","version":"1","extra":true}),
+    ] {
+        payload["synchronousRule"] = invalid;
+        assert!(serde_json::from_value::<ActionRoot>(payload.clone()).is_err());
+    }
+    assert!(
+        serde_json::from_str::<norn_ir::ActionRuleRef>(
+            r#"{"artifactId":"r","artifactId":"duplicate","version":"1"}"#
+        )
+        .is_err()
+    );
+}
 const RULE_V2_FIXTURE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
 const RULE_V1_CONFORMANCE: &str =
     include_str!("../../../verification/archive/rules-dmn-v1/fixtures/conformance.json");
@@ -579,4 +603,36 @@ fn parameter_slice_contract_is_closed_and_lossless() {
             .insert(key.into(), serde_json::json!(true));
         assert!(serde_json::from_value::<norn_ir::SliceKey>(bad).is_err());
     }
+}
+
+#[test]
+fn composed_link_source_is_optional_closed_and_object_only() {
+    let valid = serde_json::json!({"link":"parent","targetType":"example.Parent","targetIdField":"parent","source":{"objectType":"example.Child","idField":"child"}});
+    let binding: norn_ir::ActionCreateLink =
+        serde_json::from_value(valid.clone()).expect("composed link");
+    assert_eq!(serde_json::to_value(binding).expect("encoded"), valid);
+    let mut legacy = valid.clone();
+    legacy.as_object_mut().expect("object").remove("source");
+    assert!(
+        serde_json::from_value::<norn_ir::ActionCreateLink>(legacy)
+            .expect("legacy link")
+            .source
+            .is_none()
+    );
+    for source in [
+        serde_json::json!(null),
+        serde_json::json!(["example.Child", "child"]),
+        serde_json::json!({"objectType":"example.Child"}),
+        serde_json::json!({"objectType":"example.Child","idField":"child","extra":true}),
+    ] {
+        let mut value = valid.clone();
+        value["source"] = source;
+        assert!(serde_json::from_value::<norn_ir::ActionCreateLink>(value).is_err());
+    }
+    assert!(
+        serde_json::from_str::<norn_ir::ActionLinkSource>(
+            r#"{"objectType":"example.Child","idField":"child","idField":"other"}"#
+        )
+        .is_err()
+    );
 }

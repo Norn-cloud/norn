@@ -85,6 +85,9 @@
         "$ref": "#/$defs/SliceDeclaration"
       }
     },
+    "synchronousRule": {
+      "$ref": "#/$defs/ActionRuleRef"
+    },
     "title": {
       "type": "string"
     },
@@ -260,15 +263,19 @@
       ]
     },
     "ActionCreateLink": {
-      "description": "Add an outgoing link alongside an ordinary action's business write.",
+      "description": "Declare a typed link inside the action's checked proposal.",
       "type": "object",
       "properties": {
         "link": {
-          "description": "Link declared on the effect's business object type.",
+          "description": "Link declared on the source object type.",
           "type": "string"
         },
+        "source": {
+          "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1).",
+          "$ref": "#/$defs/ActionLinkSource"
+        },
         "targetIdField": {
-          "description": "Input field naming an existing authorized declared-slice object.",
+          "description": "Required input field naming a captured or proposed target.",
           "type": "string"
         },
         "targetType": {
@@ -446,6 +453,25 @@
         "expression"
       ]
     },
+    "ActionLinkSource": {
+      "description": "A declared input-key source for a link within one action proposal.",
+      "type": "object",
+      "properties": {
+        "idField": {
+          "description": "Required string input field containing its identity.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "Concrete type of an object written by the synchronous closure.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "idField"
+      ]
+    },
     "ActionQuantityEffect": {
       "description": "A closed quantity intent. Ledger/template identities come from the admitted\ndefinition; callers supply only schema-checked values and optimistic fences.",
       "type": "object",
@@ -553,6 +579,25 @@
       "required": [
         "field",
         "scale"
+      ]
+    },
+    "ActionRuleRef": {
+      "description": "Closed reference to the admitted synchronous writer of an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Exact RuleIR artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version; no latest-version resolution.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
       ]
     },
     "ActionUiEffects": {

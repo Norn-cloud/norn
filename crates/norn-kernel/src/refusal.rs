@@ -610,6 +610,7 @@ impl<X> ActionRefusal<X> {
             Self::Parameter { .. }
             | Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
+            | Self::UncheckedWriter { .. }
             | Self::InvalidInput { .. }
             | Self::DerivationFailed { .. }
             | Self::SliceUnavailable { .. }
