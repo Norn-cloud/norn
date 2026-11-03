@@ -1019,13 +1019,45 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
     let mut cell = open(&path, &fixture);
     seed_book(&mut cell, false);
     for (id, company) in [("B", "BUSINESS"), ("OTHER", "PARTY")] {
-        fixture.invoke(&mut cell, "createvault", json!({"id":id,"company":company}), "principal:operator", &format!("warehouse-{id}")).unwrap();
+        fixture
+            .invoke(
+                &mut cell,
+                "createvault",
+                json!({"id":id,"company":company}),
+                "principal:operator",
+                &format!("warehouse-{id}"),
+            )
+            .unwrap();
     }
     for (id, quantity, rate) in [("R1", 2, 10), ("R2", 3, 20)] {
-        fixture.invoke(&mut cell, "createexchange", json!({"id":format!("RECEIPT-{id}")}), "principal:operator", &format!("draft-{id}")).unwrap();
-        fixture.invoke(&mut cell, "receive", receive(id, quantity, rate, "fifo"), "principal:operator", &format!("receive-{id}")).unwrap();
+        fixture
+            .invoke(
+                &mut cell,
+                "createexchange",
+                json!({"id":format!("RECEIPT-{id}")}),
+                "principal:operator",
+                &format!("draft-{id}"),
+            )
+            .unwrap();
+        fixture
+            .invoke(
+                &mut cell,
+                "receive",
+                receive(id, quantity, rate, "fifo"),
+                "principal:operator",
+                &format!("receive-{id}"),
+            )
+            .unwrap();
     }
-    fixture.invoke(&mut cell, "createtransfer", json!({"id":"MOVE"}), "principal:operator", "draft-move").unwrap();
+    fixture
+        .invoke(
+            &mut cell,
+            "createtransfer",
+            json!({"id":"MOVE"}),
+            "principal:operator",
+            "draft-move",
+        )
+        .unwrap();
     let movement = json!({"id":"MOVE","holding":"R1","output":"MOVE-R1","source":"VAULT","destination":"B","company":"BUSINESS","event":"MOVE-EVENT","quantity":2});
     for (field, value, operation) in [
         ("quantity", json!(3), "transfer-insufficient"),
@@ -1033,54 +1065,187 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
         ("destination", json!("VAULT"), "transfer-same-location"),
         ("destination", json!("OTHER"), "transfer-other-company"),
     ] {
-        let mut invalid = movement.clone(); invalid[field] = value;
-        assert_eq!(refuses(&fixture, &mut cell, "transfer", invalid, "principal:operator", operation).code(), "decision.guard_false");
+        let mut invalid = movement.clone();
+        invalid[field] = value;
+        assert_eq!(
+            refuses(
+                &fixture,
+                &mut cell,
+                "transfer",
+                invalid,
+                "principal:operator",
+                operation
+            )
+            .code(),
+            "decision.guard_false"
+        );
     }
     let books = rows(&cell, "Leg");
-    let ActionOutcome::Committed {receipt: moved_receipt, record: moved_record} = fixture.invoke(&mut cell, "transfer", movement.clone(), "principal:operator", "move").unwrap() else {panic!("transfer commits once")};
-    assert_eq!(rows(&cell, "Leg"), books, "custody creates no sales, receivable or COGS effects");
+    let ActionOutcome::Committed {
+        receipt: moved_receipt,
+        record: moved_record,
+    } = fixture
+        .invoke(
+            &mut cell,
+            "transfer",
+            movement.clone(),
+            "principal:operator",
+            "move",
+        )
+        .unwrap()
+    else {
+        panic!("transfer commits once")
+    };
+    assert_eq!(
+        rows(&cell, "Leg"),
+        books,
+        "custody creates no sales, receivable or COGS effects"
+    );
     accounts(&cell, &[("Inventory", "80"), ("ReceivedNotBilled", "-80")]);
     inventory(&cell, "5", "80", "0", "5");
     exact(&cell, "Holding", "R1", "quantity", "0");
     exact(&cell, "Holding", "R1", "value", "0");
     exact(&cell, "Holding", "MOVE-R1", "quantity", "2");
     exact(&cell, "Holding", "MOVE-R1", "value", "20");
-    assert_eq!(values(&cell, "Holding", "MOVE-R1")["origin_layer"].as_str(), Some("R1"));
-    assert_eq!(values(&cell, "Event", "MOVE-EVENT")["action"].as_str(), Some("transfer_custody"));
+    assert_eq!(
+        values(&cell, "Holding", "MOVE-R1")["origin_layer"].as_str(),
+        Some("R1")
+    );
+    assert_eq!(
+        values(&cell, "Event", "MOVE-EVENT")["action"].as_str(),
+        Some("transfer_custody")
+    );
     for (source_kind, source, link, target_kind, target) in [
         ("Holding", "MOVE-R1", "origin", "Holding", "R1"),
         ("Holding", "MOVE-R1", "vault", "Vault", "B"),
         ("Vault", "B", "holdings", "Holding", "MOVE-R1"),
         ("Event", "MOVE-EVENT", "from_vault", "Vault", "VAULT"),
         ("Event", "MOVE-EVENT", "to_vault", "Vault", "B"),
-    ] {assert!(cell.load_link(&LinkKey::new(key(source_kind,source),link,key(target_kind,target))).unwrap().exists());}
+    ] {
+        assert!(
+            cell.load_link(&LinkKey::new(
+                key(source_kind, source),
+                link,
+                key(target_kind, target)
+            ))
+            .unwrap()
+            .exists()
+        );
+    }
     state(&cell, "Transfer", "MOVE", "posted");
-    let moved_export = cell.store().export_record(moved_receipt.seq.0).unwrap().unwrap();
+    let moved_export = cell
+        .store()
+        .export_record(moved_receipt.seq.0)
+        .unwrap()
+        .unwrap();
     let moved = cell.store().read().dump().unwrap();
-    drop(cell); let mut cell = open(&path, &fixture);
+    drop(cell);
+    let mut cell = open(&path, &fixture);
     assert_eq!(cell.store().read().dump().unwrap(), moved);
-    assert_eq!(fixture.invoke(&mut cell, "transfer", movement, "principal:operator", "move").unwrap(), ActionOutcome::Replayed {record: moved_record});
+    assert_eq!(
+        fixture
+            .invoke(
+                &mut cell,
+                "transfer",
+                movement,
+                "principal:operator",
+                "move"
+            )
+            .unwrap(),
+        ActionOutcome::Replayed {
+            record: moved_record
+        }
+    );
     assert_eq!(cell.store().read().dump().unwrap(), moved);
-    fixture.invoke(&mut cell, "createexchange", json!({"id":"DELIVERY"}), "principal:operator", "draft-sale").unwrap();
-    let mut sale = deliver(); sale["first"] = json!("MOVE-R1");
-    let mut excessive = sale.clone(); excessive["quantity"] = json!(6);
-    refuses(&fixture, &mut cell, "sell", excessive, "principal:operator", "workflow-overdraw");
-    let ActionOutcome::Committed {record: sold_record, ..} = fixture.invoke(&mut cell, "sell", sale.clone(), "principal:operator", "sell").unwrap() else {panic!("sale commits once")};
+    fixture
+        .invoke(
+            &mut cell,
+            "createexchange",
+            json!({"id":"DELIVERY"}),
+            "principal:operator",
+            "draft-sale",
+        )
+        .unwrap();
+    let mut sale = deliver();
+    sale["first"] = json!("MOVE-R1");
+    let mut excessive = sale.clone();
+    excessive["quantity"] = json!(6);
+    refuses(
+        &fixture,
+        &mut cell,
+        "sell",
+        excessive,
+        "principal:operator",
+        "workflow-overdraw",
+    );
+    let ActionOutcome::Committed {
+        record: sold_record,
+        ..
+    } = fixture
+        .invoke(
+            &mut cell,
+            "sell",
+            sale.clone(),
+            "principal:operator",
+            "sell",
+        )
+        .unwrap()
+    else {
+        panic!("sale commits once")
+    };
     exact(&cell, "Leg", "DELIVERY-COGS", "amount", "60");
     exact(&cell, "Leg", "DELIVERY-STOCK", "amount", "-60");
     exact(&cell, "Holding", "R2", "quantity", "1");
     exact(&cell, "Holding", "R2", "value", "20");
     inventory(&cell, "1", "20", "0", "1");
-    accounts(&cell, &[("Inventory", "20"), ("ReceivedNotBilled", "-80"), ("COGS", "60")]);
+    accounts(
+        &cell,
+        &[
+            ("Inventory", "20"),
+            ("ReceivedNotBilled", "-80"),
+            ("COGS", "60"),
+        ],
+    );
     assert!(cell.store().read().pending_commands().unwrap().is_empty());
     let final_dump = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
-    drop(cell); let mut cell = open(&path, &fixture);
+    drop(cell);
+    let mut cell = open(&path, &fixture);
     assert_eq!(cell.store().read().dump().unwrap(), final_dump);
     assert_eq!(cell.store().read().verify_ledger().unwrap(), head);
-    assert_eq!(cell.store().export_record(moved_receipt.seq.0).unwrap().unwrap(), moved_export);
-    assert_eq!(fixture.invoke(&mut cell, "sell", sale.clone(), "principal:operator", "sell").unwrap(), ActionOutcome::Replayed {record: sold_record});
+    assert_eq!(
+        cell.store()
+            .export_record(moved_receipt.seq.0)
+            .unwrap()
+            .unwrap(),
+        moved_export
+    );
+    assert_eq!(
+        fixture
+            .invoke(
+                &mut cell,
+                "sell",
+                sale.clone(),
+                "principal:operator",
+                "sell"
+            )
+            .unwrap(),
+        ActionOutcome::Replayed {
+            record: sold_record
+        }
+    );
     assert_eq!(cell.store().read().dump().unwrap(), final_dump);
     sale["quantity"] = json!(3);
-    assert_eq!(refuses(&fixture, &mut cell, "sell", sale, "principal:operator", "sell").code(), "action.idempotency_conflict");
+    assert_eq!(
+        refuses(
+            &fixture,
+            &mut cell,
+            "sell",
+            sale,
+            "principal:operator",
+            "sell"
+        )
+        .code(),
+        "action.idempotency_conflict"
+    );
 }
