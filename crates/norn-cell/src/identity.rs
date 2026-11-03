@@ -89,6 +89,51 @@ pub(crate) fn validate<E: SqlEngine>(
     Ok(())
 }
 
+/// Validate current rows under a candidate key contract before any DDL changes.
+pub(crate) fn preflight<E: SqlEngine>(
+    engine: &E,
+    previous: &crate::Model,
+    candidate: &crate::Model,
+) -> Result<(), CellError> {
+    let reader = StoreReader::new(engine, candidate);
+    let mut rows = MAX_ROWS;
+    let mut bytes = MAX_BYTES;
+    let mut keys_left = MAX_ROWS;
+    for object in candidate.identity_objects() {
+        let Some(old) = previous.schema().object_table(object.name.as_str()) else {
+            continue;
+        };
+        for key in object
+            .keys
+            .iter()
+            .filter(|key| key.declared_by == object.name && !key.normalize.is_empty())
+        {
+            keys_left = keys_left
+                .checked_sub(1)
+                .ok_or(CellError::OutOfRange("normalized identity scan keys"))?;
+            if key.components.iter().any(|component| {
+                !old.columns
+                    .iter()
+                    .any(|column| column.property == *component)
+            }) {
+                let occupied = engine
+                    .query_optional(
+                        &format!("SELECT 1 FROM {} LIMIT 1", quote_identifier(&old.table)),
+                        params![],
+                        |row| row.get::<i64>(0),
+                    )?
+                    .is_some();
+                if occupied {
+                    return Err(CellError::DefinitionMigrationRefused("normalized keys over added live columns require backfill-aware identity admission".into()));
+                }
+                continue;
+            }
+            check_key(&reader, object, key, &mut rows, &mut bytes)?;
+        }
+    }
+    Ok(())
+}
+
 fn check_key<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     object: &EffectiveObjectType,
@@ -175,11 +220,14 @@ fn check_key<E: SqlEngine>(
             .value(object, &payload)
             .ok_or_else(|| CellError::Encoding("unsupported normalized identity value".into()))?;
         for value in &tuple {
-            if let norn_checker::KeyComponent::Text(text) = value {
-                *bytes_left = bytes_left
-                    .checked_sub(text.len())
-                    .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
-            }
+            let size = match value {
+                norn_checker::KeyComponent::Text(text) => text.len(),
+                norn_checker::KeyComponent::Integer(_) => std::mem::size_of::<i128>(),
+                norn_checker::KeyComponent::Boolean(_) => 1,
+            };
+            *bytes_left = bytes_left
+                .checked_sub(size)
+                .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
         }
         if !seen.insert((world.clone(), scope.clone(), tuple)) {
             return Err(CellError::IdentityCollision {

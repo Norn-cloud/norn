@@ -6400,3 +6400,51 @@ fn host_provision_atomic_retry_preserves_later_installs() {
         Some(2)
     );
 }
+
+#[test]
+fn normalized_identity_activation_refuses_other_world_collisions_without_mutation() {
+    let original = model(false);
+    let mut definitions: Vec<_> = original.object_types().cloned().collect();
+    definitions[0].identity.push(norn_ir::KeySpec {
+        name: norn_ir::KeyName("by_name".into()),
+        properties: vec![norn_ir::PropertyId("name".into())],
+        naming_series: None,
+        rule: Some(norn_ir::IdentityRule {
+            match_policy: None,
+            normalize: vec![norn_ir::ComponentNormalization {
+                property: norn_ir::PropertyId("name".into()),
+                steps: vec![
+                    norn_ir::Normalization::Trim,
+                    norn_ir::Normalization::Uppercase,
+                ],
+            }],
+        }),
+    });
+    let candidate = Model::from_definitions(&definitions, &[]).expect("normalized candidate");
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("normalized-v1", 1, &original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("seed");
+    for (id, name, time) in [("a", " abc ", 2), ("b", "ABC", 3)] {
+        let mut write = batch(put_type("defs.Item", id, name, None), time);
+        write.world = "simulation-key".into();
+        store.commit(&write).expect("raw-distinct old keys");
+    }
+    let before = store.read().dump().expect("before");
+    let input = install_input("normalized-v2", 4, &candidate);
+    assert!(matches!(
+        store.check_definitions(&candidate, &input, Some(1)),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after check"), before);
+    assert!(matches!(
+        store.install_definitions(candidate, input, Some(1), "org_demo/dev"),
+        Err(CellError::IdentityCollision { .. })
+    ));
+    assert_eq!(store.read().dump().expect("after install"), before);
+}

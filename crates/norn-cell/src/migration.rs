@@ -211,6 +211,7 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
         MigrationMode::Check,
     )?;
     check_added_unique_indexes(engine, previous, candidate, &candidate_catalog)?;
+    crate::identity::preflight(engine, previous, candidate)?;
     validate_candidate_invariants(
         engine,
         previous,

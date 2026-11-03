@@ -109,3 +109,5 @@ ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared norm
 - **ID-NORMALIZED-COMPOSITE:** typed tuple boundaries prevent concatenation collisions; unsupported normalized components and exhausted scan/step bounds refuse.
 
 This cut's evidence is native runtime conformance and generated ASCII input sampling. The unchanged pure normalization helper is reused directly; the new transaction scan depends on SQL and is not a pure bounded Kani target. These tests do not establish alias history, tombstone restoration, arbitrary Unicode normalization correctness or general identity proofs.
+
+The normalized native profile checks candidate activation with reads only as well as inside the install transaction. A normalized key over a newly added component on an occupied table refuses until backfill-aware identity admission exists; an empty new type is permitted. Candidate checks cover all worlds, including worlds other than the install request's world.
