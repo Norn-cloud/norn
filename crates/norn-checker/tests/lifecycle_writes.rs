@@ -886,10 +886,13 @@ fn heterogeneous_patch_example(expression: &str) -> Vec<Value> {
 
 #[test]
 fn closed_exchange_patch_does_not_write_ledger_or_conversion_members() {
-    let findings = set_diagnostics(heterogeneous_patch_example(
+    for expression in [
         "[{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{eligible:true}}]",
-    ));
-    assert!(findings.is_empty(), "{findings:?}");
+        "[{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{eligible:true}},{op:'patch',objectType:'jewelry.CycleLedger',key:'ledger',patch:{account_code:'Sales'}},{op:'patch',objectType:'jewelry.CycleConversion',key:'conversion',patch:{output_gross:1}}]",
+    ] {
+        let findings = set_diagnostics(heterogeneous_patch_example(expression));
+        assert!(findings.is_empty(), "{findings:?}");
+    }
 }
 
 #[test]
@@ -972,15 +975,20 @@ proptest::proptest! {
             }
             format!("{{op:'patch',objectType:'{}',key:'{i}',patch:{{{}}}}}",kinds[i],fields.join(","))
         }).collect::<Vec<_>>();
-        let mut rule = stored_write_rule("patch", "unused", json!({"type":"integer"}), &format!("[{}]",records.join(",")));
-        let properties = &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
-        properties["objectType"]["enum"] = json!(kinds);
-        properties["patch"]["properties"] = Value::Object(schemas);
-        artifacts.push(rule);
+        for (i, record) in records.iter().enumerate() {
+            let mut rule = stored_write_rule("patch", "unused", json!({"type":"integer"}), &format!("[{record}]"));
+            rule["artifactId"] = json!(format!("commerce.patch_target_{i}.rule"));
+            let properties = &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
+            properties["objectType"]["enum"] = json!(kinds);
+            properties["patch"]["properties"] = Value::Object(schemas.clone());
+            artifacts.push(rule);
+        }
         let findings = set_diagnostics(artifacts);
-        for (kind,(_,wrong)) in kinds.iter().zip(&masks) {
-            let errors = findings.iter().filter(|d|d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains(&format!("{kind:?}"))).count();
-            proptest::prop_assert_eq!(errors,usize::try_from(wrong.count_ones()).expect("three fields"), "{}: {:?}",kind,findings);
+        for (i,(kind,(_,wrong))) in kinds.iter().zip(&masks).enumerate() {
+            let id = format!("commerce.patch_target_{i}.rule");
+            let errors = findings.iter().filter(|d|d.artifact_id.as_deref() == Some(id.as_str())).collect::<Vec<_>>();
+            proptest::prop_assert_eq!(errors.len(),usize::from(*wrong != 0), "{}: {:?}",kind,findings);
+            proptest::prop_assert!(errors.iter().all(|d|d.message.contains(&format!("{kind:?}"))), "{}: {:?}",kind,errors);
         }
         proptest::prop_assert!(findings.iter().all(|d|d.code == codes::INVALID_STORED_PROPERTY_WRITE), "{:?}",findings);
     }
