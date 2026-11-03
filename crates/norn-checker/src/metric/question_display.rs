@@ -11,11 +11,17 @@ use std::collections::BTreeMap;
 pub struct QuestionLabels {
     /// Direction of the surrounding text; identifiers are isolated separately.
     pub direction: TextDirection,
+    /// Label for the declared root population and traversals.
     pub population: String,
+    /// Label for the selected sum or ratio of sums.
     pub measure: String,
+    /// Label for grouping dimensions and calendar grains.
     pub by: String,
+    /// Label for additional question predicates.
     pub filters: String,
+    /// Label for effective-time properties, window and calendar.
     pub effective_time: String,
+    /// Label for the declared knowledge/freshness policy.
     pub knowledge_time: String,
 }
 impl QuestionLabels {
@@ -51,19 +57,25 @@ impl<'de> Deserialize<'de> for QuestionWording {
 /// Original semantic question plus a localized read-only projection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuestionRendering {
+    /// Unchanged semantic declaration for lossless inspection.
     pub question: QuestionIR,
     /// Norn1 identity of the unchanged QuestionIR, independent of locale.
     pub question_digest: String,
     /// Binds displayed definitions and numeric contracts, including units.
     pub binding_digest: String,
+    /// Direction of surrounding localized labels.
     pub direction: TextDirection,
+    /// Ordered semantic slots with reviewed labels.
     pub slots: Vec<QuestionSlot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// One stable semantic slot in a localized question view.
 pub struct QuestionSlot {
     /// Question digest plus a stable semantic pointer, identical in every locale.
     pub id: String,
+    /// Reviewed localized label with direction controls escaped.
     pub label: String,
+    /// Locale-independent semantic text inside a Unicode isolate.
     pub text: String,
 }
 
