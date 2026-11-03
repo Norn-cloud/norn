@@ -62,7 +62,7 @@ fn three_independent_conflicts_among_thirty_declarations() {
             BTreeSet::from([4, 5])
         ])
     );
-    assert_eq!(result.corrections, BTreeSet::from([editable]));
+    assert_eq!(result.corrections, BTreeSet::from([editable.clone()]));
     for core in &result.cores {
         assert_eq!(oracle.check(core), Verdict::Unsat);
         for member in core {
@@ -81,6 +81,14 @@ fn three_independent_conflicts_among_thirty_declarations() {
     assert_eq!(
         diagnose(&mut oracle, 30, &BTreeSet::new(), 0),
         Err(Unknown::Budget)
+    );
+    assert_eq!(
+        diagnose(&mut oracle, 65, &editable, 10_000),
+        Err(Unknown::TooManyDeclarations)
+    );
+    assert_eq!(
+        diagnose(&mut oracle, 30, &BTreeSet::from([30]), 10_000),
+        Err(Unknown::InvalidEditable)
     );
     oracle.budget.max_steps = 0;
     assert!(matches!(

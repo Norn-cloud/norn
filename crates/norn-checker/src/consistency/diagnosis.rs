@@ -4,6 +4,9 @@ use std::collections::{BTreeSet, VecDeque};
 
 use super::{ChaseBudget, ChaseError, ChaseOutcome, Fact, Theory, chase};
 
+/// Largest supported declaration universe.
+pub const MAX_DECLARATIONS: usize = 64;
+
 /// One satisfiability query over declaration indices, relative to fixed assumptions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict<E> {
@@ -29,6 +32,8 @@ pub trait Oracle {
 pub enum Unknown<E> {
     /// Whole-search oracle-call budget exhausted.
     Budget,
+    /// The declaration universe exceeds `MAX_DECLARATIONS`.
+    TooManyDeclarations,
     /// An oracle refused a subset query.
     Oracle(E),
     /// Invalid editable indices.
@@ -56,15 +61,16 @@ pub struct Diagnosis {
 /// DIAG-UNKNOWN-1: every final core/deletion and repair/restoration is checked;
 /// any unknown aborts the result rather than being interpreted as SAT.
 /// # Errors
-/// Returns unknown on exhaustion, backend refusal or invalid editable indices.
+/// Returns unknown on exhaustion, backend refusal, invalid editable indices,
+/// or a declaration universe above [`MAX_DECLARATIONS`].
 pub fn diagnose<O: Oracle>(
     oracle: &mut O,
     declarations: usize,
     editable: &BTreeSet<usize>,
     max_calls: usize,
 ) -> Result<Diagnosis, Unknown<O::Unknown>> {
-    if declarations > 64 {
-        return Err(Unknown::Budget);
+    if declarations > MAX_DECLARATIONS {
+        return Err(Unknown::TooManyDeclarations);
     }
     let all: BTreeSet<_> = (0..declarations).collect();
     if !editable.is_subset(&all) {
