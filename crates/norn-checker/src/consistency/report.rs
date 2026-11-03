@@ -269,3 +269,16 @@ mod tests {
         );
     }
 }
+
+/// Shared exact-source projection for diagnostic-only constraint cores.
+pub(crate) fn core_findings(
+    code: &str,
+    severity: crate::DiagnosticSeverity,
+    message: &str,
+    origins: &[&super::RuleOrigin],
+) -> Vec<crate::Diagnostic> {
+    origins
+        .iter()
+        .map(|origin| super::finding(code, severity, message.into(), Some(origin)))
+        .collect()
+}

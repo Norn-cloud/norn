@@ -220,3 +220,183 @@ fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> 
     }
     Ok(())
 }
+
+/// Trusted constitution layers, highest first; no domain laws live in the checker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConstitutionLayer {
+    Religious,
+    Legal,
+    Industry,
+    Company,
+    Preference,
+}
+
+/// Diagnostic-only result for a supplied grounding of one action/subject.
+/// This is not source lowering, admission, fulfilment or Datalog evidence.
+pub struct DeclaredOrderReport {
+    /// Exact rule-index cores; all declarations are protected from repair.
+    pub diagnosis: crate::consistency::diagnosis::Diagnosis,
+    /// Source-located errors and legacy-policy discrepancy notes (#767).
+    pub diagnostics: Vec<crate::Diagnostic>,
+}
+
+/// No normative conclusion was established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredOrderUnknown {
+    Limit,
+    Grounding(NormUnknown),
+    InvalidBinding,
+    Diagnosis(crate::consistency::diagnosis::Unknown<std::convert::Infallible>),
+}
+
+struct OrderOracle<'a> {
+    edges: &'a [(usize, usize)],
+    conflicts: Vec<BTreeSet<usize>>,
+    count: usize,
+}
+
+impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
+    type Unknown = std::convert::Infallible;
+    fn check(
+        &mut self,
+        active: &BTreeSet<usize>,
+    ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+        use crate::consistency::diagnosis::Verdict;
+        let reach = order_closure(self.count, self.edges, active);
+        if active.iter().any(|i| reach[*i][*i])
+            || self.conflicts.iter().any(|pair| pair.is_subset(active))
+        {
+            Verdict::Unsat
+        } else {
+            Verdict::Sat
+        }
+    }
+}
+
+fn order_closure(
+    count: usize,
+    edges: &[(usize, usize)],
+    active: &BTreeSet<usize>,
+) -> Vec<Vec<bool>> {
+    let mut reach = vec![vec![false; count]; count];
+    for &(high, low) in edges {
+        if active.contains(&high) && active.contains(&low) {
+            reach[high][low] = true;
+        }
+    }
+    for k in active {
+        for i in active {
+            for j in active {
+                reach[*i][*j] |= reach[*i][*k] && reach[*k][*j];
+            }
+        }
+    }
+    reach
+}
+
+/// LAW-RETAIN-1 / OVERLAY-MONOTONE-1: diagnose cross-layer clashes, even when
+/// legacy superior/posterior/specificity would silently resolve them. Within a
+/// layer only declared edges (winner, loser), including their transitive closure,
+/// resolve opposing rules. An absent edge never acquires an implicit tie-break.
+///
+/// This first cut checks trusted exhaustive masks for one common action/subject,
+/// not arbitrary DeonticIR. Callers must preserve source scope and explicit
+/// exceptions when grounding; CTD, temporal or Datalog applicability is unknown
+/// until a supported lowering supplies such a grounding. The layer mapping and
+/// edges are trusted policy inputs, never inferred from authority names.
+///
+/// # Errors
+/// Returns unknown on malformed grounding, missing/duplicate sources, invalid
+/// edges, or exhausted CD diagnosis budget. No partial result is returned.
+pub fn diagnose_declared_order(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    contexts: usize,
+    max_calls: usize,
+) -> Result<DeclaredOrderReport, DeclaredOrderUnknown> {
+    use crate::consistency::{diagnosis, report::core_findings};
+    if norms.len() > diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
+        return Err(DeclaredOrderUnknown::Limit);
+    }
+    validate(norms, contexts).map_err(DeclaredOrderUnknown::Grounding)?;
+    if origins.len() != norms.len()
+        || layers.len() != norms.len()
+        || origins.iter().collect::<BTreeSet<_>>().len() != origins.len()
+        || origins.iter().any(|o| {
+            o.artifact_id
+                .as_deref()
+                .is_none_or(|id| id.trim().is_empty())
+                || (!o.pointer.is_empty() && !o.pointer.starts_with('/'))
+        })
+        || edges
+            .iter()
+            .any(|(a, b)| *a >= norms.len() || *b >= norms.len())
+        || edges.iter().collect::<BTreeSet<_>>().len() != edges.len()
+        || norms.iter().any(|n| !n.excepted.is_subset(&n.applicable))
+    {
+        return Err(DeclaredOrderUnknown::InvalidBinding);
+    }
+    let all: BTreeSet<_> = (0..norms.len()).collect();
+    let reach = order_closure(norms.len(), edges, &all);
+    let mut conflicts = Vec::new();
+    // Reject even inactive or exception-masked lower-to-higher override declarations.
+    for &(high, low) in edges {
+        if layers[high] > layers[low] {
+            conflicts.push(BTreeSet::from([high, low]));
+        }
+    }
+    for (i, left) in norms.iter().enumerate() {
+        for (j, right) in norms.iter().enumerate().skip(i + 1) {
+            if opposed(left.modality, right.modality)
+                && (0..contexts).any(|c| {
+                    left.applicable.contains(&c)
+                        && right.applicable.contains(&c)
+                        && !left.excepted.contains(&c)
+                        && !right.excepted.contains(&c)
+                })
+                && (layers[i] != layers[j] || (!reach[i][j] && !reach[j][i]))
+            {
+                conflicts.push(BTreeSet::from([i, j]));
+            }
+        }
+    }
+    let mut oracle = OrderOracle {
+        edges,
+        conflicts,
+        count: norms.len(),
+    };
+    let diagnosis = diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), max_calls)
+        .map_err(DeclaredOrderUnknown::Diagnosis)?;
+    let mut diagnostics = Vec::new();
+    for core in &diagnosis.cores {
+        let ids: Vec<_> = core.iter().map(|i| norms[*i].id.as_str()).collect();
+        let located: Vec<_> = core.iter().map(|i| &origins[*i]).collect();
+        diagnostics.extend(core_findings("consistency.normative.conflict", crate::DiagnosticSeverity::Error,
+            &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
+    }
+    // Use the original implementation on the same catalog, not an approximation.
+    // Notes identify exact legacy defeats intersecting a diagnosed pair/core.
+    if let Ok(legacy) = check_norm_precedence(norms, contexts) {
+        let mut noted = BTreeSet::new();
+        for context in legacy {
+            for defeat in context.defeats {
+                if diagnosis
+                    .cores
+                    .iter()
+                    .any(|core| core.contains(&defeat.winner) && core.contains(&defeat.loser))
+                    && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
+                {
+                    diagnostics.extend(core_findings("consistency.normative.legacy_resolution", crate::DiagnosticSeverity::Warning,
+                        &format!("Legacy norm_precedence resolves {} over {} by {:?}; declared-only/layer analysis diagnoses these rules. See #767; admission behaviour is unchanged.", norms[defeat.winner].id, norms[defeat.loser].id, defeat.reason),
+                        &[&origins[defeat.winner], &origins[defeat.loser]]));
+                }
+            }
+        }
+    }
+    Ok(DeclaredOrderReport {
+        diagnosis,
+        diagnostics,
+    })
+}
