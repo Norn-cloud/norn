@@ -28,6 +28,7 @@ notices, evidence and supported connector terms require metadata reconsideration
 Every changed payload and metadata path is covered by the admin's unedited
 `/ack-rights <head>` API comment; `/revoke-rights <head>` or removal/editing revokes
 it. Gate-change `/approve-gates` is separate. A new head needs a new acknowledgment.
+Repeated acknowledgments fail closed; revoke before renewing the acknowledgment.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits

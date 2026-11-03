@@ -805,7 +805,9 @@ pub fn check_with_rights(
 
 /// Check live API evidence for an exact head. `/ack-rights <head>` covers every
 /// changed payload and metadata path, including deletions, relative to its base.
-/// An edited/deleted acknowledgment is invalid; a later admin revocation wins.
+/// Exactly one acknowledgment after the last revocation is admissible. Repeated
+/// acknowledgments require revocation before renewal, so deleting a live review
+/// cannot expose an older acknowledgment. Edited acknowledgments are invalid.
 ///
 /// # Errors
 /// Refuses wrong identity, missing, stale, edited or revoked evidence.
@@ -827,7 +829,7 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         .get("comments")
         .and_then(serde_json::Value::as_array)
         .ok_or("missing rights comments")?;
-    let mut latest = None;
+    let mut decisions = Vec::new();
     let mut ids = BTreeSet::new();
     for comment in comments {
         let id = comment
@@ -866,16 +868,24 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
             .get("user")
             .and_then(serde_json::Value::as_str)
             .ok_or("missing rights reviewer")?;
-        if latest.as_ref().is_none_or(|(prior, _, _)| id > *prior) {
-            latest = Some((
-                id,
-                ack && created == updated && !created.is_empty(),
-                user.to_owned(),
-            ));
-        }
+        decisions.push((
+            id,
+            ack,
+            ack && created == updated && !created.is_empty(),
+            user.to_owned(),
+        ));
     }
-    match latest {
-        Some((_, true, user)) => Ok(user),
+    decisions.sort_by_key(|(id, ..)| *id);
+    let active: Vec<_> = decisions
+        .iter()
+        .rev()
+        .take_while(|(_, ack, ..)| *ack)
+        .collect();
+    match active.as_slice() {
+        [(_, _, true, user)] => Ok(user.clone()),
+        [_, _, ..] => Err(format!(
+            "ambiguous repeated /ack-rights {head}; revoke and re-acknowledge"
+        )),
         _ => Err(format!("missing, edited or revoked /ack-rights {head}")),
     }
 }

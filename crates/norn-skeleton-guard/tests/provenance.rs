@@ -1220,6 +1220,31 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
 }
 
 #[test]
+fn deleting_a_live_rights_acknowledgment_cannot_revive_an_older_review() {
+    let head = "1".repeat(40);
+    let mut document = rights_document(&head, &"2".repeat(40));
+    let acknowledgment = document["comments"][0].clone();
+    let check = |doc: &Value| norn_skeleton_guard::ci::rights_acknowledgment(doc, &head);
+    assert!(check(&document).is_ok());
+    let mut repeated = acknowledgment.clone();
+    repeated["id"] = json!(2);
+    document["comments"].as_array_mut().unwrap().push(repeated);
+    assert!(check(&document).is_err());
+    document["comments"][1]["body"] = json!(format!("/revoke-rights {head}"));
+    assert!(check(&document).is_err());
+    let mut renewed = acknowledgment;
+    renewed["id"] = json!(3);
+    document["comments"].as_array_mut().unwrap().push(renewed);
+    assert!(check(&document).is_ok());
+    document["comments"].as_array_mut().unwrap().reverse();
+    assert!(check(&document).is_ok()); // API order is not authority.
+    document["comments"].as_array_mut().unwrap().remove(0);
+    assert!(check(&document).is_err()); // Deleting the live renewal leaves revocation.
+    document["comments"] = json!([]);
+    assert!(check(&document).is_err());
+}
+
+#[test]
 fn immutable_binding_refuses_post_commit_payload_record_and_staged_inventory_changes() {
     for path in ["payload", &format!("{RECORDS}payload.json")] {
         let mut f = Fixture::new();
