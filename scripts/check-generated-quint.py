@@ -25,6 +25,29 @@ def verdict(primary, oracle, returncode, timed_out, expected):
     return "unknown"
 
 
+def oracle_trace(trace):
+    """Decode the qualified Quint record/scalar trace without numeric coercion."""
+    if not isinstance(trace, list) or not trace:
+        raise ValueError("missing Apalache trace")
+    states = []
+    for record in trace:
+        if not isinstance(record, dict) or record.get("kind") != "app" or record.get("opcode") != "Rec":
+            raise ValueError("unsupported Apalache trace record")
+        args = record.get("args")
+        if not isinstance(args, list) or len(args) % 2:
+            raise ValueError("malformed Apalache trace fields")
+        values = {}
+        for key, value in zip(args[::2], args[1::2]):
+            if not isinstance(key, dict) or key.get("kind") != "str" or not isinstance(key.get("value"), str) or key["value"] in values or not isinstance(value, dict):
+                raise ValueError("malformed Apalache trace field")
+            scalar = value.get("value")
+            if not ((value.get("kind") == "int" and type(scalar) is int and -2_147_483_648 <= scalar <= 2_147_483_647) or (value.get("kind") == "bool" and type(scalar) is bool)):
+                raise ValueError("unsupported or inexact Apalache trace scalar")
+            values[key["value"]] = scalar
+        states.append({"state": values})
+    return states
+
+
 def run(args):
     model = args.model.read_text()
     magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
@@ -78,7 +101,7 @@ def run(args):
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",
                 "compilation": compilation, "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
                 "oracleRun": {"exitCode": oracle_run.returncode, "timedOut": oracle_run.timed_out},
-                "tlaSha256": hashlib.sha256(compiled.stdout).hexdigest(), "trace": primary.get("violation", {}).get("trace")}
+                "tlaSha256": hashlib.sha256(compiled.stdout).hexdigest(), "traceBackend": "apalache", "trace": oracle_trace(oracle.get("trace")) if status == "violation" else None}
 
 
 def main():

@@ -36,6 +36,20 @@ class VerdictPolicy(unittest.TestCase):
             for code in [0, 1, 124]:
                 self.assertEqual(runner.verdict(primary, oracle, code, True, 78), "unknown")
 
+    def test_oracle_trace_decodes_exact_scalars_and_refuses_other_values(self):
+        def record(value):
+            return [{"kind": "app", "opcode": "Rec", "args": [{"kind": "str", "value": "v1"}, value]}]
+        for kind, value in [("int", 2), ("bool", False)]:
+            self.assertEqual(runner.oracle_trace(record({"kind": kind, "value": value})), [{"state": {"v1": value}}])
+        for value in [{"kind": "int", "value": 0.5}, {"kind": "int", "value": True}, {"kind": "int", "value": 2**31}, {"kind": "str", "value": "2"}, {"kind": "bool", "value": 0}]:
+            with self.assertRaises(ValueError):
+                runner.oracle_trace(record(value))
+        duplicate = record({"kind": "int", "value": 2})
+        duplicate[0]["args"] *= 2
+        for trace in [None, [], [None], [{"kind": "app", "opcode": "Rec", "args": [1]}], duplicate]:
+            with self.assertRaises(ValueError):
+                runner.oracle_trace(trace)
+
 
 if __name__ == "__main__":
     unittest.main()
