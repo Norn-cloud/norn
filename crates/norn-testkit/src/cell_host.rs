@@ -42,7 +42,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
 
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
