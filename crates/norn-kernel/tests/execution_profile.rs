@@ -35,7 +35,12 @@ impl CommitView for View {
         Ok(self.ownership)
     }
     fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
-        self.pending_calls.set(self.pending_calls.get() + 1);
+        self.pending_calls.set(
+            self.pending_calls
+                .get()
+                .checked_add(1)
+                .expect("pending call count"),
+        );
         Ok(true)
     }
     fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
