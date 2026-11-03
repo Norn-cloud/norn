@@ -41,9 +41,9 @@ pub struct ActionRoot {
     /// Ledger category of the event the action appends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ledger_category: Option<String>,
-    /// Closed action input schema (an object schema). Its `decimal` leaf has
-    /// an integer `scale` in 0..=28 and accepts JSON strings only. The kernel
-    /// decodes those strings into exact decimals before authorization or effects.
+    /// Closed action input schema, using the shared `number` + `nornType`
+    /// Decimal refinement with scale 0..=18. Transports carry these leaves as
+    /// exact JSON strings; the kernel decodes them before authorization or effects.
     pub input_schema: JsonObject,
     /// Closed JSON Schema of the action output.
     pub output_schema: JsonObject,

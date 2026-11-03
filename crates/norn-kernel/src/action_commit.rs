@@ -285,7 +285,8 @@ pub trait ActionAuthorizer {
 }
 
 /// One field produced by an ordered action input derivation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionDerivedValue {
     /// The derived field.
@@ -295,7 +296,8 @@ pub struct ActionDerivedValue {
 }
 
 /// The successful outcome of one action precondition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionPreconditionOutcome {
     /// The expression evaluated.
@@ -366,7 +368,8 @@ struct ActionPreconditionOutcomeRef<'a> {
 
 /// The idempotency record of a committed call (the values of its
 /// [`ACTION_CALL_TYPE`] object).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionCallRecord {
     /// The action.
@@ -5990,4 +5993,20 @@ mod reference_lineage_tests {
                 .is_none()
         );
     }
+}
+
+
+#[cfg(test)]
+#[test]
+#[allow(clippy::expect_used, reason = "generated receipt schema correspondence")]
+fn action_call_record_schema_matches_generated_contract() {
+    let generated = serde_json::to_string_pretty(&schemars::schema_for!(ActionCallRecord))
+        .expect("receipt schema") + "\n";
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("schema/action_call_record.schema.json");
+    if std::env::var("NORN_KERNEL_UPDATE_SCHEMAS").as_deref() == Ok("1") {
+        std::fs::create_dir_all(path.parent().expect("schema directory")).expect("schema directory");
+        std::fs::write(&path, &generated).expect("write generated schema");
+    }
+    assert_eq!(generated, std::fs::read_to_string(path).expect("generated schema"));
 }

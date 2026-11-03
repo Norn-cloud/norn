@@ -211,6 +211,9 @@ mod tests {
             "../../../fixtures/engine-alpha/sales-order.definitions.json"
         ))
         .expect("authored declarations");
+        let scope = CellScope { org_id: "org_alpha".into(), environment_id: "dev".into() };
+        let original = serde_json::to_string(&artifacts[..1]).expect("original source");
+        assert!(Admitted::from_source(&original, &scope).is_ok());
         for name in ["norn.ActionCall", "norn.Actioncall", "norn.OWNEDROWS"] {
             let mut artifact = artifacts.first().expect("customer").clone();
             let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
@@ -223,14 +226,11 @@ mod tests {
                     .expect("payload"),
             );
             let source = serde_json::to_string(&vec![artifact]).expect("typed source");
-            let scope = CellScope {
-                org_id: "org_alpha".into(),
-                environment_id: "dev".into(),
-            };
             let refusal = Admitted::from_source(&source, &scope)
                 .err()
                 .expect("reserved name");
             assert_eq!(refusal.code, "defs.not_admitted");
+            assert_eq!(refusal.explanation, "reserved kernel object type");
         }
     }
 }

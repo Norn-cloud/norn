@@ -29,7 +29,7 @@ impl Modify for ContractSchemas {
                 "NornAction",
             ))
             .chain(project_schemars_components(
-                schemars::schema_for!(norn_kernel::ActionCallRecord),
+                action_call_record_schema(),
                 "NornActionCallRecord",
                 "NornAction",
             ))
@@ -90,6 +90,12 @@ impl Modify for ContractSchemas {
                 .insert(name, utoipa::openapi::RefOr::T(schema));
         }
     }
+}
+
+#[allow(clippy::expect_used, reason = "receipt schema is generated and checked from kernel types")]
+fn action_call_record_schema() -> Value {
+    serde_json::from_str(include_str!("../../norn-kernel/schema/action_call_record.schema.json"))
+        .expect("generated kernel receipt schema")
 }
 
 /// The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`).
