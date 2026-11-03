@@ -69,3 +69,7 @@ and its operands, and prove that an already-redacted refusal stays redacted.
 JSON-RPC parameter refusals preserve the validated request ID and use -32602;
 malformed-parameter notifications stay silent. Ping returns an empty result
 before or after initialization and does not unlock tool access.
+
+`norn-cli`’s `mcp_workers` serves `/mcp` and `/catalog` through the shared Rust Session/checker.
+Only artifact/context content is checked: no file paths, raw tables/columns,
+physical schema browsing or SQL. Governed bindings remain allowed; actions await #500.

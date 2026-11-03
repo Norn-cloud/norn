@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Real celld HTTP versus the identical native Rust request-value service."""
+import json
+from contextlib import closing
+import os
+from pathlib import Path
+import subprocess
+import signal
+import time
+from http.client import HTTPConnection
+project = Path(os.environ['NORN_MCP_PROJECT']).resolve()
+assert subprocess.check_output(['celld', '--version'], text=True).strip() == 'celld 0.6.3'
+transcript, observed = [], []
+def stop(child):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if child.poll() is None:
+            assert Path(os.readlink(f'/proc/{child.pid}/cwd')) == project
+            os.killpg(child.pid, sig)
+        try:
+            child.wait(timeout=15)
+            return
+        except subprocess.TimeoutExpired:
+            if sig == signal.SIGKILL:
+                raise
+
+def start():
+    child = subprocess.Popen(['celld', 'dev', '--port', '9876'], cwd=project, start_new_session=True)
+    try:
+        for _ in range(100):
+            assert child.poll() is None, 'celld exited'
+            try:
+                with closing(HTTPConnection('127.0.0.1', 9876, timeout=1)) as connection:
+                    connection.request('GET', '/')
+                    connection.getresponse().read()
+                return child
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError('celld startup timeout')
+    except BaseException:
+        stop(child)
+        raise
+child = start()
+session = None
+def send(method='POST', path='/mcp', message=None, headers=None, status=200):
+    global session
+    headers = {'Norn-Org': 'demo', 'Norn-Environment': 'dev',
+               'MCP-Protocol-Version': '2025-11-25', 'Content-Type': 'application/json'} | (headers or {})
+    if session:
+        headers.setdefault('Mcp-Session-Id', session)
+    body = '' if message is None else json.dumps(message)
+    with closing(HTTPConnection('127.0.0.1', 9876, timeout=15)) as connection:
+        connection.request(method, path, body=body if method == 'POST' else None, headers=headers)
+        response = connection.getresponse()
+        raw = response.read().decode()
+        if status == 405:
+            assert response.getheader('Allow') == ('GET' if path == '/catalog' else 'POST')
+        actual = {'status': response.status, 'body': raw, 'session': response.getheader('Mcp-Session-Id')}
+    envelope = dict(method=method, path=path, headers={k.lower(): v for k, v in headers.items()}, body=body)
+    transcript.append([envelope, actual['session'] or 'unused', 1])
+    observed.append(actual)
+    assert actual['status'] == status, actual
+    session = actual['session'] or session
+    return json.loads(raw) if raw else None
+def rpc(method, params=None):
+    return dict(jsonrpc='2.0', id=1, method=method, params=params or {})
+
+def host_catalog_excludes_raw_storage(catalog):
+    assert len(catalog['tools']) == 1
+    tool = catalog['tools'][0]
+    assert tool['name'] == 'norn.check'
+    schema = tool['inputSchema']
+    assert schema['additionalProperties'] is False
+    assert set(schema['properties']) == {'artifacts', 'context'}
+    assert all(v['type'] == 'string' for v in schema['properties'].values())
+try:
+    send(message=rpc('tools/list'), status=400)
+    send(message=rpc('initialize', {'protocolVersion': '2025-11-25'}))
+    catalog = send('GET', '/catalog')
+    assert catalog == send(message=rpc('tools/list'))['result']
+    host_catalog_excludes_raw_storage(catalog)
+    checked = send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': '[]', 'context': '{}'}}))
+    assert checked['result']['structuredContent']['admitted'] is True
+    assert send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': 'invalid', 'context': '{}'}}))['result']['isError'] is True
+    for name in ['sql', 'tables', 'columns', 'schema', 'norn.sql', 'norn.tables']:
+        assert 'error' in send(message=rpc('tools/call', {'name': name, 'arguments': {'sql': 'SELECT * FROM sqlite_master'}}))
+    refused = send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': '[]', 'context': '{}', 'sql': 'SELECT 1'}}))
+    assert refused['result']['isError'] is True
+    assert refused['result']['structuredContent']['code'] == 'request.invalid'
+    send(message={'jsonrpc': '2.0', 'method': 'notifications/initialized'}, status=202)
+    send('GET', '/mcp', status=405)
+    send('POST', '/catalog', status=405)
+    send('GET', '/schema', status=404)
+    for method in ['tables/list', 'columns/list', 'schema/browse', 'sql/execute', 'resources/list']:
+        assert 'error' in send(message=rpc(method))
+    send(message=rpc('tools/list'), headers={'Origin': 'https://invalid.example'}, status=403)
+    send(message=rpc('tools/list'), headers={'Norn-Org': 'other'}, status=403)
+    send(message=rpc('tools/list'), headers={'Norn-Org': ''}, status=400)
+    send(message=rpc('tools/list'), headers={'Mcp-Session-Id': 'unknown'}, status=404)
+    send(message=rpc('tools/list'), headers={'MCP-Protocol-Version': 'unsupported'}, status=400)
+    send(message={'padding': 'x' * 1048576}, status=413)
+    stop(child)
+    child = start()
+    expected = json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
+    assert observed == expected, (observed, expected)
+    count = len(transcript)
+    transcript, observed = [], []
+    send(message=rpc('tools/list'), status=404)
+    assert observed == json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
+    print(f'PASS: {count + len(transcript)} real-celld/native correspondences; negative catalog, raw refusal, checker, scope, origin, bounds, restart')
+finally:
+    stop(child)

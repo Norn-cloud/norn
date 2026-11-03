@@ -1622,10 +1622,13 @@ dependencies = [
  "norn-decisions",
  "norn-expr",
  "norn-ir",
+ "schemars 1.2.3",
+ "serde",
  "serde_json",
  "sse-stream",
  "tokio",
  "ureq",
+ "wasm-bindgen",
 ]
 
 [[package]]

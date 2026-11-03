@@ -28,6 +28,7 @@ The `workers_sql` example probes the adapter rather than governed actions.
 Build and run with generated files and durable state outside the checkout:
 
 ```sh
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:?set a build directory outside the checkout}"
 export NORN_WORKERS_SQL_PROJECT="${CARGO_TARGET_DIR:?set a build directory outside the checkout}/workers-sql"
 mkdir -p "$NORN_WORKERS_SQL_PROJECT"
 cp crates/norn-cell/examples/workers-sql/{worker.mjs,wrangler.json} "$NORN_WORKERS_SQL_PROJECT/"

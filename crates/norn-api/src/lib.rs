@@ -11,3 +11,6 @@ pub use clock::{Clock, ManualClock};
 
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+
+/// Portable MCP HTTP request-value service.
+pub mod mcp_host;
