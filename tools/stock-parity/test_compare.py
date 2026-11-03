@@ -2,20 +2,13 @@
 from copy import deepcopy
 import json
 import unittest
+from pathlib import Path
 from compare import compare, markdown, exact, DECISIONS
 from contract import unbound_norn
 
 
 def dump(engine):
-    empty = dict(step=-1, attempts=[], stock=[], gl=[], documents=[])
-    stock = dict(id='native-stock', requestId='receive', line='receive:1', warehouse='a',
-                 cancelled=False, quantityDelta='10', valueDelta='20', quantity='10', value='20')
-    cp = dict(step=0, attempts=[dict(attempt=0, requestId='receive', outcome='accepted', reason=None)],
-              stock=[stock], gl=[dict(id='native-gl', requestId='receive', account='stock-a',
-                                    currency='USD', debit='20', credit='0', cancelled=False)],
-              documents=[dict(requestId='receive', status=1)])
-    return dict(format='norn.stock-dump/1', engine=engine, versions=[], cases=[dict(
-        case='synthetic', method='fifo', status='complete', initial=empty, checkpoints=[cp])])
+    return dict(json.loads(Path(__file__).with_name('comparison-fixture.json').read_text()), engine=engine)
 
 
 class Contract(unittest.TestCase):
@@ -67,14 +60,21 @@ class Contract(unittest.TestCase):
         self.assertFalse(self.report()['passed'])
 
     def test_missing_and_unsupported_fail(self):
-        self.e['cases'][0]['checkpoints'] = []
-        self.assertFalse(self.report()['passed'])
-        self.n['cases'][0]['checkpoints'] = []
-        self.assertFalse(self.report()['passed'])
-        self.e['cases'][0]['status'] = 'unsupported'
-        self.assertFalse(self.report()['passed'])
+        for field, value in [('checkpoints', []), ('status', 'unsupported')]:
+            self.e = dump('erpnext')
+            self.e['cases'][0][field] = value
+            self.assertFalse(self.report()['passed'])
         self.e['cases'] = []
         self.assertEqual(self.report()['counts']['unsupported'], 1)
+
+    def test_incomplete_checkpoint_and_refusal_after_missing_observation(self):
+        del self.e['cases'][0]['checkpoints'][0]['gl']
+        self.assertFalse(self.report()['passed'])
+        self.e = dump('erpnext')
+        for d in (self.n, self.e):
+            d['cases'][0]['initial'] = dict(step=-1, status='unsupported')
+            d['cases'][0]['checkpoints'][0]['attempts'][0]['outcome'] = 'refused'
+        self.assertFalse(self.report()['passed'])
 
     def test_unavailable_snapshot_is_not_an_empty_observation(self):
         for dump in (self.n, self.e):

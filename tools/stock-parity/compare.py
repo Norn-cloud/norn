@@ -47,9 +47,16 @@ def view(cp):
                                 for r in cp['attempts']))
 
 
+def available(cp):
+    return cp is not None and cp.get("status") != "unsupported" and all(
+        isinstance(cp.get(field), list) for field in ("stock", "gl", "documents", "attempts"))
+
+
 def refusal_unchanged(before, after):
     if not after['attempts'] or not all(a['outcome'] == 'refused' for a in after['attempts']):
         return True
+    if not available(before):
+        return False
     return (view(before)['stock'] == view(after)['stock'] and
             view(before)['gl'] == view(after)['gl'] and all(
                 {r['id'] for r in before[k]} == {r['id'] for r in after[k]}
@@ -123,14 +130,14 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
             pair = [c.get(step) for c in checkpoints]
             entry = dict(step=step, differences=[])
             row['checkpoints'].append(entry)
-            if step >= len(expected[name]['steps']) or any(c is None or c.get('status') == 'unsupported' for c in pair):
+            if step >= len(expected[name]['steps']) or any(not available(c) for c in pair):
                 entry['status'] = row['status'] = 'unsupported'
                 counts['unsupported'] += 1
                 continue
             entry['rawGl'] = dict(norn=legs(pair[0]), erpnext=legs(pair[1]))
             views = [view(c) for c in pair]
             if step >= 0:
-                for i, engine in enumerate(('norn', 'erpnext')):
+                for i in range(2):
                     views[i]['refusalPreserved'] = refusal_unchanged(checkpoints[i][step-1], pair[i])
             def sanitized(value):
                 if isinstance(value, str):
