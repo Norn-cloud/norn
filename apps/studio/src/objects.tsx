@@ -39,7 +39,7 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
     })),
   })
   // Row values are cached against `data`, so each row carries its source system.
-  const systems = JSON.stringify(sources.map(({ data }) => data ? systemName(data.source.document.sourceRecordRef.system) : "—"))
+  const systems = JSON.stringify(sources.map(({ data }) => data?.source ? systemName(data.source.document.sourceRecordRef.system) : "—"))
   const rows = useMemo(() => {
     const from = JSON.parse(systems) as string[]
     return page.document.records.map((record, index): Row => ({ record, at: `/records/${index}`, from: from[index] ?? "—" }))
@@ -60,7 +60,12 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
       header: field.id.replaceAll("_", " "),
       accessorFn: ({ record, at }) => factText(field, record, page.numbers, at),
       sortingFn: field.decimal
-        ? (a, b) => compareDecimals(page.numbers.get(`${a.original.at}/values/${member(field.id)}`), page.numbers.get(`${b.original.at}/values/${member(field.id)}`))
+        ? (a, b) => {
+          // Amounts in different currencies are grouped by currency, never ordered against each other.
+          const currency = (row: Row) => String(field.decimal?.currencyFrom ? row.record.values[field.decimal.currencyFrom] ?? "" : "")
+          return currency(a.original).localeCompare(currency(b.original))
+            || compareDecimals(page.numbers.get(`${a.original.at}/values/${member(field.id)}`), page.numbers.get(`${b.original.at}/values/${member(field.id)}`))
+        }
         : "alphanumeric",
       meta: { numeric: field.decimal !== undefined },
     })),
@@ -151,7 +156,7 @@ export function ObjectPage() {
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => recordedTransport.object(name, id) })
   const data = reads.data
-  const lineage = data?.source.document
+  const lineage = data?.source?.document
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -191,7 +196,7 @@ export function ObjectPage() {
                   <li key={relationship.id}>
                     <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>
                     {edges.length === 0
-                      ? <span className="text-muted-foreground">none stored yet</span>
+                      ? <span className="text-muted-foreground">{data.links.document.hasMore ? "none on this page" : "none stored yet"}</span>
                       : edges.map((edge) => <Link key={`${edge.targetType}/${edge.target}`} to="/sources/$concept/$id" params={{ concept: edge.targetType, id: edge.target }} className="mr-2 font-medium underline-offset-4 hover:underline">{edge.target}</Link>)}
                   </li>
                 )
@@ -204,7 +209,9 @@ export function ObjectPage() {
                 </li>
               ))}
             </ul>}
+          {data.links.document.hasMore && <p className="pt-2 text-sm text-muted-foreground">More links exist than this read returned; the ones shown are the first page.</p>}
         </section>
+        {!lineage && <p className="text-sm text-muted-foreground">No source record is retained for this record.</p>}
         {lineage && <Card>
           <CardHeader>
             <CardDescription>Where it came from</CardDescription>

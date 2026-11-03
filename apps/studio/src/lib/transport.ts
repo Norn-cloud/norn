@@ -13,7 +13,8 @@ export type SourceLineage = Schemas["NornInstanceSourceProvenance"]
 export interface ObjectReads {
   readonly object: Read<ObjectRecord>
   readonly links: Read<LinkPage>
-  readonly source: Read<SourceLineage>
+  /** `null` for an object no mapping produced. */
+  readonly source: Read<SourceLineage> | null
 }
 
 export interface QuestionAnswer {
@@ -58,6 +59,6 @@ export const recordedTransport: Transport = {
     const object = optional<ObjectRecord>(objectFile(objectType, id, "object"))
     const links = optional<LinkPage>(objectFile(objectType, id, "links"))
     const source = optional<SourceLineage>(objectFile(objectType, id, "source"))
-    return object && links && source ? { object, links, source } : null
+    return object && links ? { object, links, source } : null
   },
 }
