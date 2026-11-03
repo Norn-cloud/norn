@@ -59,3 +59,7 @@ No result in this checkpoint claims cross-engine parity or race correctness.
 - `python3 tools/stock-parity/check_smoke.py --fifo DUMP` requires both cases
   and all seven checkpoints. `fifo-oracle.fixture.json` retains the observed
   synthetic ERPNext-only dump from #215; it is not new live qualification.
+
+- **CP1-checkpoint-exact:** both checker modes compare the complete recorded case,
+  including every initial/step field and ordered cumulative list. Only opaque
+  native identities receive stable per-case aliases; no observation field is dropped.

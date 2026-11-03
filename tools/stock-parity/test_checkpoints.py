@@ -59,3 +59,38 @@ class FrozenCorpus(unittest.TestCase):
                 case['checkpoints'][2]['stock'][0]['value'] = '19'
             with self.assertRaises(AssertionError):
                 check_fifo(bad)
+
+    def test_every_checkpoint_field_family_is_compared(self):
+        for family in ('documents', 'stock', 'gl', 'attempts'):
+            good = dict(deepcopy(self.dump), cases=[deepcopy(next(
+                c for c in self.dump['cases'] if c['case'] == 'receipt-delivery'))])
+            original = good['cases'][0]['checkpoints'][1][family][0]
+            for field, value in original.items():
+                if field == 'nativeId':
+                    continue
+                with self.subTest(family=family, field=field):
+                    bad = deepcopy(good)
+                    changed = not value if isinstance(value, bool) else value + 1 if isinstance(value, int) else [] if isinstance(value, list) else 'changed'
+                    bad['cases'][0]['checkpoints'][1][family][0][field] = changed
+                    self.assertRaises(AssertionError, check, bad)
+            for rows in ([], good['cases'][0]['checkpoints'][1][family] * 2):
+                bad = deepcopy(good)
+                bad['cases'][0]['checkpoints'][1][family] = rows
+                self.assertRaises(AssertionError, check, bad)
+        bad = deepcopy(good)
+        bad['cases'][0]['checkpoints'][1]['step'] = 9
+        self.assertRaises(AssertionError, check, bad)
+        bad = deepcopy(good)
+        bad['cases'][0]['checkpoints'][1]['extra'] = True
+        self.assertRaises(AssertionError, check, bad)
+
+    def test_opaque_identity_renaming_preserves_structure(self):
+        renamed = deepcopy(self.dump)
+        for case in renamed['cases']:
+            for cp in [case['initial'], *case['checkpoints']]:
+                for family in ('stock', 'gl'):
+                    for row in cp[family]:
+                        row['id'] = family + ':' + row['id']
+                for attempt in cp['attempts']:
+                    attempt['nativeId'] = 'document:' + attempt['nativeId']
+        check_fifo(renamed)
