@@ -27,7 +27,7 @@ pub struct Attempt<'a> {
     pub max_calls: usize,
 }
 
-/// Pinned refusal report. No conversion to Challenge, EvidencePins or proof records.
+/// Pinned refusal report. No conversion to `Challenge`, `EvidencePins` or proof records.
 pub struct Report {
     /// SHA-256 of exact attempted source, base and complete analysis profile.
     pub digests: [String; 3],
@@ -40,32 +40,7 @@ pub struct Report {
 /// Reproduce a diagnostic from exact inputs. Ordinary admission remains separate.
 #[must_use]
 pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
-    use sha2::{Digest, Sha256};
-    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
-    let members: Vec<_> = attempt
-        .members
-        .iter()
-        .map(|(o, p)| serde_json::json!([o.artifact_id, o.pointer, p]))
-        .collect();
-    let profile = serde_json::json!([
-        PROFILE,
-        env!("CARGO_PKG_VERSION"),
-        crate::receipt::EXPR_PROFILE,
-        attempt.profile,
-        format!("{:?}", attempt.schema),
-        members,
-        attempt.assumptions,
-        attempt.editable,
-        attempt.protected,
-        attempt.max_calls,
-        FiniteOracle::bounds()
-    ])
-    .to_string();
-    let digests = [
-        hash(attempt.source),
-        hash(attempt.base),
-        hash(profile.as_bytes()),
-    ];
+    let digests = attempt_pins(attempt);
     let predicates: Vec<_> = attempt.members.iter().map(|(_, p)| p.as_str()).collect();
     let origins: BTreeSet<_> = attempt.members.iter().map(|(o, _)| o).collect();
     let diagnosis = if origins.len() != attempt.members.len()
@@ -105,10 +80,11 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
         ));
     };
     let context = format!(
-        "Closed world: {}. Limits [contexts, domain bytes, evaluations, expression fuel] {:?}; at most {} queries. Protected laws remain unchanged. Edit only authorized inputs and resubmit for ordinary admission.",
+        "Closed world: {}. Limits [contexts, domain bytes, evaluations, expression fuel] {:?}; at most {} queries and {} declarations. Protected laws remain unchanged. Edit only authorized inputs and resubmit for ordinary admission.",
         attempt.assumptions,
         FiniteOracle::bounds(),
-        attempt.max_calls
+        attempt.max_calls,
+        super::diagnosis::MAX_DECLARATIONS
     );
     match &diagnosis {
         Err(error) => emit(
@@ -159,4 +135,34 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
         diagnosis,
         diagnostics,
     }
+}
+
+fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
+    use sha2::{Digest, Sha256};
+    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let members: Vec<_> = attempt
+        .members
+        .iter()
+        .map(|(o, p)| serde_json::json!([o.artifact_id, o.pointer, p]))
+        .collect();
+    let profile = serde_json::json!([
+        PROFILE,
+        env!("CARGO_PKG_VERSION"),
+        crate::receipt::EXPR_PROFILE,
+        attempt.profile,
+        format!("{:?}", attempt.schema),
+        members,
+        attempt.assumptions,
+        attempt.editable,
+        attempt.protected,
+        attempt.max_calls,
+        super::diagnosis::MAX_DECLARATIONS,
+        FiniteOracle::bounds()
+    ])
+    .to_string();
+    [
+        hash(attempt.source),
+        hash(attempt.base),
+        hash(profile.as_bytes()),
+    ]
 }
