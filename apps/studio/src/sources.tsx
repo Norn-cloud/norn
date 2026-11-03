@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowRight, Database } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -8,6 +8,18 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
+
+/** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
+function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <Table className="text-[13px] tabular-nums">
+        <TableHeader className="bg-muted">{head}</TableHeader>
+        <TableBody>{children}</TableBody>
+      </Table>
+    </div>
+  )
+}
 
 const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
 
@@ -63,7 +75,7 @@ function SourceCell({ source }: { readonly source: Source | undefined }) {
     case "fixed": return <span>always “{source.value.replaceAll("_", " ")}”</span>
     case "empty": return <span className="text-muted-foreground">left empty</span>
     case "computed": return <code className="text-xs">{source.expression}</code>
-    case "gap": return <span className="text-amber-700 dark:text-amber-400" title={source.note}>not in this system</span>
+    case "gap": return <Badge variant="outline" title={source.note}>not in this system</Badge>
   }
 }
 
@@ -79,22 +91,19 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
   }
   return (
     <div className="space-y-3">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Fact</TableHead>
-            {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+      <DenseTable head={
+        <TableRow>
+          <TableHead>Fact</TableHead>
+          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+        </TableRow>
+      }>
+        {concept.fields.map(({ id }) => (
+          <TableRow key={id}>
+            <TableCell className="font-medium">{id.replaceAll("_", " ")}</TableCell>
+            {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}><SourceCell source={facts.get(id)} /></TableCell>)}
           </TableRow>
-        </TableHeader>
-        <TableBody>
-          {concept.fields.map(({ id }) => (
-            <TableRow key={id}>
-              <TableCell className="font-medium">{id.replaceAll("_", " ")}</TableCell>
-              {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}><SourceCell source={facts.get(id)} /></TableCell>)}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+        ))}
+      </DenseTable>
       {[...gaps].map(([key, { system, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system} has no {facts.join(" or ")}.</b> {note}</p>)}
     </div>
   )
@@ -117,17 +126,14 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
           <div className="space-y-6 px-4 pb-6">
             <section>
               <h3 className="pb-2 font-medium">Facts recorded</h3>
-              <Table>
-                <TableHeader><TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {concept.fields.map((field) => (
-                    <TableRow key={field.id}>
-                      <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
-                      <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
+                {concept.fields.map((field) => (
+                  <TableRow key={field.id}>
+                    <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
+                    <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
+                  </TableRow>
+                ))}
+              </DenseTable>
             </section>
             {concept.relationships.length > 0 && (
               <section>
