@@ -75,7 +75,7 @@ pub fn diagnose<O: Oracle>(
         if calls >= max_calls {
             return Err(Unknown::Budget);
         }
-        calls += 1;
+        calls = calls.saturating_add(1);
         match oracle.check(active) {
             Verdict::Sat => Ok(false),
             Verdict::Unsat => Ok(true),
