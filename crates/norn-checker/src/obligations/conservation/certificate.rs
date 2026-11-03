@@ -61,7 +61,7 @@ impl Certificate {
         if text.len() > WIRE_LIMIT {
             return Err(Failure::Malformed);
         }
-        let wire: Wire = serde_json::from_str(text).map_err(|_| Failure::Malformed)?;
+        let wire: Wire = serde_json::from_str(text).map_err(|_error| Failure::Malformed)?;
         let digest = wire.system_sha256;
         if wire.profile != PROFILE
             || digest.len() != 64
@@ -78,8 +78,8 @@ impl Certificate {
             .into_iter()
             .map(|(id, (n, d))| {
                 let q = Rational::new(
-                    n.parse().map_err(|_| Failure::Malformed)?,
-                    d.parse().map_err(|_| Failure::Malformed)?,
+                    n.parse().map_err(|_error| Failure::Malformed)?,
+                    d.parse().map_err(|_error| Failure::Malformed)?,
                 )
                 .ok_or(Failure::Malformed)?;
                 if id.is_empty() || q.numerator.to_string() != n || q.denominator.to_string() != d {
@@ -156,9 +156,10 @@ fn identity(coordinates: &[Coordinate], writers: &[Writer]) -> Result<String, Fa
             Delta::Unknown(reason) => json!({"unknown":reason}),
             Delta::Affine(rows) => json!({"affine":rows.iter().map(|row| row.iter().copied().map(number).collect::<Vec<_>>()).collect::<Vec<_>>()}),
         }])).collect::<Vec<_>>()});
-    let bytes = norn_canonical::serialize_json_verbatim(&body).map_err(|_| Failure::Malformed)?;
+    let bytes =
+        norn_canonical::serialize_json_verbatim(&body).map_err(|_error| Failure::Malformed)?;
     super::super::exact_commitment(b"linear-system/1", &[&bytes])
-        .map_err(|_| Failure::Unknown("certificate identity encoding limit".into()))
+        .map_err(|_error| Failure::Unknown("certificate identity encoding limit".into()))
 }
 
 #[cfg(test)]
