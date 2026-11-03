@@ -15,6 +15,8 @@ Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `La
 | Evidence | generated goal/statement digest, full writer/mapping closure, semantics/compiler/tool pins, parameter assumptions, bounds/fairness, result and proof digests, assurance level. |
 | Delegation | authenticated principal, acting agent/session, accountable delegator, parent grant, scope/resources/actions/expiry/budget, revocation generation; every child is an attenuation. |
 
+Display wording is an ordered BCP 47 locale map, separate from executable semantics. Each locale declares direction, templates and the full renderer vocabulary; all declared locales must be complete. See [the wording contract](../../platform/structured-requirements.md#locale-wording-law-wording-locale-1).
+
 B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. Event occurrence, arbitrary temporal logic and progress are not implied by these PRs.
 
 ## Semantics and obligations
@@ -31,6 +33,7 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 | Invariant / layer | Stable target diagnostic |
 |---|---|
+| LAW-WORDING-LOCALE-1: complete, unique well-formed locale entries; admission/render/inspection | `law.wording.invalid_locale` / `law.wording.duplicate_locale` / `law.wording.incomplete_locale` / `law.wording.unknown_locale` |
 | LAW-RETAIN-1: inherited law identity/domain unchanged; admission | `core.laws.weakening` |
 | LAW-COMPLETE-1: complete effective subject/writer/mapping closure; admission | `core.laws.unresolved_scope` |
 | LAW-SUPPORTED-1: exact predicate/timing supported, never omitted; admission | `core.laws.unsupported_semantics` |
@@ -40,8 +43,40 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 Evidence levels remain separate. Lean proof bodies must check the generated theorem with declared axioms and no admitted holes; bounded model results carry bounds. Admission receipts, source reviews and echoed challenges are structural evidence only. Report eligible auto-proof goals solved/total separately from all goals and unknown/refuted counts.
 
+### Exact result identity (PROOF-BIND-1)
+
+The checker-owned `Challenge` supplies `evidence_pins`, `record_evidence` and
+`evidence_identity`; there is no parallel goal type. Pins select an existing
+generated obligation by index and digest and retain the exact challenge digest.
+The record retains the complete challenge: generated statements, full definition
+and writer/mapping closure, unit interpretation, semantics/compiler profile,
+assumptions and assurance requirements. Any source change conservatively
+invalidates identity, including edits outside a narrower semantic dependency set.
+
+The controller supplies tool ID, version and lowercase implementation SHA-256,
+an exact nonempty bounds/fairness JSON object (at most 64 KiB), and a `u64` seed.
+The result is opaque UTF-8 JSON (at most 1 MiB) with its raw SHA-256. Whitespace,
+Unicode spelling and numeric spelling remain significant. The identity check
+also requires the independently retained result digest from the trusted checked
+driver; taking that expected digest from the record under inspection is invalid.
+
+`Current` establishes identity only. It authenticates no tool execution and
+confers no bounded-pass, counterexample, non-vacuity or proof status. The real
+checked driver supplies those results and actual bounds; unsupported generated
+proof assessments remain unknown. A mismatched current pin, malformed record or
+changed payload yields `Unknown` / `core.laws.stale_evidence` (PROOF-STALE), never
+a pass. Replacing both a stored result and its co-located hash still fails the
+independent result pin.
+
+Named identity scenarios: matching pass-shaped and counterexample-shaped payloads
+stay identity-only; writer, unit and mapping edits stale either result kind;
+tool/version/implementation, bounds, seed and goal edits stale evidence; joint
+payload/hash substitution fails; malformed or oversized profiles/results refuse.
+These scenarios do not simulate a solver or claim a completed constitution drop.
+
 ## Named acceptance scenarios
 
+- **LAW-LOCALE-DATA/INCOMPLETE/UNKNOWN:** A complete French entry admits and renders through data only; missing text, labels or terms in any declared locale refuse. An unavailable requested locale refuses without fallback, including during direction inspection. EN/AR retain their existing display bytes and semantic identities.
 - **LAW-INTERFACE/TRANSITIVE/DIAMOND:** Given direct and transitive implementors, when B2 resolves laws, then retain each origin and one instance per identical substitution; missing subject refuses.
 - **LAW-CONTAINED/EMPTY:** Given nested pack/app laws and zero implementors, when admitted, then validate bindings but leave non-vacuity unknown; an unknown app refuses.
 - **LAW-TIGHTEN/WEAKEN:** Given inherited conservation, when adding an additional loss bound, then conjunction is allowed; replacing conservation or excluding failing inputs refuses.
