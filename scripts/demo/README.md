@@ -9,6 +9,14 @@ bash scripts/demo/run.sh
 
 Catalog inspection: `bash scripts/demo/drop-03-catalog.sh`. The [Drop 3 note](drop-03-catalog.md) describes its bounded reads, actual refusals and uncovered behavior.
 
+Bounded constitution runtime driver: `bash scripts/demo/drop-constitution.sh`.
+It recompiles an authored loss-removal mutation, checks actual native action
+commits/refusals, and binds its finite results to checker-generated goals.
+[MVP-CONSTITUTION](../../docs/spec/acceptance/master-ontology-mvp.md) states the
+77-case domain and open proof boundaries. This driver reports bounded runtime
+conformance and generated runtime counterexamples; generated solver jobs and
+inductive proof remain unknown. It does not upgrade the full rehearsal below.
+
 Fallback status: **checker-admitted / refused; obligations generated; runtime execution not yet (#341 #342 #343)**.
 
 The default exits successfully only when the current admission demonstration succeeds; it always says INCOMPLETE. `--require-complete` exits 1 while required beats are missing. Unexpected compile/check failures stop execution. No tenant, external integration or stock/books state is manufactured. The script has no output fixtures or mocked adapters.

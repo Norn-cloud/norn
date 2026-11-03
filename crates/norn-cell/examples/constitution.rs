@@ -100,7 +100,9 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
     } else { "counterexample" };
     Ok(json!({"status":status,"checkedCases":checked,"committedCases":committed,"positiveLossCases":nonzero_loss,
         "counterexampleCount":counterexamples.len(),"counterexample":counterexamples.first(),
-        "nonVacuity":if nonzero_loss > 0 {json!({"status":"witnessed","inputFineG":2,"outputFineG":1,"lossFineG":1})}else{json!({"status":"not_witnessed"})}}))
+        "nonVacuity":if committed > 0 {json!({"status":"witnessed","inputFineG":2,
+            "outputFineG":if nonzero_loss>0{1}else{2},"lossFineG":if nonzero_loss>0{1}else{0},
+            "positiveLossWitness":nonzero_loss>0})}else{json!({"status":"not_witnessed"})}}))
 }
 
 fn bind(challenge: &Challenge, result: &Value, tool: &EvidenceTool, bounds: &str) -> Result<Vec<EvidenceRecord>> {
@@ -146,12 +148,14 @@ fn main() -> Result<()> {
     let original_result = exercise(&with_loss, &base)?;
     let mutated_result = exercise(&without_loss, &base)?;
     let restored_result = exercise(&with_loss, &base)?;
+    let restored = authority.challenge(&source(&with_loss)?, &BTreeSet::new())?;
+    if good.sha256() != restored.sha256() { return Err("restored writer did not reproduce the generated challenge".into()); }
     if original_result["status"] != "bounded_pass" || mutated_result["counterexampleCount"] != 66 || original_result != restored_result {
         return Err("positive/mutation/restoration correspondence failed".into());
     }
     let original_records = bind(&good, &original_result, &tool, &bounds)?;
     let bad_records = bind(&bad, &mutated_result, &tool, &bounds)?;
-    let restored_records = bind(&good, &restored_result, &tool, &bounds)?;
+    let restored_records = bind(&restored, &restored_result, &tool, &bounds)?;
     let prior = original_records.first().ok_or("no bound result")?;
     let changed_pins = bad.evidence_pins(prior.pins.goal_index, tool.clone(), &bounds, 0)?;
     if bad.evidence_identity(&changed_pins, prior) != EvidenceIdentity::Unknown { return Err("stale pass accepted for changed writer".into()); }
