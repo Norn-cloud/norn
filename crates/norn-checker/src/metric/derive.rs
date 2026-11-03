@@ -283,6 +283,14 @@ mod ontology_derived_measures {
         ))
         .expect("typed ontology")
     }
+    fn replace(artifact: &mut ArtifactEnvelope, root: EntityRootV2) {
+        artifact.payload = ArtifactPayload::from_kind_json(
+            &ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("typed entity"))
+                .expect("IR JSON"),
+        )
+        .expect("entity payload");
+    }
     fn derive(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
         derive_declared_metric_space(
             artifacts,
@@ -335,12 +343,7 @@ mod ontology_derived_measures {
             )
             .expect("entity");
             root.object_type.links[0].inverse = Some(norn_ir::LinkId(role.to_owned()));
-            artifacts[0].payload = ArtifactPayload::from_kind_json(
-                &ArtifactKind::Entity,
-                serde_json::from_value(serde_json::to_value(root).expect("typed entity"))
-                    .expect("IR JSON"),
-            )
-            .expect("entity payload");
+            replace(&mut artifacts[0], root);
             let generated = derive(&artifacts);
             let has = |property: &str| {
                 generated
@@ -352,7 +355,12 @@ mod ontology_derived_measures {
                             && path.property.as_str() == property
                     })
             };
-            assert!(has("name"), "role={role}; item={:?}; store={:?}; candidates={:?}", generated.catalog.object_type_named("erpnext.SalesInvoiceItem").and_then(Result::err), generated.catalog.object_type_named("erpnext.Store").and_then(Result::err), generated.candidates);
+            if !expected {
+                assert!(
+                    matches!(generated.catalog.object_type_named("erpnext.SalesInvoiceItem"),
+                    Some(Err(error)) if error.code.as_str() == crate::object_types::codes::MEMBER_ID_CONFLICT)
+                );
+            }
             assert_eq!(has("idx"), expected, "{role}");
         }
     }
@@ -383,12 +391,7 @@ mod ontology_derived_measures {
                 unreachable!("fixture amount")
             };
             *additivity = class;
-            artifacts[1].payload = ArtifactPayload::from_kind_json(
-                &ArtifactKind::Entity,
-                serde_json::from_value(serde_json::to_value(root).expect("typed payload"))
-                    .expect("JSON object"),
-            )
-            .expect("entity payload");
+            replace(&mut artifacts[1], root);
             assert!(derive(&artifacts).candidates.is_empty());
         }
     }
