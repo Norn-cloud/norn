@@ -7,9 +7,7 @@ use crate::{
 };
 use norn_cell::engine::SqlEngine;
 use norn_ir::RuntimeObject;
-use norn_kernel::{
-    ActionOutcome, DecisionTurn, LogicalTime, Refusable, TypeCatalog, World,
-};
+use norn_kernel::{ActionOutcome, DecisionTurn, LogicalTime, Refusable, TypeCatalog, World};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -21,26 +19,82 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
     use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
     let mut snapshot = model.definitions_snapshot();
     for (name, text_fields, json_fields) in [
-        (norn_kernel::ACTION_CALL_TYPE,
-         &["actionId", "actionArtifactId", "actionVersion", "effectKind", "actor", "turn", "transition", "from", "to", "ruleBinding"][..],
-         &["object", "input", "effectiveInput", "derivedValues", "preconditionOutcomes", "rowOperations"][..]),
-        (norn_kernel::OWNED_ROWS_TYPE, &["parentType", "parentKey", "collectionId"][..], &["rowIds"][..]),
+        (
+            norn_kernel::ACTION_CALL_TYPE,
+            &[
+                "actionId",
+                "actionArtifactId",
+                "actionVersion",
+                "effectKind",
+                "actor",
+                "turn",
+                "transition",
+                "from",
+                "to",
+                "ruleBinding",
+            ][..],
+            &[
+                "object",
+                "input",
+                "effectiveInput",
+                "derivedValues",
+                "preconditionOutcomes",
+                "rowOperations",
+            ][..],
+        ),
+        (
+            norn_kernel::OWNED_ROWS_TYPE,
+            &["parentType", "parentKey", "collectionId"][..],
+            &["rowIds"][..],
+        ),
     ] {
-        if snapshot.object_types.iter().any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
-            || snapshot.interfaces.iter().any(|ty| ty.name.as_str().eq_ignore_ascii_case(name)) {
+        if snapshot
+            .object_types
+            .iter()
+            .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
+            || snapshot
+                .interfaces
+                .iter()
+                .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
+        {
             return Err(Refusal::invalid("reserved kernel object type"));
         }
-        let properties = text_fields.iter().map(|id| (*id, PropertyType::Text { format: None }))
-            .chain(json_fields.iter().map(|id| (*id, PropertyType::JsonExt { schema: None })))
+        let properties = text_fields
+            .iter()
+            .map(|id| (*id, PropertyType::Text { format: None }))
+            .chain(
+                json_fields
+                    .iter()
+                    .map(|id| (*id, PropertyType::JsonExt { schema: None })),
+            )
             .map(|(id, property_type)| Property {
-                id: PropertyId(id.into()), property_type, description: None,
-                constraints: norn_ir::PropertyConstraints { nullable: true, ..Default::default() },
-                default: None, markings: vec![], computed: None,
-            }).collect();
+                id: PropertyId(id.into()),
+                property_type,
+                description: None,
+                constraints: norn_ir::PropertyConstraints {
+                    nullable: true,
+                    ..Default::default()
+                },
+                default: None,
+                markings: vec![],
+                computed: None,
+            })
+            .collect();
         snapshot.object_types.push(ObjectTypeDef {
-            name: ObjectTypeName(name.into()), role: None, description: None, status: Default::default(),
-            extends: None, implements: vec![], properties, links: vec![], owned_collections: vec![],
-            identity: vec![], invariants: vec![], lifecycles: vec![], markings: vec![], accounting_leg: None,
+            name: ObjectTypeName(name.into()),
+            role: None,
+            description: None,
+            status: Default::default(),
+            extends: None,
+            implements: vec![],
+            properties,
+            links: vec![],
+            owned_collections: vec![],
+            identity: vec![],
+            invariants: vec![],
+            lifecycles: vec![],
+            markings: vec![],
+            accounting_leg: None,
         });
     }
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
@@ -103,7 +157,10 @@ pub fn call_action_in_epoch<E: SqlEngine>(
         .map_err(Refusal::host)?
         .ok_or_else(|| Refusal::host("missing definitions"))?;
     if installed.version != request.version
-        || scope.version.is_some_and(|version| version != request.version) {
+        || scope
+            .version
+            .is_some_and(|version| version != request.version)
+    {
         return Err(Refusal::new(
             http::StatusCode::CONFLICT,
             "defs.stale",
@@ -118,7 +175,9 @@ pub fn call_action_in_epoch<E: SqlEngine>(
         .with_interfaces(model.interfaces())
         .with_governing_laws(model.law_artifacts())
         .with_action_rules(&admitted.rules);
-    let (artifact, action) = admitted.actions.iter()
+    let (artifact, action) = admitted
+        .actions
+        .iter()
         .find(|(_, action)| action.action_id == request.action_id)
         .ok_or_else(|| Refusal::invalid("unknown admitted action"))?;
     let now = LogicalTime::from_millis(cell.store().read().clock_floor().map_err(Refusal::host)?);
@@ -164,7 +223,6 @@ pub fn call_action_in_epoch<E: SqlEngine>(
 fn kernel_refusal(safe: norn_kernel::Refusal) -> Refusal {
     Refusal::from_kernel(safe, false)
 }
-
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "actions_tests.rs"]

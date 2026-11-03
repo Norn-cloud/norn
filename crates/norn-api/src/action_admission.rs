@@ -6,11 +6,11 @@ use norn_kernel::{DecisionBinding, SynchronousRule};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct RetainedActions {
-    pub actions: Vec<(ArtifactEnvelope, ActionRoot)>,
-    pub rules: Vec<SynchronousRule>,
+    pub(crate) actions: Vec<(ArtifactEnvelope, ActionRoot)>,
+    pub(crate) rules: Vec<SynchronousRule>,
 }
 impl RetainedActions {
-    pub fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
+    pub(crate) fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
         crate::routes::verify_retained(set, scope)?;
         let RuntimeValue::Array(sources) =
             RuntimeValue::from_json_text(&set.canonical_set).map_err(Refusal::host)?
