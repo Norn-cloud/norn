@@ -4209,7 +4209,12 @@ fn authorize_identity_collision<H: CellHost + ?Sized>(
     for key in conflicts.iter() {
         authorize_slice_type(call, input, authorizer, &key.object_type)?;
         let bounded = host
-            .load_bounded(key, crate::SliceLimits::default().max_canonical_bytes)
+            .load_bounded(
+                key,
+                norn_ir::ResourceLimitProfile::norn_limits_v1()
+                    .slice
+                    .max_canonical_bytes,
+            )
             .map_err(host_failure)?
             .ok_or(ActionRefusal::TargetNotFound)?;
         if bounded.state.values.is_none() {

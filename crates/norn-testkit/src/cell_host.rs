@@ -1913,15 +1913,15 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    use norn_kernel::CommitError as Error;
+    use norn_kernel::CommitError::{self as Error, IdentityCollision};
 
     Ok(match error {
         Error::Law { key, reason } => Error::Law { key, reason },
-        Error::IdentityCollision {
+        IdentityCollision {
             owner,
             key,
             conflicts,
-        } => Error::IdentityCollision {
+        } => IdentityCollision {
             owner,
             key,
             conflicts,
