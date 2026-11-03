@@ -117,3 +117,14 @@ unchanged by transport projection versions. Historical receipts still verify.
 Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
+
+### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
+
+The chase-backed diagnosis profile enumerates irreducible declaration conflicts
+and correction proposals relative to fixed open-world facts. Every core is
+unsatisfiable and each one-member deletion is satisfiable. Every correction
+relaxes only explicitly editable declarations and is independently checked on
+the complete remaining input; restoring any member makes it unsatisfiable.
+These proposals grant no authority: concrete edits require ordinary admission.
+Protected laws are never repair candidates. Whole-search and per-chase ceilings
+are disclosed; an exhausted or refused subset query makes the diagnosis unknown.
