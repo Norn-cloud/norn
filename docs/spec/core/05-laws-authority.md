@@ -142,3 +142,8 @@ Discovery is untrusted and never refutes a law. Every candidate must separately
 pass CONS-LINEAR-1 against the declared functional. Named scenarios: fractional
 exchange, conflicting/zero anchors, free coordinates, unit/book separation,
 opaque writer, duplicate identity and generated scaled exchanges.
+
+**CONS-LINEAR-CERT-1 / CONS-LINEAR-WITNESS-1:** closed certificates bind the
+exact mathematical system, ordered coordinate IDs and canonical rational strings.
+Tampered weights refuse; system edits are unknown. Countervaluations retain
+scope/unit, exact deltas and nonzero change; guard feasibility remains unknown.
