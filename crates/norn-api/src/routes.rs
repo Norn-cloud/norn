@@ -82,19 +82,16 @@ pub fn get_defs<E: SqlEngine>(
     defs_response(installed, host.scope())
 }
 
-fn defs_response(
-    installed: InstalledDefinitionSet,
-    scope: &CellScope,
-) -> Result<DefsResponse, Refusal> {
-    verify_retained(&installed, scope)?;
-    let receipt = installed
+fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsResponse, Refusal> {
+    verify_retained(&set, scope)?;
+    let receipt = set
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
     Ok(DefsResponse {
         admitted: true,
-        version: installed.version,
-        layout_revision: installed.layout_revision,
-        layout: installed
+        version: set.version,
+        layout_revision: set.layout_revision,
+        layout: set
             .layout
             .as_deref()
             .map(serde_json::from_str)
@@ -103,11 +100,11 @@ fn defs_response(
             .unwrap_or_default(),
         layout_diagnostics: None,
         receipt: RawValue::from_string(receipt).map_err(Refusal::host)?,
-        receipt_sha256: installed.receipt_sha256,
+        receipt_sha256: set.receipt_sha256,
         diagnostics: None,
-        registry: installed.registry,
+        registry: set.registry,
         base_artifact_ids: Vec::new(),
-        artifacts: serde_json::from_str(&installed.canonical_set).map_err(Refusal::host)?,
+        artifacts: serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?,
     })
 }
 
