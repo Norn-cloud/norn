@@ -152,3 +152,12 @@ Ceilings are 256 contexts, 65536 encoded domain bytes, 8192 predicate evaluation
 and 1000 expression fuel. A diagnosis discloses these plus its query ceiling.
 Unsupported/unbounded domains or exhausted enumeration return unknown, not a
 conflict. This fragment grants no admission or proof authority.
+
+DIAG-PIN-1: refused candidates receive diagnostics only: exact attempted-source/base digests,
+member identities/pointers, checker/expression/fragment profiles, enumeration and
+query budgets, explicit closed-world assumptions and retained editability
+policy are pinned together. The report type has no Challenge/EvidencePins or
+PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
+must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
+incomplete source identities are unknown rather than an unbound explanation.
+Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
