@@ -1,0 +1,17 @@
+{
+  "profile": "norn.constitution.one-create/1",
+  "action": "constitution.melt.convert.action",
+  "identity": "melt",
+  "inputs": {
+    "input_quantity": ["2", "12"],
+    "output_quantity": ["1", "12"]
+  },
+  "seed": 0,
+  "enabledCases": 77,
+  "expectedStates": 78,
+  "exclusions": {
+    "loss_quantity": "Caller input is absent; the writer derivation or stored default supplies it.",
+    "output_quantity": "Zero is outside this finite profile; the declared precondition still permits it.",
+    "authorization": "Pre-authorized fixture actor; permission policy correctness is not assessed."
+  }
+}
