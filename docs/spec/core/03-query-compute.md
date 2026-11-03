@@ -49,16 +49,18 @@ At an explicitly selected law root, an unconditional, error-severity `always`
 law of the form `self.input == self.output + self.loss` supplies additive terms
 and one ratio of sums for each output/input pair. The bounded structural
 recognizer accepts distinct same-type/same-unit terms, not coefficients,
-conditionals or nonlinear algebra. Nullable/computed terms, explicit conflicting
+conditionals or nonlinear algebra. Rates, nullable/computed terms, explicit conflicting
 additivity, state-limited laws and other law roots supply no such contract.
 Generated definitions retain the canonical law-envelope digest; changes to a
-law change the generated ratio identity. Input order does not change identity.
+law change the generated ratio identity. Artifact order does not change identity.
+Reordering terms within a law expression does change identity.
 The original ontology and every property contract carried by the compute plan
 remain unchanged. Only the checker-owned catalog contains the law admission
 evidence, and every selection lowers through `compute::admit`. In particular,
 law evidence cannot make the plan fail the native cell's model-contract guard.
 
-Named scenarios: **METRIC-CONSERVATION** (no metric declarations yield recovered
+Named scenarios: **METRIC-RATE-UNKNOWN** (rate terms supply no conservation
+additivity), **METRIC-CONSERVATION** (no metric declarations yield recovered
 and loss ratios), **METRIC-LAW-SCOPE** (conditional/advisory/other-scope laws
 supply no additivity), **METRIC-LAW-PIN** (deterministic derivation retains the
 exact governing law), **METRIC-SCRAP-PARITY** (all 80 pinned scrap-yield rows

@@ -421,12 +421,14 @@ fn compatible_terms(object: &EffectiveObjectType, source: &ConservationSource) -
                         scale: a,
                         unit: u,
                         currency_source: None,
+                        per_unit: None,
                         ..
                     },
                     PropertyType::Decimal {
                         scale: b,
                         unit: v,
                         currency_source: None,
+                        per_unit: None,
                         ..
                     },
                 ) => a == b && u == v,
@@ -881,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_derivation_and_pins_are_independent_of_input_order() {
+    fn canonical_derivation_and_pins_are_independent_of_artifact_order() {
         let mut artifacts = fixture();
         let original = space(&artifacts);
         artifacts.reverse();
@@ -908,6 +910,34 @@ mod tests {
             yield_question(&original).metrics,
             yield_question(&space(&artifacts)).metrics
         );
+    }
+
+    #[test]
+    fn conservation_rates_do_not_supply_additivity() {
+        let generated = space(&fixture());
+        let Some(Ok(object)) = generated.catalog.object_type_named("demo.Conversion") else {
+            panic!("conversion catalog")
+        };
+        let source = &generated.candidates()[0].conservation[0];
+        assert!(compatible_terms(object, source));
+        for id in [&source.input].into_iter().chain(&source.outputs) {
+            let mut rate = object.clone();
+            let property = rate
+                .properties
+                .iter_mut()
+                .find(|property| &property.id == id)
+                .expect("conservation term");
+            let EffectiveKind::Base(PropertyType::Decimal { per_unit, .. }) =
+                &mut property.kind
+            else {
+                panic!("decimal term")
+            };
+            *per_unit = Some(norn_ir::UnitRef {
+                system: norn_ir::UnitSystem::Ucum,
+                code: "kg".to_owned(),
+            });
+            assert!(!compatible_terms(&rate, source), "{id:?}");
+        }
     }
 
     #[test]
