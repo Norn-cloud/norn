@@ -561,29 +561,53 @@ def core_physics_closure_canaries() -> None:
 def workflow_verdict_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     verdict = next(step["run"] for step in workflow["jobs"]["full"]["steps"] if "run" in step)
-    full_plan = {"mode": "full", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["clippy"]}
+    full_plan = json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "plan"],
+                                         cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
+    full_plan.update(base_sha="base", head_sha="head")
     affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
-    passed = dict.fromkeys(("CORE", "PLANNED", "TEST", "PHASE"), "success")
+    def packed(plan: dict[str, Any]) -> dict[str, Any]:
+        return json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "bundle-plan", json.dumps(plan)],
+                                        cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
+    full_plan = packed(full_plan)
+    affected = packed(affected)
+    passed = dict.fromkeys(("CORE", "PLANNED", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
-    cases.append(("pull_request", affected, {**passed, "PHASE": "skipped"}, True))
-    cases.extend((event, affected, {**passed, "PHASE": "skipped"}, False)
+    cases.append(("pull_request", affected, passed, True))
+    cases.extend((event, affected, passed, False)
                  for event in ("push", "merge_group", "workflow_dispatch"))
     cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
                  for key in passed for result in ("failure", "cancelled", "skipped"))
-    cases.append(("pull_request", affected, {**passed, "TEST": "skipped", "PHASE": "skipped"}, False))
+    cases.append(("pull_request", affected, {**passed, "TEST": "skipped"}, False))
     # Affected merge groups pass only while the always-run phases stay in the plan.
     merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
+    merge_affected = packed(merge_affected)
     cases.append(("merge_group", merge_affected, passed, True))
-    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance"]}, passed, False))
-    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance", "clippy-extra"]}, passed, False))
+    cases.append(("merge_group", packed({**merge_affected, "phase": ["guards", "provenance"]}), passed, False))
+    extra = copy.deepcopy(merge_affected)
+    extra["phase"] = ["guards", "provenance", "clippy-extra"]
+    for bundle in extra["bundle"]:
+        bundle["tasks"] = ["phase/clippy-extra" if task == "phase/clippy" else task for task in bundle["tasks"]]
+    cases.append(("merge_group", extra, passed, False))
     cases.append(("pull_request", full_plan, {**passed, "DRAFT": "true"}, False))
     cases.append(("pull_request", full_plan, passed, True))
     for plan in ({}, None, [], {**affected, "mode": "unknown"},
                  {**affected, "shard": "rest-1"}, {**affected, "phase": None},
-                 {**affected, "shard": ["rest-1", "rest-1"]},
                  {**affected, "base_sha": "old-base"}, {**affected, "head_sha": "old-head"}):
         cases.append(("pull_request", plan, passed, False))
+    duplicate = copy.deepcopy(affected)
+    duplicate["shard"] = ["rest-1", "rest-1"]
+    duplicate["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "test/rest-1"]}]
+    cases.append(("pull_request", duplicate, passed, False))
     cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
+    for mutate in (
+        lambda p: p.pop("bundle"),
+        lambda p: p["bundle"][0]["tasks"].pop(),
+        lambda p: p["bundle"][0]["tasks"].append(p["bundle"][0]["tasks"][0]),
+        lambda p: p["bundle"].append(copy.deepcopy(p["bundle"][0])),
+    ):
+        broken = copy.deepcopy(full_plan)
+        mutate(broken)
+        cases.append(("pull_request", broken, passed, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
         environment = {**os.environ, "DRAFT": "false", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
@@ -686,15 +710,19 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
+        for name in ("core", "plan", "full", "trusted-policy"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["name"] = "renamed"
+            rejected(f"renamed control check {name}", document)
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
             rejected(f"removed trigger {trigger}", document)
-        for name in ("core", "plan", "test", "phase", "full"):
+        for name in ("core", "plan", "test", "full"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
-        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST", "PHASE"):
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
             rejected(f"forged verdict input {key}", document)
@@ -705,7 +733,7 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["on"]["pull_request"]["types"].remove("ready_for_review")
         rejected("missing READY activity", document)
-        for name in ("core", "test", "phase"):
+        for name in ("core", "test"):
             for before, after in (("12 * 1024 * 1024", "1 * 1024 * 1024"),
                                   ('if [ "$(available)" -lt "$minimum" ]; then', "if true; then"),
                                   ('[ "$(available)" -ge "$minimum" ]', "true"),
@@ -729,7 +757,7 @@ def workflow_context_canaries(source: str) -> None:
                 expected = "boat" if event == "merge_group" and variable == "boat" else "ubuntu-24.04"
                 if eval(concrete, {"__builtins__": {}}, {}) != expected:
                     raise AssertionError(f"Boat runner evaluation drift: {event}/{variable}")
-        for name in ("core", "plan", "test", "phase", "full", "trusted-policy"):
+        for name in ("core", "plan", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
@@ -740,16 +768,18 @@ def workflow_context_canaries(source: str) -> None:
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             if name == "trusted-policy":
                 unsafe.append(runner)
+            else:
+                unsafe.append("ubuntu-24.04")
             for value in unsafe:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "plan", "test", "phase", "full"):
+        for name in ("core", "plan", "test", "full"):
             document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
-        for name in ("core", "plan", "test", "phase"):
+        for name in ("core", "plan", "test"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
                 "uses": "actions/github-script@" + "a" * 40,
@@ -762,10 +792,20 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 action_step(document, name, "actions/checkout")["with"][key] = value
                 rejected(f"{name} checkout {key}", document)
-            for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE"):
+            for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE", "PLAN", "BUNDLE_ID"):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["needs"] = ["plan"]
+        rejected("bundles admitted before the cheap gate", document)
+        for key in ("PLAN", "BUNDLE_ID"):
+            document = copy.deepcopy(workflow)
+            document["jobs"]["test"]["env"][key] = "forged"
+            rejected(f"forged bundle input {key}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["strategy"]["max-parallel"] = 2
+        rejected("surplus billed jobs waiting for matrix slots", document)
         document = copy.deepcopy(workflow)
         action_step(document, "test", "oven-sh/setup-bun")["with"]["bun-version"] = "latest"
         rejected("altered preparation action inputs", document)
@@ -790,7 +830,7 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["core"]["steps"].append(checkout)
         rejected("candidate checkout after the gate", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["phase"]["env"]["NORN_CI_BASE"] = "HEAD"
+        document["jobs"]["test"]["env"]["NORN_CI_BASE"] = "HEAD"
         rejected("unbound shrink-only baseline", document)
         candidate.write_text(source.replace("      - run: bash scripts/ci/core.sh cheap",
                                             "      - run: echo ignored\n        run: bash scripts/ci/core.sh cheap", 1), encoding="utf-8")
@@ -805,13 +845,10 @@ def workflow_canaries() -> None:
     workflow_cache_canaries()
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
-        ("missing test shards", "run: bash scripts/ci/core.sh test ${{ matrix.shard }}", "run: echo skipped"),
-        ("missing phases", "run: bash scripts/ci/core.sh ${{ matrix.phase }}", "run: echo skipped"),
-        ("missing shard matrix", "shard: ${{ fromJSON(needs.plan.outputs.plan).shard }}", "shard: [rest-1]"),
-        ("missing phase matrix", "phase: ${{ fromJSON(needs.plan.outputs.plan).phase }}", "phase: [cheap]"),
-        ("missing full verdict dependency", "needs: [core, plan, test, phase]", "needs: [core, plan, test]"),
-        ("disabled planned tests", "if: fromJSON(needs.plan.outputs.plan).shard[0] != null", "if: false"),
-        ("disabled planned phases", "if: fromJSON(needs.plan.outputs.plan).phase[0] != null", "if: false"),
+        ("missing bundle executor", 'run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"', "run: echo skipped"),
+        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}", "bundle: []"),
+        ("missing full verdict dependency", "needs: [core, plan, test]", "needs: [core, plan]"),
+        ("disabled planned bundles", "if: fromJSON(needs.plan.outputs.plan).bundle[0] != null", "if: false"),
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
@@ -836,7 +873,7 @@ def workflow_canaries() -> None:
             "name: Public core\n", "name: Public core\nenv:\n  toolchain: 1.98.0\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
         expect_coverage_validator_rejection("decoy toolchain key", formal_workflow_path=candidate)
-        command = "bash scripts/ci/core.sh test ${{ matrix.shard }}"
+        command = 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"'
         decoy = source.replace("run: " + command, "run: echo skipped", 1).replace(
             "name: Public core\n", "name: 'Public core " + command + "'\n", 1)
         candidate.write_text(decoy, encoding="utf-8")
