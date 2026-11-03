@@ -1059,7 +1059,7 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
             "draft-move",
         )
         .unwrap();
-    let movement = json!({"id":"MOVE","holding":"R1","output":"MOVE-R1","source":"VAULT","destination":"B","company":"BUSINESS","event":"MOVE-EVENT","quantity":2});
+    let movement = json!({"id":"MOVE","holding":"R1","output":"ZZZ-R1","source":"VAULT","destination":"B","company":"BUSINESS","event":"MOVE-EVENT","quantity":2});
     for (field, value, operation) in [
         ("quantity", json!(3), "transfer-insufficient"),
         ("source", json!("B"), "transfer-nonmember"),
@@ -1106,10 +1106,10 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
     inventory(&cell, "5", "80", "0", "5");
     exact(&cell, "Holding", "R1", "quantity", "0");
     exact(&cell, "Holding", "R1", "value", "0");
-    exact(&cell, "Holding", "MOVE-R1", "quantity", "2");
-    exact(&cell, "Holding", "MOVE-R1", "value", "20");
+    exact(&cell, "Holding", "ZZZ-R1", "quantity", "2");
+    exact(&cell, "Holding", "ZZZ-R1", "value", "20");
     assert_eq!(
-        values(&cell, "Holding", "MOVE-R1")["origin_layer"].as_str(),
+        values(&cell, "Holding", "ZZZ-R1")["origin_layer"].as_str(),
         Some("R1")
     );
     assert_eq!(
@@ -1117,9 +1117,9 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
         Some("transfer_custody")
     );
     for (source_kind, source, link, target_kind, target) in [
-        ("Holding", "MOVE-R1", "origin", "Holding", "R1"),
-        ("Holding", "MOVE-R1", "vault", "Vault", "B"),
-        ("Vault", "B", "holdings", "Holding", "MOVE-R1"),
+        ("Holding", "ZZZ-R1", "origin", "Holding", "R1"),
+        ("Holding", "ZZZ-R1", "vault", "Vault", "B"),
+        ("Vault", "B", "holdings", "Holding", "ZZZ-R1"),
         ("Event", "MOVE-EVENT", "from_vault", "Vault", "VAULT"),
         ("Event", "MOVE-EVENT", "to_vault", "Vault", "B"),
     ] {
@@ -1168,7 +1168,7 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
         )
         .unwrap();
     let mut sale = deliver();
-    sale["first"] = json!("MOVE-R1");
+    sale["first"] = json!("ZZZ-R1");
     let mut excessive = sale.clone();
     excessive["quantity"] = json!(6);
     refuses(
