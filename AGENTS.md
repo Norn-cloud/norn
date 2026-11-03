@@ -69,7 +69,8 @@ back to an older review after editing or deletion. Saved run payloads identify
 pending events independently of PR numbers; any failed or missing receipt blocks
 that target until an admin reconciles the event and posts a fresh review.
 `/revoke-rights <SHA>` revokes the target across all PRs. `/approve-gates` remains
-a separate PR-scoped approval. New heads invalidate rights acknowledgments. Human source review remains necessary. The gate binds all
+a separate PR-scoped approval. New heads invalidate rights acknowledgments.
+Human source review remains necessary. The gate binds all
 inspected bytes and records to the immutable candidate tree. Expanded archives
 must match that source commit exactly; generated exports require an independently
 verified external binding and are refused without one. Nested evidence and
