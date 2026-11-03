@@ -36,7 +36,7 @@ export const Transfer = Norn.action({
   input: Input, output: Schema.Struct({holding: Schema.String}), synchronousRule: Writer,
   slice: [{name: "holding", type: Holding, key: {property: {from: "input", property: "holding"}}}, {name: "destination", type: Location, key: {property: {from: "input", property: "destination"}}}],
   preconditions: [Norn.unsafeZen<boolean>("slice.holding.company == slice.destination.company and slice.holding.location != input.destination")],
-  writes: [{type: Holding, change: "modified"}, {type: Movement, change: "created"}],
+  writes: [{type: Holding, change: "created"}, {type: Holding, change: "modified"}, {type: Movement, change: "created"}, {type: Movement, change: "modified"}],
   createLinks: [{source: {objectType: Movement, idField: "movement"}, link: "holding", targetType: Holding, targetIdField: "holding"}, {source: {objectType: Movement, idField: "movement"}, link: "destination", targetType: Location, targetIdField: "destination"}],
   effect: {kind: "fire_transition", type: Holding, objectIdField: "holding", lifecycle: "status", transition: "transfer"},
 })
