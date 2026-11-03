@@ -117,16 +117,22 @@ fn extract(artifact: &ArtifactEnvelope, scope: &LawRoot) -> Option<ConservationE
 
 #[cfg(test)]
 mod ontology_derived_measures {
-    #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+    #![allow(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        reason = "typed law-evidence fixture assertions"
+    )]
     use super::*;
     use crate::EffectiveCatalog;
     use norn_ir::{
-        ArtifactDependency, ArtifactKind, EntityRootV2, ObjectTypeName, PropertyType, ZenExpression,
+        ArtifactDependency, ArtifactKind, EntityRootV2, ObjectTypeName, PropertyConstraints,
+        PropertyType, ZenExpression,
     };
 
-    fn payload<T: serde::Serialize>(kind: ArtifactKind, value: &T) -> ArtifactPayload {
+    fn payload<T: serde::Serialize>(kind: &ArtifactKind, value: &T) -> ArtifactPayload {
         ArtifactPayload::from_kind_json(
-            &kind,
+            kind,
             serde_json::from_value(serde_json::to_value(value).expect("typed payload"))
                 .expect("IR JSON"),
         )
@@ -157,12 +163,12 @@ mod ontology_derived_measures {
             .map(|id| {
                 let mut property = quantity.clone();
                 property.id = PropertyId(id.to_owned());
-                property.constraints = Default::default();
+                property.constraints = PropertyConstraints::default();
                 property
             })
             .to_vec();
         entity.artifact_id = "demo.Conversion.entity".to_owned();
-        entity.payload = payload(ArtifactKind::Entity, &root);
+        entity.payload = payload(&ArtifactKind::Entity, &root);
         let mut laws: Vec<ArtifactEnvelope> =
             serde_json::from_str(include_str!("../../../../fixtures/law-ir/laws.json"))
                 .expect("laws");
@@ -187,7 +193,7 @@ mod ontology_derived_measures {
             version: Some(entity.version.clone()),
             required: true,
         }];
-        artifact.payload = payload(ArtifactKind::Law, &law);
+        artifact.payload = payload(&ArtifactKind::Law, &law);
         vec![entity, artifact]
     }
 
@@ -197,7 +203,7 @@ mod ontology_derived_measures {
         )
         .expect("law");
         change(&mut law);
-        artifacts[1].payload = payload(ArtifactKind::Law, &law);
+        artifacts[1].payload = payload(&ArtifactKind::Law, &law);
     }
 
     fn sources(artifacts: &[ArtifactEnvelope]) -> Vec<ConservationEvidence> {
@@ -233,7 +239,7 @@ mod ontology_derived_measures {
                     .expect("available")
             )
         );
-        let mut changed = artifacts.clone();
+        let mut changed = artifacts;
         changed[1].name.push_str(" reviewed");
         assert_ne!(source.digest(), sources(&changed)[0].digest());
         assert_eq!(source.law().id, "demo.mass_conservation");
