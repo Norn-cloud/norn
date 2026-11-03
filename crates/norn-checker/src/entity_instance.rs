@@ -35,6 +35,9 @@
 //! (T8-ID-1), links (no instance representation of a v2 link exists), and
 //! invariants (they need ZEN Expression evaluation at commit).
 
+/// ID-UNIQUE-1: one canonical key binding per declaring root, scope and world.
+pub const IDENTITY_COLLISION: &str = "core.identity.collision";
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{

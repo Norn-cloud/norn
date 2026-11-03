@@ -20,6 +20,14 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// ID-UNIQUE-1: two live objects share a normalized key in one scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no row values or identities are disclosed.
+        owner: String,
+        /// The declared key name.
+        key: String,
+    },
     /// Captured relation/delete output requires a processing profile beyond CP2.
     #[error("unsupported mapping processing profile")]
     UnsupportedMappingProfile,

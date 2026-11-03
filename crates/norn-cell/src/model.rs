@@ -382,6 +382,7 @@ impl Model {
                         (objects, links)
                     },
                 );
+        crate::identity::validate_model(&effective_objects)?;
         Ok(Self {
             schema,
             types,
@@ -566,6 +567,12 @@ impl Model {
     /// The definition of `object_type`.
     pub(crate) fn def(&self, object_type: &str) -> Result<&ObjectTypeDef, CellError> {
         Ok(&self.entry(object_type)?.def)
+    }
+
+    pub(crate) fn identity_object(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
+        self.effective_objects
+            .get(name)
+            .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
     }
 
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`

@@ -2156,6 +2156,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
             store.read().verify_value_history()?;
+            crate::identity::validate(&store.read(), None)?;
             Ok::<_, CellError>(verified)
         })?;
         store.verified.replace(head);
@@ -2561,6 +2562,7 @@ impl<E: SqlEngine> CellStore<E> {
                     let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
+                    crate::identity::validate(&self.read(), None)?;
                     self.verified.replace(head);
                     admitted_boundary.set(boundary);
                     let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
@@ -2755,6 +2757,7 @@ impl<E: SqlEngine> CellStore<E> {
                     installation.is_some(),
                 )?;
             }
+            crate::identity::validate(&writer.reader(), if installation.is_some() { None } else { Some(&written) })?;
             let (first_event_seq, ledger_head) = writer.append_events()?;
             if let Some(boundary) = new_boundary {
                 crate::quantity::establish_boundary(&self.conn, boundary)?;
