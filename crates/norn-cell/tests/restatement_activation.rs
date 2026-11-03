@@ -181,6 +181,15 @@ fn stage(
     context: &QueryContext,
     point: KnowledgeCutoff,
 ) {
+    stage_at(store, plan, context, context, point);
+}
+fn stage_at(
+    store: &mut CellStore,
+    plan: &QuestionPlan,
+    build_context: &QueryContext,
+    query_context: &QueryContext,
+    point: KnowledgeCutoff,
+) {
     let version = store
         .read()
         .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
@@ -188,18 +197,206 @@ fn stage(
     let build = store
         .begin_restatement(
             ID,
-            context.clone(),
+            build_context.clone(),
             version,
             "late analytical evidence",
             &BTreeSet::from(["week".into(), "loss".into()]),
         )
         .expect("private rebuild");
     let prepared = store
-        .prepare_restatement(build, requests(plan, context, point), |_| Ok(true))
+        .prepare_restatement(build, requests(plan, query_context, point), |_| Ok(true))
         .expect("delta correspondence");
     store
         .stage_restatement(prepared)
         .expect("complete candidate");
+}
+
+fn clock_test_correction(store: &mut CellStore, at: u64, recovered: i64) {
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: at,
+            writes: vec![put(
+                "SYN-MELT-15-1",
+                75_000,
+                recovered,
+                "2026-10-23T12:01:00Z",
+                "gold",
+            )],
+            ..CommitBatch::default()
+        })
+        .expect("source correction");
+}
+
+fn finish_resumed_clock_build(
+    path: &Path,
+    model: &Model,
+    plan: &QuestionPlan,
+    build_context: &QueryContext,
+    query_context: &QueryContext,
+    point: KnowledgeCutoff,
+) -> CellStore {
+    let mut store = open(path, model);
+    let build = store
+        .resume_restatement(ID, build_context.clone())
+        .expect("recover build after reopen");
+    let head = store.verified_head().expect("before preparation");
+    let prepared = store
+        .prepare_restatement(build, requests(plan, query_context, point), |_| Ok(true))
+        .expect("clock-ahead correspondence");
+    assert_eq!(store.verified_head().expect("read-only preparation"), head);
+    let later = build_context
+        .now_ms
+        .checked_add(2)
+        .expect("later source clock");
+    clock_test_correction(&mut store, later, 69_000);
+    store
+        .stage_restatement(prepared)
+        .expect("stage over concurrent source commits");
+    let staged = store.verified_head().expect("staged receipt").commits;
+    assert_eq!(
+        store
+            .read()
+            .receipt_at(staged)
+            .expect("receipt")
+            .expect("staged")
+            .body
+            .logical_time,
+        later
+    );
+    drop(store);
+    activate(path, model, "clock/K2");
+    open(path, model)
+}
+
+// RESTATE-HISTORY-1: query clocks can run ahead of committed receipt clocks.
+fn clock_ahead_restatement_sequence(receipt_offset: u64, query_lead: u64) {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("clock.sqlite");
+    let (mut store, plan, mut context, model) = setup(&path);
+    let receipt_time = CLOCK
+        .checked_add(receipt_offset)
+        .expect("bounded receipt clock");
+    let prior_clock = receipt_time
+        .checked_add(query_lead)
+        .expect("bounded query clock");
+    let mut query = context.clone();
+    progress(
+        &mut query,
+        prior_clock,
+        store.verified_head().expect("initial frontier").commits,
+    );
+    let initial = cutoff(&store, &query);
+    stage_at(&mut store, &plan, &context, &query, initial);
+    drop(store);
+    activate(&path, &model, "clock/K1");
+    let mut store = open(&path, &model);
+    let old = view(&store, &context);
+    assert_eq!(week(&old).totals[0].canonical(), "294");
+    let old_version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("old version");
+    clock_test_correction(&mut store, receipt_time, 72_000);
+    let frontier = store.verified_head().expect("K2 frontier").commits;
+    assert!(
+        store
+            .read()
+            .receipt_at(frontier)
+            .expect("receipt")
+            .expect("committed")
+            .body
+            .logical_time
+            < prior_clock
+    );
+    progress(&mut context, receipt_time, frontier);
+    query = context.clone();
+    progress(
+        &mut query,
+        prior_clock.checked_add(1).expect("next query clock"),
+        frontier,
+    );
+    let point = cutoff(&store, &query);
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            old_version,
+            "clock-ahead correction",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("begin");
+    // This later version is below the clock ceiling but outside the pinned frontier.
+    clock_test_correction(
+        &mut store,
+        receipt_time.checked_add(1).expect("later source clock"),
+        70_000,
+    );
+    let head = store.verified_head().expect("before refusal");
+    let before = serde_json::to_vec(&view(&store, &context)).expect("old complete view");
+    assert!(matches!(
+        store.prepare_restatement(build, requests(&plan, &query, point), |_| Err(
+            norn_cell::CellError::ComputeRefused("test.refusal")
+        )),
+        Err(norn_cell::CellError::ComputeRefused("test.refusal"))
+    ));
+    assert_eq!(store.verified_head().expect("no preparation writes"), head);
+    assert_eq!(
+        serde_json::to_vec(&view(&store, &context)).expect("unchanged view"),
+        before
+    );
+    assert!(view(&store, &context).stale);
+    drop(store);
+    let store = finish_resumed_clock_build(&path, &model, &plan, &context, &query, point);
+    assert_clock_slice(&store, &plan, &context, &query, point);
+    let old_again = store
+        .read_restatement_at_version(ID, old_version, &context)
+        .expect("retained K1");
+    assert_eq!(
+        serde_json::to_vec(&old_again).expect("old K1"),
+        serde_json::to_vec(&old).expect("original K1")
+    );
+}
+
+fn assert_clock_slice(
+    store: &CellStore,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    query: &QueryContext,
+    point: KnowledgeCutoff,
+) {
+    let current = view(store, context);
+    assert!(!current.stale);
+    assert_eq!(week(&current).totals[0].canonical(), "292.5");
+    assert_eq!(week(&current).value.expect("ratio").canonical(), "0.975");
+    assert_eq!(week(&current).members["SYN-MELT-15-1"].version, 2);
+    assert_eq!(
+        store
+            .read()
+            .version(MAIN_WORLD, TYPE, "SYN-MELT-15-1")
+            .expect("later version"),
+        4
+    );
+    assert_eq!(
+        current.outputs["week"].knowledge_time_ms,
+        point.recorded_at.as_millis()
+    );
+    assert_eq!(current.outputs["week"].result.known_as_of, point.frontier);
+    assert_same_slice(store, plan, query, point);
+}
+
+#[test]
+fn clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart() {
+    clock_ahead_restatement_sequence(800, 200);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn generated_clock_leads_preserve_pinned_restatement_and_recovery(receipt_offset in 1u64..1000, query_lead in 1u64..1000) {
+        clock_ahead_restatement_sequence(receipt_offset, query_lead);
+    }
 }
 struct Authority(bool);
 impl ActionAuthorizer for Authority {

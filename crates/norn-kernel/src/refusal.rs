@@ -609,6 +609,7 @@ impl<X> ActionRefusal<X> {
             Self::Command(rejection) => rejection.category(),
             Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
+            | Self::UncheckedWriter { .. }
             | Self::InvalidInput { .. }
             | Self::DerivationFailed { .. }
             | Self::SliceUnavailable { .. }

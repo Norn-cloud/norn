@@ -653,15 +653,19 @@
       ]
     },
     "ActionCreateLink": {
-      "description": "Add an outgoing link alongside an ordinary action's business write.",
+      "description": "Declare a typed link inside the action's checked proposal.",
       "type": "object",
       "properties": {
         "link": {
-          "description": "Link declared on the effect's business object type.",
+          "description": "Link declared on the source object type.",
           "type": "string"
         },
+        "source": {
+          "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1).",
+          "$ref": "#/$defs/ActionLinkSource"
+        },
         "targetIdField": {
-          "description": "Input field naming an existing authorized declared-slice object.",
+          "description": "Required input field naming a captured or proposed target.",
           "type": "string"
         },
         "targetType": {
@@ -839,6 +843,25 @@
         "expression"
       ]
     },
+    "ActionLinkSource": {
+      "description": "A declared input-key source for a link within one action proposal.",
+      "type": "object",
+      "properties": {
+        "idField": {
+          "description": "Required string input field containing its identity.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "Concrete type of an object written by the synchronous closure.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "idField"
+      ]
+    },
     "ActionPayload": {
       "type": "object",
       "properties": {
@@ -923,6 +946,9 @@
           "items": {
             "$ref": "#/$defs/SliceDeclaration"
           }
+        },
+        "synchronousRule": {
+          "$ref": "#/$defs/ActionRuleRef"
         },
         "title": {
           "type": "string"
@@ -1054,6 +1080,25 @@
       "required": [
         "field",
         "scale"
+      ]
+    },
+    "ActionRuleRef": {
+      "description": "Closed reference to the admitted synchronous writer of an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Exact RuleIR artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version; no latest-version resolution.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
       ]
     },
     "ActionUiEffects": {
@@ -8324,6 +8369,14 @@
             "kind": {
               "type": "string",
               "const": "decimal"
+            },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
             },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",

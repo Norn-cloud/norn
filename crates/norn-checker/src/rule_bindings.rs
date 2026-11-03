@@ -429,6 +429,40 @@ fn snapshot_property_schema_error(
     member: &JsonValue,
     property: &EffectiveProperty,
 ) -> Option<String> {
+    if let EffectiveKind::Base(
+        expected @ PropertyType::Decimal {
+            rounding, per_unit, ..
+        },
+    ) = &property.kind
+    {
+        let declared = norn_expr::schema::decimal_refinement(member, "snapshot")
+            .ok()
+            .flatten();
+        if let Some(mut declared) = declared {
+            let mut expected = expected.clone();
+            if let (
+                PropertyType::Decimal { rounding: a, .. },
+                PropertyType::Decimal { rounding: b, .. },
+            ) = (&mut expected, &mut declared)
+            {
+                *a = Some(norn_ir::Rounding::effective(*a));
+                *b = Some(norn_ir::Rounding::effective(*b));
+            }
+            if declared != expected {
+                return Some(format!(
+                    "{} must retain its exact Decimal bindings",
+                    property.id.as_str()
+                ));
+            }
+        } else if per_unit.is_some()
+            || rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse)
+        {
+            return Some(format!(
+                "{} requires nornType at its declared exact site",
+                property.id.as_str()
+            ));
+        }
+    }
     if let EffectiveKind::Base(PropertyType::JsonExt { schema }) = &property.kind {
         return snapshot_json_schema_error(member, property, schema.as_ref());
     }

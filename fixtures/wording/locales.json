@@ -1,0 +1,64 @@
+{
+  "en": {
+    "direction": "ltr",
+    "scope": "declared predicate",
+    "activation": "declared predicate",
+    "component": "declared predicate",
+    "response": "declared predicate",
+    "labels": {
+      "scope": "Scope",
+      "condition": "Condition",
+      "component": "Component",
+      "grade": "Grade",
+      "timing": "Timing",
+      "response": "Response",
+      "source": "Unverified source",
+      "preferences": "Preferences",
+      "exception": "Exception"
+    },
+    "terms": {
+      "company": "company",
+      "application": "application",
+      "cell": "cell",
+      "entity": "entity",
+      "commitments": "commitments",
+      "obligation": "must",
+      "permission": "may (no authorization grant)",
+      "prohibition": "must not",
+      "sameCommit": "same commit",
+      "everyCommittedState": "every state",
+      "grounding": "requires grounding"
+    }
+  },
+  "ar": {
+    "direction": "rtl",
+    "scope": "المحمول المعلن",
+    "activation": "المحمول المعلن",
+    "component": "المحمول المعلن",
+    "response": "المحمول المعلن",
+    "labels": {
+      "scope": "النطاق",
+      "condition": "الشرط",
+      "component": "المكوّن",
+      "grade": "الحكم",
+      "timing": "التوقيت",
+      "response": "الاستجابة",
+      "source": "مصدر بلا تحقق",
+      "preferences": "تفضيلات",
+      "exception": "استثناء"
+    },
+    "terms": {
+      "company": "شركة",
+      "application": "تطبيق",
+      "cell": "خلية",
+      "entity": "كيان",
+      "commitments": "الالتزامات",
+      "obligation": "يجب",
+      "permission": "يجوز (لا يمنح صلاحية)",
+      "prohibition": "يُحظر",
+      "sameCommit": "التثبيت نفسه",
+      "everyCommittedState": "كل حالة مثبتة",
+      "grounding": "يتطلب التأصيل"
+    }
+  }
+}
