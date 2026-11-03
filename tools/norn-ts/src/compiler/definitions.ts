@@ -619,7 +619,7 @@ class DefinitionCompiler {
             return { entityKind: this.typeName(m.get("type")!, OBJECT_TYPES), change }
           })
         : [],
-      ...(members.has("synchronousRule") ? { synchronousRule: this.decisionDependency(need("synchronousRule")) } : {}),
+      ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),
@@ -885,6 +885,12 @@ class DefinitionCompiler {
   }
 
   /** Resolve a local Norn.decision reference or read an explicit artifact/version pin. */
+  private synchronousRule(input: ts.Expression): NonNullable<A.ActionDef["synchronousRule"]> {
+    const pin = this.decisionDependency(input)
+    if (pin.kind !== undefined && pin.kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL", "synchronous writer must pin a rule", input)
+    return { artifactId: pin.artifactId, version: pin.version }
+  }
+
   private decisionDependency(input: ts.Expression): R.DecisionDependencyPin {
     const referenced = this.deref(input)
     if (ts.isCallExpression(referenced)) {
