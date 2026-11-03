@@ -50,8 +50,7 @@ impl<B: Backend> Host<B> {
             sessions: BTreeMap::new(),
         }
     }
-    /// Dispatch a request value to the existing Rust Session and backend.
-    /// `nonce` comes from platform cryptographic randomness; `now` is host time.
+    /// Dispatch using the trusted cryptographic nonce and host time.
     #[must_use]
     pub fn handle(
         &mut self,

@@ -1,9 +1,6 @@
 //! Workers adapter; the protocol and service remain native-testable Rust.
 #![cfg(target_arch = "wasm32")]
-use norn_api::{
-    mcp_host::{Host, Request},
-    scope::CellScope,
-};
+use norn_api::mcp_host::{Host, Request};
 use wasm_bindgen::prelude::*;
 #[path = "mcp-workers/backend.rs"]
 mod backend;
@@ -18,15 +15,7 @@ impl McpHost {
     /// Invalid generated catalog.
     #[wasm_bindgen(constructor)]
     pub fn new(org: String, environment: String, origin: String) -> Result<Self, JsValue> {
-        Ok(Self(Host::new(
-            CellScope {
-                org_id: org,
-                environment_id: environment,
-            },
-            origin,
-            backend::tools().map_err(|e| JsValue::from_str(&e.explanation))?,
-            backend::Checker,
-        )))
+        backend::host(org, environment, origin).map(Self).map_err(|e| JsValue::from_str(&e.explanation))
     }
     /// Preserve the JSON-RPC text across the JS boundary.
     /// # Errors

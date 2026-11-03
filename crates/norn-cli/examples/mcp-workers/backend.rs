@@ -1,11 +1,11 @@
 use norn_api::{
     mcp::{Backend, CallOutput},
     refusal::Refusal,
+    mcp_host::Host,
+    scope::CellScope,
 };
 use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
-use serde::Deserialize;
-/// Content arguments to the same checker ABI used by the human command.
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct CheckInput {
     artifacts: String,
@@ -32,8 +32,8 @@ impl Backend for Checker {
         })
     }
 }
-pub fn tools() -> Result<Vec<McpTool>, Refusal> {
-    let input_schema =
-        serde_json::to_value(schemars::schema_for!(CheckInput)).map_err(Refusal::host)?;
-    Ok(vec![serde_json::from_value(serde_json::json!({"name":"norn.check", "description":"Check artifact-set content through the shared checker; no storage access", "inputSchema":input_schema})).map_err(Refusal::host)?])
+pub fn host(org_id: String, environment_id: String, origin: String) -> Result<Host<Checker>, Refusal> {
+    let input_schema = serde_json::to_value(schemars::schema_for!(CheckInput)).map_err(Refusal::host)?;
+    let tool: McpTool = serde_json::from_value(serde_json::json!({"name":"norn.check", "description":"Check artifact-set content through the shared checker; no storage access", "inputSchema":input_schema})).map_err(Refusal::host)?;
+    Ok(Host::new(CellScope { org_id, environment_id }, origin, vec![tool], Checker))
 }
