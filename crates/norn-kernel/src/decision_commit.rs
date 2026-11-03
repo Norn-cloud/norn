@@ -1450,6 +1450,14 @@ pub type PreparedDecision = CellCommit<FactEvent, JsonObject, JsonObject>;
 /// Why a complete effective object value could not be materialized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EffectiveValuesError {
+    /// A retained property uses semantics the value checker cannot evaluate.
+    #[error("unsupported effective property `{property}`: {feature}")]
+    Unsupported {
+        /// The effective property.
+        property: String,
+        /// The unsupported retained declaration feature.
+        feature: String,
+    },
     /// A submitted value or declared default is not an exact runtime value.
     #[error(transparent)]
     Runtime(#[from] RuntimeValueError),

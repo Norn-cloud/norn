@@ -3405,7 +3405,7 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
         }],
         ..CellCommit::empty()
     }).expect_err("unsupported members cannot become validity findings");
-    assert!(matches!(refusal, CommitError::EffectiveValues { reason, .. } if reason.contains("duration")));
+    assert!(matches!(refusal, CommitError::EffectiveValues { reason: norn_kernel::EffectiveValuesError::Unsupported { .. }, .. }));
     assert!(native.load(&key).unwrap().values.is_none());
     assert!(native.ledger().is_empty());
     assert!(native.outbox().is_empty());
