@@ -5,7 +5,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { QuestionsPage } from "./questions.tsx"
@@ -30,9 +30,18 @@ function Shell() {
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <Sidebar>
-          <SidebarHeader className="px-4 py-5">
-            <span className="text-lg font-semibold tracking-tight">Norn Studio</span>
+        <Sidebar variant="inset" collapsible="icon">
+          <SidebarHeader>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton size="lg" asChild>
+                  <Link to="/questions">
+                    <span className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground">N</span>
+                    <span className="text-panel font-medium">Norn Studio</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
@@ -49,9 +58,13 @@ function Shell() {
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
+          <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-12 items-center border-b px-4"><SidebarTrigger /></header>
+          <header className="flex h-12 items-center gap-2 border-b px-4">
+            <SidebarTrigger />
+            <span className="text-meta text-muted-foreground">{SECTIONS.find(({ path }) => path === pathname)?.label}</span>
+          </header>
           <main className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></main>
         </SidebarInset>
       </SidebarProvider>
@@ -62,7 +75,7 @@ function Shell() {
 function NotYet({ label, summary }: Section) {
   return (
     <section className="space-y-2">
-      <h1 className="text-3xl font-semibold tracking-tight">{label}</h1>
+      <h1 className="text-title font-medium">{label}</h1>
       <p className="max-w-2xl text-muted-foreground">{summary}</p>
       <p className="pt-6 text-sm text-muted-foreground">This section is not available yet.</p>
     </section>
@@ -80,6 +93,12 @@ const router = createRouter({
     })),
   ]),
 })
+
+// Dark and light are peers: follow the reader's system setting.
+const dark = window.matchMedia("(prefers-color-scheme: dark)")
+const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
+applyScheme()
+dark.addEventListener("change", applyScheme)
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>

@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, bucketLabel, day, headline, period, scope } from "./lib/format.ts"
@@ -55,15 +57,15 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
           </SheetHeader>
           <div className="px-4">
             <p className="pb-3 text-sm text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
-            <Table>
+            <TableCard><Table>
               <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
                 {bucket.members.map(({ id, amounts }) => (
-                  <TableRow key={id}><TableCell className="font-mono text-xs">{id}</TableCell><TableCell className="text-right tabular-nums">{fraction(amounts)}</TableCell></TableRow>
+                  <TableRow key={id}><TableCell className="font-mono">{id}</TableCell><TableCell className="text-right tabular-nums">{fraction(amounts)}</TableCell></TableRow>
                 ))}
               </TableBody>
               <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
-            </Table>
+            </Table></TableCard>
             <p className="pt-4 text-xs text-muted-foreground">The source rows behind each record are not available yet.</p>
           </div>
         </>}
@@ -71,6 +73,8 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
     </Sheet>
   )
 }
+
+const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
 
 function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
   const [open, setOpen] = useState<Bucket>()
@@ -85,7 +89,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-xl">{headline(question)}</CardTitle>
+          <CardTitle className="text-section font-medium">{headline(question)}</CardTitle>
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
           {read.answer.origin === "recorded" && <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
@@ -93,11 +97,13 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
       </CardHeader>
       <CardContent className="space-y-8">
         {latest && (
-          <button type="button" className="block text-left" onClick={() => setOpen(latest)}>
-            <div className="text-sm text-muted-foreground">{latest.label}</div>
-            <div className="text-5xl font-semibold tracking-tight tabular-nums">{latest.value}</div>
-            <div className="text-muted-foreground tabular-nums">{fraction(latest.totals)}</div>
-          </button>
+          <StatStrip>
+            <button type="button" className="rounded-lg text-left transition-transform duration-150 ease-spring active:translate-y-px" onClick={() => setOpen(latest)}>
+              <KpiTile label={latest.label} value={latest.value} sub={fraction(latest.totals)} />
+            </button>
+            <KpiTile label="Records counted" value={latest.members.length} sub={latest.label} />
+            <KpiTile label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`} />
+          </StatStrip>
         )}
         <ChartContainer config={{ value: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
           <LineChart data={rows.map(({ label, value }) => ({ label, value: Number(value), exact: value }))} margin={{ left: 8, right: 8 }}>
@@ -113,7 +119,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
             <Line dataKey="value" stroke="var(--color-value)" strokeWidth={2} dot={false} isAnimationActive={false} />
           </LineChart>
         </ChartContainer>
-        <Table>
+        <TableCard><Table>
           <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
@@ -128,10 +134,10 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </Table></TableCard>
       </CardContent>
-      <CardFooter className="text-sm text-muted-foreground">
-        After {answer.knownAsOf} committed {answer.knownAsOf === 1 ? "change" : "changes"}, read {day(answer.nowMs)} · {sources.join(", ")}. Select any number to see the records behind it.
+      <CardFooter className="text-meta text-muted-foreground">
+        Sources: {sources.join(", ")}. Select any number to see the records behind it.
       </CardFooter>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} />
     </Card>
@@ -143,7 +149,7 @@ export function QuestionsPage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Questions</h1>
+        <h1 className="text-title font-medium">Questions</h1>
         <p className="max-w-2xl text-muted-foreground">Business questions answered exactly by the server. Every number opens to the records it was added up from.</p>
       </div>
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
