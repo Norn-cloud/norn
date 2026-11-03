@@ -149,3 +149,5 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**LAW-COMMIT-1 (severity):** Only Error-severity law violations enter refusal journaling and delivery consumption; Warning violations remain quality findings and do not enter that refusal path.

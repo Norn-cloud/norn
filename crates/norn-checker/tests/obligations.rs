@@ -1333,7 +1333,7 @@ fn layers_challenge_binds_checked_authority_and_refuses_substituted_base() {
         .is_err()
     );
     let unsupported = retained_candidate(&[pool()[3].clone()], &retained);
-    assert!(
+    assert_eq!(
         ApprovedContract::approve_retained(
             &unsupported,
             &retained,
@@ -1341,7 +1341,8 @@ fn layers_challenge_binds_checked_authority_and_refuses_substituted_base() {
             json!({"a":1}),
             json!({"p":1})
         )
-        .is_err(),
+        .err(),
+        Some(ChallengeError::NotAdmitted),
         "unresolved app refuses"
     );
 }
