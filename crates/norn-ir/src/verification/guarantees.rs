@@ -120,6 +120,8 @@ pub struct GoalGuarantee {
     pub index: u32,
     /// Actual generated obligation kind.
     pub goal_kind: String,
+    /// Whether this goal is inside the declared backend fragment.
+    pub eligible: bool,
     /// Scoped verdict or explicit Unknown reason.
     pub verdict: GuaranteeVerdict,
     /// Actual evidence level.
@@ -156,6 +158,8 @@ pub struct GuaranteesDocument {
     pub tools: Vec<EvidenceTool>,
     /// Every generated obligation, including individually unsupported goals.
     pub goals: Vec<GoalGuarantee>,
+    /// Complete generated denominator, including unsupported obligations.
+    pub total: u32,
     /// Actual eligible denominator, independent of the total goal inventory.
     pub eligible: u32,
     /// Eligible goals discharged by the checked driver.
