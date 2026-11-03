@@ -118,7 +118,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
     }
 
-    fn mapping_bundle(
+    pub(crate) fn mapping_bundle(
         &self,
         raw: &RuntimeValue,
         input: &MappingInput,
@@ -251,6 +251,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .installed_definitions(None)?
                 .ok_or_else(mismatch)?
                 .version;
+            if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
+                return Ok(captured);
+            }
             let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
             crate::mapping_conflict::capture(self, raw, &bundle)
         })

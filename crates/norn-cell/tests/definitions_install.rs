@@ -6561,6 +6561,100 @@ fn source_event_lookup_matches_canonical_inbox_text_without_rewriting_rows() {
     );
 }
 
+// OBS-EVIDENCE-1: NFC lookup equivalence cannot merge distinct source spelling bytes.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn identity_normalized_redelivery_is_one_durable_finding(prefix in "[a-z]{0,5}", first_nfc in norn_testkit::proptest::bool::ANY, deliveries in 2i64..4) {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("identity.sqlite");
+        let mut store = mapping_bundle_store(&path);
+        let input = bundle_input();
+        let mut canonical = bundle_raw("MEAS-1", "0.90");
+        canonical.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(format!("{prefix}é")));
+        let mut decomposed = canonical.clone();
+        decomposed.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from(format!("{prefix}e\u{301}")));
+        let model = store.model().clone();
+        if first_nfc {
+            let (id, _) = store.inject_mapping_bundle(&canonical, &input).expect("first accepted");
+            let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+            cell.process_mapping_bundle(&id).expect("apply first");
+            drop(cell);
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        }
+        let (guard_id, inserted) = store.inject_mapping_bundle(&decomposed, &input).expect("capture spelling");
+        norn_testkit::proptest::prop_assert!(inserted && guard_id.starts_with("mapping-identity:"));
+        let (canonical_id, _) = store.inject_mapping_bundle(&canonical, &input).expect("candidate retained");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+        norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&guard_id), Err(CellError::UnsupportedMappingProfile)));
+        if !first_nfc {
+            norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&canonical_id), Err(CellError::UnsupportedMappingProfile)));
+        }
+        drop(cell);
+        for delivery in 1..deliveries {
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+            let mut replay = decomposed.clone();
+            replay.id.0 = format!("delivery-{delivery}");
+            replay.input.as_object_mut().expect("raw").insert("extracted_at".into(), Value::from(1_793_527_260_000i64.checked_add(delivery).expect("bounded time")));
+            let (id, inserted) = store.inject_mapping_bundle(&replay, &input).expect("redelivery");
+            norn_testkit::proptest::prop_assert_eq!(&id, &guard_id);
+            norn_testkit::proptest::prop_assert!(!inserted);
+            let findings = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("durable finding");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+            norn_testkit::proptest::prop_assert_eq!(&findings[0].message, "identity normalized; possible collision");
+            norn_testkit::proptest::prop_assert!(store.read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            if first_nfc {
+                let page = store.read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
+                norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
+                norn_testkit::proptest::prop_assert!(page.records.is_empty());
+                norn_testkit::proptest::prop_assert!(store.read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first preserved").is_some());
+            }
+        }
+    }
+}
+
+#[test]
+fn identity_guard_keeps_spelling_bytes_and_refuses_an_altered_finding() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("guard.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let mut input = bundle_input();
+    input.partition = "e\u{301}".into();
+    let (id, _) = store
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "0.90"), &input)
+        .expect("guard");
+    let pending = store.read().pending_observations().expect("inbox");
+    assert_eq!(pending.len(), 1);
+    let captured: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&pending[0].observed).expect("guard envelope");
+    let proof = serde_json::to_value(&captured.input).expect("JSON proof");
+    assert_eq!(proof["identity"][1], json!([101, 204, 129]));
+    assert_eq!(proof["bundle"]["input"]["partition"], "é");
+    let mut altered = captured;
+    altered.id.0.push_str("-forged");
+    altered
+        .input
+        .as_object_mut()
+        .expect("input")
+        .get_mut("finding")
+        .expect("finding")
+        .as_object_mut()
+        .expect("object")
+        .insert("status".into(), Value::from("resolved"));
+    store
+        .inject(
+            &altered.id.0,
+            &norn_ir::runtime::encode(&altered).expect("encode"),
+        )
+        .expect("untrusted inbox evidence");
+    assert!(matches!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1"),
+        Err(CellError::MappingBundleMismatch)
+    ));
+    assert!(id.starts_with("mapping-identity:"));
+}
+
 #[test]
 fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
     let dir = tempfile::tempdir().expect("directory");
