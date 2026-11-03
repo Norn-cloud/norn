@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { QuestionsPage } from "./questions.tsx"
+import { ObjectPage, ObjectsPage } from "./objects.tsx"
 import { SourcesPage } from "./sources.tsx"
 import "./index.css"
 
@@ -41,7 +42,7 @@ function Shell() {
                 <SidebarMenu>
                   {SECTIONS.map(({ path, label, icon: Icon }) => (
                     <SidebarMenuItem key={path}>
-                      <SidebarMenuButton asChild isActive={pathname === path} tooltip={label}>
+                      <SidebarMenuButton asChild isActive={pathname === path || pathname.startsWith(`${path}/`)} tooltip={label}>
                         <Link to={path}><Icon /><span>{label}</span></Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -81,6 +82,8 @@ const router = createRouter({
       path: section.path,
       component: PAGES[section.path] ?? (() => <NotYet {...section} />),
     })),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectsPage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
   ]),
 })
 
