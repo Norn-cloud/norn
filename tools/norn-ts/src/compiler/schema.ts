@@ -254,7 +254,13 @@ export class SchemaProjection {
           const fields = this.objectLiteral(additivityNode)
           const kind = this.stringLiteral(fields.get("kind"), additivityNode, "additivity.kind")
           if (kind === "ratio" && fields.size === 3) {
-            additivity = { kind, numerator: this.stringLiteral(fields.get("numerator"), additivityNode, "additivity.numerator"), denominator: this.stringLiteral(fields.get("denominator"), additivityNode, "additivity.denominator") }
+            const operand = (field: "numerator" | "denominator"): string => {
+              const node = fields.get(field)
+              const value = this.stringLiteral(node, additivityNode, `additivity.${field}`)
+              if (value.match(/^[a-z][a-z0-9_]*$/)?.[0] !== value) throw new CompileError("NORN-FLOW-LITERAL", `additivity.${field} must be a PropertyId matching [a-z][a-z0-9_]*`, node ?? additivityNode)
+              return value
+            }
+            additivity = { kind, numerator: operand("numerator"), denominator: operand("denominator") }
           } else if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
             additivity = kind === "undeclared" ? undefined : { kind }
           } else {

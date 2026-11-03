@@ -87,3 +87,19 @@ test("METRIC-ADDITIVITY-1 decimal authoring retains explicit classes and refuses
     expect(compileModule(text, {orgId:"org_demo",environmentId:"dev"}).ok).toBe(false)
   }
 })
+
+test("METRIC-ADDITIVITY-1 ratio operands must be complete PropertyId values", () => {
+  for (const field of ["numerator", "denominator"]) {
+    for (const value of ["bad.path", "Uppercase", "", "input\n"]) {
+      const operands = { numerator: "recovered", denominator: "input", [field]: value }
+      const declaration = JSON.stringify({ kind: "ratio", ...operands })
+      const text = source("6").replace(/Norn\.rate\(6,.*?\) /, `Norn.decimal(6, {additivity:${declaration}}) `)
+      const result = compileModule(text, { orgId: "org_demo", environmentId: "dev" })
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error("invalid ratio operand emitted an artifact")
+      expect(result.diagnostics).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "NORN-FLOW-LITERAL", message: expect.stringContaining("PropertyId") }),
+      ]))
+    }
+  }
+})

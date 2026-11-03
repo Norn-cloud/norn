@@ -105,6 +105,12 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
 
+## Aggregation changes during model migration
+
+**METRIC-ADDITIVITY-MIGRATION:** additivity changes aggregation semantics and the full plan/model contract, not which stored values are admitted. An additivity-only change remains a governed declared model change in `additivityChanges`, with previous/candidate classes, and never triggers a live-value narrowing scan. Actual kind, scale or constraint narrowing still scans, including when additivity changes in the same update. Object, link and nested-record property changes retain their affected identities; ledger summaries bound rows and identifiers.
+
+Named scenarios: `additivity_only_change_skips_live_scan_over_4096_rows` (Integer and Decimal), `additivity_change_with_value_narrowing_still_scans_live_rows`, `additivity_change_is_declared_separately_from_value_narrowing`, `additivity_changes_preserve_values_but_change_the_plan_contract`. Ratio authoring operands must match the complete `PropertyId` grammar before emission; `ratio operands must be complete PropertyId values` covers malformed operands.
+
 ## Declared candidate space
 
 `METRIC-DECLARED-SPACE-1`: enumerate explicitly additive numeric properties with direct time properties, direct/single-link scalar dimensions and existing calendar grains. Units do not imply additivity; undeclared, ratio, semi-additive and non-additive properties produce no sum candidate. Ordering is deterministic, candidates stay uncertified, native property contracts remain unchanged, and selection passes through existing compute admission. Unsupported selections retain its refusals. Law-derived candidates are a separate refinement.
