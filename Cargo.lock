@@ -1562,7 +1562,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "norn-checker",
- "norn-expr",
  "norn-ir",
  "norn-kernel",
  "norn-projections",

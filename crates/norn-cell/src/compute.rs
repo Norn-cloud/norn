@@ -134,19 +134,16 @@ pub struct QueryResult {
 }
 
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
-/// ASOF-KNOWLEDGE-1: compare exact instants without truncating sub-millisecond bounds.
-fn asof_matches(at: &UtcTimestamp, millis: u64) -> bool {
-    let Ok(seconds) = i64::try_from(millis.div_euclid(1000)) else {
-        return false;
-    };
-    let Some(nanos) = millis
-        .rem_euclid(1000)
-        .checked_mul(1_000_000)
-        .and_then(|n| u32::try_from(n).ok())
-    else {
-        return false;
-    };
-    norn_expr::temporal::timestamp_ordering_key(at.as_str()) == Ok((seconds, nanos))
+/// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
+/// instant; sub-millisecond declarations never match a millisecond clock.
+fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
+    plan.as_of_instant()
+        .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
+}
+fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
+    let seconds = i64::try_from(millis.div_euclid(1000)).ok()?;
+    let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
+    Some((seconds, u32::try_from(nanos).ok()?))
 }
 fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
@@ -202,9 +199,9 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
-            if let FreshnessPolicy::AsOf { at } = &plan.question().freshness {
+            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-                if !asof_matches(at, point.recorded_at.as_millis()) {
+                if !asof_matches(plan, point.recorded_at.as_millis()) {
                     return Err(refused("core.compute.stale_input"));
                 }
             }
@@ -503,12 +500,12 @@ mod tests {
     use super::*;
     proptest::proptest! {
         #[test]
-        fn asof_instants_match_exact_millisecond_coordinates(offset in 0u32..86_400_000) {
+        fn asof_millisecond_coordinates_are_exact(offset in 0u32..86_400_000) {
             let millis=1_792_972_800_000u64.checked_add(u64::from(offset)).expect("bounded timestamp");
-            let stamp=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp").to_rfc3339_opts(chrono::SecondsFormat::Millis,true);
-            let at=UtcTimestamp(stamp);
-            proptest::prop_assert!(asof_matches(&at,millis));
-            proptest::prop_assert!(!asof_matches(&at,millis.checked_add(1).expect("bounded successor")));
+            let at=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp");
+            let expected=(at.timestamp(),at.timestamp_subsec_nanos());
+            proptest::prop_assert_eq!(millis_coordinates(millis),Some(expected));
+            proptest::prop_assert_ne!(millis_coordinates(millis.checked_add(1).expect("bounded successor")),Some(expected));
         }
     }
 

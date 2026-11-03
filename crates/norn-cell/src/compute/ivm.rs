@@ -108,7 +108,7 @@ impl IncrementalQuestion {
     }
 
     /// RESTATE-HISTORY-1: retract/replace only receipt-changed members at the next slice.
-    /// ASOF-KNOWLEDGE-1: maintenance retains the declared AsOf instant.
+    /// ASOF-KNOWLEDGE-1: maintenance retains the declared `AsOf` instant.
     /// This maintains a private cache; governed activation and durable outputs are separate.
     /// # Errors
     /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
@@ -122,8 +122,10 @@ impl IncrementalQuestion {
         let prior = self
             .knowledge
             .ok_or_else(|| refused("core.world.invalid_restatement"))?;
-        if let norn_ir::metric::FreshnessPolicy::AsOf { at } = &self.plan.question().freshness
-            && !super::asof_matches(at, cutoff.recorded_at.as_millis())
+        if matches!(
+            self.plan.question().freshness,
+            norn_ir::metric::FreshnessPolicy::AsOf { .. }
+        ) && !super::asof_matches(&self.plan, cutoff.recorded_at.as_millis())
         {
             return Err(refused("core.compute.stale_input"));
         }
