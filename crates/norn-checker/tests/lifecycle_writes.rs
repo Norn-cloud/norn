@@ -889,7 +889,7 @@ fn closed_patch_still_refuses_an_undeclared_member_or_invalid_stored_value() {
 #[test]
 fn uncertain_patch_keys_keep_the_full_schema_refusal() {
     let deep = format!("{{eligible:true,nested:{}0{}}}", "{nested:".repeat(34), "}".repeat(34));
-    for patch in [&deep, "event", "(event.patch)", "{eligible:true, [event.name]:true}", "{eligible:true, ...event}", "{eligible:true, eligible:false}", "{eligible:true"] {
+    for patch in [deep.as_str(), "event", "(event.patch)", "{eligible:true, [event.name]:true}", "{eligible:true, ...event}", "{eligible:true, eligible:false}", "{eligible:true"] {
         let expression = format!("[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]");
         let findings = set_diagnostics(heterogeneous_patch_example(&expression));
         for property in ["account_code", "output_gross"] {
