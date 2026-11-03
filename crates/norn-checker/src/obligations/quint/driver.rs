@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn counterexample_reconstruction_uses_declared_exact_units_and_empty_state() {
         let bounds = json!({"action":"test.writer","identity":"one","interpretation":{
-            "v0":{"property":"mass","type":{"scale":2,"unit":{"kind":"ucum","code":"g"}}}
+            "v0":{"property":"mass","type":{"scale":2,"unit":{"system":"ucum","code":"g"}}}
         }});
         let trace = json!([
             {"state":{"present":false,"v0":0}},
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(result["states"][0], json!({"exists":false,"values":{}}));
         assert_eq!(
             result["states"][1]["values"]["mass"],
-            json!({"coefficient":"125","scale":2,"unit":{"kind":"ucum","code":"g"}})
+            json!({"coefficient":"125","scale":2,"unit":{"system":"ucum","code":"g"}})
         );
         for bad in [json!(1.25), json!("125"), json!(null)] {
             assert!(
