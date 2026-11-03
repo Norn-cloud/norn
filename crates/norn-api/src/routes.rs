@@ -84,7 +84,7 @@ pub fn get_defs<E: SqlEngine>(
 
 fn defs_response(
     installed: InstalledDefinitionSet,
-    scope: &crate::scope::CellScope,
+    scope: &CellScope,
 ) -> Result<DefsResponse, Refusal> {
     verify_retained(&installed, scope)?;
     let receipt = installed
