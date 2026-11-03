@@ -84,6 +84,8 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+mod unit_admission;
+mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod law_enrollment;
 pub mod naming_series;
@@ -224,9 +226,7 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let legacy = crate::envelope::validate_artifact_unchecked(&normalized)
-        .err()
-        .unwrap_or_default();
+    let legacy = crate::envelope::collect_artifact_diagnostics(&normalized);
     // Resolve dotted paths against the envelope's wire JSON so keys that
     // contain `.` stay one pointer segment.
     let mut checked = match serde_json::to_value(artifact) {

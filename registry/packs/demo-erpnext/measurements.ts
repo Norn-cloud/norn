@@ -3,6 +3,7 @@ import { Norn } from "@norn/authoring"
 
 export const Measurement = Norn.interfaceType({
   name: "demo.erpnext.Measurement", title: "Synthetic ERPNext measurement evidence", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),
     role: Schema.Literals(["input", "output", "loss"]),
@@ -13,6 +14,7 @@ export const Measurement = Norn.interfaceType({
 
 export const StockEntryMeasurement = Norn.type({
   name: "demo.erpnext.StockEntryMeasurement", title: "Stock Entry measurement row", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   implements: [Measurement],
   properties: Schema.Struct({
     id: Schema.String, metal: Schema.Literals(["gold", "silver"]),

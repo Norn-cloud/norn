@@ -115,14 +115,32 @@ impl AdmittedDecision {
         let root_graph = decision_graph(root, RuleContractV2::Decide)?;
         let loader = MemoryLoader::default();
         let mut loaded_keys = BTreeSet::new();
+        let mut contracts = crate::step::StepContracts::default();
+        contracts.bind_expressions(root)?;
         // Deepest depth each key has been expanded at: a key is re-expanded
         // only on a deeper path (which may exceed the bound), so the walk is
         // at most MAX_SUB_DECISION_DEPTH expansions per key.
         let mut expanded: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut checked = BTreeMap::new();
         let mut stack = vec![(root.rule_id.as_str(), root_graph, 0_usize)];
         while let Some((rule_id, graph, depth)) = stack.pop() {
-            for key in sub_decision_keys(graph) {
+            for node in &graph.nodes {
+                let JdmNode::DecisionNode { content, .. } = node else {
+                    continue;
+                };
+                let key = content.key.as_str();
                 let child_depth = depth.saturating_add(1);
+                let sub = sub_decisions.get(key).ok_or_else(|| {
+                    AdmissionError::UnresolvedSubDecision {
+                        rule_id: rule_id.to_owned(),
+                        key: key.to_owned(),
+                    }
+                })?;
+                let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
+                if let Some(fold) = &content.ordered_fold {
+                    refuse_nested_folds(key, sub, sub_decisions, 0, &mut checked)?;
+                    contracts.insert_fold(key, sub, fold)?;
+                }
                 if expanded.get(key).is_some_and(|seen| *seen >= child_depth) {
                     continue;
                 }
@@ -133,22 +151,17 @@ impl AdmittedDecision {
                         size: loaded_keys.len(),
                     });
                 }
-                let sub = sub_decisions.get(key).ok_or_else(|| {
-                    AdmissionError::UnresolvedSubDecision {
-                        rule_id: rule_id.to_owned(),
-                        key: key.to_owned(),
-                    }
-                })?;
-                let sub_graph = decision_graph(sub, RuleContractV2::SubDecision)?;
                 if loaded_keys.insert(key) {
                     closed_record(sub, "inputSchema")?;
                     closed_record(sub, "outputSchema")?;
+
                     if loaded_keys.len() > MAX_SUB_DECISION_CLOSURE {
                         return Err(AdmissionError::SubDecisionBound {
                             depth: child_depth,
                             size: loaded_keys.len(),
                         });
                     }
+                    contracts.bind_expressions(sub)?;
                     loader.add(key, graph_content(&sub.rule_id, sub_graph)?);
                 }
                 stack.push((sub.rule_id.as_str(), sub_graph, child_depth));
@@ -163,14 +176,25 @@ impl AdmittedDecision {
             });
         }
 
+        if !sub_decisions.is_empty() && !contracts.expressions.is_empty() {
+            return Err(invalid_schema(
+                &root.rule_id,
+                "nornType",
+                "exact schema profiles currently require a direct graph without sub-decision closures",
+            ));
+        }
         let content = graph_content(&root.rule_id, root_graph)?;
+        let loader = Arc::new(loader);
+        let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
         let (slice_schema, event_schema) = decide_input(root)?;
         let output_schema = decide_output(root)?;
         let defaults = defaults(root, &output_schema, exact_defaults)?;
         Ok(Self {
             rule_id: root.rule_id.clone(),
             binding,
-            decision: Decision::from(Arc::new(content)).with_loader(Arc::new(loader)),
+            decision: Decision::from(Arc::new(content))
+                .with_loader(loader)
+                .with_contracts(policies),
             slice_schema: Arc::new(slice_schema),
             event_schema: Arc::new(event_schema),
             output_schema,
@@ -403,13 +427,9 @@ fn validate_graph_expressions(rule_id: &str, graph: &JdmGraph) -> Result<(), Adm
                     )?;
                 }
             }
-            JdmNode::DecisionNode { content, .. } => validate_optional_source(
-                rule_id,
-                &format!("{base}.inputField"),
-                content.input_field.as_deref(),
-                false,
-                &limits,
-            )?,
+            JdmNode::DecisionNode { content, .. } => {
+                validate_call_sources(rule_id, content, &base, &limits)?;
+            }
             JdmNode::InputNode { .. }
             | JdmNode::OutputNode { .. }
             | JdmNode::FunctionNode { .. }
@@ -492,16 +512,22 @@ fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, Admissio
             content: switch_content(content),
         },
         JdmNode::DecisionNode { content, .. } => {
+            if content.key.starts_with('\0')
+                || content.execution_mode == Some(JdmExecutionMode::Loop)
+                    && content.ordered_fold.is_some()
+            {
+                return Err(invalid_schema(
+                    rule_id,
+                    "decisionNode",
+                    "reserved key or fold loop mode",
+                ));
+            }
+            let mut mapped = sub_decision_content(content);
             if content.ordered_fold.is_some() {
-                return Err(AdmissionError::NodeNotAdmitted {
-                    rule_id: rule_id.to_owned(),
-                    node_id: node.id().to_owned(),
-                    node_type: "orderedFold",
-                });
+                mapped.key = Arc::from(crate::fold::fold_key(rule_id, node.id()));
+                mapped.transform_attributes.input_field = None;
             }
-            DecisionNodeKind::DecisionNode {
-                content: sub_decision_content(content),
-            }
+            DecisionNodeKind::DecisionNode { content: mapped }
         }
         JdmNode::FunctionNode { .. } | JdmNode::CustomNode { .. } => {
             return Err(AdmissionError::NodeNotAdmitted {
@@ -755,6 +781,7 @@ fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
             | Schema::String(_)
             | Schema::Integer
             | Schema::Number
+            | Schema::Decimal(_)
             | Schema::Boolean
             | Schema::Null
             | Schema::Json
@@ -849,4 +876,141 @@ fn same_up_to_f64(decoded: &JsonValue, source: &RuntimeValue) -> bool {
         }
         _ => false,
     }
+}
+
+fn refuse_nested_folds(
+    key: &str,
+    rule: &RuleRoot,
+    closure: &BTreeMap<String, RuleRoot>,
+    depth: usize,
+    checked: &mut BTreeMap<String, usize>,
+) -> Result<(), AdmissionError> {
+    if depth > MAX_SUB_DECISION_DEPTH {
+        return Err(AdmissionError::SubDecisionBound {
+            depth,
+            size: closure.len(),
+        });
+    }
+    if checked.get(key).is_some_and(|seen| *seen >= depth) {
+        return Ok(());
+    }
+    checked.insert(key.to_owned(), depth);
+    if checked.len() > MAX_SUB_DECISION_CLOSURE {
+        return Err(AdmissionError::SubDecisionBound {
+            depth,
+            size: checked.len(),
+        });
+    }
+    let graph = decision_graph(rule, RuleContractV2::SubDecision)?;
+    if !norn_expr::schema::fold_step_graph_supported(graph) {
+        return Err(invalid_schema(
+            &rule.rule_id,
+            "orderedFold",
+            "unsupported nested step graph",
+        ));
+    }
+    for key in sub_decision_keys(graph) {
+        if let Some(child) = closure.get(key) {
+            refuse_nested_folds(key, child, closure, depth.saturating_add(1), checked)?;
+        }
+    }
+    Ok(())
+}
+
+fn fold_policies(
+    root: &RuleRoot,
+    sub_decisions: &BTreeMap<String, RuleRoot>,
+    loader: &Arc<MemoryLoader>,
+    contracts: crate::step::StepContracts,
+) -> Result<Arc<crate::step::StepContracts>, AdmissionError> {
+    let contracts = Arc::new(contracts);
+    let mut folds = BTreeMap::new();
+    for owner in std::iter::once(root).chain(sub_decisions.values()) {
+        let Some(graph) = &owner.graph else {
+            continue;
+        };
+        for node in &graph.nodes {
+            if let JdmNode::DecisionNode { content, .. } = node
+                && let Some(fold) = &content.ordered_fold
+            {
+                let helper = sub_decisions
+                    .get(&content.key)
+                    .ok_or_else(|| invalid_schema(&owner.rule_id, "key", "missing helper"))?;
+                let helper_graph = decision_graph(helper, RuleContractV2::SubDecision)?;
+                let (step_input, state_schema) =
+                    contracts.schemas.get(&content.key).ok_or_else(|| {
+                        invalid_schema(&owner.rule_id, "orderedFold", "missing step contract")
+                    })?;
+                let item_schema = step_input
+                    .properties()
+                    .and_then(|fields| fields.get("item"))
+                    .ok_or_else(|| {
+                        invalid_schema(&owner.rule_id, "orderedFold", "missing item contract")
+                    })?;
+                let plan = crate::fold::FoldPlan {
+                    item_schema: item_schema.clone(),
+                    state_schema: state_schema.clone(),
+                    declaration: fold.clone(),
+                    key: content.key.clone(),
+                    selector: content
+                        .input_field
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .ok_or_else(|| {
+                            invalid_schema(
+                                &owner.rule_id,
+                                "inputField",
+                                "fold requires a collection selector",
+                            )
+                        })?,
+                    helper: Decision::from(Arc::new(graph_content(&helper.rule_id, helper_graph)?))
+                        .with_loader(Arc::<MemoryLoader>::clone(loader))
+                        .with_contracts(Arc::<crate::step::StepContracts>::clone(&contracts)),
+                };
+                crate::step::validate_fold(&plan.declaration).map_err(|error| {
+                    invalid_schema(&owner.rule_id, "orderedFold", error.to_string())
+                })?;
+                if folds
+                    .insert(crate::fold::fold_key(&owner.rule_id, node.id()), plan)
+                    .is_some()
+                {
+                    return Err(invalid_schema(
+                        &owner.rule_id,
+                        "orderedFold",
+                        "ambiguous fold owner/node identity",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(Arc::new(crate::step::StepContracts {
+        schemas: contracts.schemas.clone(),
+        expressions: contracts.expressions.clone(),
+        folds,
+    }))
+}
+
+fn validate_call_sources(
+    rule_id: &str,
+    content: &JdmSubDecisionContent,
+    base: &str,
+    limits: &ResourceLimitProfile,
+) -> Result<(), AdmissionError> {
+    validate_optional_source(
+        rule_id,
+        &format!("{base}.inputField"),
+        content.input_field.as_deref(),
+        false,
+        limits,
+    )?;
+    if let Some(fold) = &content.ordered_fold {
+        validate_source(
+            rule_id,
+            &format!("{base}.orderedFold.initial"),
+            fold.initial.as_str(),
+            false,
+            limits,
+        )?;
+    }
+    Ok(())
 }

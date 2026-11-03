@@ -1796,6 +1796,9 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
+    install
+        .candidate_model
+        .check_governing_laws(&install.input.canonical_set)?;
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
@@ -2244,6 +2247,7 @@ impl<E: SqlEngine> CellStore<E> {
                     installation.readmission.as_ref(),
                 )?;
                 let installed_model = Model::from_snapshot(&installation.model)?;
+                installed_model.check_governing_laws(&version.canonical_set)?;
                 let entries =
                     reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
                 if installation.installed != *version
@@ -2642,10 +2646,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let effective_batch = &reconciled;
             let boundary = crate::quantity::admission_boundary(&self.conn, self.quantity_boundary.get())?;
-            let (quantity_batch, new_boundary) = crate::quantity::admit_events(
+            let (mut quantity_batch, new_boundary) = crate::quantity::admit_events(
                 &self.conn, &self.model, effective_batch, boundary, prior_receipt.as_ref(),
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
+            let quality_reader = StoreReader::new(&self.conn, &self.model);
+            let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
+            crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
             let request_hash = hash_json(effective_batch)?;
             if let Some(key) = &batch.idempotency_key

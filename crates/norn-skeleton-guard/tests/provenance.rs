@@ -502,6 +502,7 @@ fn policy_fixture() -> Fixture {
         "scripts/ci/validate-runner-policy.py",
         "scripts/proof_enrollment.py",
         "verification/coverage-v1/validate.py",
+        "verification/coverage-v1/negative_canaries.py",
         "scripts/coverage_manifest.py",
         "scripts/verify-promoted-subsystems.sh",
         "scripts/check-proof-holes.py",
@@ -566,7 +567,11 @@ fn index_fixture(fixture: &Fixture) {
 fn trusted_policy_rejects_changed_workflows_and_gate_contracts_even_with_updated_hashes() {
     let base = policy_fixture();
     assert!(norn_skeleton_guard::ci::run(base.root(), base.root()).is_empty());
-    for path in [".github/workflows/core.yml", "scripts/ci/core.sh"] {
+    for path in [
+        ".github/workflows/core.yml",
+        "scripts/ci/core.sh",
+        "verification/coverage-v1/negative_canaries.py",
+    ] {
         let mut candidate = policy_fixture();
         let record = candidate
             .records
