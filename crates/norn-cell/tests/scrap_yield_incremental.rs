@@ -254,27 +254,27 @@ fn data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids() {
     let before = run.answers();
     assert_eq!(
         before[0].rows[WEEK].totals,
-        vec![Decimal::parse("210.7").expect("sum"), Decimal::from(215)]
+        vec![Decimal::parse("210.7").expect("sum"), Decimal::from(215i64)]
     );
     assert_eq!(before[0].rows[WEEK].members.len(), 3);
     run.apply(vec![fourth], "G4", CLOCK.checked_add(1).expect("clock"));
     let k1 = run.answers();
     assert_eq!(
         k1[0].rows[WEEK].totals,
-        vec![Decimal::from(294), Decimal::from(300)]
+        vec![Decimal::from(294i64), Decimal::from(300i64)]
     );
     assert_eq!(
         k1[0].rows[WEEK].value,
         Some(Decimal::parse("0.98").expect("ratio"))
     );
-    assert_eq!(k1[1].rows[WEEK].totals, vec![Decimal::from(6)]);
+    assert_eq!(k1[1].rows[WEEK].totals, vec![Decimal::from(6i64)]);
     assert_eq!(
         signed_delta(&before[0].rows[WEEK].totals[0], &k1[0].rows[WEEK].totals[0]),
         Decimal::parse("83.3").expect("G4 recovered")
     );
     assert_eq!(
         signed_delta(&before[0].rows[WEEK].totals[1], &k1[0].rows[WEEK].totals[1]),
-        Decimal::from(85)
+        Decimal::from(85i64)
     );
     let k1_context = run.context.clone();
     let k1_point = point(&run.store, &run.context);
@@ -298,7 +298,7 @@ fn data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids() {
     let k2 = run.answers();
     assert_eq!(
         k2[0].rows[WEEK].totals,
-        vec![Decimal::parse("292.5").expect("sum"), Decimal::from(300)]
+        vec![Decimal::parse("292.5").expect("sum"), Decimal::from(300i64)]
     );
     assert_eq!(
         k2[0].rows[WEEK].value,
