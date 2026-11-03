@@ -224,6 +224,260 @@ fn observed_reappearance_retains_identity_and_advances_its_version() {
     assert_eq!(cell.store().read().dump().expect("stable reopen"), after);
 }
 
+fn identity_history_model() -> Model {
+    let mut definitions = definitions();
+    let mut event = definitions[0].clone();
+    event.name = ObjectTypeName("identity.Event".into());
+    event.role = Some(norn_ir::ConceptRole::Happening);
+    event.properties.clear();
+    event.identity.clear();
+    event.links = vec![norn_ir::Link {
+        id: norn_ir::LinkId("subject".into()),
+        description: None,
+        target: definitions[0].name.clone(),
+        cardinality: norn_ir::LinkCardinality {
+            to: norn_ir::Multiplicity::One,
+            from: norn_ir::Multiplicity::Many,
+            required: false,
+        },
+        acyclic: false,
+        inverse: None,
+        properties: Vec::new(),
+    }];
+    definitions.push(event);
+    Model::from_definitions(&definitions, &[]).expect("history model")
+}
+
+fn identity_history_cell(path: &std::path::Path) -> IdentityCell {
+    IdentityCell::open(
+        path,
+        identity_history_model(),
+        StoreOptions::default(),
+        "org_a",
+        |_| JsonObject::new(),
+    )
+    .expect("history cell")
+}
+
+fn post_identity_reference(cell: &mut IdentityCell) -> norn_cell::export::ExportRecord {
+    use norn_kernel::{FactExpectation, LinkKey, LinkMutation, LinkWrite};
+    let target = FactKey::new("identity.Child", "stable");
+    let event = FactKey::new("identity.Event", "posted");
+    let mut commit = CellCommit::empty();
+    commit.reads.push(FactExpectation {
+        expected: cell.load(&target).expect("target version").version,
+        key: target.clone(),
+    });
+    commit.writes.push(FactWrite {
+        key: event.clone(),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: JsonObject::new(),
+        },
+    });
+    commit.links.push(LinkWrite {
+        key: LinkKey::new(event, "subject", target),
+        expected: FactVersion::ABSENT,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    });
+    cell.commit(commit).expect("post typed reference");
+    cell.store()
+        .export_record(2)
+        .expect("export")
+        .expect("posted record")
+}
+
+fn assert_original_identity_reference(store: &CellStore, posted: &norn_cell::export::ExportRecord) {
+    use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
+    assert_eq!(
+        posted.bindings.get("scope").map(String::as_str),
+        Some("org_a")
+    );
+    assert_eq!(posted.batch.scope, "org_a");
+    assert_eq!(posted.batch.world, "main");
+    assert_eq!(posted.receipt.body.linked.len(), 1);
+    let reference = &posted.receipt.body.linked[0];
+    assert_eq!(
+        (
+            reference.object_type.as_str(),
+            reference.source.as_str(),
+            reference.link.as_str()
+        ),
+        ("identity.Event", "posted", "subject")
+    );
+    assert_eq!(
+        (reference.target_type.as_str(), reference.target.as_str()),
+        ("identity.Child", "stable")
+    );
+    let pin = posted
+        .batch
+        .marking_reads
+        .iter()
+        .find(|read| read.key == FactKey::new("identity.Child", "stable"))
+        .expect("retained target version");
+    assert_eq!(pin.expected, FactVersion(1));
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let mut budget = DecodeBudget::new(&limits);
+    let proof = store
+        .read()
+        .fact_version_evidence_with_budget(
+            "main",
+            &reference.target_type,
+            &reference.target,
+            pin.expected.0,
+            &mut budget,
+        )
+        .expect("authenticated historical target")
+        .expect("proof fits");
+    let snapshot = proof.snapshot();
+    assert_eq!(
+        (
+            snapshot.root_type.as_str(),
+            snapshot.object_type.as_str(),
+            snapshot.key.as_str(),
+            snapshot.scope.as_str(),
+            snapshot.world.as_str()
+        ),
+        ("identity.Root", "identity.Child", "stable", "org_a", "main")
+    );
+    assert_eq!(snapshot.version, 1);
+    assert_eq!(snapshot.model_hash, posted.model_hash);
+    assert_eq!(
+        snapshot
+            .values
+            .as_ref()
+            .expect("original live values")
+            .get("code"),
+        Some(&RuntimeValue::from("original"))
+    );
+    assert_eq!(
+        store
+            .read()
+            .receipt_at(2)
+            .expect("receipt")
+            .expect("posted"),
+        posted.receipt
+    );
+}
+
+/// ID-RENAME / ID-REF-1: recorded typed references retain A, even when B reuses A's old business key.
+#[test]
+fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("history.sqlite");
+    let mut cell = identity_history_cell(&path);
+    cell.commit(identity_proposal(&cell, Some("original")))
+        .expect("create A");
+    let posted = post_identity_reference(&mut cell);
+    let posted_hash = posted.hash().expect("posted hash");
+    let mut rename = identity_proposal(&cell, Some("renamed"));
+    rename.writes.push(FactWrite {
+        key: FactKey::new("identity.Sibling", "replacement"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: BTreeMap::from([("code".into(), RuntimeValue::from("original"))]),
+        },
+    });
+    cell.commit(rename)
+        .expect("rename A and release its business key to B");
+    let key = FactKey::new("identity.Child", "stable");
+    assert_eq!(
+        cell.load(&key)
+            .expect("renamed A")
+            .values
+            .expect("live")
+            .get("code"),
+        Some(&RuntimeValue::from("renamed"))
+    );
+    cell.commit(identity_proposal(&cell, None))
+        .expect("delete A");
+    let deleted = cell.load(&key).expect("deleted identity");
+    assert!(!deleted.exists());
+    for _ in 0..2 {
+        assert_original_identity_reference(cell.store(), &posted);
+        let before = cell.store().read().dump().expect("before refusal");
+        let refusal = cell
+            .commit(identity_proposal(&cell, Some("new identity spelling")))
+            .expect_err("authored reuse");
+        assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
+        assert_eq!(cell.store().read().dump().expect("atomic refusal"), before);
+        drop(cell);
+        let foreign = IdentityCell::open(
+            &path,
+            identity_history_model(),
+            StoreOptions::default(),
+            "org_b",
+            |_| JsonObject::new(),
+        );
+        assert!(matches!(foreign, Err(CellError::BindingMismatch { .. })));
+        cell = identity_history_cell(&path);
+        assert_eq!(
+            cell.store().read().dump().expect("unchanged scope binding"),
+            before
+        );
+    }
+    assert!(matches!(
+        cell.store()
+            .read()
+            .object_at_version("main", "identity.Sibling", "stable", 1),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
+    assert!(matches!(
+        cell.store()
+            .read()
+            .object_at_version("foreign", "identity.Child", "stable", 1),
+        Err(CellError::HistoricalValueUnproven(_))
+    ));
+    let (commit, authority) = identity_observation(&cell, "history-reappearance").into_parts();
+    let before = cell.store().read().dump().expect("before unsealed write");
+    let refusal = cell
+        .commit(commit.clone())
+        .expect_err("unsealed reappearance");
+    assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
+    assert_eq!(
+        cell.store().read().dump().expect("unsealed refusal"),
+        before
+    );
+    cell.commit_observed(commit, authority)
+        .expect("sealed reappearance");
+    let live = cell.load(&key).expect("same stable identity");
+    assert!(live.exists());
+    assert!(live.version > deleted.version);
+    assert_original_identity_reference(cell.store(), &posted);
+    assert_eq!(posted.hash().expect("unchanged reference"), posted_hash);
+    assert_replayed_identity_reference(&cell, &posted);
+}
+
+fn assert_replayed_identity_reference(
+    cell: &IdentityCell,
+    posted: &norn_cell::export::ExportRecord,
+) {
+    let head = cell.store().read().verify_ledger().expect("ledger");
+    let records = (1..=head.commits)
+        .map(|seq| {
+            cell.store()
+                .export_record(seq)
+                .expect("export")
+                .expect("record")
+        })
+        .collect::<Vec<_>>();
+    let final_hash = records
+        .last()
+        .expect("retained prefix")
+        .hash()
+        .expect("head");
+    let engine = norn_cell::engine::NativeEngine::open_in_memory().expect("engine");
+    let rebuilt =
+        CellStore::rebuild_export_history(engine, &records, &final_hash).expect("verified rebuild");
+    assert_eq!(
+        rebuilt.read().dump().expect("replay"),
+        cell.store().read().dump().expect("live")
+    );
+    assert_original_identity_reference(&rebuilt, posted);
+}
+
 proptest! {
     #[test]
     fn observed_version_successor_lifts_retained_deletion(version in 1_u64..u64::MAX) {
