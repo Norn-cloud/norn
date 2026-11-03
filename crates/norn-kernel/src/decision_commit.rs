@@ -44,6 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
 use norn_checker::property_codec::{self, PropertyCodecError};
 use norn_checker::{
@@ -69,6 +70,9 @@ use crate::effect::{
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
+
+/// Stable platform rule for an exact retained property-domain declaration.
+pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 
 /// The object types a cell knows, for resolving effective lifecycles and
 /// property defaults along `extends`.
@@ -295,8 +299,8 @@ impl<'a> TypeCatalog<'a> {
     /// Build the complete stored values for one effective link instance:
     /// preserve submitted values and fill each effective stored property with
     /// its declared default or `null`. Computed properties are omitted.
-    /// Temporal values are checked against their declared type and valid
-    /// timestamps are canonicalized to UTC.
+    /// VAL-DECIMAL-SCALE-1: Decimal and Record domains, including defaults,
+    /// are checked before a link can commit. Valid timestamps normalize to UTC.
     ///
     /// An unknown source type or link returns `submitted` unchanged; callers
     /// that admit link facts must fail closed when the shared shape is absent.
@@ -306,7 +310,8 @@ impl<'a> TypeCatalog<'a> {
     /// Returns [`EffectiveValuesError::Runtime`] when a submitted typed value
     /// or effective default cannot be represented as an exact runtime value,
     /// and [`EffectiveValuesError::ValueType`] when its scalar encoding or
-    /// temporal form does not match the effective property.
+    /// domain does not match the effective property. Unsupported Record members
+    /// return [`EffectiveValuesError::Unsupported`].
     pub fn effective_link_values(
         &self,
         source: &ObjectTypeName,
@@ -342,13 +347,28 @@ impl<'a> TypeCatalog<'a> {
                 .map_err(|error| property_codec_error(name, error))?;
             let value = property_codec::decode(kind, &encoded)
                 .map_err(|error| property_codec_error(name, error))?;
-            if let Some(expected) = temporal_property_expected(property) {
-                property.check_runtime_value(&value).map_err(|_error| {
-                    EffectiveValuesError::ValueType {
-                        property: name.to_owned(),
-                        expected,
-                    }
-                })?;
+            let expected = match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("valid decimal"),
+                EffectiveKind::Base(PropertyType::Record { .. }) => Some("valid record"),
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    temporal_property_expected(property)
+                }
+            };
+            if let Some(expected) = expected {
+                property
+                    .check_runtime_value(&value)
+                    .map_err(|error| match error {
+                        InstanceError::Unsupported(feature) => EffectiveValuesError::Unsupported {
+                            property: name.to_owned(),
+                            feature,
+                        },
+                        InstanceError::TypeMismatch(_) | InstanceError::ConstraintViolation(_) => {
+                            EffectiveValuesError::ValueType {
+                                property: name.to_owned(),
+                                expected,
+                            }
+                        }
+                    })?;
             }
             let value = property.canonical_runtime_value(&value);
             values.insert(name.to_owned(), value);
@@ -650,6 +670,88 @@ impl<'a> TypeCatalog<'a> {
         }))
     }
 
+    /// PROPERTY-RULE-PIN-1 binds the property and its retained declaration closure,
+    /// including inherited, interface, extension and referenced type constraints.
+    /// The closure is conservative: unrelated shared declarations also invalidate it.
+    /// # Errors
+    /// Canonical serialization of the retained declarations failed.
+    pub fn property_domain_rule_ref(
+        &self,
+        object_type: &ObjectTypeName,
+        property: &PropertyId,
+    ) -> Result<Option<DataQualityRuleRef>, norn_ir::canonical::CanonicalJsonError> {
+        let Some(effective) = self.effective_property(object_type, property) else {
+            return Ok(None);
+        };
+        if effective.computed
+            || !matches!(
+                effective.kind,
+                EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Record { .. })
+            )
+        {
+            return Ok(None);
+        }
+        let mut property_types: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
+        property_types.sort_by_key(|declaration| &declaration.name);
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|declaration| {
+                Ok((
+                    (
+                        &declaration.target,
+                        &declaration.namespace,
+                        norn_ir::canonical::canonical_json_of(declaration)?,
+                    ),
+                    *declaration,
+                ))
+            })
+            .collect::<Result<Vec<_>, norn_ir::canonical::CanonicalJsonError>>()?;
+        extensions.sort_by(|left, right| left.0.cmp(&right.0));
+        let extensions: Vec<_> = extensions
+            .into_iter()
+            .map(|(_, declaration)| declaration)
+            .collect();
+        let declarations = (
+            PROPERTY_DOMAIN_RULE_ID,
+            1_u16,
+            object_type,
+            property,
+            self.ancestry(object_type),
+            self.interfaces.values().collect::<Vec<_>>(),
+            property_types,
+            extensions,
+        );
+        let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
+        Ok(Some(DataQualityRuleRef::Builtin {
+            id: PROPERTY_DOMAIN_RULE_ID.to_owned(),
+            version: format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            ),
+        }))
+    }
+
+    fn has_property_domain_rule(
+        &self,
+        rule: &DataQualityRuleRef,
+    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        for definition in self.types.values() {
+            if let Some(effective) = self.effective_type(&definition.name) {
+                for property in &effective.properties {
+                    if self
+                        .property_domain_rule_ref(&definition.name, &property.id)?
+                        .as_ref()
+                        == Some(rule)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolve a finding's classification only when its pinned rule reference
     /// matches the typed owner definition in this catalog.
     ///
@@ -665,13 +767,15 @@ impl<'a> TypeCatalog<'a> {
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
             DataQualityRuleRef::Law { .. } => Ok(crate::governing_laws::classify(self, rule_ref)),
-            DataQualityRuleRef::Builtin { id, version } => {
-                Ok(if is_supported_builtin_rule(id, version) {
+            DataQualityRuleRef::Builtin { id, version } => Ok(
+                if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
+                    || is_supported_builtin_rule(id, version)
+                {
                     DataQualityRuleClassification::Builtin
                 } else {
                     DataQualityRuleClassification::Unverified
-                })
-            }
+                },
+            ),
             DataQualityRuleRef::Invariant {
                 owner,
                 invariant_id,
@@ -1468,6 +1572,14 @@ pub type PreparedDecision = CellCommit<FactEvent, JsonObject, JsonObject>;
 /// Why a complete effective object value could not be materialized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EffectiveValuesError {
+    /// A retained property uses semantics the value checker cannot evaluate.
+    #[error("unsupported effective property `{property}`: {feature}")]
+    Unsupported {
+        /// The effective property.
+        property: String,
+        /// The unsupported retained declaration feature.
+        feature: String,
+    },
     /// A submitted value or declared default is not an exact runtime value.
     #[error(transparent)]
     Runtime(#[from] RuntimeValueError),

@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// An effective property uses semantics the kernel cannot evaluate.
+    #[error(transparent)]
+    EffectiveValues(#[from] norn_kernel::EffectiveValuesError),
     /// ID-UNIQUE-1: two live objects share a normalized key in one scope/world.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {

@@ -43,6 +43,8 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and the exact retained property-domain declaration digest, including inherited, referenced-type and interface constraints; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
