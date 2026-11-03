@@ -1,4 +1,4 @@
 {
-  "order": 128,
+  "order": 125,
   "value": "crates/norn-checker/tests/quantity_ledger_boundary.rs"
 }

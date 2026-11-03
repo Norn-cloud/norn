@@ -1,4 +1,4 @@
 {
-  "order": 99,
+  "order": 96,
   "value": "crates/norn-checker/tests/entitlement_join_budget.rs"
 }
