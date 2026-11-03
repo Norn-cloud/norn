@@ -6,6 +6,9 @@ mod historical;
 pub mod ivm;
 #[cfg(feature = "duckdb")]
 mod olap;
+
+/// Exact result membership and native fact evidence.
+pub mod lineage;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
@@ -144,6 +147,18 @@ fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
     plan.as_of_instant()
         .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
 }
+fn check_question_cutoff(
+    plan: &QuestionPlan,
+    cutoff: Option<crate::KnowledgeCutoff>,
+) -> Result<(), CellError> {
+    if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
+        let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        if !asof_matches(plan, point.recorded_at.as_millis()) {
+            return Err(refused("core.compute.stale_input"));
+        }
+    }
+    Ok(())
+}
 fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
     let seconds = i64::try_from(millis.div_euclid(1000)).ok()?;
     let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
@@ -201,14 +216,28 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+    }
+    fn question_snapshot_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.question_snapshot_at_with(plan, context, None, visible, consume)
+    }
+    fn question_snapshot_at_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
-            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
-                let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-                if !asof_matches(plan, point.recorded_at.as_millis()) {
-                    return Err(refused("core.compute.stale_input"));
-                }
-            }
+            check_question_cutoff(plan, cutoff)?;
             self.check_question_model(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
@@ -293,12 +322,15 @@ impl<E: SqlEngine> CellStore<E> {
                 definition_pin,
                 &contributions,
             )?;
-            Ok(Snapshot {
-                historical_receipt,
-                result,
-                contributions,
-                members,
-            })
+            consume(
+                Snapshot {
+                    historical_receipt,
+                    result,
+                    contributions,
+                    members,
+                },
+                &mut budget,
+            )
         })
     }
     fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {

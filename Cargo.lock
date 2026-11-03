@@ -1941,6 +1941,7 @@ name = "norn-api"
 version = "0.1.0"
 dependencies = [
  "http",
+ "jsonschema",
  "norn-cell",
  "norn-checker",
  "norn-ir",
