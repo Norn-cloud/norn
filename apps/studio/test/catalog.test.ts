@@ -37,19 +37,25 @@ test("each system's declared source for a fact, including a declared gap", () =>
   expect(feed("ERPNext")?.facts.get("quantity")).toEqual([{ kind: "field", field: "quantity" }])
   expect(feed("ERPNext")?.facts.get("quantity_basis")).toEqual([{ kind: "fixed", value: "on_hand" }])
   expect(feed("ERPNext")?.facts.get("currency")).toEqual([{ kind: "empty" }])
-  expect(feed("Shopify")?.facts.get("stock_cost")?.[0]?.kind).toBe("gap")
+  expect(feed("Shopify")?.facts.get("stock_cost")?.[0]).toMatchObject({ kind: "gap", reason: "not_in_source" })
   expect(feed("ERPNext")?.facts.get("owner")).toEqual([{ kind: "field", field: "owner_ref" }])
   const delivery = catalog.byName.get("canon.Delivery")?.feeds.find((candidate) => candidate.system === "Shopify")
   expect(delivery?.facts.get("reverses")?.[0]?.kind).toBe("gap")
 })
 
-test("a link declared twice keeps both declared sources", () => {
+test("repeated links, nested rows, lifecycle states and gap reasons keep what is declared", () => {
   const artifacts = [
     { kind: "entity", artifactId: "demo.Thing.entity", name: "Thing", payload: { entityVersion: "2.0", objectType: { name: "demo.Thing", properties: [] } } },
     { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-odoo" } } },
-    { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.Thing.entity" }, links: [{ link: "party", key: "input.a" }, { link: "party", key: "input.b" }] }] } },
+    { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.Thing.entity" }, links: [{ link: "party", key: "input.a" }, { link: "party", key: "input.b" }],
+      properties: [{ property: "amount", value: "row.amount", nested: { dataset: "Lines", field: "amount", where: "row.kind == 'gold'" } }],
+      lifecycles: [{ property: "status", state: "input.state" }], gaps: [{ member: "cost", reason: "deferred" }] }] } },
   ] as unknown as readonly Artifact[]
-  expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds[0]?.facts.get("party")).toEqual([{ kind: "field", field: "a" }, { kind: "field", field: "b" }])
+  const facts = catalogOf(artifacts).byName.get("demo.Thing")?.feeds[0]?.facts
+  expect(facts?.get("party")).toEqual([{ kind: "field", field: "a" }, { kind: "field", field: "b" }])
+  expect(facts?.get("amount")).toEqual([{ kind: "nested", dataset: "Lines", field: "amount", where: "row.kind == 'gold'" }])
+  expect(facts?.get("status")).toEqual([{ kind: "field", field: "state" }])
+  expect(facts?.get("cost")).toEqual([{ kind: "gap", reason: "deferred", note: undefined }])
 })
 
 test("laws attach to the concepts they govern", () => {

@@ -68,6 +68,8 @@ function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly 
   )
 }
 
+const GAP = { not_in_source: "not in this system", defaulted: "defaulted", deferred: "not mapped yet", derived_elsewhere: "derived elsewhere" } as const
+
 function SourceCell({ source }: { readonly source: Source | undefined }) {
   switch (source?.kind) {
     case undefined: return <span className="text-muted-foreground">not sent</span>
@@ -75,17 +77,18 @@ function SourceCell({ source }: { readonly source: Source | undefined }) {
     case "fixed": return <span>always “{source.value.replaceAll("_", " ")}”</span>
     case "empty": return <span className="text-muted-foreground">left empty</span>
     case "computed": return <code className="text-xs">{source.expression}</code>
-    case "gap": return <Badge variant="outline" title={source.note}>not in this system</Badge>
+    case "nested": return <span title={`where ${source.where}`}><code className="text-xs">{source.field}</code> <span className="text-muted-foreground">of {source.dataset}</span></span>
+    case "gap": return <Badge variant="outline" title={source.note}>{GAP[source.reason]}</Badge>
   }
 }
 
 /** Each fact against each system's record that feeds it, as the admitted mappings declare. */
 function SourceMatrix({ concept }: { readonly concept: Concept }) {
-  const gaps = new Map<string, { readonly system: string; readonly note: string; readonly facts: string[] }>()
+  const gaps = new Map<string, { readonly system: string; readonly reason: string; readonly note: string; readonly facts: string[] }>()
   for (const { system, facts } of concept.feeds) for (const [fact, [source]] of facts) {
-    if (source?.kind !== "gap") continue
+    if (source?.kind !== "gap" || source.note === undefined) continue
     const key = `${system}\u0000${source.note}`
-    const gap = gaps.get(key) ?? { system, note: source.note, facts: [] }
+    const gap = gaps.get(key) ?? { system, reason: GAP[source.reason], note: source.note, facts: [] }
     gap.facts.push(fact.replaceAll("_", " "))
     gaps.set(key, gap)
   }
@@ -105,7 +108,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           </TableRow>
         ))}
       </DenseTable>
-      {[...gaps].map(([key, { system, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system} has no {facts.join(" or ")}.</b> {note}</p>)}
+      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
     </div>
   )
 }
