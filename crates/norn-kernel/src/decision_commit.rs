@@ -1761,12 +1761,12 @@ impl<X> DecisionRefusal<X> {
     }
 
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
+        use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
+
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
-            CommitError::AtomicDeliveryBoundary { consumed } => {
-                Self::AtomicDeliveryBoundary { consumed }
-            }
+            AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
             CommitError::IdentityCollision { owner, key, .. } => {
                 Self::IdentityCollision { owner, key }
@@ -1832,9 +1832,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
             },
-            CommitError::AccountingPosting { key, reason } => {
-                Self::AccountingPosting { key, reason }
-            }
+            AccountingPosting { key, reason } => Self::AccountingPosting { key, reason },
             CommitError::InvariantViolation {
                 key,
                 owner,
