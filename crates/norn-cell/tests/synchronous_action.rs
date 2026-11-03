@@ -325,7 +325,19 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
         let root = match &artifact.payload {
             ArtifactPayload::Action(_) => serde_json::to_value(&action).unwrap(),
             ArtifactPayload::Rule(_) => serde_json::to_value(&writer).unwrap(),
-            _ => continue,
+            ArtifactPayload::Entity(_)
+            | ArtifactPayload::Relation(_)
+            | ArtifactPayload::Connector(_)
+            | ArtifactPayload::Widget(_)
+            | ArtifactPayload::Customization(_)
+            | ArtifactPayload::Setting(_)
+            | ArtifactPayload::BusinessPack(_)
+            | ArtifactPayload::Policy(_)
+            | ArtifactPayload::Derived(_)
+            | ArtifactPayload::SourceSchema(_)
+            | ArtifactPayload::Mapping(_)
+            | ArtifactPayload::Law(_)
+            | ArtifactPayload::DefinedConcept(_) => continue,
         };
         artifact.payload = ArtifactPayload::from_kind_json(
             &artifact.kind(),
@@ -372,8 +384,8 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
     clippy::too_many_lines,
     reason = "one witness compares all effects before refusal and after successful reopen/retry"
 )]
-fn txn_all_refuses_atomically_and_replays_the_complete_receipt_after_reopen() {
-    use norn_ir::quantity_ledger::{QuantityOperation, QuantityResolution};
+fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() {
+    use norn_ir::quantity_ledger::{EvaluatedLedgerLeg, QuantityOperation, QuantityResolution};
     let directory = tempfile::tempdir().unwrap();
     let definitions = types();
     let (action, rule) = quantity_action();
@@ -444,13 +456,24 @@ fn txn_all_refuses_atomically_and_replays_the_complete_receipt_after_reopen() {
         assert_eq!(receipt.linked.len(), 2);
         assert_eq!(cell.store().read().pending_commands().unwrap().len(), 1);
         assert_eq!(cell.store().read().next_timer_due().unwrap(), None);
-        assert!(
-            cell.store()
-                .read()
-                .quantity_posting("main", "stock", "shipment")
-                .unwrap()
-                .is_some()
-        );
+        let posting = cell
+            .store()
+            .read()
+            .quantity_posting("main", "stock", "shipment")
+            .unwrap()
+            .expect("shipment posting");
+        let expected_legs: Vec<_> = [("out", "lot", "-10"), ("in", "transit", "10")]
+            .into_iter()
+            .map(|(id, account, amount)| EvaluatedLedgerLeg {
+                leg_id: id.into(),
+                account_id: account.into(),
+                unit_id: "item".into(),
+                layer: "physical".into(),
+                unit_precision: 0,
+                amount_unscaled: amount.into(),
+            })
+            .collect();
+        assert_eq!(posting.legs, expected_legs);
         for (account, posted) in [("lot", "10"), ("transit", "10")] {
             let balance = cell
                 .store()
