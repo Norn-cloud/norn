@@ -54,3 +54,7 @@ No result in this checkpoint claims cross-engine parity or race correctness.
 
 - **cold-bootstrap-budget:** cold image loading plus a fresh site can exceed
   ten minutes. The batch is bounded to 1800 seconds, inside the two-hour TTL.
+
+- `python3 tools/stock-parity/check_smoke.py --fifo DUMP` requires both cases
+  and all seven checkpoints. `fifo-oracle.fixture.json` retains the observed
+  synthetic ERPNext-only dump from #215; it is not new live qualification.
