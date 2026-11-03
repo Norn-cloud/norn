@@ -44,7 +44,7 @@
       "description": "The call's input.",
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/JsonValue"
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
     },
     "effectiveInput": {
@@ -54,7 +54,7 @@
         "null"
       ],
       "additionalProperties": {
-        "$ref": "#/$defs/JsonValue"
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
     },
     "derivedValues": {
@@ -95,7 +95,7 @@
       "description": "Normalized row operations committed by a parent-and-rows action.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/JsonValue"
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
     }
   },
@@ -135,35 +135,6 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
     },
-    "JsonValue": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "number",
-          "format": "double"
-        },
-        {
-          "type": "string"
-        },
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          }
-        }
-      ]
-    },
     "ActionDerivedValue": {
       "description": "One field produced by an ordered action input derivation.",
       "type": "object",
@@ -173,8 +144,7 @@
           "type": "string"
         },
         "value": {
-          "description": "The exact runtime value written to the effective input.",
-          "$ref": "#/$defs/JsonValue"
+          "description": "The exact runtime value written to the effective input."
         }
       },
       "additionalProperties": false,

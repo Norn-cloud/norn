@@ -51,7 +51,6 @@
             "description": "The derived field."
           },
           "value": {
-            "$ref": "#/components/schemas/NornActionJsonValue",
             "description": "The exact runtime value written to the effective input."
           }
         },
@@ -134,7 +133,7 @@
             ],
             "description": "The final input after ordered derivations. Legacy records use `input`.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornActionJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           },
           "from": {
@@ -145,7 +144,7 @@
             "type": "object",
             "description": "The call's input.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornActionJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           },
           "object": {
@@ -162,7 +161,7 @@
           "rowOperations": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/NornActionJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             },
             "description": "Normalized row operations committed by a parent-and-rows action."
           },
@@ -212,33 +211,8 @@
         "type": "object",
         "title": "Map_of_RuntimeValue",
         "additionalProperties": {
-          "$ref": "#/components/schemas/NornActionJsonValue"
+          "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
-      },
-      "NornActionJsonValue": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "number",
-            "format": "double"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          },
-          {
-            "type": "object",
-            "additionalProperties": {}
-          }
-        ]
       },
       "NornActionObjectTypeName": {
         "type": "string",
@@ -7428,8 +7402,7 @@
             "items": {}
           },
           {
-            "type": "object",
-            "additionalProperties": {}
+            "$ref": "#/components/schemas/NornIrJsonValueAnyOf5"
           }
         ]
       },
@@ -8030,7 +8003,6 @@
             }
           },
           "settings": {
-            "$ref": "#/components/schemas/NornIrLayoutJsonValue",
             "description": "Optional editor settings preserved as exact JSON."
           },
           "viewport": {
@@ -8113,31 +8085,6 @@
         "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
         "enum": [
           "0.1"
-        ]
-      },
-      "NornIrLayoutJsonValue": {
-        "anyOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "boolean"
-          },
-          {
-            "type": "number",
-            "format": "double"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {}
-          },
-          {
-            "type": "object",
-            "additionalProperties": {}
-          }
         ]
       },
       "NornIrLayoutLayoutViewport": {
@@ -11088,7 +11035,7 @@
             "type": "object",
             "description": "Typed operands; disclosure authority is required before projection.",
             "additionalProperties": {
-              "$ref": "#/components/schemas/NornIrJsonValue"
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
             }
           }
         },

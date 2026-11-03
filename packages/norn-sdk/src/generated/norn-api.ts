@@ -27,7 +27,7 @@ export interface components {
             /** @description The derived field. */
             field: string;
             /** @description The exact runtime value written to the effective input. */
-            value: components["schemas"]["NornActionJsonValue"];
+            value: unknown;
         };
         /** @description The successful outcome of one action precondition. */
         NornActionActionPreconditionOutcome: {
@@ -65,20 +65,20 @@ export interface components {
             effectKind?: string | null;
             /** @description The final input after ordered derivations. Legacy records use `input`. */
             effectiveInput?: {
-                [key: string]: components["schemas"]["NornActionJsonValue"];
+                [key: string]: unknown;
             } | null;
             /** @description The state it left. */
             from: string;
             /** @description The call's input. */
             input: {
-                [key: string]: components["schemas"]["NornActionJsonValue"];
+                [key: string]: unknown;
             };
             /** @description The target object. */
             object: components["schemas"]["NornActionFactKey"];
             /** @description Successful precondition results, in declaration order. */
             preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
             /** @description Normalized row operations committed by a parent-and-rows action. */
-            rowOperations?: components["schemas"]["NornActionJsonValue"][];
+            rowOperations?: unknown[];
             /** @description TXN-RULE-1: exact writer closure, action, scope and world identity. */
             ruleBinding?: string | null;
             /** @description The state it entered. */
@@ -97,9 +97,6 @@ export interface components {
         };
         /** Map_of_RuntimeValue */
         NornActionInput: {
-            [key: string]: components["schemas"]["NornActionJsonValue"];
-        };
-        NornActionJsonValue: null | boolean | number | string | unknown[] | {
             [key: string]: unknown;
         };
         /**
@@ -2859,9 +2856,7 @@ export interface components {
         };
         /** @constant */
         NornIrJsonFalse: false;
-        NornIrJsonValue: null | boolean | number | string | unknown[] | {
-            [key: string]: unknown;
-        };
+        NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
         };
@@ -3076,7 +3071,7 @@ export interface components {
                 [key: string]: components["schemas"]["NornIrLayoutNodeLayout"];
             };
             /** @description Optional editor settings preserved as exact JSON. */
-            settings?: components["schemas"]["NornIrLayoutJsonValue"];
+            settings?: unknown;
             /** @description Optional viewport state in the editor's canvas coordinate system. */
             viewport?: components["schemas"]["NornIrLayoutLayoutViewport"] | null;
         };
@@ -3107,9 +3102,6 @@ export interface components {
          * @enum {string}
          */
         NornIrLayoutIrVersion01: "0.1";
-        NornIrLayoutJsonValue: null | boolean | number | string | unknown[] | {
-            [key: string]: unknown;
-        };
         /** @description Exact pan and zoom state of the editor canvas. */
         NornIrLayoutLayoutViewport: {
             /** @description Horizontal viewport offset. */
@@ -4471,7 +4463,7 @@ export interface components {
             subject: string;
             /** @description Typed operands; disclosure authority is required before projection. */
             values: {
-                [key: string]: components["schemas"]["NornIrJsonValue"];
+                [key: string]: unknown;
             };
         };
         /** @description Directional `rel(from, role)`. */

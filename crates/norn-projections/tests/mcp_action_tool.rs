@@ -75,9 +75,12 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     let mut schema = serde_json::to_value(&action.input_schema).expect("schema");
     schema["properties"]["amount"]["description"] = json!("Author supplied decimal guidance");
     action.input_schema = serde_json::from_value(schema).expect("typed schema");
-    let described = serde_json::to_value(action_tool(&action).expect("described tool")).expect("tool");
-    assert_eq!(described["inputSchema"]["properties"]["amount"]["anyOf"][0]["description"], "Author supplied decimal guidance");
-
+    let described =
+        serde_json::to_value(action_tool(&action).expect("described tool")).expect("tool");
+    assert_eq!(
+        described["inputSchema"]["properties"]["amount"]["anyOf"][0]["description"],
+        "Author supplied decimal guidance"
+    );
 }
 
 #[test]
