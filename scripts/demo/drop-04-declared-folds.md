@@ -2,7 +2,7 @@
 
 Run `bash scripts/demo/drop-04-declared-folds.sh` from clean, fetched main.
 Install the frozen `tools/norn-ts` dependencies with Bun's `--backend copyfile`;
-Rust 1.98 and Python 3 are required.
+Rust 1.98 and Python 3.9 or newer are required.
 
 The script checks fresh TypeScript extraction against the retained jewelry
 RuleIR, then builds one native evaluator test binary, prints its SHA-256 and
@@ -22,7 +22,11 @@ These are pure evaluator plans. `complete` and `needs_approval` are returned
 data; no cell is opened, no stock or books are posted, and no manager grants
 approval. The TypeScript test always checks extraction correspondence; its
 optional WASM checker branch runs only when a checker package is configured.
-Do not infer artifact-set admission from a compiler-only run. T1-C1 owns the
+The compiler-only Boat mode expects `CI` unset. Under CI, first prepare both
+`NORN_BIN` and `NORN_CHECKER_WASM_PKG`, as the existing integration phase
+does. The SDK import-time CI guard remains active; the drop does not
+bootstrap those prerequisites. Do not infer artifact-set admission from a
+compiler-only run. T1-C1 owns the
 native business cycle and real authorization. No ERPNext sampled parity,
 generated solver counterexample or checked application proof is claimed.
 
