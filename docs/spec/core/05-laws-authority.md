@@ -149,6 +149,21 @@ goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
 
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
@@ -168,3 +183,7 @@ obligations remain individually unknown. Source inspection and parity qualify
 this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+### HOST-AUTH-1: explicit server policy before host access
+
+The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.

@@ -1,4 +1,8 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+/// Typed-question answer documents.
+pub mod answers;
+/// Default-deny server authorization for host operations and kernel action requests.
+pub mod authz;
 pub mod clock;
 pub mod contracts;
 pub mod openapi;
@@ -11,9 +15,6 @@ pub use clock::{Clock, ManualClock};
 
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
-
-/// Shared default-deny host authorization.
-pub mod authz;
 /// Shared cell and definition epoch.
 pub mod host;
 /// Authorized read services shared by transports.
