@@ -220,3 +220,22 @@ fn jewelry_staffing_closed_world_and_independent_repair() {
         Some(norn_checker::table_analysis::Unknown::Limit)
     );
 }
+
+#[test]
+fn a_backend_that_changes_its_answers_never_publishes_a_core() {
+    struct Flaky(BTreeSet<BTreeSet<usize>>);
+    impl Oracle for Flaky {
+        type Unknown = ();
+        fn check(&mut self, active: &BTreeSet<usize>) -> Verdict<()> {
+            if !active.is_empty() && self.0.insert(active.clone()) {
+                Verdict::Unsat
+            } else {
+                Verdict::Sat
+            }
+        }
+    }
+    assert_eq!(
+        diagnose(&mut Flaky(BTreeSet::new()), 2, &BTreeSet::new(), 1000),
+        Err(Unknown::InconsistentOracle)
+    );
+}

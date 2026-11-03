@@ -44,7 +44,13 @@ impl FiniteOracle {
                         holds.insert(index);
                     }
                     Value::Bool(false) => {}
-                    _ => return Err(Unknown::Expression("predicate is not boolean".into())),
+                    Value::Null
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Array(_)
+                    | Value::Object(_) => {
+                        return Err(Unknown::Expression("predicate is not boolean".into()));
+                    }
                 }
             }
             models.push(holds);
