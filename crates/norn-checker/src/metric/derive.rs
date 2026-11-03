@@ -342,17 +342,18 @@ mod ontology_derived_measures {
             )
             .expect("entity payload");
             let generated = derive(&artifacts);
-            assert!(expected || generated.candidates.is_empty());
-            assert_eq!(
+            let has = |property: &str| {
                 generated
                     .candidates
                     .iter()
                     .flat_map(|candidate| &candidate.dimensions)
-                    .any(|path| path.links == [norn_ir::LinkId(role.to_owned())]
-                        && path.property.as_str() == "idx"),
-                expected,
-                "{role}"
-            );
+                    .any(|path| {
+                        path.links == [norn_ir::LinkId(role.to_owned())]
+                            && path.property.as_str() == property
+                    })
+            };
+            assert!(has("name"));
+            assert_eq!(has("idx"), expected, "{role}");
         }
     }
 
