@@ -55,13 +55,15 @@ impl ApprovedContract {
                     .and_then(|i| at(challenge.body(), "writerStatements").get(i));
                 match &model {
                     Ok((law_id, module, _))
-                        if law.is_some_and(|l| at(l, "artifactId") == *law_id)
-                            && (kind == "initialization"
-                                || kind == "non_vacuity"
-                                || (kind == "preservation"
-                                    && writer.is_some_and(|w| {
-                                        at(at(w, "identity"), "artifactId") == bounds.action
-                                    }))) =>
+                        if law.is_some_and(|l| {
+                            at(l, "artifactId").as_str() == Some(law_id.as_str())
+                        }) && (kind == "initialization"
+                            || kind == "non_vacuity"
+                            || (kind == "preservation"
+                                && writer.is_some_and(|w| {
+                                    at(at(w, "identity"), "artifactId").as_str()
+                                        == Some(bounds.action.as_str())
+                                }))) =>
                     {
                         Ok(module.clone())
                     }
@@ -246,7 +248,7 @@ fn lower(
             demand(
                 at(&declared, "kind") == "text"
                     && !bounds.inputs.contains_key(id)
-                    && at(schema, id) == json!({"type":"string"}),
+                    && at(schema, id) == &json!({"type":"string"}),
                 "identity must be singleton text",
             )?;
             object
