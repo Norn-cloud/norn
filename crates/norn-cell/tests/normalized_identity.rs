@@ -377,17 +377,8 @@ fn assert_original_identity_reference(store: &CellStore, posted: &norn_cell::exp
     );
 }
 
-/// ID-RENAME / ID-REF-1: recorded typed references retain A, even when B reuses A's old business key.
-#[test]
-fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("history.sqlite");
-    let mut cell = identity_history_cell(&path);
-    cell.commit(identity_proposal(&cell, Some("original")))
-        .expect("create A");
-    let posted = post_identity_reference(&mut cell);
-    let posted_hash = posted.hash().expect("posted hash");
-    let mut rename = identity_proposal(&cell, Some("renamed"));
+fn rename_identity_and_reuse_business_key(cell: &mut IdentityCell) {
+    let mut rename = identity_proposal(cell, Some("renamed"));
     rename.writes.push(FactWrite {
         key: FactKey::new("identity.Sibling", "replacement"),
         expected: FactVersion::ABSENT,
@@ -418,6 +409,20 @@ fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
             .get("code"),
         Some(&RuntimeValue::from("renamed"))
     );
+}
+
+/// ID-RENAME / ID-REF-1: recorded typed references retain A, even when B reuses A's old business key.
+#[test]
+fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("history.sqlite");
+    let mut cell = identity_history_cell(&path);
+    cell.commit(identity_proposal(&cell, Some("original")))
+        .expect("create A");
+    let posted = post_identity_reference(&mut cell);
+    let posted_hash = posted.hash().expect("posted hash");
+    rename_identity_and_reuse_business_key(&mut cell);
+    let key = FactKey::new("identity.Child", "stable");
     cell.commit(identity_proposal(&cell, None))
         .expect("delete A");
     let deleted = cell.load(&key).expect("deleted identity");
