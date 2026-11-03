@@ -209,7 +209,7 @@ export function ObjectPage() {
                 </li>
               ))}
             </ul>}
-          {data.links.document.hasMore && <p className="pt-2 text-sm text-muted-foreground">More links exist than this read returned; the ones shown are the first page.</p>}
+          {data.links.document.hasMore && <p className="pt-2 text-sm text-muted-foreground">More links may exist; these are the first page the server returned.</p>}
         </section>
         {!lineage && <p className="text-sm text-muted-foreground">No source record is retained for this record.</p>}
         {lineage && <Card>
