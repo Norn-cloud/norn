@@ -264,7 +264,7 @@ impl PropertyType {
     pub const fn kind(&self) -> PropertyKind {
         match self {
             Self::Text { .. } => PropertyKind::Text,
-            Self::Integer {} => PropertyKind::Integer,
+            Self::Integer { .. } => PropertyKind::Integer,
             Self::Decimal { .. } => PropertyKind::Decimal,
             Self::Boolean {} => PropertyKind::Boolean,
             Self::Timestamp { .. } => PropertyKind::Timestamp,
