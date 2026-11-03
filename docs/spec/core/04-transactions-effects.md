@@ -37,6 +37,8 @@ Expected evidence: runtime atomicity/CAS enforcement, crash/reopen/race correspo
 
 RECEIPT-AUTH-BIND-1: `acceptReceipt` preparation accepts a content-digest reference only. The tenant/world/authority-scoped host receipt store resolves authenticated `Acceptance` plus `FunctionReceipt` and consumption state. A bound result retains the exact receipt/result/command/generation pins and reconciliation reads. Unknown, replayed, mismatched, failed or wrongly typed results refuse; an action-supplied receipt body always refuses. Receipt consumption and destination writes remain one checked commit; binding alone grants no publication authority.
 
+GUARD-DIAGNOSTIC-1: a transition may declare `guardRefusalCode`, naming an error diagnostic registered at runtime tier T6. Admission refuses unknown/non-runtime codes with T2 `lifecycle.validation.invalid_guard_diagnostic`; replacing an inherited alias uses T3 `lifecycle.validation.inherited_guard_diagnostic`. A redeclaration retains an inherited diagnostic; omission inherits it. A refused guard exposes the selected code while retaining the original guard expression, failure reason and underlying code. Diagnostic selection changes no admission, authorization or transaction behavior. Core 08 publication uses `core.projection.publication_guard`.
+
 ## Named acceptance scenarios
 
 - **TXN-ALL:** Given receipt quantity/value and matching GL effects, when a final guard fails, then no voucher, stock, GL, command or timer changes; successful replay returns the whole same commit.
@@ -68,8 +70,16 @@ Both destinations exclude objectIdField and every effective identity-key compone
 Only the cell host resolves authenticated, scoped evidence; unsupported hosts refuse.
 Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
 
+RECEIPT-STORE-1: only authenticated reconciliation of the cell’s recorded performer result may populate its scoped, persisted receipt store. Intake records source receipt and knowledge time; it grants no action/publication authority. Unknown, forged, wrong-scope or differently recorded results refuse without a write. Predicate and collection freshness adapters are currently unavailable and refuse closed. Generic event export does not restore private receipt authority.
+
+RECEIPT-ONCE-1: SqliteCell resolves references only from its authenticated scoped store. The accepting transaction checks the intake frontier, claims one unconsumed reference, consumes its performer delivery and writes the accepted command state with the action effects. Any refusal rolls back the claim and effects; replay, unknown, stale or mismatched manifest references refuse. Unsupported hosts refuse. This host boundary alone does not open acceptReceipt action execution or publication.
+
+RECEIPT-EFFECT-1 execution: non-Main calls refuse before retry lookup; only Main exact retries may replay. After current authorization and exact action retry lookup, acceptReceipt resolves a reference through the authenticated host seam. The authenticated acceptance must carry a destination pin for the exact action target; missing or mismatched pins refuse. Its digest and result bindings are typed property changes before the lifecycle transition. Guard/type failure leaves evidence unconsumed. The host atomically consumes only on successful action commit. Historical/fork execution and receipt-plus-quantity combinations refuse.
+RECEIPT-STORE-AUTH-1: the intake ledger event binds the canonical digest of the complete stored receipt, acceptance, source and frontier. Preparation captures its frontier before reconciliation; commit rechecks that frontier and actual performer delivery atomically. Resolving or exporting evidence verifies the complete body against that event. Changed acceptance/read pins, a forged frontier and legacy events lacking the authority digest refuse; refusal grants no authority and writes no action effects.
+
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
+RECEIPT-ONCE-1 commit-context limit: acceptance requires the exact authenticated intake frontier. Receipts are not re-authenticated after intervening commits, even unrelated commits; acceptance then refuses without consumption or effects, while retained evidence remains readable. Expected receipt refusals are typed precondition failures (`action.receipt_refused`) with safe reason detail; SQL/storage failures remain internal and redacted. Named scenario: intervening_commit_refuses_without_consuming_receipt. Post-demo receipt refresh is tracked with native memory accounting in https://github.com/Norn-cloud/norn/issues/508.
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in
@@ -192,4 +202,3 @@ host-side cardinality failure and denied secondary authority, with complete
 SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
-

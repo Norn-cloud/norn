@@ -1,0 +1,44 @@
+{
+  "artifactId": "core.analytics.publication.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Analytical publication reviewer",
+  "namespace": "core",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "core.analytics.publication.access",
+    "rules": [
+      {
+        "actions": [
+          "core.analytics.publish",
+          "core.analytics.refuse"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "AnalyticsReviewer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "core.analytics.Publication",
+        "ruleId": "reviewer",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.publication.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

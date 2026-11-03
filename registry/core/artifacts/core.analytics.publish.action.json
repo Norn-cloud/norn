@@ -1,0 +1,97 @@
+{
+  "artifactId": "core.analytics.publish.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Publish qualified analysis",
+  "namespace": "core",
+  "payload": {
+    "actionId": "core.analytics.publish",
+    "description": "Accept configured Function evidence, then apply the declared publication policy under reviewer authority.",
+    "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "receipt_digest",
+        "manifestDigest": "sha256:604e74087c2f7893e02701a7c5db5d1b1f557a7c63ba26c2b0bc041a92db5115",
+        "referenceField": "receipt",
+        "resultBindings": {
+          "complete": "complete",
+          "diagnostics_passed": "diagnostics_passed",
+          "fresh": "fresh",
+          "frontier_age_ms": "frontier_age_ms",
+          "holdout_count": "holdout_rows",
+          "holdout_error_nanos": "rmse_nanos",
+          "late_feature_count": "late_features",
+          "latest_training_label_ms": "latest_training_label_ms",
+          "non_forward_outcome_count": "non_forward_outcome_count",
+          "quarantined_count": "quarantine_count",
+          "result_assumptions_digest": "assumptions_digest",
+          "result_error_unit": "error_unit",
+          "result_model_digest": "implementation_digest",
+          "result_parameters_digest": "parameters_digest",
+          "result_remedy_digest": "remedy_digest",
+          "result_source_digest": "source_digest",
+          "result_split_at_ms": "split_at_ms",
+          "result_table_digest": "table_digest",
+          "result_table_version": "table_version",
+          "temporal_leakage": "temporal_leakage",
+          "training_count": "training_rows"
+        }
+      },
+      "entityArtifactId": "core.analytics.Publication.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "core.analytics.Publication",
+      "transition": "publish"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "receipt"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Publish qualified analysis",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "core.analytics.Publication"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.publish.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

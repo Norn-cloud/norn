@@ -11,8 +11,9 @@ const directory = (path: string): Artifact[] => readdirSync(join(root, path)).fi
   .map((name) => JSON.parse(readFileSync(join(root, path, name), "utf8")) as Artifact)
 const core = directory("registry/core/artifacts")
 const measurements = directory("registry/packs/demo-erpnext/artifacts")
-const laws = JSON.parse(readFileSync(join(root, "fixtures/law-ir/laws.json"), "utf8")) as Artifact[]
-const compiled = [...core, ...measurements, ...laws]
+const lawFixtures = JSON.parse(readFileSync(join(root, "fixtures/law-ir/laws.json"), "utf8")) as Artifact[]
+const compiled = [...core, ...measurements, ...lawFixtures]
+const laws = compiled.filter((artifact) => artifact.kind === "law")
 const html = renderCatalogDocument({ artifacts: compiled })
 const declaredLaws = compiled.filter((artifact) => artifact.kind === "law")
 

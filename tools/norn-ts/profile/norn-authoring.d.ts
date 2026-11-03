@@ -88,6 +88,7 @@ declare module "@norn/authoring" {
       readonly to: V
       /** ZEN Expression guards, conjoined. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
     }
 
     /** A lifecycle over one enum property of `T`; its states are that property's values. */

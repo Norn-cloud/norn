@@ -1585,3 +1585,64 @@ fn machine_boundaries_match_dependency_policy() {
         assert_eq!(doc["third_party"], serde_json::json!(rule.third_party));
     }
 }
+
+/// HOST-CONFORMANCE-1: cross-boundary integration never becomes a shipped edge.
+#[test]
+fn host_conformance_admits_only_the_declared_development_edges() {
+    let rule = norn_skeleton_guard::crate_rule("norn-host-conformance").expect("declared");
+    for dependency in rule.dev_only_norn.iter().copied().chain(["norn-cli"]) {
+        for kind in [None, Some("dev"), Some("build")] {
+            let metadata = with_dep_as("norn-host-conformance", dependency, kind, None);
+            let violations = check_dependencies(&metadata);
+            let admitted = kind == Some("dev") && dependency != "norn-cli";
+            assert_eq!(
+                violations.is_empty(),
+                admitted,
+                "{dependency} {kind:?}: {}",
+                render(&violations)
+            );
+        }
+    }
+}
+
+#[test]
+fn host_conformance_refuses_publishing_or_runtime_targets() {
+    for field in ["publish", "targets"] {
+        let mut value = serde_json::to_value(metadata()).expect("metadata");
+        let package = value["packages"]
+            .as_array_mut()
+            .expect("packages")
+            .iter_mut()
+            .find(|p| p["name"] == "norn-host-conformance")
+            .expect("host");
+        if field == "publish" {
+            package[field] = Value::Null;
+        } else {
+            package[field][0]["kind"] = json!(["lib"]);
+        }
+        let value: Metadata = serde_json::from_value(value).expect("metadata");
+        assert!(
+            check_dependencies(&value)
+                .iter()
+                .any(|v| v.rule == "host-conformance-test-only")
+        );
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn host_conformance_profile_is_closed_over_generated_metadata(
+        publishing in proptest::bool::ANY, runtime in proptest::bool::ANY,
+        kind in proptest::sample::select(vec![None,Some("dev"),Some("build")]),
+    ) {
+        let mut doc=serde_json::to_value(with_dep_as("norn-host-conformance","norn-cell",kind,None)).expect("metadata");
+        let package=doc["packages"].as_array_mut().expect("packages").iter_mut().find(|p|p["name"]=="norn-host-conformance").expect("host");
+        package["publish"]=if publishing {Value::Null} else {json!([])};
+        package["targets"][0]["kind"]=json!([if runtime {"lib"} else {"test"}]);
+        let metadata:Metadata=serde_json::from_value(doc).expect("metadata");
+        let violations=check_dependencies(&metadata);
+        let refused=violations.iter().any(|v|v.rule=="host-conformance-test-only");
+        proptest::prop_assert_eq!(refused,publishing || runtime || kind != Some("dev"));
+    }
+}

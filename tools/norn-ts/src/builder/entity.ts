@@ -110,6 +110,7 @@ export interface TransitionDecl {
   readonly to: string
   /** ZEN Expression guards (conjoined). */
   readonly guards?: ReadonlyArray<string>
+  readonly guardRefusalCode?: string
 }
 
 export interface LifecycleDecl {

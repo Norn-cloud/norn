@@ -189,6 +189,7 @@ impl<X> CommitError<X> {
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }
+            | Self::ReceiptRefused { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
             Self::AccountingPosting { reason, .. } => match reason {
                 norn_ir::posting::AccountingError::PostedJournalImmutable
@@ -295,6 +296,7 @@ impl<X> DecisionRefusal<X> {
             | Self::ObjectExists { .. }
             | Self::ImmutableStateWrite { .. }
             | Self::SourceOwnedTarget { .. }
+            | Self::ReceiptRefused { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
             Self::Stale { .. } | Self::NotPending { .. } => RefusalCategory::Conflict,
             Self::AccountingPosting { reason, .. } => match reason {
@@ -453,16 +455,61 @@ fn lifecycle_guard(
     transition: &str,
     guard: &str,
     error: Option<&str>,
+    underlying_code: Option<&str>,
 ) -> BTreeMap<String, RuntimeValue> {
     let mut values = refusal_values([("transition", transition.into()), ("guard", guard.into())]);
     let (name, value) = error.map_or(("result", RuntimeValue::Bool(false)), |error| {
         ("error", error.into())
     });
     values.insert(name.to_owned(), value);
+    if let Some(code) = underlying_code {
+        values.insert("underlyingCode".to_owned(), code.into());
+    }
     values
 }
 
 impl<X> DecisionRefusal<X> {
+    fn lifecycle_guard_reason_parts(
+        &self,
+    ) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
+        let (key, transition, guard, error, diagnostic) = if let Self::GuardFalse {
+            key,
+            transition,
+            guard,
+            diagnostic,
+        } = self
+        {
+            (key, transition, guard, None, diagnostic)
+        } else if let Self::GuardError {
+            key,
+            transition,
+            guard,
+            reason,
+            diagnostic,
+        } = self
+        {
+            (
+                key.as_ref(),
+                transition,
+                guard,
+                Some(reason.as_str()),
+                diagnostic,
+            )
+        } else {
+            return None;
+        };
+        let (law, underlying) = if error.is_some() {
+            ("lifecycle.guard_evaluable", "decision.guard_error")
+        } else {
+            ("lifecycle.guard", "decision.guard_false")
+        };
+        Some((
+            law,
+            key,
+            lifecycle_guard(transition, guard, error, diagnostic.map(|_| underlying)),
+        ))
+    }
+
     fn lifecycle_reason_parts(&self) -> Option<(&str, &FactKey, BTreeMap<String, RuntimeValue>)> {
         match self {
             Self::NotFromState {
@@ -520,25 +567,9 @@ impl<X> DecisionRefusal<X> {
                     ("transition", RuntimeValue::String(transition.clone())),
                 ]),
             )),
-            Self::GuardFalse {
-                key,
-                transition,
-                guard,
-            } => Some((
-                "lifecycle.guard",
-                key,
-                lifecycle_guard(transition, guard, None),
-            )),
-            Self::GuardError {
-                key,
-                transition,
-                guard,
-                reason,
-            } => Some((
-                "lifecycle.guard_evaluable",
-                key,
-                lifecycle_guard(transition, guard, Some(reason)),
-            )),
+            Self::GuardFalse { .. } | Self::GuardError { .. } => {
+                self.lifecycle_guard_reason_parts()
+            }
             Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -558,6 +589,7 @@ impl<X> DecisionRefusal<X> {
             | Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::Overflow
+            | Self::ReceiptRefused { .. }
             | Self::Host(_) => None,
         }
     }

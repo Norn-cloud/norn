@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.analytics.publication_policy.law",
+  "dependencies": [
+    {
+      "artifactId": "core.analytics.Publication.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Publish only qualified recorded analysis",
+  "namespace": "core",
+  "payload": {
+    "id": "core.analytics.publication_policy",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core.analytics",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/analytics.ts"
+    },
+    "rationale": "ANALYSIS-PUBLISH-1: publication requires complete fresh inputs, chronological knowledge, qualified holdout evidence and matching Function pins; reviewer authority is enforced by the action's AccessIR.",
+    "response": {
+      "invariantId": "publication_policy",
+      "kind": "invariant",
+      "objectType": "core.analytics.Publication"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.analytics.Publication"
+      ],
+      "root": {
+        "id": "core.analytics.Publication",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.analytics.Publication"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.publication_policy.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

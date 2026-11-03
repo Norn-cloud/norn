@@ -905,6 +905,9 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    let unsupported = || ActionRefusal::UnsupportedEffect {
+        action_id: action.action_id.clone(),
+    };
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
@@ -912,10 +915,16 @@ where
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
         )
+        || (!matches!(call.turn.world, crate::World::Main)
+            && matches!(
+                action.effect_program,
+                Some(ActionEffectProgram::FireTransition {
+                    accept_receipt: Some(_),
+                    ..
+                })
+            ))
     {
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        });
+        return Err(unsupported());
     }
     check_scope(call)?;
     let prepared_input = match preparation {
@@ -933,14 +942,7 @@ where
         )?,
     };
     match action.effect_program.as_ref() {
-        // RECEIPT-EFFECT-1: refuse until consumption and effects share one commit.
-        Some(ActionEffectProgram::FireTransition {
-            accept_receipt: Some(_),
-            ..
-        })
-        | None => Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        }),
+        None => Err(unsupported()),
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
@@ -1094,7 +1096,11 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let mut changes = if let Some(rule) = rule {
+    let ReceiptChanges {
+        reference: receipt,
+        facts: mut changes,
+    } = receipt_changes(host, catalog, call, &preparation.effective_input, &target)?;
+    if let Some(rule) = rule {
         let output = rule.evaluate(
             call,
             &preparation.effective_input,
@@ -1103,7 +1109,10 @@ where
         )?;
         check_action_envelope::<H::Error>(
             limits,
-            output.facts.len().saturating_add(1),
+            changes
+                .len()
+                .saturating_add(output.facts.len())
+                .saturating_add(1),
             action.commands.len(),
         )?;
         for change in &output.facts {
@@ -1144,10 +1153,9 @@ where
                 )?;
             }
         }
-        output.facts
-    } else {
-        Vec::new()
-    };
+        changes.extend(output.facts);
+    }
+
     let change = FactChange::Transition {
         object_type,
         key: object_id.clone(),
@@ -1173,9 +1181,97 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt,
         },
         EnvelopePolicy { limits, meter },
     )
+}
+
+struct ReceiptChanges {
+    reference: Option<crate::receipt_binding::ReceiptReference>,
+    facts: Vec<FactChange>,
+}
+
+/// RECEIPT-EFFECT-1: only a host-authenticated binding supplies effect values.
+fn receipt_changes<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    target: &FactKey,
+) -> Result<ReceiptChanges, ActionRefusal<H::Error>> {
+    let Some(ActionEffectProgram::FireTransition {
+        accept_receipt: Some(declaration),
+        ..
+    }) = &call.action.effect_program
+    else {
+        return Ok(ReceiptChanges {
+            reference: None,
+            facts: Vec::new(),
+        });
+    };
+    let invalid = || ActionRefusal::InvalidInput {
+        field: declaration.reference_field.clone(),
+    };
+    let value = input
+        .get(&declaration.reference_field)
+        .ok_or_else(invalid)?;
+    let reference = crate::receipt_binding::ReceiptReference::parse(value)
+        .map_err(|_invalid_reference| invalid())?;
+    let binding = host
+        .resolve_accepted_receipt(&reference, &declaration.manifest_digest)
+        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?
+        .ok_or_else(invalid)?;
+    let (digest, result, acceptance) = binding.into_parts();
+    if acceptance
+        .destination
+        .as_ref()
+        .is_none_or(|pin| &pin.key != target)
+    {
+        return Err(invalid());
+    }
+    let mut values = JsonObject::new();
+    values.insert(
+        declaration.digest_property.0.clone(),
+        JsonValue::String(digest.0),
+    );
+    for (property, member) in &declaration.result_bindings {
+        values.insert(
+            property.0.clone(),
+            result.get(member.as_str()).ok_or_else(invalid)?.clone(),
+        );
+    }
+    validate_stored_patch::<H::Error>(
+        catalog,
+        &target.object_type,
+        &values,
+        &declaration.reference_field,
+    )?;
+    let effective = catalog
+        .effective_type(&target.object_type)
+        .ok_or_else(invalid)?;
+    for (property, value) in &mut values {
+        let declared = effective.property(property).ok_or_else(invalid)?;
+        declared.check_runtime_value(value).map_err(|error| {
+            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                reason: format!("receipt result property {property}: {error:?}"),
+            })
+        })?;
+        *value = declared.canonical_runtime_value(value);
+    }
+    let changes = values
+        .into_iter()
+        .map(|(property, value)| FactChange::Set {
+            object_type: target.object_type.clone(),
+            key: target.key.clone(),
+            property: norn_ir::PropertyId(property),
+            value,
+        })
+        .collect();
+    Ok(ReceiptChanges {
+        reference: Some(reference),
+        facts: changes,
+    })
 }
 
 fn upsert_stored_input(
@@ -1449,6 +1545,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            receipt: None,
         },
         EnvelopePolicy { limits, meter },
     )
@@ -3401,6 +3498,7 @@ where
             recorded,
             record,
             series_candidate: Some(candidate),
+            receipt: None,
             remaining_fuel: preparation.remaining_fuel,
         };
         let outcome = commit_effect(
@@ -3561,6 +3659,7 @@ struct Pending {
     recorded: FactState,
     record: ActionCallRecord,
     series_candidate: Option<SeriesCandidate>,
+    receipt: Option<crate::receipt_binding::ReceiptReference>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.
@@ -3672,6 +3771,7 @@ where
         recorded,
         record,
         series_candidate,
+        receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -3806,7 +3906,14 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some(request) = quantity {
+    let result = if let Some(reference) = receipt {
+        if quantity.is_some() {
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: call.action.action_id.clone(),
+            });
+        }
+        host.commit_accepted_receipt(commit, &reference)
+    } else if let Some(request) = quantity {
         let identity = norn_ir::canonical::canonical_json_of(&(
             "action.quantity/1",
             &call.action.action_id,
@@ -4209,6 +4316,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_) => None,
     };
     let stale_link = match error {
@@ -4241,6 +4349,7 @@ fn precondition_read_refusal<X>(
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_) => None,
     };
     if let Some(key) = stale_fact {
@@ -4360,6 +4469,7 @@ where
         | CommitError::ObservationAuthorization
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
+        | CommitError::ReceiptRefused { .. }
         | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
     };
     let refusal = DecisionRefusal::InvariantViolation {

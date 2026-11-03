@@ -1,0 +1,268 @@
+{
+  "artifactId": "core.analytics.PublicationEvidence.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Qualified publication evidence",
+  "namespace": "core.analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "invariants": [
+        {
+          "expression": "(self.status != 'published') or (((((((((((((((((((((((((((((((((((self.receipt_digest != '') and (self.table_version != '')) and (self.table_digest != '')) and (self.source_digest != '')) and (self.result_table_version == self.table_version)) and (self.result_table_digest == self.table_digest)) and (self.result_source_digest == self.source_digest)) and (self.result_split_at_ms == self.split_at_ms)) and (self.model_digest != '')) and (self.parameters_digest != '')) and (self.result_model_digest == self.model_digest)) and (self.result_parameters_digest == self.parameters_digest)) and self.complete) and (self.quarantined_count == 0)) and self.fresh) and (self.frontier_age_ms >= 0)) and (self.max_frontier_age_ms >= 0)) and (self.frontier_age_ms <= self.max_frontier_age_ms)) and (not self.temporal_leakage)) and (self.late_feature_count == 0)) and (self.latest_training_label_ms < self.split_at_ms)) and (self.training_count > 0)) and (self.holdout_count > 0)) and (self.non_forward_outcome_count == 0)) and (self.holdout_error_nanos != null)) and ((self.holdout_error_nanos ?? -1) >= 0)) and (self.holdout_error_limit_nanos >= 0)) and ((self.holdout_error_nanos ?? -1) <= self.holdout_error_limit_nanos)) and (self.error_unit != '')) and (self.error_unit == self.result_error_unit)) and (self.assumptions_digest != '')) and (self.assumptions_digest == self.result_assumptions_digest)) and (self.remedy_digest != '')) and (self.remedy_digest == self.result_remedy_digest)) and (self.diagnostics_passed or (self.mode == 'descriptive')))",
+          "id": "publication_policy",
+          "message": "Analytical publication requires matching qualified evidence."
+        }
+      ],
+      "name": "core.analytics.PublicationEvidence",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "proposed"
+              },
+              {
+                "value": "published"
+              },
+              {
+                "value": "refused"
+              }
+            ]
+          }
+        },
+        {
+          "id": "table_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "table_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "source_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "split_at_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "model_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "parameters_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "assumptions_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "remedy_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "mode",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "inference"
+              },
+              {
+                "value": "descriptive"
+              }
+            ]
+          }
+        },
+        {
+          "id": "result_assumptions_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_remedy_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "receipt_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_table_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_table_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_source_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_split_at_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "result_model_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_parameters_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "complete",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "fresh",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "quarantined_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "frontier_age_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "max_frontier_age_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "late_feature_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "latest_training_label_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "temporal_leakage",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "training_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "holdout_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "non_forward_outcome_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "holdout_error_nanos",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "holdout_error_limit_nanos",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "error_unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "result_error_unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "diagnostics_passed",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.PublicationEvidence.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

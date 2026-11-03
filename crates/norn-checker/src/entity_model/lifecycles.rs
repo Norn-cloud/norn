@@ -110,6 +110,9 @@ impl<'a> Checker<'a, '_> {
                     }
                     for edge in &mut machine.transitions {
                         if let Some(parent) = wide.transitions.iter().find(|p| p.id == edge.id) {
+                            if parent.guard_refusal_code.is_some() {
+                                edge.guard_refusal_code = parent.guard_refusal_code;
+                            }
                             let own = std::mem::take(&mut edge.guards);
                             edge.guards = parent.guards.clone();
                             for guard in own {
@@ -132,6 +135,18 @@ impl<'a> Checker<'a, '_> {
         for (position, transition) in lifecycle.transitions.iter().enumerate() {
             let position = position.to_string();
             let id = transition.id.as_str();
+            if let Some(code) = &transition.guard_refusal_code
+                && crate::codes::lookup(code).is_none_or(|entry| {
+                    entry.tier != crate::codes::Tier::T6
+                        || entry.severity != norn_ir::DiagnosticSeverity::Error
+                })
+            {
+                self.out.push(error(
+                    codes::INVALID_GUARD_DIAGNOSTIC,
+                    "guardRefusalCode must name a registered T6 error".to_owned(),
+                    span_at(at, &["transitions", position.as_str(), "guardRefusalCode"]),
+                ));
+            }
             for (index, guard) in transition.guards.iter().enumerate() {
                 let index = index.to_string();
                 let guard_at = span_at(
@@ -549,6 +564,21 @@ impl<'a> Checker<'a, '_> {
                         span_at(&at, &["from", index.as_str()]),
                     ));
                 }
+            }
+            if transition
+                .guard_refusal_code
+                .as_deref()
+                .is_some_and(|code| {
+                    inherited
+                        .guard_refusal_code
+                        .is_some_and(|parent| code != parent)
+                })
+            {
+                self.out.push(error(
+                    codes::INHERITED_GUARD_DIAGNOSTIC,
+                    "a subtype cannot replace an inherited guard diagnostic".to_owned(),
+                    span_at(&at, &["guardRefusalCode"]),
+                ));
             }
             for guard in &inherited.guards {
                 if !transition.guards.iter().any(|own| own.as_str() == *guard) {

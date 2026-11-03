@@ -2243,6 +2243,38 @@ fn lean_l1_lifecycle_corpus_matches_real_commit() {
     assert_eq!(count, 20);
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn declared_guard_diagnostic_preserves_guard_acceptance_and_evidence(amount in -1000_i64..1000) {
+        let mut types = types();
+        types[0].lifecycles[0].transitions[0].guard_refusal_code =
+            Some(norn_checker::lifecycles::codes::PUBLICATION_GUARD.to_owned());
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = cell();
+        let row = key(ORDER, "diagnostic");
+        cell.commit(CellCommit { writes: vec![FactWrite {
+            key: row.clone(), expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: record(json!({
+                "order_no":"diagnostic", "status":"draft", "approver":"", "amount":amount
+            })) },
+        }], ..CellCommit::empty() }).unwrap();
+        let slice = load_slice(&cell, [row]).unwrap();
+        let command = output(json!({"facts":[transition(ORDER,"diagnostic","submit")], "commands":[], "timers":[]}));
+        let result = prepare_decision::<Infallible>(&catalog, &slice, &turn("alias"), &command);
+        prop_assert_eq!(result.is_ok(), amount > 0);
+        if let Err(error) = result {
+            prop_assert_eq!(error.code(), norn_checker::lifecycles::codes::PUBLICATION_GUARD);
+            let reason = norn_kernel::Refusable::refusal(&error).reason.unwrap();
+            prop_assert_eq!(reason.pin.as_ref(), Some(&norn_ir::DataQualityRuleRef::Builtin {
+                id: "lifecycle.guard".into(), version: "1".into(),
+            }));
+            prop_assert_eq!(&reason.values["underlyingCode"], &JsonValue::from("decision.guard_false"));
+            prop_assert_eq!(&reason.values["guard"], &JsonValue::from("self.amount > 0"));
+        }
+    }
+}
+
 #[test]
 fn complete_partition_reads_fence_insertion_removal_and_member_updates() {
     use norn_kernel::{

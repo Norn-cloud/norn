@@ -1,0 +1,64 @@
+{
+  "artifactId": "core.analytics.refuse.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Refuse analytical publication",
+  "namespace": "core",
+  "payload": {
+    "actionId": "core.analytics.refuse",
+    "effectProgram": {
+      "entityArtifactId": "core.analytics.Publication.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "core.analytics.Publication",
+      "transition": "refuse"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Refuse analytical publication",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "core.analytics.Publication"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.refuse.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
