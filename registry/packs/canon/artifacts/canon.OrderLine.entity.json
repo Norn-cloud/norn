@@ -1,0 +1,111 @@
+{
+  "artifactId": "canon.OrderLine.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Order-line commitment",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "implements": [
+        "core.Commitment"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "provider",
+          "target": "canon.Party"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "receiver",
+          "target": "canon.Party"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "resource",
+          "target": "canon.Holding"
+        }
+      ],
+      "name": "canon.OrderLine",
+      "properties": [
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "requested"
+              },
+              {
+                "value": "promised"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              },
+              {
+                "value": "breached"
+              }
+            ]
+          }
+        },
+        {
+          "id": "due_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.OrderLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

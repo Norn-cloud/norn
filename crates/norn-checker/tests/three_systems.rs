@@ -6,6 +6,7 @@ use std::{collections::BTreeSet, fs, path::PathBuf};
 use norn_checker::{ArtifactRef, EntityArtifactSetContext, check_artifact_set, lint::coverage::{MemberRef, MemberStatus}, mapping::{CompiledMapping, SourceDocument, compile_mapping_artifact}};
 use norn_ir::{ArtifactEnvelope, mapping::MappedRecord, provenance::UtcTimestamp};
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use serde_json::{Value, json};
 
 const SYSTEMS: [&str; 3] = ["erpnext", "shopify", "odoo"];
@@ -19,6 +20,9 @@ fn compiled(system: &str) -> CompiledMapping {
     let set = artifacts();
     let mapping = set.iter().find(|a| a.artifact_id == format!("{system}.three.mapping")).expect("mapping");
     let source = set.iter().find(|a| a.artifact_id == format!("{system}.three.source")).expect("source");
+    let source_wire=serde_json::to_value(source).expect("source wire");
+    let bytes=fs::read(root().join(format!("registry/packs/{system}/synthetic.json"))).expect("fixture bytes");
+    assert_eq!(source_wire["payload"]["rawMetadata"]["sha256"],format!("{:x}",Sha256::digest(bytes)));
     let wire = serde_json::to_value(mapping).expect("wire");
     assert_eq!(wire["payload"]["source"]["sha256"], ArtifactRef::of(source).expect("source pin").sha256);
     compile_mapping_artifact(mapping, &set, &[]).unwrap_or_else(|d| panic!("{system}: {d:#?}"))
@@ -69,14 +73,18 @@ fn mvp_map_three_aliases_roles_and_one_economic_identity() {
         let values=serde_json::to_value(&delivery.invocations[0].input).expect("delivery values");
         assert_eq!(values["quantity"],json!(20)); assert_eq!(values["unit"],json!("g"));
         assert_eq!(values["action"],json!("transfer_ownership")); assert_eq!(values["currency"],Value::Null);
-        let roles=serde_json::to_value(&delivery.links).expect("links");
-        let text=roles.to_string();
-        for role in ["provider","receiver","resource","fulfils"] { assert!(text.contains(role)); }
-        for key in ["demo/party/owner","demo/party/customer","demo/holding/owner/north/gold","demo/order/1/line/1"] { assert!(text.contains(key)); }
+        for (role,key) in [("provider","demo/party/owner"),("receiver","demo/party/customer"),("resource","demo/holding/owner/north/gold"),("fulfils","demo/order/1/line/1")] {
+            let link=delivery.links.iter().find(|l|l.link.as_str()==role).expect("role");
+            assert_eq!(link.target_key,key); assert_eq!(link.key,delivery.key);
+        }
         assert!(!delivery.property_provenance.is_empty());
         let holding=mapped.iter().find(|r| r.map=="holding").expect("holding");
-        let text=serde_json::to_string(&holding.links).expect("holding roles");
-        assert!(text.contains("demo/party/owner") && text.contains("demo/party/custodian"));
+        for (role,key) in [("owner","demo/party/owner"),("custodian","demo/party/custodian")] {
+            assert_eq!(holding.links.iter().find(|l|l.link.as_str()==role).expect("resource role").target_key,key);
+        }
+        let values=serde_json::to_value(&holding.invocations[0].input).expect("holding values");
+        assert_eq!(values["quantity"],json!(200));
+        assert_eq!(values["quantity_basis"],json!(if system=="shopify" {"available"} else {"on_hand"}));
         assert_eq!(mapped.iter().filter(|r| r.map=="party_role").count(),3);
         assert!(mapped.iter().any(|r| r.object_type.as_str()=="canon.OrderLine"));
         assert!(mapped.iter().any(|r| r.object_type.as_str()=="canon.SettlementObservation"));
@@ -107,12 +115,12 @@ fn mvp_map_gap_shopify_price_is_never_stock_cost_or_gl() {
     assert!(mapped.iter().all(|r| r.object_type.as_str()!="canon.Posting"));
     let coverage=mapping.coverage().iter().find(|c| c.target.as_str()=="canon.Holding").expect("coverage");
     for field in ["stock_cost","cost_currency"] {
-        let member=coverage.member(&MemberRef::Property(field.into())).expect("explicit gap");
+        let member=coverage.member(&MemberRef::Property(norn_ir::PropertyId(field.to_owned()))).expect("explicit gap");
         assert!(matches!(member.status,MemberStatus::Gap{..}));
     }
     let holding=mapped.iter().find(|r| r.map=="holding").expect("holding");
-    assert!(!holding.invocations[0].input.contains_key(&"stock_cost".into()));
-    assert!(!holding.invocations[0].input.contains_key(&"cost_currency".into()));
+    assert!(!holding.invocations[0].input.contains_key("stock_cost"));
+    assert!(!holding.invocations[0].input.contains_key("cost_currency"));
 }
 #[test]
 fn mvp_map_three_ambiguous_identity_refuses_without_sku_guessing() {

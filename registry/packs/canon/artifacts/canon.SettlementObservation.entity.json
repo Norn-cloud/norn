@@ -1,0 +1,85 @@
+{
+  "artifactId": "canon.SettlementObservation.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Settlement observation",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "implements": [
+        "canon.Settlement"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "payer",
+          "target": "canon.Party"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "payee",
+          "target": "canon.Party"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "event",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "canon.SettlementObservation",
+      "properties": [
+        {
+          "id": "amount",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "payment"
+              },
+              {
+                "value": "refund"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.SettlementObservation.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

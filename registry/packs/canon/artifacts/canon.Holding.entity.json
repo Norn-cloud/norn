@@ -1,0 +1,147 @@
+{
+  "artifactId": "canon.Holding.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Owner and location partitioned holding",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "implements": [
+        "core.Resource"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "item",
+          "target": "canon.Item"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "owner",
+          "target": "canon.Party"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "custodian",
+          "target": "canon.Party"
+        }
+      ],
+      "name": "canon.Holding",
+      "properties": [
+        {
+          "id": "resource_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        },
+        {
+          "id": "location",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "quantity_basis",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "on_hand"
+              },
+              {
+                "value": "available"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "stock_cost",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "cost_currency"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "cost_currency",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.Holding.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
