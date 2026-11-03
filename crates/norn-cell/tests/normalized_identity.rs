@@ -425,7 +425,9 @@ fn normalized_composite_integer_key_keeps_values_beyond_binary64_precision() {
     let mut defs = definitions();
     let mut ordinal = defs[0].properties[0].clone();
     ordinal.id = PropertyId("ordinal".into());
-    ordinal.property_type = PropertyType::Integer {};
+    ordinal.property_type = PropertyType::Integer {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+    };
     defs[0].properties.push(ordinal);
     defs[0].identity[0]
         .properties
