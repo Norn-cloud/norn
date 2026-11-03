@@ -204,7 +204,10 @@ mod tests {
             json!({"kind":"proved"}),
             json!({"kind":"bounded-pass","reason":"extra"}),
         ] {
-            assert!(serde_json::from_value::<GuaranteeVerdict>(value.clone()).is_err(), "{value}");
+            assert!(
+                serde_json::from_value::<GuaranteeVerdict>(value.clone()).is_err(),
+                "{value}"
+            );
         }
         assert!(serde_json::from_value::<GuaranteeLevel>(json!({"kind":"proved"})).is_err());
         assert_eq!(
