@@ -52,15 +52,33 @@ pub(crate) fn read(engine: &impl SqlEngine) -> Result<Option<CellId>, CellError>
 
 pub(crate) fn verify_history(engine: &impl SqlEngine) -> Result<(), CellError> {
     let current = read(engine)?;
-    if let Some(first) = crate::export_journal::read_record(engine, 1)? {
-        let original = from_bindings(&first.bindings)?;
-        if original != current {
+    let mut next = engine.query_optional(
+        "SELECT commit_seq FROM _norn_export_journal ORDER BY commit_seq LIMIT 1",
+        params![],
+        |row| row.get::<i64>(0),
+    )?;
+    while let Some(sequence) = next {
+        let sequence_u64 = crate::read::to_u64(sequence, "commit sequence")?;
+        let record =
+            crate::export_journal::read_record(engine, sequence_u64)?.ok_or_else(|| {
+                CellError::LedgerCorrupt {
+                    seq: sequence_u64,
+                    reason: "retained journal record disappeared during admission".to_owned(),
+                }
+            })?;
+        let retained = from_bindings(&record.bindings)?;
+        if retained != current {
             return Err(CellError::BindingMismatch {
                 key: KEY.to_owned(),
-                expected: original.map_or_else(String::new, String::from),
-                found: current.map_or_else(String::new, String::from),
+                expected: current.map_or_else(String::new, String::from),
+                found: retained.map_or_else(String::new, String::from),
             });
         }
+        next = engine.query_optional(
+            "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
+            params![sequence],
+            |row| row.get::<i64>(0),
+        )?;
     }
     Ok(())
 }
