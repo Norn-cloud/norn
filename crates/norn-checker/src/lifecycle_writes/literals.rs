@@ -139,9 +139,15 @@ pub(super) enum Value {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Record {
     members: Vec<(String, Value)>,
+    closed: bool,
 }
 
 impl Record {
+    /// Every member key was read from a closed, duplicate-free object literal.
+    pub(super) const fn has_closed_keys(&self) -> bool {
+        self.closed
+    }
+
     /// Add a member while assembling the scalar columns of one table fact.
     pub(super) fn insert(&mut self, name: &str, value: Value) {
         if let Some((_, previous)) = self.members.iter_mut().find(|(member, _)| member == name) {
@@ -250,10 +256,13 @@ impl Parser<'_, '_> {
     /// The object literal at `{`; consumes through its `}`.
     fn object(&mut self, depth: usize) -> Record {
         self.advance();
-        let mut record = Record::default();
+        let mut record = Record { members: Vec::new(), closed: true };
         loop {
             match self.peek(0) {
-                None => return record,
+                None => {
+                    record.closed = false;
+                    return record;
+                },
                 Some(Token::Punct('}')) => {
                     self.advance();
                     return record;
@@ -270,9 +279,15 @@ impl Parser<'_, '_> {
                     self.advance();
                     self.advance();
                     let value = self.value(depth);
+                    if record.get(&key).is_some() {
+                        record.closed = false;
+                    }
                     record.members.push((key, value));
                 }
-                Some(_) => self.skip_value(depth),
+                Some(_) => {
+                    record.closed = false;
+                    self.skip_value(depth);
+                },
             }
         }
     }
@@ -391,6 +406,18 @@ pub(super) fn whole_literal(source: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{Record, Value, records, whole_literal};
+
+    #[test]
+    fn closed_key_evidence_requires_complete_unique_literal_members() {
+        for source in ["{mode: event.kind}", "{mode: 'open', count: 1}"] {
+            let found = records(source);
+            assert!(found.last().expect("record").has_closed_keys(), "{source}");
+        }
+        for source in ["{mode: 'open', mode: event.kind}", "{mode: 'open'", "{[event.kind]: 'open'}", "{...event}"] {
+            let found = records(source);
+            assert!(!found.last().expect("record").has_closed_keys(), "{source}");
+        }
+    }
 
     #[test]
     fn table_columns_preserve_nested_patch_members() {

@@ -71,16 +71,20 @@ fn pairs(findings: Vec<Diagnostic>) -> Vec<(String, String)> {
 }
 
 fn set_findings(artifacts: Vec<Value>) -> Vec<(String, String)> {
+    pairs(set_diagnostics(artifacts))
+}
+
+fn set_diagnostics(artifacts: Vec<Value>) -> Vec<Diagnostic> {
     let artifacts: Vec<ArtifactEnvelope> = artifacts.into_iter().map(envelope).collect();
     let registry = BTreeSet::<PropertyTypeName>::new();
-    pairs(check_artifact_set(
+    check_artifact_set(
         &artifacts,
         &EntityArtifactSetContext {
             registry: &registry,
             base: &[],
             tenant: None,
         },
-    ))
+    )
 }
 
 /// The T2 findings of the approval rule after `mutate` edits its fact-change
@@ -837,4 +841,102 @@ fn generated_series_key_cannot_be_written_by_input_derivation() {
             "/payload/derive/0/field".to_owned()
         ))
     );
+}
+
+
+fn heterogeneous_patch_example(expression: &str) -> Vec<Value> {
+    let targets = [
+        ("jewelry.CycleExchange", "eligible", json!({"kind":"boolean"})),
+        ("jewelry.CycleLedger", "account_code", json!({"kind":"text"})),
+        ("jewelry.CycleConversion", "output_gross", json!({"kind":"decimal","scale":3})),
+    ];
+    let mut artifacts = Vec::new();
+    for (kind, property, property_type) in &targets {
+        let mut entity = entity_with_mode();
+        entity["artifactId"] = json!(format!("{kind}.entity"));
+        entity["namespace"] = json!("jewelry");
+        entity["payload"]["objectType"]["name"] = json!(kind);
+        entity["payload"]["objectType"]["properties"].as_array_mut().expect("properties")
+            .push(json!({"id":property,"type":property_type}));
+        artifacts.push(entity);
+    }
+    let mut rule = stored_write_rule("patch", "eligible", json!({"type":"boolean"}), expression);
+    let properties = &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
+    properties["objectType"]["enum"] = json!(targets.iter().map(|(kind,_,_)| kind).collect::<Vec<_>>());
+    properties["patch"]["properties"]["account_code"] = json!({"type":"string"});
+    properties["patch"]["properties"]["output_gross"] = json!({"type":"number"});
+    artifacts.push(rule);
+    artifacts
+}
+
+#[test]
+fn closed_exchange_patch_does_not_write_ledger_or_conversion_members() {
+    let findings = set_diagnostics(heterogeneous_patch_example(
+        "[{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{eligible:true}}]",
+    ));
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn closed_patch_still_refuses_an_undeclared_member_or_invalid_stored_value() {
+    for patch in ["{account_code:'Sales'}", "{eligible:'invalid'}"] {
+        let expression = format!("[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]");
+        let findings = set_diagnostics(heterogeneous_patch_example(&expression));
+        assert!(findings.iter().any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains("jewelry.CycleExchange")), "{patch}: {findings:?}");
+    }
+}
+
+#[test]
+fn uncertain_patch_keys_keep_the_full_schema_refusal() {
+    for patch in ["event", "(event.patch)", "{eligible:true, [event.name]:true}", "{eligible:true, ...event}", "{eligible:true, eligible:false}", "{eligible:true"] {
+        let expression = format!("[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]");
+        let findings = set_diagnostics(heterogeneous_patch_example(&expression));
+        for property in ["account_code", "output_gross"] {
+            assert!(findings.iter().any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains("jewelry.CycleExchange") && d.message.contains(property)), "{patch}/{property}: {findings:?}");
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn generated_literal_patch_sets_keep_errors_on_their_own_target(
+        masks in proptest::collection::vec((0_u8..8, 0_u8..8), 2..4)
+    ) {
+        let kinds = masks.iter().enumerate().map(|(i,_)|format!("example.Target{i}")).collect::<Vec<_>>();
+        let mut artifacts = Vec::new();
+        let mut schemas = serde_json::Map::new();
+        for (i,kind) in kinds.iter().enumerate() {
+            let mut entity = entity_with_mode();
+            entity["artifactId"] = json!(format!("{kind}.entity"));
+            entity["namespace"] = json!("example");
+            entity["payload"]["objectType"]["name"] = json!(kind);
+            for field in 0_u8..3 {
+                let name = format!("p{i}_{field}");
+                entity["payload"]["objectType"]["properties"].as_array_mut().expect("properties").push(json!({"id":name,"type":{"kind":"integer"}}));
+                schemas.insert(name,json!({"type":"integer"}));
+            }
+            artifacts.push(entity);
+        }
+        let records = masks.iter().enumerate().map(|(i,(own,wrong))| {
+            let other = kinds.iter().enumerate().find(|(j,_)| *j != i).expect("another target").0;
+            let mut fields = Vec::new();
+            for field in 0_u8..3 {
+                if own & (1_u8 << field) != 0 { fields.push(format!("p{i}_{field}:1")); }
+                if wrong & (1_u8 << field) != 0 { fields.push(format!("p{other}_{field}:1")); }
+            }
+            format!("{{op:'patch',objectType:'{}',key:'{i}',patch:{{{}}}}}",kinds[i],fields.join(","))
+        }).collect::<Vec<_>>();
+        let mut rule = stored_write_rule("patch", "unused", json!({"type":"integer"}), &format!("[{}]",records.join(",")));
+        let properties = &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
+        properties["objectType"]["enum"] = json!(kinds);
+        properties["patch"]["properties"] = Value::Object(schemas);
+        artifacts.push(rule);
+        let findings = set_diagnostics(artifacts);
+        for (kind,(_,wrong)) in kinds.iter().zip(&masks) {
+            let errors = findings.iter().filter(|d|d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains(&format!("{kind:?}"))).count();
+            proptest::prop_assert_eq!(errors,usize::try_from(wrong.count_ones()).expect("three fields"), "{}: {:?}",kind,findings);
+        }
+        proptest::prop_assert!(findings.iter().all(|d|d.code == codes::INVALID_STORED_PROPERTY_WRITE), "{:?}",findings);
+    }
 }
