@@ -3,5 +3,6 @@
   "message": "evidence identity differs from the current generated goal or independently retained result pin",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3"
+  "tier": "T3",
+  "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
 }
