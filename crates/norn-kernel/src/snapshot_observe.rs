@@ -1590,9 +1590,7 @@ pub fn prepare_observed_delete(
             reads: expectations(slice, &writes),
             writes,
             events,
-            effects: Vec::new(),
-            links: Vec::new(),
-            link_reads: Vec::new(),
+            ..CellCommit::empty()
         },
         authorization,
     })
