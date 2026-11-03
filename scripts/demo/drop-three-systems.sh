@@ -6,7 +6,7 @@ if [[ ! -f crates/norn-checker/tests/three_systems.rs ]]; then
   printf 'not yet: #548 (ERPNext, Shopify and Odoo mappings onto one REA ontology)\n'; exit 1
 fi
 
-bun test tools/norn-ts/test/registry-packs.test.ts \
+env -u NORN_PACKS_UPDATE bun test tools/norn-ts/test/registry-packs.test.ts \
   --test-name-pattern 'registry packs are generated from their typed sources'
 binary=$(cargo test --locked -p norn-checker --test three_systems --no-run --message-format=json \
   | python3 -c 'import json,sys
