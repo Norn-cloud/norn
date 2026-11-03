@@ -2,9 +2,8 @@
 
 pub(crate) const fn accepts(
     context_matches: bool,
-    exact: bool,
-    complete: bool,
+    exact_complete: bool,
     requires_exact: bool,
 ) -> bool {
-    context_matches && (!requires_exact || exact && complete)
+    context_matches && (!requires_exact || exact_complete)
 }

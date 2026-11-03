@@ -149,8 +149,7 @@ impl ReadToken {
     ) -> Result<(), ReadTokenMismatch> {
         if crate::read_token_check::accepts(
             self.context == *expected,
-            self.semantics == ReadSemantics::Exact,
-            self.completeness == Completeness::Complete,
+            self.semantics == ReadSemantics::Exact && self.completeness == Completeness::Complete,
             requirement == ReadRequirement::Exact,
         ) {
             Ok(())
