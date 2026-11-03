@@ -356,6 +356,231 @@ export interface components {
             sha256: string;
             version: number;
         };
+        /**
+         * GuaranteesDocument
+         * @description The presentation contract consumed by Studio; identity alone grants no verdict.
+         */
+        NornGuaranteesDocument: {
+            /** @description Complete pinned bounds/assumptions JSON bytes, without a lossy projection. */
+            boundsJson: string;
+            /** @description Exact source/closure/statement identity. */
+            challengeSha256: string;
+            /**
+             * Format: uint32
+             * @description Eligible goals discharged by the checked driver.
+             */
+            discharged: number;
+            /**
+             * Format: uint32
+             * @description Actual eligible denominator, independent of the total goal inventory.
+             */
+            eligible: number;
+            /**
+             * @description Versioned wire contract.
+             * @enum {string}
+             */
+            format: "norn/guarantees@1";
+            /** @description Every generated obligation, including individually unsupported goals. */
+            goals: components["schemas"]["NornGuaranteesGoalGuarantee"][];
+            /** @description Exact governing law artifact. */
+            lawArtifactId: string;
+            /** @description Declared LawIR identifier. */
+            lawId: string;
+            /** @description Governing artifact version. */
+            lawVersion: string;
+            /** @description Independently qualified evidence level. */
+            level: components["schemas"]["NornGuaranteesGuaranteeLevel"];
+            /** @description Separately supplied application/reference parity evidence, or not yet. */
+            parity: components["schemas"]["NornGuaranteesGuaranteeReference"];
+            /** @description Separately supplied runtime enforcement evidence, or explicitly not yet. */
+            runtimeEnforcement: components["schemas"]["NornGuaranteesGuaranteeReference"];
+            /** @description Actual tools used by the trusted driver. */
+            tools: components["schemas"]["NornGuaranteesEvidenceTool"][];
+            /**
+             * Format: uint32
+             * @description Complete generated denominator, including unsupported obligations.
+             */
+            total: number;
+            /** @description Result for the eligible bounded profile, not all possible application goals. */
+            verdict: components["schemas"]["NornGuaranteesGuaranteeVerdict"];
+        };
+        /**
+         * @description Complete run identity. Fields are untrusted wire data, not proof capabilities.
+         *     The challenge digest binds law, writer/mapping closure, unit interpretation,
+         *     generator/semantics profiles, assumptions and every generated statement.
+         */
+        NornGuaranteesEvidencePins: {
+            /** @description Exact JSON object containing the runner's bounds and assumptions. */
+            boundsJson: string;
+            /** @description Exact checker-owned challenge identity. */
+            challengeSha256: string;
+            /**
+             * Format: uint32
+             * @description Index in that challenge's generated obligations, never a supplied theorem.
+             */
+            goalIndex: number;
+            /** @description Exact generated goal, including its statement and assessment. */
+            goalSha256: string;
+            /**
+             * Format: uint64
+             * @description Explicit deterministic seed (zero is permitted).
+             */
+            seed: number;
+            /** @description Actual runner identity. */
+            tool: components["schemas"]["NornGuaranteesEvidenceTool"];
+        };
+        /** @description A result and its source identity. Deserializing or matching it grants no status. */
+        NornGuaranteesEvidenceRecord: {
+            /** @description Exact serialized challenge, retaining all law/writer/unit/mapping pins. */
+            challengeJson: string;
+            /** @description Complete expected run identity. */
+            pins: components["schemas"]["NornGuaranteesEvidencePins"];
+            /**
+             * @description Exact UTF-8 JSON result bytes, including whitespace and number spelling.
+             *     The checked driver owns their meaning and assurance level.
+             */
+            resultJson: string;
+            /** @description Raw SHA-256 of `result_json`'s UTF-8 bytes. */
+            resultSha256: string;
+        };
+        /**
+         * @description Identity of the actual runner, supplied by its trusted controller.
+         *     This record does not authenticate a runner or attest its execution.
+         */
+        NornGuaranteesEvidenceTool: {
+            /** @description Tool/profile identity. */
+            id: string;
+            /** @description Lowercase SHA-256 of the implementing binary/source closure. */
+            implementationSha256: string;
+            /** @description Exact tool version. */
+            version: string;
+        };
+        /** @description One generated obligation, including every unsupported goal. */
+        NornGuaranteesGoalGuarantee: {
+            /** @description Whether this goal is inside the declared backend fragment. */
+            eligible: boolean;
+            /**
+             * @description Actual bound result bytes, pins and digest; absent for unsupported goals.
+             *     Presentation never replaces the controller's independent result pin.
+             */
+            evidence?: components["schemas"]["NornGuaranteesEvidenceRecord"] | null;
+            /** @description Actual generated obligation kind. */
+            goalKind: string;
+            /**
+             * Format: uint32
+             * @description Index in the retained Challenge.
+             */
+            index: number;
+            /** @description Actual evidence level. */
+            level: components["schemas"]["NornGuaranteesGuaranteeLevel"];
+            /** @description Actual trace when a counterexample or reachability witness was returned. */
+            scenario?: components["schemas"]["NornGuaranteesGuaranteeScenario"] | null;
+            /** @description Scoped verdict or explicit Unknown reason. */
+            verdict: components["schemas"]["NornGuaranteesGuaranteeVerdict"];
+        };
+        /** @description Distinct assurance dimensions; none implies an unrestricted proof. */
+        NornGuaranteesGuaranteeLevel: {
+            /** @enum {string} */
+            kind: "exhaustive-finite/bounded";
+        } | {
+            /** @enum {string} */
+            kind: "runtime-enforced";
+        } | {
+            /** @enum {string} */
+            kind: "parity-tested";
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
+            /** @description Concrete reason, rather than an inferred guarantee. */
+            reason: string;
+        };
+        /** @description A real independently supplied link, or an explicit unavailable reference. */
+        NornGuaranteesGuaranteeReference: {
+            /** @enum {string} */
+            kind: "not-yet";
+            /** @description Missing evidence or integration boundary. */
+            reason: string;
+        } | {
+            /** @enum {string} */
+            kind: "available";
+            /** @description Exact referenced bytes. */
+            sha256: string;
+            /** @description Evidence location, not an execution attestation by itself. */
+            uri: string;
+        };
+        /** @description An exact scalar coefficient, interpreted at its declared decimal scale/unit. */
+        NornGuaranteesGuaranteeScalar: {
+            /** @description Signed integer text; never a binary64 quantity. */
+            coefficient: string;
+            /**
+             * Format: uint32
+             * @description Fractional decimal digits from the declaration.
+             */
+            scale: number;
+            /** @description Effective declared unit; absent means dimensionless. */
+            unit?: components["schemas"]["NornGuaranteesUnitRef"] | null;
+        };
+        /** @description A generated writer proposal before runtime law enforcement. */
+        NornGuaranteesGuaranteeScenario: {
+            /** @description Singleton identity retained from the finite profile. */
+            identity: string;
+            /**
+             * @description Why the solver returned this trace.
+             * @enum {string}
+             */
+            kind: "counterexample" | "non-vacuity-witness";
+            /** @description Actual checked trace, in transition order. */
+            states: components["schemas"]["NornGuaranteesGuaranteeState"][];
+            /** @description Actual source writer artifact. */
+            writerArtifactId: string;
+        };
+        /**
+         * @description Distinguishes a refutation from a successful non-vacuity witness.
+         * @enum {string}
+         */
+        NornGuaranteesGuaranteeScenarioKind: "counterexample" | "non-vacuity-witness";
+        /** @description One typed counterexample state; absent objects have no scalar values. */
+        NornGuaranteesGuaranteeState: {
+            /** @description Whether the modeled object exists. */
+            exists: boolean;
+            /** @description Exact quantities keyed by source property name. */
+            values: {
+                [key: string]: components["schemas"]["NornGuaranteesGuaranteeScalar"];
+            };
+        };
+        /** @description A scoped result; Unknown always explains the missing evidence. */
+        NornGuaranteesGuaranteeVerdict: {
+            /** @enum {string} */
+            kind: "bounded-pass";
+        } | {
+            /** @enum {string} */
+            kind: "refuted";
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
+            /** @description Concrete unsupported, stale, failed or unavailable boundary. */
+            reason: string;
+        };
+        /**
+         * @description Stable per-law guarantees document format.
+         * @enum {string}
+         */
+        NornGuaranteesGuaranteesFormat: "norn/guarantees@1";
+        /**
+         * @description A reference to a unit of measure in a standard unit vocabulary (ruling
+         *     2026-09-25 §27). The code is not interpreted here; resolving it against the
+         *     vocabulary is registry work (T8-STD-1).
+         */
+        NornGuaranteesUnitRef: {
+            /** @description The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`). */
+            code: string;
+            system: components["schemas"]["NornGuaranteesUnitSystem"];
+        };
+        /**
+         * @description A standard unit vocabulary.
+         * @enum {string}
+         */
+        NornGuaranteesUnitSystem: "ucum" | "qudt";
         /** @description Exact origin of a law inherited from an installed composition pack. */
         NornInheritedLawOrigin: {
             /** @description Norn1 semantic artifact digest. */
