@@ -165,11 +165,7 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .expect("rebuild");
     let before = KnowledgeCutoff {
         recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
-        frontier: host
-            .store()
-            .verified_head()
-            .expect("pre-quarantine")
-            .commits,
+        frontier: view.result().known_as_of,
     };
     capture_quality(&mut host, 80_000, "bad-source");
     let cutoff = KnowledgeCutoff {
@@ -197,8 +193,6 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         serde_json::to_string_pretty(&finding).expect("finding document")
     );
     if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-        std::fs::create_dir_all(std::path::Path::new(path).parent().expect("directory"))
-            .expect("fixture directory");
         std::fs::write(path, &text).expect("bless finding");
     }
     assert_eq!(
