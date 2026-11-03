@@ -1,4 +1,4 @@
-//! Checked scaled-integer arithmetic for a declaration's numeric profile.
+//! FOLD-SCALED: checked scaled-integer arithmetic for the declared numeric profile.
 use rust_decimal::Decimal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,71 @@ pub struct ScaledArithmetic {
 }
 
 impl ScaledArithmetic {
+    /// VAL-ROUND: explicit modes override inherited sites; absent modes never round.
+    pub fn rounding_site(
+        scale: u32,
+        mode: Option<Rounding>,
+        inherited: Option<Self>,
+        exact: bool,
+    ) -> Result<Option<Self>, &'static str> {
+        if mode.is_none() && inherited.is_none() && !exact {
+            return Ok(None);
+        }
+        let rounding = mode
+            .or_else(|| inherited.map(|site| site.rounding))
+            .ok_or("rounding must be declared")?;
+        if scale > 18 {
+            return Err("invalid exact site scale");
+        }
+        Ok(Some(Self { scale, rounding }))
+    }
+
+    /// VAL-EXACT-1: exact operations derive their scale without a rounding site.
+    pub fn exact_result_scale(op: &str, a: u32, b: u32) -> Result<u32, &'static str> {
+        let scale = match op {
+            "Add" | "Subtract" => a.max(b),
+            "Multiply" => a.checked_add(b).ok_or("exact result scale overflow")?,
+            _ => return Err("operation requires a declared result scale and rounding"),
+        };
+        (scale <= 18)
+            .then_some(scale)
+            .ok_or("exact result scale exceeds 18")
+    }
+
+    /// VAL-EXACT-1: checked addition, subtraction and multiplication never round.
+    pub fn exact_binary(op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
+        let scale = Self::exact_result_scale(op, a.scale(), b.scale())?;
+        let coefficient = match op {
+            "Multiply" => a.mantissa().checked_mul(b.mantissa()),
+            "Add" | "Subtract" => {
+                let profile = Self {
+                    scale,
+                    rounding: Rounding::Refuse,
+                };
+                let (a, b) = (profile.coefficient(a)?, profile.coefficient(b)?);
+                if op == "Add" {
+                    a.checked_add(b)
+                } else {
+                    a.checked_sub(b)
+                }
+            }
+            _ => return Err("unsupported exact operation"),
+        }
+        .ok_or("exact coefficient overflow")?;
+        Decimal::try_from_i128_with_scale(coefficient, scale)
+            .map_err(|_| "number exceeds the exact decimal range")
+    }
+
+    /// VAL-EXACT-1: compare after checked exact scale alignment.
+    pub fn exact_compare(a: Decimal, b: Decimal) -> Result<std::cmp::Ordering, &'static str> {
+        let scale = Self::exact_result_scale("Add", a.scale(), b.scale())?;
+        let profile = Self {
+            scale,
+            rounding: Rounding::Refuse,
+        };
+        Ok(profile.coefficient(a)?.cmp(&profile.coefficient(b)?))
+    }
+
     pub fn coefficient(self, value: Decimal) -> Result<i128, &'static str> {
         let value = value.normalize();
         let places = self
@@ -27,6 +92,53 @@ impl ScaledArithmetic {
             .mantissa()
             .checked_mul(10_i128.pow(places))
             .ok_or("scaled coefficient overflow")
+    }
+
+    /// FOLD-RESCALE / VAL-ROUND: quantize at an explicit result-scale site.
+    /// Higher source precision is accepted here; inexact results obey the mode.
+    /// Invalid target scales and intermediate or exact-decimal overflow refuse.
+    pub fn rescale(self, value: Decimal) -> Result<Decimal, &'static str> {
+        if self.scale > 18 {
+            return Err("number is outside the declared exact scale");
+        }
+        let value = value.normalize();
+        let coefficient = if self.scale >= value.scale() {
+            value
+                .mantissa()
+                .checked_mul(10_i128.pow(self.scale - value.scale()))
+                .ok_or("scaled coefficient overflow")?
+        } else {
+            self.quotient(value.mantissa(), 10_i128.pow(value.scale() - self.scale))?
+        };
+        Decimal::try_from_i128_with_scale(coefficient, self.scale)
+            .map_err(|_| "number exceeds the exact decimal range")
+    }
+
+    /// VAL-ROUND: divide exact operands directly into a declared rounding site.
+    pub fn divide(self, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
+        Self::exact_result_scale("Add", a.scale(), b.scale())?;
+        if self.scale > 18 {
+            return Err("number is outside the declared exact scale");
+        }
+        let exponent = i64::from(self.scale) + i64::from(b.scale()) - i64::from(a.scale());
+        let places = u32::try_from(exponent.unsigned_abs())
+            .map_err(|_overflow| "division scale overflow")?;
+        let factor = 10_i128.pow(places);
+        let (numerator, denominator) = if exponent >= 0 {
+            (
+                a.mantissa()
+                    .checked_mul(factor)
+                    .ok_or("dividend overflow")?,
+                b.mantissa(),
+            )
+        } else {
+            (
+                a.mantissa(),
+                b.mantissa().checked_mul(factor).ok_or("divisor overflow")?,
+            )
+        };
+        Decimal::try_from_i128_with_scale(self.quotient(numerator, denominator)?, self.scale)
+            .map_err(|_| "number exceeds the exact decimal range")
     }
 
     pub fn binary(self, op: &str, a: Decimal, b: Decimal) -> Result<Decimal, &'static str> {
@@ -44,6 +156,7 @@ impl ScaledArithmetic {
             .map_err(|_| "number exceeds the exact decimal range")
     }
 
+    /// FOLD-ARITHMETIC: exact signed remainders select the declared rounding rule.
     fn quotient(self, numerator: i128, denominator: i128) -> Result<i128, &'static str> {
         let quotient = numerator
             .checked_div(denominator)
@@ -78,6 +191,10 @@ impl ScaledArithmetic {
     }
 }
 
+#[cfg(kani)]
+#[path = "../../../../../verification/ordered-fold-v1/scaled_kani.rs"]
+mod proof;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +203,76 @@ mod tests {
             .binary(op, a.parse().unwrap(), b.parse().unwrap())
             .map(|n| n.normalize().to_string())
     }
+    #[test]
+    fn explicit_rescale_covers_signed_midpoints_and_refusal_boundaries() {
+        for (mode, expected) in [
+            (Rounding::TowardZero, "1.00"),
+            (Rounding::HalfEven, "1.00"),
+            (Rounding::HalfAwayFromZero, "1.01"),
+        ] {
+            let p = ScaledArithmetic {
+                scale: 2,
+                rounding: mode,
+            };
+            for sign in ["", "-"] {
+                let n = p.rescale(format!("{sign}1.005").parse().unwrap()).unwrap();
+                assert_eq!(n.to_string(), format!("{sign}{expected}"));
+            }
+        }
+        let p = ScaledArithmetic {
+            scale: 2,
+            rounding: Rounding::Refuse,
+        };
+        assert_eq!(
+            p.rescale("1.0100".parse().unwrap()).unwrap().to_string(),
+            "1.01"
+        );
+        assert!(p.rescale("1.005".parse().unwrap()).is_err());
+        assert!(p.rescale(Decimal::MAX).is_err());
+        assert!(ScaledArithmetic { scale: 18, ..p }
+            .rescale(Decimal::MAX)
+            .is_err());
+        assert!(ScaledArithmetic { scale: 19, ..p }
+            .rescale(Decimal::ZERO)
+            .is_err());
+        assert_eq!(
+            ScaledArithmetic { scale: 18, ..p }
+                .rescale(Decimal::ZERO)
+                .unwrap()
+                .scale(),
+            18
+        );
+        assert_eq!(
+            p.rescale("0.0000000000000000000000000001".parse().unwrap()),
+            Err("inexact result refused")
+        );
+    }
+
+    #[test]
+    fn store_rounding_does_not_quantize_exact_intermediate_products() {
+        let p = ScaledArithmetic {
+            scale: 3,
+            rounding: Rounding::Refuse,
+        };
+        let intermediate = p
+            .binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap())
+            .unwrap();
+        let exact = p
+            .binary("Multiply", intermediate, Decimal::from(100))
+            .unwrap();
+        let site = ScaledArithmetic {
+            scale: 2,
+            rounding: Rounding::HalfEven,
+        };
+        assert_eq!(site.rescale(exact).unwrap().to_string(), "12.50");
+        assert!(ScaledArithmetic {
+            rounding: Rounding::Refuse,
+            ..site
+        }
+        .binary("Multiply", "1.25".parse().unwrap(), "0.1".parse().unwrap())
+        .is_err());
+    }
+
     #[test]
     fn declared_rounding_is_symmetric_and_uses_exact_remainders() {
         for (rounding, eighth, three_eighths) in [
@@ -194,5 +381,35 @@ mod tests {
         }
         .coefficient(Decimal::ZERO)
         .is_err());
+    }
+    #[test]
+    fn derived_exact_operations_preserve_intermediates_and_refuse_overflow() {
+        let product = ScaledArithmetic::exact_binary(
+            "Multiply",
+            "1.25".parse().unwrap(),
+            "0.1".parse().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(product.to_string(), "0.125");
+        let result =
+            ScaledArithmetic::exact_binary("Multiply", product, Decimal::from(100)).unwrap();
+        assert_eq!(
+            ScaledArithmetic {
+                scale: 2,
+                rounding: Rounding::HalfEven
+            }
+            .rescale(result)
+            .unwrap()
+            .to_string(),
+            "12.50"
+        );
+        for (op, a, b) in [
+            ("Add", Decimal::MAX, Decimal::ONE),
+            ("Subtract", Decimal::MIN, Decimal::ONE),
+            ("Multiply", Decimal::MAX, Decimal::MAX),
+        ] {
+            assert!(ScaledArithmetic::exact_binary(op, a, b).is_err());
+        }
+        assert!(ScaledArithmetic::exact_binary("Divide", Decimal::ONE, Decimal::ONE).is_err());
     }
 }

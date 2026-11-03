@@ -1,0 +1,7 @@
+{
+  "code": "core.values.unit_mismatch",
+  "message": "VAL-UNIT-1: unit requires a visible, exact core unit catalog pin and an admitted UCUM code; conversion must be explicit",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

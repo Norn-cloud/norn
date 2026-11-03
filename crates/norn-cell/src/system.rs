@@ -28,10 +28,9 @@
 use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
-/// Pre-alpha format /7 binds exact values and durable markings on top of
-/// main's pending-link indexes (/4), quantity v2 and cell-wide clock (/6).
-/// Stores /2 through /6 must be recreated, never upgraded in place.
-pub const STORE_FORMAT: &str = "norn.cell.store/7";
+/// Pre-alpha format /8 binds producing receipts to exact incarnation digests.
+/// Stores /2 through /7 must be recreated, never upgraded in place.
+pub const STORE_FORMAT: &str = "norn.cell.store/8";
 /// Reverse index of pending relation intents, maintained with their records.
 pub(crate) const PENDING_LINK_INDEX: &str = "_norn_pending_link";
 
@@ -427,6 +426,8 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("seq")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/commit" ON "_norn_ledger" ("commit_seq")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_sequence" ON "_norn_ledger" ("world", json_extract("event", '$.fact.id'), "seq", "commit_seq") WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/finding_subject" ON "_norn_ledger" ("world", json_extract("event", '$.fact.subjects[0].objectType'), json_extract("event", '$.fact.subjects[0].key')) WHERE json_extract("event", '$.op') = 'data_quality_finding'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/quantity_latest" ON "_norn_ledger"
       ("world", json_extract("event", '$.request.ledgerId'), "seq" DESC)
       WHERE json_extract("event", '$.type')='quantity.transition'"#,

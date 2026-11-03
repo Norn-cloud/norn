@@ -718,7 +718,12 @@ fn verify_receipt(
                 .join("; ")
         ))
     })?;
-    let expected_env = derived_env.reference()?;
+    let version = parsed
+        .type_env
+        .as_ref()
+        .and_then(|reference| norn_expr::env::TypeEnvVersion::from_number(reference.version))
+        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    let expected_env = derived_env.reference_at_version(version)?;
     if !parsed.type_env.as_ref().is_some_and(|reference| {
         profile_ref_matches(
             reference,
@@ -843,6 +848,7 @@ pub fn recover_legacy_admission_receipt(
         IDENTIFIER_ADMISSION_PROFILE,
         None,
     )?;
+    let current_sha256 = checked.receipt.content_sha256()?;
 
     if checked.receipt.admitted {
         let bytes = checked.receipt.canonical_json()?;
@@ -868,7 +874,20 @@ pub fn recover_legacy_admission_receipt(
         .map_err(|errors| {
             invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
         })?
-        .reference()?;
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .map_err(|_error| ReceiptError::ReceiptHashMismatch {
+            expected: expected_sha256.to_owned(),
+            actual: current_sha256.clone(),
+        })?;
+    if checked.receipt.admitted {
+        let mut historical_current = checked.receipt;
+        historical_current.type_env = Some(type_env.clone());
+        let recovered = String::from_utf8(historical_current.canonical_json()?)
+            .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
+        if admission_receipt_sha256(&recovered)? == expected_sha256 {
+            return Ok(recovered);
+        }
+    }
     let warnings: Vec<Diagnostic> = historical_check
         .diagnostics
         .iter()
@@ -909,7 +928,7 @@ pub fn recover_legacy_admission_receipt(
 
     Err(ReceiptError::ReceiptHashMismatch {
         expected: expected_sha256.to_owned(),
-        actual: checked.receipt.content_sha256()?,
+        actual: current_sha256,
     })
 }
 
@@ -937,7 +956,41 @@ pub fn derive_type_env(
         object_types: &layer.object_types,
         extensions: &layer.extensions,
     };
-    ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))
+    let mut env =
+        ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
+    for artifact in base.iter().chain(artifacts) {
+        if matches!(
+            &artifact.payload,
+            norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)
+        ) {
+            let payload_value = artifact.payload.to_json_value();
+            let Some(payload) = payload_value.as_object() else {
+                continue;
+            };
+            for member in ["inputSchema", "outputSchema"] {
+                if let Some(schema) = payload.get(member) {
+                    let name = format!(
+                        "exact.{}.{}.{}",
+                        artifact.artifact_id, artifact.version, member
+                    );
+                    let bound = if matches!(&artifact.payload, norn_ir::ArtifactPayload::Action(_))
+                        && member == "inputSchema"
+                    {
+                        env.bind_exact_action_schema(&name, schema)
+                    } else {
+                        env.bind_exact_schema(&name, schema)
+                    };
+                    env = bound.map_err(|reason| {
+                        vec![norn_expr::EnvError::Unresolved {
+                            site: name,
+                            name: reason,
+                        }]
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(env)
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {
@@ -1789,7 +1842,7 @@ mod tests {
             .expect("historical full-envelope identity");
         let type_env = derive_type_env(&artifacts, &base, &limits)
             .expect("definition environment")
-            .reference()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
             .expect("environment reference");
         let historical = CheckReceipt {
             checker: CHECKER_NAME.to_owned(),

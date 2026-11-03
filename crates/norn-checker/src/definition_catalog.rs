@@ -7,9 +7,9 @@ use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
 pub use crate::receipt::ReceiptError as CatalogError;
 use norn_ir::definition_catalog::{
-    ArtifactKey, CatalogArtifact, CatalogFormat, DefinitionCatalog, DependencyVia, DependsOnRow,
-    LawBinding, LawRow, LifecycleStates, LinkRow, MapRule, MappingRow, Member, MemberRef,
-    PropertyRow, TransitionRow, TypeKind, TypeRow, WriteVia, WritesRow,
+    ArtifactKey, CatalogArtifact, CatalogFormat, ConceptFacet, ConceptFacetRow, DefinitionCatalog,
+    DependencyVia, DependsOnRow, LawBinding, LawRow, LifecycleStates, LinkRow, MapRule, MappingRow,
+    Member, MemberRef, PropertyRow, TransitionRow, TypeKind, TypeRow, WriteVia, WritesRow,
 };
 use norn_ir::mapping::MappingIr;
 use norn_ir::{
@@ -41,6 +41,26 @@ pub fn project(
         property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
         ..Rows::default()
     };
+    for artifact in &all {
+        let mut layer = crate::entity_artifacts::Layer::default();
+        let context = std::iter::once(*artifact).chain(
+            all.iter()
+                .copied()
+                .filter(|other| other.artifact_id != artifact.artifact_id),
+        );
+        for (index, artifact) in context.enumerate() {
+            if let Decoded::Root(root) = decode_v2(artifact) {
+                layer.push(index, *root);
+            }
+        }
+        rows.roles.insert(
+            key(artifact),
+            crate::concept_roles::resolve(layer.as_model(), crate::EntityModel::EMPTY)
+                .into_iter()
+                .filter_map(|(name, role)| role.ok().map(|role| (name, role)))
+                .collect(),
+        );
+    }
     for (index, artifact) in all.iter().enumerate() {
         let reference = ArtifactRef::of(artifact)?;
         rows.artifacts.insert(CatalogArtifact {
@@ -117,6 +137,11 @@ struct Rows {
     property_types: Vec<PropertyTypeDef>,
     artifacts: BTreeSet<CatalogArtifact>,
     types: BTreeSet<TypeRow>,
+    facets: BTreeSet<ConceptFacetRow>,
+    roles: std::collections::BTreeMap<
+        ArtifactKey,
+        std::collections::BTreeMap<String, norn_ir::ConceptRole>,
+    >,
     properties: BTreeSet<PropertyRow>,
     links: BTreeSet<LinkRow>,
     transitions: BTreeSet<TransitionRow>,
@@ -224,12 +249,23 @@ impl Rows {
         match *root {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
             EntityRoot::V2Interface(root) => {
-                let def = root.interface;
+                let def = &root.interface;
                 let name = def.name.as_str().to_owned();
                 self.types.insert(TypeRow {
                     at: at(artifact, type_member(name.clone())),
                     kind: TypeKind::Interface,
-                    extends: def.extends.iter().map(|n| n.0.clone()).collect(),
+                    role: self
+                        .roles
+                        .get(&key(artifact))
+                        .and_then(|roles| roles.get(&name))
+                        .copied()
+                        .unwrap_or(norn_ir::ConceptRole::Thing),
+                    extends: root
+                        .interface
+                        .extends
+                        .iter()
+                        .map(|n| n.as_str().to_owned())
+                        .collect(),
                     implements: Vec::new(),
                 });
                 for property in &def.properties {
@@ -267,8 +303,18 @@ impl Rows {
         self.types.insert(TypeRow {
             at: at(artifact, type_member(name.clone())),
             kind: TypeKind::ObjectType,
-            extends: def.extends.iter().map(|n| n.0.clone()).collect(),
-            implements: def.implements.iter().map(|n| n.0.clone()).collect(),
+            role: self
+                .roles
+                .get(&key(artifact))
+                .and_then(|roles| roles.get(&name))
+                .copied()
+                .unwrap_or(norn_ir::ConceptRole::Thing),
+            extends: def.extends.iter().map(|n| n.as_str().to_owned()).collect(),
+            implements: def
+                .implements
+                .iter()
+                .map(|n| n.as_str().to_owned())
+                .collect(),
         });
         for property in &def.properties {
             self.property(artifact, &name, property, &def.lifecycles);
@@ -304,6 +350,7 @@ impl Rows {
             }
             for transition in &lifecycle.transitions {
                 self.transitions.insert(TransitionRow {
+                    guards: transition.guards.clone(),
                     at: at(
                         artifact,
                         Member::Transition {
@@ -346,11 +393,64 @@ impl Rows {
         });
     }
 
-    fn finish(self) -> DefinitionCatalog {
+    fn concept_for(&self, member: &MemberRef, type_name: &str) -> Option<MemberRef> {
+        let exact = MemberRef {
+            member: Member::Type {
+                type_name: type_name.to_owned(),
+            },
+            ..member.clone()
+        };
+        if self.types.iter().any(|row| row.at == exact) {
+            return Some(exact);
+        }
+        let mut owners = self
+            .types
+            .iter()
+            .filter(|row| row.at.member == exact.member);
+        let first = owners.next()?;
+        owners.next().is_none().then(|| first.at.clone())
+    }
+
+    fn finish(mut self) -> DefinitionCatalog {
+        let members = self
+            .properties
+            .iter()
+            .map(|row| (ConceptFacet::Props, &row.at))
+            .chain(self.links.iter().map(|row| (ConceptFacet::Links, &row.at)))
+            .chain(
+                self.transitions
+                    .iter()
+                    .map(|row| (ConceptFacet::States, &row.at)),
+            )
+            .chain(self.states.iter().map(|row| (ConceptFacet::States, row)));
+        for (facet, member) in members {
+            let (Member::Property { type_name, .. }
+            | Member::Link { type_name, .. }
+            | Member::Transition { type_name, .. }
+            | Member::State { type_name, .. }) = &member.member
+            else {
+                continue;
+            };
+            let Some(concept) = self.concept_for(member, type_name) else {
+                continue;
+            };
+            self.facets.insert(ConceptFacetRow {
+                concept,
+                facet,
+                member: member.clone(),
+            });
+        }
+        self.facets
+            .extend(self.laws.iter().map(|row| ConceptFacetRow {
+                concept: row.subject.clone(),
+                facet: ConceptFacet::Laws,
+                member: row.at.clone(),
+            }));
         DefinitionCatalog {
             format: CatalogFormat::V1,
             artifacts: self.artifacts.into_iter().collect(),
             types: self.types.into_iter().collect(),
+            facets: self.facets.into_iter().collect(),
             properties: self.properties.into_iter().collect(),
             links: self.links.into_iter().collect(),
             transitions: self.transitions.into_iter().collect(),
@@ -402,6 +502,7 @@ impl Rows {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
+        self.action_facets(artifact, &action, admission);
         let Some(program) = &action.effect_program else {
             return;
         };
@@ -453,6 +554,60 @@ impl Rows {
                 target,
                 via,
             });
+        }
+    }
+
+    fn action_facets(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        action: &ActionRoot,
+        admission: &Admission<'_>,
+    ) {
+        let mut concepts: BTreeSet<_> = action
+            .writes
+            .iter()
+            .filter_map(|write| admission.named(&write.entity_kind))
+            .map(|target| PinnedType::of(target).type_ref())
+            .collect();
+        if let Some(target) = action
+            .effect_program
+            .as_ref()
+            .and_then(|program| admission.effect_target(program))
+        {
+            concepts.insert(PinnedType::of(target).type_ref());
+        }
+        for concept in concepts {
+            self.facets.insert(ConceptFacetRow {
+                concept: concept.clone(),
+                facet: ConceptFacet::Actions,
+                member: at(artifact, Member::Artifact {}),
+            });
+            if let Some(access) = &action.access {
+                let version = access.version.as_deref().or_else(|| {
+                    artifact
+                        .dependencies
+                        .iter()
+                        .find(|d| d.artifact_id == access.artifact_id && d.required)
+                        .and_then(|d| d.version.as_deref())
+                });
+                for policy in self.artifacts.iter().filter(|a| {
+                    a.artifact_id == access.artifact_id
+                        && Some(a.version.as_str()) == version
+                        && a.kind == ArtifactKind::Policy
+                }) {
+                    for facet in [ConceptFacet::Policies, ConceptFacet::Access] {
+                        self.facets.insert(ConceptFacetRow {
+                            concept: concept.clone(),
+                            facet,
+                            member: MemberRef {
+                                artifact_id: policy.artifact_id.clone(),
+                                version: policy.version.clone(),
+                                member: Member::Artifact {},
+                            },
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -577,6 +732,16 @@ impl Rows {
             };
             let lineage = PinnedType::lineage(admitted, admission);
             let owner = PinnedType::of(admitted);
+            self.facets.insert(ConceptFacetRow {
+                concept: owner.type_ref(),
+                facet: ConceptFacet::Sources,
+                member: at(
+                    artifact,
+                    Member::ObjectMap {
+                        map: map.id.clone(),
+                    },
+                ),
+            });
             let type_name = owner.name.as_str();
             let link = |id: &str| Member::Link {
                 type_name: type_name.to_owned(),
@@ -715,4 +880,37 @@ impl Rows {
             binds,
         });
     }
+}
+
+/// GRAPH-META-1: a catalog or catalog row is never executable definition input.
+pub(crate) fn catalog_write(artifact: &ArtifactEnvelope) -> Option<crate::Diagnostic> {
+    catalog_refusal(&payload_json(artifact), Some(&artifact.artifact_id))
+}
+
+pub(crate) fn catalog_write_json(value: &serde_json::Value) -> Option<crate::Diagnostic> {
+    catalog_refusal(
+        value.get("payload")?,
+        value.get("artifactId").and_then(serde_json::Value::as_str),
+    )
+}
+
+fn catalog_refusal(
+    value: &serde_json::Value,
+    artifact_id: Option<&str>,
+) -> Option<crate::Diagnostic> {
+    let projection = value.get("format").and_then(serde_json::Value::as_str)
+        == Some("norn.catalog/1")
+        || (value.get("at").is_some()
+            && (serde_json::from_value::<TransitionRow>(value.clone()).is_ok()
+                || serde_json::from_value::<LawRow>(value.clone()).is_ok()));
+    if !projection {
+        return None;
+    }
+    let mut finding = crate::property_types::error(
+        "core.graph.catalog_write",
+        "catalog projections cannot activate definitions".to_owned(),
+        crate::Span::pointer("/payload"),
+    );
+    finding.artifact_id = artifact_id.map(str::to_owned);
+    Some(finding)
 }

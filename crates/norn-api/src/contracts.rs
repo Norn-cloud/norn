@@ -34,6 +34,11 @@ impl Modify for ContractSchemas {
                 "NornIr",
             ))
             .chain(project_schemars_components(
+                norn_ir::refusal_reason_schema(),
+                "NornIrRefusalReason",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::diagnostic_severity_schema(),
                 "NornIrDiagnosticSeverity",
                 "NornIr",

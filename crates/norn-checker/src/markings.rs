@@ -194,7 +194,8 @@ fn collect_references(artifact: &ArtifactEnvelope) -> Vec<MarkingReference> {
         | ArtifactPayload::Policy(_)
         | ArtifactPayload::Derived(_)
         | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_) => {}
+        | ArtifactPayload::Law(_)
+        | ArtifactPayload::DefinedConcept(_) => {}
     }
     references
 }

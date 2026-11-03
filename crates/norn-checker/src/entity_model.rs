@@ -658,6 +658,33 @@ impl<'a> Checker<'a, '_> {
         self.register();
         self.find_cycles();
         self.register_inverses();
+        let roles = crate::concept_roles::resolve(self.model, self.context.base);
+        let definitions = self
+            .model
+            .interfaces
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, d.name.as_str(), self.roots.interfaces))
+            .chain(
+                self.model
+                    .object_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| (i, d.name.as_str(), self.roots.object_types)),
+            );
+        for (index, name, root) in definitions {
+            if let Some(Err(conflict)) = roles.get(name) {
+                let (code, field): (_, &[&str]) = match conflict {
+                    norn_ir::RoleConflict::Inherited => ("core.graph.role_conflict", &[]),
+                    norn_ir::RoleConflict::Declared => ("core.graph.role_mismatch", &["role"]),
+                };
+                self.out.push(error(
+                    code,
+                    format!("concept {name} has incompatible declared or inherited roles"),
+                    span_at(&pointer(root, &index.to_string()), field),
+                ));
+            }
+        }
         for (index, def) in self.model.interfaces.iter().enumerate() {
             self.check_interface(index, def);
         }

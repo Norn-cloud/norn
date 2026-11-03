@@ -65,10 +65,25 @@ impl RefusalCategory {
     }
 }
 
+/// Version of the public refusal projection, independent of stored receipt formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, ToSchema)]
+pub enum RefusalFormat {
+    /// Pinned typed reasons and explicit engine retry semantics.
+    #[serde(rename = "norn/refusal@2")]
+    V2,
+}
+
 /// A refused request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Refusal {
+    /// Versioned projection; stored checker receipts keep their original bytes.
+    pub format: RefusalFormat,
+    /// Engine-defined retryability, false unless explicitly supplied by the engine.
+    pub retryable: bool,
+    /// Shared declaration pin and typed operands, disclosed together.
+    #[schema(required = true, schema_with = refusal_reason_schema)]
+    pub reason: Option<Box<norn_ir::RefusalReason>>,
     /// The HTTP status the refusal is served with.
     #[serde(skip)]
     pub status: u16,
@@ -92,8 +107,14 @@ impl Refusal {
     /// Codes, categories and status remain usable even when detail is hidden.
     #[must_use]
     pub fn project_detail(mut self, revealable: bool) -> Self {
-        if !revealable {
+        if !revealable
+            || matches!(
+                self.category,
+                RefusalCategory::Visibility | RefusalCategory::Internal
+            )
+        {
             Self::UNPROVEN_DETAIL.clone_into(&mut self.explanation);
+            self.reason = None;
         }
         self
     }
@@ -107,6 +128,9 @@ impl Refusal {
         explanation: impl Into<String>,
     ) -> Self {
         Self {
+            format: RefusalFormat::V2,
+            retryable: false,
+            reason: None,
             status: status.as_u16(),
             code: code.to_owned(),
             category: RefusalCategory::of_status(status),
@@ -121,6 +145,55 @@ impl Refusal {
     pub fn with_category(mut self, category: RefusalCategory) -> Self {
         self.category = category;
         self
+    }
+
+    /// Project a kernel refusal under the caller's proven disclosure authority.
+    /// DIAG-REDACT-1: codes remain usable; pins and operands are one disclosure unit.
+    #[must_use]
+    pub fn from_kernel(source: norn_kernel::Refusal, revealable: bool) -> Self {
+        use norn_kernel::RefusalCategory as Kernel;
+        let (status, category, message) = match source.category {
+            Kernel::Visibility => (
+                StatusCode::NOT_FOUND,
+                RefusalCategory::Visibility,
+                "not found",
+            ),
+            Kernel::Permission => (
+                StatusCode::FORBIDDEN,
+                RefusalCategory::Permission,
+                "the action is not permitted",
+            ),
+            Kernel::Precondition => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                RefusalCategory::Precondition,
+                "a declared precondition does not hold",
+            ),
+            Kernel::Conflict => (
+                StatusCode::CONFLICT,
+                RefusalCategory::Conflict,
+                "the request conflicts with current state",
+            ),
+            Kernel::Invalid => (
+                StatusCode::BAD_REQUEST,
+                RefusalCategory::Invalid,
+                "the request is invalid",
+            ),
+            Kernel::Limit => (
+                StatusCode::TOO_MANY_REQUESTS,
+                RefusalCategory::Limit,
+                "a declared limit was exceeded",
+            ),
+            Kernel::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                RefusalCategory::Internal,
+                "the cell could not complete the request",
+            ),
+        };
+        let mut projected =
+            Self::new(status, &source.code, message, source.message).with_category(category);
+        projected.reason = source.reason.map(Box::new);
+        projected.retryable = source.retryable;
+        projected.project_detail(revealable)
     }
 
     /// A malformed request.
@@ -145,4 +218,18 @@ impl Refusal {
             Self::UNPROVEN_DETAIL,
         )
     }
+}
+
+fn refusal_reason_schema() -> utoipa::openapi::schema::Schema {
+    utoipa::openapi::schema::Schema::AnyOf(
+        utoipa::openapi::schema::AnyOfBuilder::new()
+            .item(utoipa::openapi::Ref::from_schema_name(
+                "NornIrRefusalReason",
+            ))
+            .item(
+                utoipa::openapi::schema::ObjectBuilder::new()
+                    .schema_type(utoipa::openapi::schema::Type::Null),
+            )
+            .build(),
+    )
 }

@@ -148,6 +148,7 @@ impl<E: SqlEngine> CellStore<E> {
             &record.batch,
             None,
             input,
+            None,
             |_reader| Ok::<(), CellError>(()),
             &mut |_point| Ok(()),
         )

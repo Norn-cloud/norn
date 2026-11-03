@@ -259,6 +259,22 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "defined_concept"
+        },
+        "payload": {
+          "$ref": "#/$defs/DefinedConceptPayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -637,15 +653,19 @@
       ]
     },
     "ActionCreateLink": {
-      "description": "Add an outgoing link alongside an ordinary action's business write.",
+      "description": "Declare a typed link inside the action's checked proposal.",
       "type": "object",
       "properties": {
         "link": {
-          "description": "Link declared on the effect's business object type.",
+          "description": "Link declared on the source object type.",
           "type": "string"
         },
+        "source": {
+          "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1).",
+          "$ref": "#/$defs/ActionLinkSource"
+        },
         "targetIdField": {
-          "description": "Input field naming an existing authorized declared-slice object.",
+          "description": "Required input field naming a captured or proposed target.",
           "type": "string"
         },
         "targetType": {
@@ -823,6 +843,25 @@
         "expression"
       ]
     },
+    "ActionLinkSource": {
+      "description": "A declared input-key source for a link within one action proposal.",
+      "type": "object",
+      "properties": {
+        "idField": {
+          "description": "Required string input field containing its identity.",
+          "type": "string"
+        },
+        "objectType": {
+          "description": "Concrete type of an object written by the synchronous closure.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "objectType",
+        "idField"
+      ]
+    },
     "ActionPayload": {
       "type": "object",
       "properties": {
@@ -907,6 +946,9 @@
           "items": {
             "$ref": "#/$defs/SliceDeclaration"
           }
+        },
+        "synchronousRule": {
+          "$ref": "#/$defs/ActionRuleRef"
         },
         "title": {
           "type": "string"
@@ -1038,6 +1080,25 @@
       "required": [
         "field",
         "scale"
+      ]
+    },
+    "ActionRuleRef": {
+      "description": "Closed reference to the admitted synchronous writer of an action.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Exact RuleIR artifact identity.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version; no latest-version resolution.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version"
       ]
     },
     "ActionUiEffects": {
@@ -1246,6 +1307,11 @@
           "description": "Scoped temporal laws over ZEN predicates.",
           "type": "string",
           "const": "law"
+        },
+        {
+          "description": "Pure classification over existing base identities.",
+          "type": "string",
+          "const": "defined_concept"
         }
       ]
     },
@@ -1517,6 +1583,21 @@
         "packId",
         "packVersion",
         "artifacts"
+      ]
+    },
+    "ConceptRole": {
+      "description": "Semantic role of an ordinary concept, independent of lifecycle presence.",
+      "oneOf": [
+        {
+          "description": "A persistent thing.",
+          "type": "string",
+          "const": "thing"
+        },
+        {
+          "description": "A concept that occurs, runs or terminates in time.",
+          "type": "string",
+          "const": "happening"
+        }
       ]
     },
     "ConnectorAuth": {
@@ -3270,6 +3351,36 @@
         "queue"
       ]
     },
+    "DecideBudget": {
+      "description": "Budget for one warm `decide` (§1 row 1).",
+      "type": "object",
+      "properties": {
+        "cpu_p99_micros": {
+          "description": "Target p99 CPU per decision, in microseconds (qualification target;\nnot enforceable by a clock inside the kernel).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_envelope_micros": {
+          "description": "The CPU envelope the fuel budget is calibrated against, in\nmicroseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_units": {
+          "description": "Deterministic fuel per decision, in Norn ZEN metering units.\nProvisional and uncalibrated until `T3-BUDGET-1`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "fuel_envelope_micros",
+        "fuel_units"
+      ]
+    },
     "DecimalLiteral": {
       "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
       "type": "string",
@@ -3281,6 +3392,55 @@
       "not": {
         "type": "null"
       }
+    },
+    "DefinedConceptPayload": {
+      "description": "Pack-owned classification; never a writable object store.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "Exact type member in an entity artifact required by this artifact.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "bounds": {
+          "description": "Existing resource vocabulary and units, capped by the admitted profile.",
+          "$ref": "#/$defs/ResourceLimitProfile"
+        },
+        "dependencies": {
+          "description": "Exact member dependencies, including other classifications.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberRef"
+          }
+        },
+        "extensions": {
+          "description": "Reserved versioned extension slots, as on other artifact roots.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "id": {
+          "description": "Qualified classification identity, distinct from the base object kind.",
+          "type": "string"
+        },
+        "predicate": {
+          "description": "A pure Boolean expression over the authorized base snapshot.",
+          "$ref": "#/$defs/ZenExpression"
+        },
+        "version": {
+          "description": "Definition version; must match its artifact envelope.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "base",
+        "predicate",
+        "dependencies",
+        "bounds"
+      ]
     },
     "DerivedPayload": {
       "type": "object",
@@ -4227,6 +4387,43 @@
         "value"
       ]
     },
+    "EnvelopeLimits": {
+      "description": "Per-decision envelope caps (§1 row 5).\n\nCounts are `u32` and sizes `u64` so the serialized profile is identical on\nnative and `wasm32` hosts. `norn-kernel`'s `step` enforces the counts; the\nhost checks `max_output_bytes` against the bytes it serializes.",
+      "type": "object",
+      "properties": {
+        "max_commands": {
+          "description": "Maximum `perform` effects per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_events": {
+          "description": "Maximum events (facts) per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_output_bytes": {
+          "description": "Maximum serialized metadata/output bytes per decision.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_timers": {
+          "description": "Maximum timer effects (schedule + cancel) per decision.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_output_bytes",
+        "max_events",
+        "max_commands",
+        "max_timers"
+      ]
+    },
     "EvidenceRef": {
       "description": "A content-addressed reference to evidence (raw metadata, a profile\nquery result, a sample file).",
       "type": "object",
@@ -4264,7 +4461,7 @@
       "type": "object",
       "properties": {
         "rounding": {
-          "$ref": "#/$defs/FoldRounding"
+          "$ref": "#/$defs/Rounding"
         },
         "scale": {
           "description": "Quantity-ledger-compatible exact scaled integers; at most 18 places.",
@@ -4301,15 +4498,6 @@
       "enum": [
         "string",
         "integer"
-      ]
-    },
-    "FoldRounding": {
-      "type": "string",
-      "enum": [
-        "refuse",
-        "toward_zero",
-        "half_even",
-        "half_away_from_zero"
       ]
     },
     "GapReason": {
@@ -4410,6 +4598,36 @@
             "kind"
           ]
         }
+      ]
+    },
+    "HelperLimits": {
+      "description": "Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so\nthese only bind a future admission; the helper's fuel is charged to the\nenclosing decision and turn budget.",
+      "type": "object",
+      "properties": {
+        "aggregate_micros_per_decision": {
+          "description": "Aggregate helper CPU per decision, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cpu_p99_micros": {
+          "description": "Target p99 CPU per helper call, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_guest_memory_bytes": {
+          "description": "Maximum guest memory, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "aggregate_micros_per_decision",
+        "max_guest_memory_bytes"
       ]
     },
     "HttpMethod": {
@@ -4548,6 +4766,10 @@
           "items": {
             "$ref": "#/$defs/InterfaceProperty"
           }
+        },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active`.",
@@ -6478,6 +6700,219 @@
         }
       ]
     },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
+      ]
+    },
+    "MemoryLimits": {
+      "description": "Working-memory targets (§1 row 4). Allocation metering is `T3-BUDGET-1`.",
+      "type": "object",
+      "properties": {
+        "live_footprint_target_bytes": {
+          "description": "Integrated live-footprint target under the concurrency fixture, in\nbytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_turn_working_bytes": {
+          "description": "Maximum incremental working allocation per admitted turn, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_turn_working_bytes",
+        "live_footprint_target_bytes"
+      ]
+    },
     "Multiplicity": {
       "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
       "oneOf": [
@@ -6871,6 +7306,10 @@
           "items": {
             "$ref": "#/$defs/Property"
           }
+        },
+        "role": {
+          "description": "Declared concept role; omission inherits, then defaults to `thing`.",
+          "$ref": "#/$defs/ConceptRole"
         },
         "status": {
           "description": "The definition's resource status. Omitted means `active` (the\ncanonical form omits it).",
@@ -7561,7 +8000,8 @@
             "customization",
             "setting",
             "business_pack",
-            "policy"
+            "policy",
+            "defined_concept"
           ]
         },
         {
@@ -7929,6 +8369,14 @@
             "kind": {
               "type": "string",
               "const": "decimal"
+            },
+            "perUnit": {
+              "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`.",
+              "$ref": "#/$defs/UnitRef"
+            },
+            "rounding": {
+              "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+              "$ref": "#/$defs/Rounding"
             },
             "scale": {
               "description": "Fraction digits every value is held at (`2` for cents). At most 28,\nthe exact range of ZEN Expression's decimal (checked by\n`norn-checker`).",
@@ -8424,6 +8872,57 @@
         "value"
       ]
     },
+    "ResourceLimitProfile": {
+      "description": "A versioned resource-limit profile (ruling 2026-09-27 §1).\n\nAll values are v1 qualification targets pending measurement.",
+      "type": "object",
+      "properties": {
+        "decide": {
+          "description": "One warm `decide`.",
+          "$ref": "#/$defs/DecideBudget"
+        },
+        "envelope": {
+          "description": "The per-decision output envelope.",
+          "$ref": "#/$defs/EnvelopeLimits"
+        },
+        "helper": {
+          "description": "An inline custom helper, only if D33 ever admits one.",
+          "$ref": "#/$defs/HelperLimits"
+        },
+        "id": {
+          "description": "Profile family identifier, e.g. `norn.limits`.",
+          "type": "string"
+        },
+        "memory": {
+          "description": "Working memory.",
+          "$ref": "#/$defs/MemoryLimits"
+        },
+        "slice": {
+          "description": "The declared input slice.",
+          "$ref": "#/$defs/SliceLimits"
+        },
+        "turn": {
+          "description": "The whole synchronous cell turn: one aggregate budget.",
+          "$ref": "#/$defs/TurnBudget"
+        },
+        "version": {
+          "description": "Profile version within the family. Any changed value is a new version.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "decide",
+        "turn",
+        "slice",
+        "memory",
+        "envelope",
+        "helper"
+      ]
+    },
     "ResourceLimits": {
       "description": "Resource ceilings of a customization executable.",
       "type": "object",
@@ -8592,6 +9091,16 @@
       "additionalProperties": false,
       "required": [
         "anyOf"
+      ]
+    },
+    "Rounding": {
+      "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
+      "type": "string",
+      "enum": [
+        "refuse",
+        "toward_zero",
+        "half_even",
+        "half_away_from_zero"
       ]
     },
     "RuleConditionV1": {
@@ -9611,6 +10120,43 @@
         }
       ]
     },
+    "SliceLimits": {
+      "description": "Bounds on the declared input slice (§1 row 3), enforced while reading.",
+      "type": "object",
+      "properties": {
+        "max_canonical_bytes": {
+          "description": "Maximum canonical input bytes of the slice.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_records": {
+          "description": "Maximum selected records.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_relation_depth": {
+          "description": "Maximum relation depth.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "qualification_ceiling_bytes": {
+          "description": "The byte ceiling a later, measured profile may raise\n`max_canonical_bytes` to. Informational: never enforced in place of\n`max_canonical_bytes`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "max_canonical_bytes",
+        "max_records",
+        "max_relation_depth",
+        "qualification_ceiling_bytes"
+      ]
+    },
     "SourceAdapter": {
       "description": "The adapter that produced a document.",
       "type": "object",
@@ -10202,6 +10748,29 @@
       "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TurnBudget": {
+      "description": "Budget for one synchronous cell turn (§1 row 2): one aggregate budget that\nevery triggered decision, validation, and helper debits.",
+      "type": "object",
+      "properties": {
+        "cpu_p99_micros": {
+          "description": "Target p99 active CPU per turn, in microseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuel_units": {
+          "description": "Deterministic fuel per turn, in Norn ZEN metering units, shared by every\ndecision in the turn. Provisional and uncalibrated until `T3-BUDGET-1`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cpu_p99_micros",
+        "fuel_units"
+      ]
     },
     "TypeCandidate": {
       "description": "A candidate normalized type and who asserted it.",

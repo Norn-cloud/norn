@@ -1516,6 +1516,10 @@ pub struct WrittenRow {
     pub key: String,
     /// The new version.
     pub version: u64,
+    /// SNAPSHOT-RECEIPT-1: producing receipt commits to this incarnation.
+    /// Missing legacy commitments deserialize but never prove historical values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_sha256: Option<String>,
 }
 
 /// Ordered atomic intents/results. A singleton retains its canonical scalar encoding.
@@ -1792,6 +1796,9 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
+    install
+        .candidate_model
+        .check_governing_laws(&install.input.canonical_set)?;
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
@@ -1928,6 +1935,19 @@ fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    /// Whether the tenant engine has no application schema or persisted state.
+    ///
+    /// # Errors
+    /// SQL failures; existing metadata, ledger or history returns false.
+    pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
+        engine
+            .query(
+                "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 1",
+                &[],
+            )
+            .map(|schema| schema.is_empty())
+    }
+
     /// Initialize this store over an already-open engine.
     ///
     /// The engine supplies transaction and parameter/result handling; the
@@ -1944,6 +1964,53 @@ impl<E: SqlEngine> CellStore<E> {
     /// or [`Self::from_engine_bound`]. Reopening never invokes the identity source.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
         Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
+    }
+
+    /// Atomically initialize, bind and install a tenant's first admitted set.
+    /// An identical request reopens the initial revision without writing.
+    ///
+    /// # Errors
+    /// Store failures roll back all schema and data. A changed request, scope,
+    /// or invalid retained history refuses. Identical retries reopen the current model.
+    pub fn provision_definitions(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+    ) -> Result<Self, CellError> {
+        let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
+        let mut store = Self::unverified(conn, model);
+        if let Some(active) = Self::read_active_definitions(&store.conn)? {
+            let installation = store
+                .local_export_record(active.commit_seq)?
+                .and_then(|record| record.definition_install)
+                .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
+            store.model = Model::from_snapshot(&installation.model)?;
+        }
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: scope.to_owned(),
+            logical_time: input.installed_at,
+            ..CommitBatch::default()
+        };
+        let installation = DefinitionInstallContext {
+            candidate_model: &store.model,
+            input,
+            expected_version: Some(0),
+        };
+        store
+            .commit_guarded_inner(
+                &batch,
+                Some(installation),
+                crate::portable_receipt::JournalInput::current(None),
+                Some(&identity),
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .map_err(|error| match error {
+                GuardedError::Guard(error) | GuardedError::Store(error) => error,
+            })?;
+        Ok(store)
     }
 
     /// Read the installed active set before constructing the model used to
@@ -2203,6 +2270,7 @@ impl<E: SqlEngine> CellStore<E> {
                     installation.readmission.as_ref(),
                 )?;
                 let installed_model = Model::from_snapshot(&installation.model)?;
+                installed_model.check_governing_laws(&version.canonical_set)?;
                 let entries =
                     reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
                 if installation.installed != *version
@@ -2404,6 +2472,7 @@ impl<E: SqlEngine> CellStore<E> {
             batch,
             None,
             crate::portable_receipt::JournalInput::current(None),
+            None,
             guard,
             probe,
         )
@@ -2422,6 +2491,7 @@ impl<E: SqlEngine> CellStore<E> {
             batch,
             None,
             crate::portable_receipt::JournalInput::current(submitted),
+            None,
             guard,
             probe,
         )
@@ -2465,6 +2535,7 @@ impl<E: SqlEngine> CellStore<E> {
                 submitted: None,
                 mode: receipt_mode,
             },
+            None,
             |_reader| Ok::<(), CellError>(()),
             &mut |_point| Ok(()),
         );
@@ -2514,10 +2585,11 @@ impl<E: SqlEngine> CellStore<E> {
         reason = "the shared atomic commit transaction keeps receipt, ledger and install writes together"
     )]
     pub(crate) fn commit_guarded_inner<T: Default, X>(
-        &mut self,
+        &self,
         batch: &CommitBatch,
         installation: Option<DefinitionInstallContext<'_>>,
         input: crate::portable_receipt::JournalInput<'_>,
+        provisioning: Option<&str>,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
@@ -2525,6 +2597,36 @@ impl<E: SqlEngine> CellStore<E> {
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
         let result = self.conn.transaction(|| -> Result<_, GuardedError<X>> {
             probe(CommitPoint::Begun)?;
+            if let Some(identity) = provisioning {
+                if Self::engine_is_fresh(&self.conn)? {
+                    Self::init_schema(&self.conn, &self.model, &mut crate::cell_identity::generate)?;
+                    for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
+                        self.conn.execute(
+                            &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
+                            params![key, value],
+                        )?;
+                    }
+                } else {
+                    let binding = |key: &str| self.conn.query_optional(
+                        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+                        params![key], |row| row.get::<String>(0),
+                    );
+                    let active = Self::read_active_definitions(&self.conn)?;
+                    if binding("binding:provision")?.as_deref() != Some(identity)
+                        || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
+                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
+                        return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
+                    }
+                    crate::cell_identity::verify_history(&self.conn)?;
+                    let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
+                    self.verify_definition_history()?;
+                    self.read().verify_value_history()?;
+                    self.verified.replace(head);
+                    admitted_boundary.set(boundary);
+                    let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
+                    return Ok((T::default(), CommitOutcome::Replayed(receipt)));
+                }
+            }
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(
@@ -2604,10 +2706,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let effective_batch = &reconciled;
             let boundary = crate::quantity::admission_boundary(&self.conn, self.quantity_boundary.get())?;
-            let (quantity_batch, new_boundary) = crate::quantity::admit_events(
+            let (mut quantity_batch, new_boundary) = crate::quantity::admit_events(
                 &self.conn, &self.model, effective_batch, boundary, prior_receipt.as_ref(),
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
+            let quality_reader = StoreReader::new(&self.conn, &self.model);
+            let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
+            crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
             let request_hash = hash_json(effective_batch)?;
             if let Some(key) = &batch.idempotency_key
@@ -2706,7 +2811,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 validate(
-                    &StoreReader::new(&self.conn, commit_model),
+                    &writer.reader(),
                     effective_batch,
                     installation.is_some(),
                 )?;

@@ -36,8 +36,14 @@ if (command === "compile") {
   if (output) writeFileSync(output, document)
   else process.stdout.write(document)
 } else {
-  const checker = await loadChecker()
-  if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is required")
+  let checker: Awaited<ReturnType<typeof loadChecker>>
+  try {
+    checker = await loadChecker()
+    if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is required")
+  } catch (error) {
+    process.stderr.write(`NORN-CHECKER-WASM-SETUP: ${String(error)}\nExpected norn-checker-abi/1 built from this checkout. From the repository root, run:\n  bash crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/target/norn-checker-wasm/pkg"\n  export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"\nThen rerun this check.\n`)
+    process.exit(2)
+  }
   const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
   const flowSourceMap = pack.flowSourceMap ? finalizeFlowSourceMap(pack.flowSourceMap, pack.flows, checked.receipt) : undefined
   const report = flowSourceMap ? checkPack(checker, pack.artifacts, pack.baseArtifacts, flowSourceMap) : checked

@@ -416,6 +416,77 @@ fn resolve<'a>(
     }
 }
 
+/// VAL-ROUND: a decoded policy cannot activate legacy expression arithmetic.
+/// VAL-RATE: reuse one bounded Decimal representation and its shared runtime.
+fn check_rate_site(
+    base: &[&str],
+    scale: u64,
+    unit: Option<&norn_ir::UnitRef>,
+    per_unit: Option<&norn_ir::UnitRef>,
+    currency_source: Option<&norn_ir::metric::DimensionPath>,
+    out: &mut Vec<Diagnostic>,
+) {
+    if let Some(per_unit) = per_unit
+        && (currency_source.is_none()
+            || unit.is_some()
+            || per_unit.code.is_empty()
+            || per_unit.code.chars().any(char::is_whitespace)
+            || scale > 18)
+    {
+        out.push(error(crate::property_codec::INEXACT, "VAL-RATE requires currencySource, a denominator unit, no quantity unit, and scale <= 18".to_owned(), span_at(base, &["type", "perUnit"])));
+    }
+}
+
+fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut Vec<Diagnostic>) {
+    let PropertyType::Decimal {
+        scale,
+        unit,
+        rounding,
+        per_unit,
+        currency_source,
+    } = property_type
+    else {
+        return;
+    };
+    check_rate_site(
+        base,
+        scale.0,
+        unit.as_ref(),
+        per_unit.as_ref(),
+        currency_source.as_ref(),
+        out,
+    );
+    if rounding.is_some_and(|mode| mode != norn_ir::Rounding::Refuse) && scale.0 > 18 {
+        out.push(error(
+            crate::property_codec::INEXACT,
+            "declared rounding scale exceeds exact profile maximum 18".into(),
+            span_at(base, &["type", "scale"]),
+        ));
+    }
+    if scale.0 > MAX_DECIMAL_SCALE {
+        out.push(error(
+            codes::SCALE_OUT_OF_RANGE,
+            format!(
+                "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
+                scale.0
+            ),
+            span_at(base, &["type", "scale"]),
+        ));
+    }
+    if let Some(unit) = unit
+        && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
+    {
+        out.push(error(
+            codes::INVALID_UNIT,
+            format!(
+                "unit code {:?} must be non-blank without whitespace",
+                unit.code
+            ),
+            span_at(base, &["type", "unit", "code"]),
+        ));
+    }
+}
+
 /// Per-kind member checks of one type (`scale`, `unit`, enum `values`); `base`
 /// is the JSON-pointer prefix of the object holding `type`.
 pub(crate) fn check_type_members(
@@ -456,30 +527,7 @@ pub(crate) fn check_type_members(
                 check_type_members(&pointer, &member.property_type, out);
             }
         }
-        PropertyType::Decimal { scale, unit, .. } => {
-            if scale.0 > MAX_DECIMAL_SCALE {
-                out.push(error(
-                    codes::SCALE_OUT_OF_RANGE,
-                    format!(
-                        "decimal scale {} exceeds the maximum of {MAX_DECIMAL_SCALE}",
-                        scale.0
-                    ),
-                    span_at(base, &["type", "scale"]),
-                ));
-            }
-            if let Some(unit) = unit
-                && (unit.code.is_empty() || unit.code.chars().any(char::is_whitespace))
-            {
-                out.push(error(
-                    codes::INVALID_UNIT,
-                    format!(
-                        "unit code {:?} must be non-blank without whitespace",
-                        unit.code
-                    ),
-                    span_at(base, &["type", "unit", "code"]),
-                ));
-            }
-        }
+        PropertyType::Decimal { .. } => check_decimal_members(base, property_type, out),
         PropertyType::Enum { values } => {
             if values.is_empty() {
                 out.push(error(

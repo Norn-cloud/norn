@@ -152,7 +152,7 @@ fn pre_upgrade_discriminator_events_keep_original_meaning_after_quantity_upgrade
                 |row| row.get(0),
             )
             .expect("format");
-        assert_eq!(format, "norn.cell.store/7");
+        assert_eq!(format, "norn.cell.store/8");
         drop(engine);
         // Ordinary receipts retain ordinary meaning even after the boundary.
         append_pre_pr_event(&path, &serde_json::json!({"type":"quantity.transition"}));
@@ -304,7 +304,7 @@ fn immutable_quantity_boundary_refuses_coordinated_legacy_downgrade_and_redefini
         let before = store.read().dump().expect("damaged dump");
         assert!(matches!(
             CellStore::open(&path, model(), StoreOptions::default()),
-            Err(CellError::StoreFormat { found, expected }) if found == "norn.cell.store/4" && expected == "norn.cell.store/7"
+            Err(CellError::StoreFormat { found, expected }) if found == "norn.cell.store/4" && expected == "norn.cell.store/8"
         ));
         let mut replacement = define();
         if let QuantityOperation::Define { pack, .. } = &mut replacement.operation {

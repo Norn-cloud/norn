@@ -27,6 +27,35 @@ OBS-EVIDENCE-1 findings may reference a law by its artifact ID, stable LawIR ID
 and canonical declaration digest. A law pin records identity; it does not prove
 evaluation, authorize promotion or inherit an invariant's verified classification.
 The observation evaluator must bind that pin to the retained governing law.
+Definition snapshots retain exact `lawArtifacts` envelopes, canonicalized by
+artifact ID and included in the model hash; installation checks them against
+the canonical admitted set. Historical lookup uses the pinned definition version.
+CP2 resolves only exact entity-root laws directly attached to the observed type.
+Applicable inherited or effective-instance scope refuses with
+`core.laws.unsupported_semantics` and an `unsupported until B2` detail, preserving
+LAW-COMPLETE-1 / LAW-SUPPORTED-1 rather than omitting governing constraints.
+
+LAW-COMMIT-1 uses the metered expression evaluator for CP2 pointwise laws:
+`always`/`never` predicates with an optional Boolean activation condition.
+Unsupported timing, response, lifecycle or commitment scope fails closed with
+`core.laws.unsupported_semantics`; native violations use `core.laws.violated`.
+
+OBS-EVIDENCE-1 evaluates observations against those same retained direct laws,
+retaining the actual law ID/declaration digest in each finding. The emitting
+receipt pins the definition version for historical re-evaluation; current laws
+cannot substitute for that snapshot. A law pin is classified as `Integrity` or `Quality` only
+when it resolves to the supported direct-law contract.
+
+Pointwise recovery checks the violated rule under an authenticated retained
+catalog without requiring old outcome values to remain identical. Lifecycle
+out-of-band findings require state-aware recovery and refuse pointwise revalidation.
+
+OBS-LEGACY-1: law-bearing snapshots without retained laws refuse with
+`core.boundary.legacy_law_snapshot`; findings pinned to definition version 0
+refuse with `core.boundary.unpinned_finding`, without effects or substitution
+from the current model/catalog: legacy stores must be recreated; migration is out of scope. Authenticated migration is tracked in [#505](https://github.com/Norn-cloud/norn/issues/505) for post-Nov 5.
+Kernel-owned naming counters remain outside the tenant action catalog and do
+not acquire unrelated tenant laws; unknown application subjects still refuse.
 
 ## Ingestion versus governed action
 
@@ -35,6 +64,27 @@ The observation evaluator must bind that pin to the retained governing law.
 CDC replays deduplicate by `(connector instance, partition, source event identity)`. Same ID/different bytes is an evidence conflict finding. Snapshot handoff records its watermark then consumes CDC without gaps/duplicates. Persist capture, dedup record and cursor together; crash/restart never advances past uncaptured data. Multi-object events preserve each role; Item and Holding mappings remain separate. Declared gaps make coverage incomplete, not silently complete.
 
 Canonical promotion/write-back is a separate governed action under 04/05. Its laws may **refuse** the proposed commit. Observational truth and authoritative posted truth are separate projections; source violations cannot authorize native mutations. Write-back carries causal source/operation IDs to suppress echoes without discarding independent evidence.
+
+CP2 quarantine constraints include integrity-classified invariants, error-severity
+direct safety laws, and error-severity findings from supported built-in rules.
+Warning-severity built-in findings do not quarantine. Recovery uses revalidation:
+an appended corrected observation is eligible only when every such constraint passes. `authoritative_object` excludes quarantined
+records; raw reads retain source truth. Finding status is per law: a correction that passes law A resolves finding A
+without rewriting the original, even if law B still has an open finding.
+Object quarantine remains while any finding under the declared quarantine
+constraints is open; recovery requires every such finding to be resolved.
+Recovery re-evaluates each finding's rule using the retained definition model
+pinned by its emitting receipt, including after a definition install; the current
+catalog never substitutes. Quarantine derives from these version-bound open
+findings, and changed failing values do not resolve a still-violated rule.
+Capture atomically suppresses an already proven finding ID, including after
+redelivery/restart; retry normalization uses the original commit cutoff.
+
+The CP2 bridge contract captures content-addressed evidence bundles over the
+sealed raw-envelope digest and exact source/mapping/definition pins, preserving
+diagnostics and nonconforming records, and issues observed-write authority only
+after cell-owned recomputation matches the pinned bundle
+(`core.boundary.bundle_mismatch` on disagreement).
 
 ## Perform and recovery semantics
 
@@ -60,6 +110,10 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
+- **OBS-RECOVERY-UPGRADE:** After a definition install, an old finding stays open while its pinned rule fails; only a correction satisfying that retained rule resolves it. New definitions never supersede the old finding implicitly.
+- **OBS-RECOVERY-LIFECYCLE-REFUSE:** An unchanged out-of-band lifecycle finding cannot resolve through pointwise evaluation; unsupported state-aware recovery refuses.
+- **OBS-LEGACY-LAW-REFUSE:** A legacy snapshot omitting admitted laws refuses with `core.boundary.legacy_law_snapshot` and leaves receipts, definitions and facts unchanged.
+- **OBS-LEGACY-V0-REFUSE:** A version-0 finding refuses quality/recovery reads with `core.boundary.unpinned_finding`; the current model cannot supply its missing authority and no receipt or fact changes.
 - **EFFECT-UNCERTAIN:** Given provider success followed by lost reply, when retried, then dedup/lookup resolves once or outcome remains unknown; never issue a new payment ID.
 - **EFFECT-COMPENSATE:** Given confirmed payment 25, when cancellation wins after dispatch, then a separate refund 25 records its own outcome; failed refund remains outstanding.
 - **FUNCTION-ML:** Given a pinned training table and model Function, when it returns a forecast, then record output/input digests; stale or leaked-future input cannot pass publication guards.

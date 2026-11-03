@@ -25,9 +25,12 @@
 // (docs/platform/rust-safety-baseline.md) and keep the same staged burn-down.
 pub mod action_set;
 pub mod artifact_set;
+pub mod classification;
 pub mod codes;
+mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
+mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
 pub mod deontic;
@@ -81,6 +84,8 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+mod unit_admission;
+mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod law_enrollment;
 pub mod naming_series;
@@ -207,20 +212,22 @@ pub use sealing::{
 pub use typed_roots::decode_artifact_json;
 
 /// Check one artifact envelope and return every finding in the checker
-/// [`Diagnostic`] model (empty when the artifact is valid).
+/// [`Diagnostic`] model. The artifact is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes may remain.
 ///
 /// Same checks, codes, and messages as [`validate_artifact`]; only the
 /// location is re-expressed as a JSON-pointer [`Span`], resolved against the
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
+    if let Some(finding) = definition_catalog::catalog_write(artifact) {
+        return vec![finding];
+    }
     let (normalized, findings) = match crate::layout::normalize_artifact(artifact) {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let legacy = crate::envelope::validate_artifact_unchecked(&normalized)
-        .err()
-        .unwrap_or_default();
+    let legacy = crate::envelope::collect_artifact_diagnostics(&normalized);
     // Resolve dotted paths against the envelope's wire JSON so keys that
     // contain `.` stay one pointer segment.
     let mut checked = match serde_json::to_value(artifact) {
@@ -249,6 +256,9 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
 /// [`Diagnostic`] model, with spans resolved against `value`.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
+    if let Some(finding) = definition_catalog::catalog_write_json(value) {
+        return vec![finding];
+    }
     match decode_artifact_json(value) {
         Ok(artifact) => check_artifact(&artifact),
         Err(legacy) => legacy

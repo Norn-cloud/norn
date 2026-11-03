@@ -45,7 +45,8 @@
             "name": "core.code"
           }
         }
-      ]
+      ],
+      "role": "happening"
     }
   },
   "provenance": {

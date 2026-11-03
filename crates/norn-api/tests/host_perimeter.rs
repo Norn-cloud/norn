@@ -89,14 +89,11 @@ fn host_refusal_preserves_status_category_and_conceals_opaque_detail()
         )
         .project_detail(false);
         assert_eq!((refusal.status, refusal.category), (status, category));
-        assert_eq!(
-            serde_json::to_string(&refusal)?,
-            format!(
-                r#"{{"code":"stable.code","category":{},"message":"summary","explanation":"{}"}}"#,
-                serde_json::to_string(&category)?,
-                Refusal::UNPROVEN_DETAIL
-            )
-        );
+        let wire = serde_json::to_value(&refusal)?;
+        assert_eq!(wire["format"], "norn/refusal@2");
+        assert_eq!(wire["reason"], serde_json::Value::Null);
+        assert_eq!(wire["retryable"], false);
+        assert_eq!(wire["explanation"], Refusal::UNPROVEN_DETAIL);
     }
     let malformed = Refusal::invalid("syntax");
     assert_eq!(
@@ -110,4 +107,62 @@ fn host_refusal_preserves_status_category_and_conceals_opaque_detail()
         Refusal::UNPROVEN_DETAIL
     );
     Ok(())
+}
+
+#[test]
+fn invariant_refusal_retains_pin_and_typed_reason_through_api()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_kernel::{CommitError, FactKey, Refusable};
+    let error = CommitError::<std::convert::Infallible>::InvariantViolation {
+        key: Box::new(FactKey {
+            object_type: norn_ir::ObjectTypeName("demo.Item".into()),
+            key: "one".into(),
+        }),
+        owner: norn_ir::InvariantOwner::Object(norn_ir::ObjectTypeName("demo.Item".into())),
+        version: "sha256:owner-definition".into(),
+        id: norn_ir::InvariantId("positive".into()),
+        message: "must be positive".into(),
+        outcome: Box::new(norn_ir::DataQualityOutcome::NotSatisfied),
+    };
+    let kernel = error.refusal();
+    let projected = Refusal::from_kernel(kernel.clone(), true);
+    assert_eq!(projected.reason.as_deref(), kernel.reason.as_ref());
+    assert_eq!(projected.code, "commit.invariant_violation");
+    assert!(!projected.retryable);
+    let reason = projected.reason.ok_or("missing invariant reason")?;
+    assert_eq!(
+        reason.values.get("outcome"),
+        Some(&norn_ir::RuntimeValue::from("not_satisfied"))
+    );
+    assert!(
+        matches!(reason.pin, Some(norn_ir::DataQualityRuleRef::Invariant { version, .. }) if version == "sha256:owner-definition")
+    );
+    let hidden = Refusal::from_kernel(kernel, false);
+    assert!(hidden.reason.is_none());
+    assert_eq!(hidden.explanation, Refusal::UNPROVEN_DETAIL);
+    Ok(())
+}
+
+proptest::proptest! {
+    #[test]
+    fn unauthorized_reason_projection_is_independent_of_secret(secret in "(?s:.{0,256})") {
+        use norn_kernel::RefusalCategory as Category;
+        for category in [Category::Visibility, Category::Permission, Category::Precondition, Category::Conflict, Category::Invalid, Category::Limit, Category::Internal] {
+            let make = |value: &str| {
+                let mut source = norn_kernel::Refusal::new("stable.code", category, value);
+                source.reason = Some(norn_ir::RefusalReason {
+                    law: value.into(), subject: value.into(),
+                    values: [("secret".into(), norn_ir::RuntimeValue::from(value))].into(),
+                    pin: Some(norn_ir::DataQualityRuleRef::Builtin { id: value.into(), version: value.into() }),
+                });
+                if matches!(category, Category::Visibility | Category::Internal) {
+                    let privileged = Refusal::from_kernel(source.clone(), true);
+                    assert!(privileged.reason.is_none());
+                    assert_eq!(privileged.explanation, Refusal::UNPROVEN_DETAIL);
+                }
+                Refusal::from_kernel(source, false)
+            };
+            proptest::prop_assert_eq!(make(&secret), make("different-secret"));
+        }
+    }
 }
