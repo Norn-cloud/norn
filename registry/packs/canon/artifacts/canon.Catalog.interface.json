@@ -12,6 +12,12 @@
       "name": "canon.Catalog",
       "properties": [
         {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
           "id": "code",
           "type": {
             "kind": "text"

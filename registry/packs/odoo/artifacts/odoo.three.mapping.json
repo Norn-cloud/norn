@@ -141,6 +141,10 @@
         ],
         "properties": [
           {
+            "property": "id",
+            "value": "input.x_norn_ref"
+          },
+          {
             "property": "code",
             "value": "input.code"
           },
@@ -338,7 +342,7 @@
           },
           {
             "property": "due_at",
-            "value": "input.due_at"
+            "value": "timestamp(input.due_at)"
           }
         ],
         "source": {
@@ -407,7 +411,7 @@
           },
           {
             "property": "occurred_at",
-            "value": "input.occurred_at"
+            "value": "timestamp(input.occurred_at)"
           }
         ],
         "source": {
@@ -515,7 +519,7 @@
     ],
     "source": {
       "schemaId": "odoo.three.source",
-      "sha256": "5e804ff37e123b8a2967b8aad98adcc8043c4748be93626d74ccc10eb194cd5c",
+      "sha256": "4e64de3ac09814bd664aa179a08b67974bc3727d50603cff1c8e7ccd28f90b37",
       "version": "0.1.0"
     }
   },

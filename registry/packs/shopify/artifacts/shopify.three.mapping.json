@@ -128,6 +128,10 @@
         ],
         "properties": [
           {
+            "property": "id",
+            "value": "input.metafield_norn_ref"
+          },
+          {
             "property": "code",
             "value": "input.code"
           },
@@ -329,7 +333,7 @@
           },
           {
             "property": "due_at",
-            "value": "input.due_at"
+            "value": "timestamp(input.due_at)"
           }
         ],
         "source": {
@@ -398,7 +402,7 @@
           },
           {
             "property": "occurred_at",
-            "value": "input.occurred_at"
+            "value": "timestamp(input.occurred_at)"
           }
         ],
         "source": {
@@ -459,7 +463,7 @@
     ],
     "source": {
       "schemaId": "shopify.three.source",
-      "sha256": "b751b7065405b7d1984dc3aa9cdacbed2a7b5908373a2fabb55249c72a1c92b4",
+      "sha256": "452a8dfff590da61932050ceb4e87c42ea388b9b7a34830d6bde9d4b9f36c8c1",
       "version": "0.1.0"
     }
   },

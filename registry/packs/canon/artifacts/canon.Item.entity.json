@@ -13,7 +13,7 @@
         {
           "name": "primary",
           "properties": [
-            "code"
+            "id"
           ]
         }
       ],
@@ -22,6 +22,12 @@
       ],
       "name": "canon.Item",
       "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
         {
           "id": "code",
           "type": {

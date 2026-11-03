@@ -141,6 +141,10 @@
         ],
         "properties": [
           {
+            "property": "id",
+            "value": "input.custom_norn_ref"
+          },
+          {
             "property": "code",
             "value": "input.code"
           },
@@ -338,7 +342,7 @@
           },
           {
             "property": "due_at",
-            "value": "input.due_at"
+            "value": "timestamp(input.due_at)"
           }
         ],
         "source": {
@@ -407,7 +411,7 @@
           },
           {
             "property": "occurred_at",
-            "value": "input.occurred_at"
+            "value": "timestamp(input.occurred_at)"
           }
         ],
         "source": {
@@ -515,7 +519,7 @@
     ],
     "source": {
       "schemaId": "erpnext.three.source",
-      "sha256": "ef588de89afc97bb03a35392f8072c9b4d66484c37568e5a8d0ca9781e706c28",
+      "sha256": "5493a3f662c855a2040cc04940b046d6688abe0caa82fc759181634aa7f7a4bb",
       "version": "0.1.0"
     }
   },
