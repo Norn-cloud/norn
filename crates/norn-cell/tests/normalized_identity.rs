@@ -127,7 +127,7 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     canonical.facts = ["fresh", "stable"]
         .into_iter()
         .map(|key| norn_ir::FactChange::Create {
-            object_type: "identity.Child".into(),
+            object_type: ObjectTypeName("identity.Child".into()),
             key: key.into(),
             values: BTreeMap::from([("code".into(), RuntimeValue::from(key))]),
         })
