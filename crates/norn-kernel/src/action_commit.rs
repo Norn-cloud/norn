@@ -5993,20 +5993,18 @@ mod reference_lineage_tests {
                 .is_none()
         );
     }
-}
 
-
-#[cfg(test)]
-#[test]
-#[allow(clippy::expect_used, reason = "generated receipt schema correspondence")]
-fn action_call_record_schema_matches_generated_contract() {
-    let generated = serde_json::to_string_pretty(&schemars::schema_for!(ActionCallRecord))
-        .expect("receipt schema") + "\n";
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("schema/action_call_record.schema.json");
-    if std::env::var("NORN_KERNEL_UPDATE_SCHEMAS").as_deref() == Ok("1") {
-        std::fs::create_dir_all(path.parent().expect("schema directory")).expect("schema directory");
-        std::fs::write(&path, &generated).expect("write generated schema");
+    #[test]
+    #[allow(clippy::expect_used, reason = "generated receipt schema correspondence")]
+    fn action_call_record_schema_matches_generated_contract() {
+        let generated = serde_json::to_string_pretty(&schemars::schema_for!(ActionCallRecord))
+            .expect("receipt schema") + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schema/action_call_record.schema.json");
+        if std::env::var("NORN_KERNEL_UPDATE_SCHEMAS").as_deref() == Ok("1") {
+            std::fs::create_dir_all(path.parent().expect("schema directory")).expect("schema directory");
+            std::fs::write(&path, &generated).expect("write generated schema");
+        }
+        assert_eq!(generated, std::fs::read_to_string(path).expect("generated schema"));
     }
-    assert_eq!(generated, std::fs::read_to_string(path).expect("generated schema"));
 }
