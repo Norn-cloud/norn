@@ -58,6 +58,32 @@ pub struct QueryContext {
     /// Engine-owned excluded identity → finding ID. Nonempty caller input refuses.
     pub exclusions: BTreeMap<String, String>,
 }
+impl QueryContext {
+    // DATA-QUARANTINE: shared cell/IVM population selection pins retained evidence.
+    fn include_record<E: SqlEngine>(
+        &mut self,
+        reader: &crate::StoreReader<'_, E>,
+        record: &ObjectRecord,
+        frontier: Option<u64>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<bool, CellError> {
+        if record.scope != self.scope {
+            return Err(refused("core.compute.stale_input"));
+        }
+        if !visible(record)? {
+            return Ok(false);
+        }
+        if let Some(finding) = reader
+            .question_findings(&self.world, record, frontier)?
+            .first()
+        {
+            self.exclusions
+                .insert(record.id.clone(), finding.id.clone());
+            return Ok(false);
+        }
+        Ok(true)
+    }
+}
 /// Declared execution strategy; qualification belongs to the producing evaluator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -273,18 +299,8 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(refused("core.compute.bound_exceeded"));
                     }
                 };
-                if record.scope != context.scope {
-                    return Err(refused("core.compute.stale_input"));
-                }
                 members.insert(id.clone());
-                if !visible(&record)? {
-                    continue;
-                }
-                if let Some(finding) = reader
-                    .question_findings(&context.world, &record, cutoff.map(|c| c.frontier))?
-                    .first()
-                {
-                    context.exclusions.insert(id.clone(), finding.id.clone());
+                if !context.include_record(&reader, &record, cutoff.map(|c| c.frontier), visible)? {
                     continue;
                 }
                 if let Some(value) = project(plan, &record.values).map_err(refused)? {

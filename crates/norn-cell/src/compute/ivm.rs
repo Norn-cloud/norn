@@ -271,21 +271,12 @@ impl IncrementalQuestion {
             };
             match selected {
                 BudgetedRead::Found(record) => {
-                    if record.scope != context.scope {
-                        return Err(stale());
-                    }
-                    let authorized = visible(&record)?;
-                    if authorized
-                        && let Some(finding) = reader
-                            .question_findings(
-                                &context.world,
-                                &record,
-                                self.knowledge.map(|c| c.frontier),
-                            )?
-                            .first()
-                    {
-                        context.exclusions.insert(id.clone(), finding.id.clone());
-                    }
+                    let authorized = context.include_record(
+                        &reader,
+                        &record,
+                        self.knowledge.map(|c| c.frontier),
+                        visible,
+                    )?;
                     records.insert(id, (record, authorized));
                 }
                 BudgetedRead::Missing => {}
