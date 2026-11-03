@@ -92,6 +92,19 @@ fn source(artifacts: &[Value]) -> DefinitionSource {
 #[test]
 fn original_mutant_restore_and_visible_unknown_inventory() {
     let mut artifacts = fixture();
+    let typed: Vec<norn_ir::ArtifactEnvelope> = artifacts
+        .iter()
+        .map(|a| serde_json::from_value(a.clone()).expect("typed artifact"))
+        .collect();
+    let diagnostics = crate::check_artifact_set(
+        &typed,
+        &crate::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     let original = source(&artifacts);
     let registry = BTreeSet::new();
     let authority = ApprovedContract::approve(
@@ -107,7 +120,7 @@ fn original_mutant_restore_and_visible_unknown_inventory() {
         .quint(&original, &registry, &profile)
         .expect("lowered");
     let modules: Vec<_> = good.goals.iter().filter_map(|g| g.as_ref().ok()).collect();
-    assert_eq!(modules.len(), 3);
+    assert_eq!(modules.len(), 3, "{:?}", good.goals);
     assert!(good.goals.iter().any(Result::is_err));
     assert!(modules[0].contains(" - "));
     artifacts[2]["payload"]["derive"] = json!([]);

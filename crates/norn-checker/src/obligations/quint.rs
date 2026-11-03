@@ -78,7 +78,7 @@ impl ApprovedContract {
             .unwrap_or(Value::Null);
         Ok(Batch {
             challenge,
-            bounds: json!({"profile":"norn.quint.one-create/1","action":bounds.action,"inputs":bounds.inputs,"identity":bounds.identity,"seed":bounds.seed,"initialStore":"empty","maxObjects":1,"maxSteps":1,"absentInputs":"all non-identity fields not in inputs","interpretation":interpretation}),
+            bounds: json!({"profile":"norn.quint.one-create/1","action":bounds.action,"inputs":bounds.inputs,"identity":bounds.identity,"seed":bounds.seed,"initialStore":"empty","maxObjects":1,"maxSteps":1,"authorization":"pre-authorized; permission policy outside profile","absentInputs":"all non-identity fields not in inputs","interpretation":interpretation}),
             goals,
         })
     }
@@ -179,7 +179,8 @@ fn lower(
             && action.synchronous_rule.is_none()
             && action.quantity_effect.is_none()
             && action.create_links.is_empty()
-            && action.extensions.is_none(),
+            && action.extensions.is_none()
+            && action.access.is_none(),
         "unsupported transitive action effects or reads",
     )?;
     let effect = &action_json["effectProgram"];
