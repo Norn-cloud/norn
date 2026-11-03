@@ -120,3 +120,5 @@ Raw-byte duplicates may refuse earlier through the existing physical unique inde
 
 
 **ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
+
+- **ID-NORMALIZED-RETAINED-LOOKUP-PROVISION:** after upgrading away from a retained profile outside current admission bounds, historical definition lookup preserves its exact metadata/hash, and an identical provisioning retry reopens the current admitted model without adding receipts or changing live facts.

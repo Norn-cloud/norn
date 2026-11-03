@@ -3232,6 +3232,83 @@ mod identity_history_tests {
         (store, current)
     }
 
+    #[test]
+    fn retained_identity_lookup_and_provision_retry_preserve_inactive_profiles() {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("provisioned.sqlite");
+        let current = Model::from_snapshot(&snapshot(1)).expect("current model");
+        let input = definition_input(&current);
+        let mut store = CellStore::provision_definitions(
+            NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning");
+        store
+            .commit(&batch(vec![put("first", "abc")]))
+            .expect("live fact");
+        let legacy = Model::from_retained_snapshot(&snapshot(17)).expect("legacy projection");
+        let legacy_input = definition_input(&legacy);
+        let mut retained = store.export_record(1).expect("export").expect("record");
+        retained.batch = batch(vec![]);
+        retained.batch.events = vec![
+            super::definition_event(
+                2,
+                Some(1),
+                &legacy_input.receipt_sha256,
+                &legacy_input.registry,
+                &legacy_input.diff,
+                None,
+            )
+            .expect("retained install event"),
+        ];
+        retained.model_hash = legacy.model_hash().to_owned();
+        retained.ddl_hash = legacy.ddl_hash().to_owned();
+        retained.ddl_sql = legacy.ddl_sql().to_owned();
+        retained.receipt.body.commit_seq = 3;
+        store
+            .install_definitions_from_origin(
+                legacy.clone(),
+                &legacy_input,
+                Some(1),
+                "s",
+                super::CommitOrigin::Retained(&retained),
+            )
+            .expect("legacy-shaped install through the shared writer");
+        store
+            .install_definitions(current.clone(), input.clone(), Some(2), "s")
+            .expect("current active profile");
+        let lookup = store
+            .read()
+            .retained_definition_model(2)
+            .expect("inactive metadata lookup");
+        assert_eq!(lookup.definitions_snapshot(), snapshot(17));
+        assert_eq!(lookup.model_hash(), legacy.model_hash());
+        assert!(
+            store
+                .read()
+                .governing_laws_at(2, "identity.Legacy")
+                .expect("public retained lookup")
+                .is_empty()
+        );
+        let expected = store.read().dump().expect("before retry");
+        drop(store);
+        let retried = CellStore::provision_definitions(
+            NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+            current.clone(),
+            &input,
+            "s",
+        )
+        .expect("public provisioning retry preserves inactive metadata");
+        assert_eq!(retried.model().model_hash(), current.model_hash());
+        assert_eq!(retried.read().dump().expect("after retry"), expected);
+        assert_eq!(
+            retried.read().receipts().expect("unchanged receipts").len(),
+            4
+        );
+    }
+
     #[tokio::test]
     async fn retained_identity_profiles_reopen_rebuild_restore_and_do_not_escape_admission() {
         for steps in [1, 17] {
