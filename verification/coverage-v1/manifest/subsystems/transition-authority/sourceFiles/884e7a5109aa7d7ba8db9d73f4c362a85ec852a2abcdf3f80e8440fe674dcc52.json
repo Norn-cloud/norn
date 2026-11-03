@@ -1,4 +1,4 @@
 {
-  "order": 296,
+  "order": 20000,
   "value": "crates/norn-kernel/tests/execution_profile.rs"
 }

@@ -1,4 +1,4 @@
 {
-  "order": 117,
+  "order": 112,
   "value": "crates/norn-checker/tests/lifecycle_writes.rs"
 }
