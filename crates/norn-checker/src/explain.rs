@@ -171,7 +171,7 @@ fn explain_laws(pool: &[ArtifactEnvelope], kind: ExplainKind, target: &MemberRef
                 .filter(|binding| matches!(binding, LawBinding::Invariant { .. })),
             obligations: obligations
                 .iter()
-                .map(|goal| norn_ir::RuntimeValue::from_json_text(&goal.to_string()))
+                .map(|goal| norn_ir::RuntimeValue::from_json_text(goal.to_string()))
                 .collect::<Result<_, _>>()
                 .map_err(closure_error)?,
             why_unknown,
@@ -328,11 +328,10 @@ fn inheritance_path(
             continue;
         };
         for name in row.extends.iter().chain(&row.implements) {
-            if let Some(parent) = by_name.get(name.as_str()) {
-                if !parents.contains_key(&parent.at) {
+            if let Some(parent) = by_name.get(name.as_str())
+                && !parents.contains_key(&parent.at) {
                     parents.insert(parent.at.clone(), Some(at.clone()));
                     queue.push_back(parent.at.clone());
-                }
             }
         }
     }

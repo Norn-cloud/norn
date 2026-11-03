@@ -268,11 +268,16 @@ impl Diagnostic {
     #[must_use]
     pub fn to_json_v2(&self) -> serde_json::Value {
         let mut value = self.to_json();
-        value["format"] = "norn/diagnostic@2".into();
-        value["phase"] = self.registration().map(|entry| entry.tier.as_str()).into();
-        value["retryable"] = false.into();
-        value["fix"] = self.registration().and_then(|entry| entry.fix).into();
-        value["no_fix"] = self.registration().and_then(|entry| entry.no_fix).into();
+        if let Some(fields) = value.as_object_mut() {
+            let additions: [(&str, serde_json::Value); 5] = [
+                ("format", "norn/diagnostic@2".into()),
+                ("phase", self.registration().map(|entry| entry.tier.as_str()).into()),
+                ("retryable", false.into()),
+                ("fix", self.registration().and_then(|entry| entry.fix).into()),
+                ("no_fix", self.registration().and_then(|entry| entry.no_fix).into()),
+            ];
+            fields.extend(additions.into_iter().map(|(key, value)| (key.to_owned(), value)));
+        }
         value
     }
 
