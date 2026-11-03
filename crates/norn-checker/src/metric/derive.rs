@@ -890,7 +890,7 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 80);
-        assert_eq!(showcase, [294_000, 300_000]);
+        assert_eq!(showcase, [294_000_000, 300_000_000]);
         assert_eq!(
             compute::arithmetic::ratio(showcase[0], showcase[1]),
             Some(980_000)
