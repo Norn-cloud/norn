@@ -1,10 +1,10 @@
 //! Scoped temporal declarations over the existing ZEN profile. No evaluator or proof engine.
 /// Exact identity records consumed by checker-owned Challenge binding.
 pub mod evidence;
-/// Typed presentation of actual law guarantees and explicit missing evidence.
-pub mod guarantees;
 /// Backend-neutral finite relations produced from admitted declarations.
 pub mod finite;
+/// Typed presentation of actual law guarantees and explicit missing evidence.
+pub mod guarantees;
 
 use crate::members::present_non_null;
 use crate::{IrVersion01, ProvenanceSource, ZenExpression};
