@@ -278,12 +278,6 @@ fn data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids() {
     );
     let k1_context = run.context.clone();
     let k1_point = point(&run.store, &run.context);
-    let original_ids = contribution_ids(&k1[0]);
-    assert_eq!(
-        original_ids.len(),
-        64,
-        "all sixteen weeks retain four gold contribution IDs"
-    );
     run.apply(
         vec![put(
             "SYN-MELT-15-1",
@@ -327,22 +321,7 @@ fn data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids() {
     ] {
         assert_eq!(signed_delta(before, after).canonical(), expected);
     }
-    assert_eq!(k2[0].rows[WEEK].members.len(), 4);
-    assert_eq!(k2[0].rows[WEEK].members["SYN-MELT-15-1"].version, 2);
-    assert_eq!(
-        contribution_ids(&k2[0])
-            .difference(&original_ids)
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([FactRef::new(TYPE, "SYN-MELT-15-1", 2).stable_id()])
-    );
-    assert_eq!(
-        original_ids
-            .difference(&contribution_ids(&k2[0]))
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([FactRef::new(TYPE, "SYN-MELT-15-1", 1).stable_id()])
-    );
+    assert_corrected_ids(&k1[0], &k2[0]);
     run = run.restart();
     for (i, expected) in [(0, &k1[2]), (1, &k1[3])] {
         let mut old = run
@@ -353,6 +332,31 @@ fn data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids() {
         old.engine = Engine::Ivm;
         assert_eq!(&old, expected);
     }
+}
+
+fn assert_corrected_ids(k1: &QueryResult, k2: &QueryResult) {
+    let original_ids = contribution_ids(k1);
+    assert_eq!(
+        original_ids.len(),
+        64,
+        "all sixteen weeks retain four gold contribution IDs"
+    );
+    assert_eq!(k2.rows[WEEK].members.len(), 4);
+    assert_eq!(k2.rows[WEEK].members["SYN-MELT-15-1"].version, 2);
+    assert_eq!(
+        contribution_ids(k2)
+            .difference(&original_ids)
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([FactRef::new(TYPE, "SYN-MELT-15-1", 2).stable_id()])
+    );
+    assert_eq!(
+        original_ids
+            .difference(&contribution_ids(k2))
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([FactRef::new(TYPE, "SYN-MELT-15-1", 1).stable_id()])
+    );
 }
 
 fn assert_delivery_equivalence(left: &Run, right: &Run) {
