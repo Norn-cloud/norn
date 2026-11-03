@@ -231,6 +231,9 @@ fn registry_generation_refuses_invalid_entries() {
         "valid",
         "no_fix",
         "missing-guidance",
+        "empty-guidance",
+        "duplicate-guidance",
+        "orphan-guidance",
         "both-guidance",
         "blank-guidance",
         "identity",
@@ -273,7 +276,13 @@ fn registry_generation_refuses_invalid_entries() {
             if let Some(v) = value.as_object_mut().expect("object").remove(key) { guide.as_object_mut().expect("guide object").insert(key.to_owned(), v); }
         }
         let guidance = temp.join("guidance.json");
-        fs::write(&guidance, serde_json::json!([guide]).to_string()).expect("guidance fixture");
+        let guides = match change {
+            "empty-guidance" => serde_json::json!([]),
+            "duplicate-guidance" => serde_json::json!([guide, guide]),
+            "orphan-guidance" => serde_json::json!([guide, {"code":"toy.other.missing", "no_fix":"No matching declaration"}]),
+            _ => serde_json::json!([guide]),
+        };
+        fs::write(&guidance, guides.to_string()).expect("guidance fixture");
         if change == "directory" {
             fs::create_dir(&path).expect("invalid directory");
         } else {

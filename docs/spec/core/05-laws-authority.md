@@ -144,7 +144,7 @@ refuses unavailable locales; there is no language fallback or EN/AR-only enum
 in the command interface. Without wording input, the report is metadata only.
 
 **DIAG-ADVICE-1:** every registered code supplies exactly one nonblank `fix` or
-`no_fix` reason. Registration rejects missing, conflicting and blank guidance.
+`no_fix` reason. The build joins the code records with `conformance/diagnostic-guidance.json` into the existing registry. Registration rejects missing, conflicting, duplicate, orphaned and blank guidance.
 **DIAG-PROJECTION-2:** diagnostic advice is emitted by the new projection only;
 historical diagnostics and receipt hashes retain their original serialization.
 

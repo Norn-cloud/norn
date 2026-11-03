@@ -1,4 +1,4 @@
-//! Compile the authoritative per-code registry without a shared generated file.
+//! Compile code records and mandatory guidance into one diagnostic registry.
 
 use std::{collections::BTreeMap, fmt::Write as _, fs, path::Path};
 
