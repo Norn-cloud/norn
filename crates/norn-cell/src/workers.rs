@@ -43,6 +43,7 @@ fn backend(error: JsValue) -> CellError {
     CellError::Engine(format!("DO SQLite: {error:?}"))
 }
 
+#[allow(clippy::as_conversions, clippy::cast_precision_loss, reason = "validate_bindings bounds integers to the exactly representable JS range")]
 fn encode(value: &SqlValue) -> JsValue {
     match value {
         SqlValue::Null => JsValue::NULL,
@@ -53,6 +54,7 @@ fn encode(value: &SqlValue) -> JsValue {
     }
 }
 
+#[allow(clippy::as_conversions, clippy::cast_precision_loss, clippy::cast_possible_truncation, reason = "finite integral values are checked against the exact JS integer range before conversion")]
 fn decode(value: JsValue) -> Result<SqlValue, CellError> {
     if value.is_null() {
         return Ok(SqlValue::Null);
