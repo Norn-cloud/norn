@@ -38,6 +38,9 @@ test("each system's declared source for a fact, including a declared gap", () =>
   expect(feed("ERPNext")?.facts.get("quantity_basis")).toEqual({ kind: "fixed", value: "on_hand" })
   expect(feed("ERPNext")?.facts.get("currency")).toEqual({ kind: "empty" })
   expect(feed("Shopify")?.facts.get("stock_cost")?.kind).toBe("gap")
+  expect(feed("ERPNext")?.facts.get("owner")).toEqual({ kind: "field", field: "owner_ref" })
+  const delivery = catalog.byName.get("canon.Delivery")?.feeds.find((candidate) => candidate.system === "Shopify")
+  expect(delivery?.facts.get("reverses")?.kind).toBe("gap")
 })
 
 test("laws attach to the concepts they govern", () => {

@@ -97,9 +97,10 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
         </TableRow>
       }>
-        {concept.fields.map(({ id }) => (
+        {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
+          ...concept.relationships.map(({ id, target }) => ({ id, label: `${id.replaceAll("_", " ")} → ${conceptTitle(target)}` }))].map(({ id, label }) => (
           <TableRow key={id}>
-            <TableCell className="font-medium">{id.replaceAll("_", " ")}</TableCell>
+            <TableCell className="font-medium">{label}</TableCell>
             {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}><SourceCell source={facts.get(id)} /></TableCell>)}
           </TableRow>
         ))}

@@ -29,7 +29,7 @@ export type Source =
 export interface Feed {
   readonly system: string
   readonly dataset: string
-  /** Declared source per fact id; a fact missing here is not mapped by this system. */
+  /** Declared source per fact or relationship id; one missing here is not mapped by this system. */
   readonly facts: ReadonlyMap<string, Source>
 }
 
@@ -131,7 +131,10 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     for (const map of artifact.payload.maps) {
       const target = entityName.get(map.target.entity) ?? map.target.entity
       targets.add(target)
-      const facts = new Map<string, Source>((map.properties ?? []).map(({ property, value }) => [property, sourceOf(value)]))
+      const facts = new Map<string, Source>([
+        ...(map.properties ?? []).map(({ property, value }): [string, Source] => [property, sourceOf(value)]),
+        ...(map.links ?? []).map(({ link, key }): [string, Source] => [link, sourceOf(key)]),
+      ])
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, { kind: "gap", note: note ?? reason.replaceAll("_", " ") })
       feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
     }
