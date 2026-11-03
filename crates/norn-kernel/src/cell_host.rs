@@ -52,8 +52,8 @@ use norn_ir::{DataQualityOutcome, InvariantId, InvariantOwner};
 use serde::{Deserialize, Serialize};
 
 pub use norn_ir::{
-    InterfaceDef, Link, LinkCardinality, LinkId, Multiplicity, ObjectTypeDef, ObjectTypeName,
-    PropertyTypeDef, ResourceStatus,
+    ArtifactEnvelope, InterfaceDef, Link, LinkCardinality, LinkId, Multiplicity, ObjectTypeDef,
+    ObjectTypeName, PropertyTypeDef, ResourceStatus,
 };
 
 /// An object's property values, a command payload, or a timer payload: an
@@ -769,6 +769,14 @@ pub enum CommitError<X> {
         /// The stable accounting authority refusal.
         reason: AccountingError,
     },
+    /// A retained direct law refuses a native write or unsupported law semantics.
+    #[error("{key}: {reason}")]
+    Law {
+        /// Proposed subject.
+        key: FactKey,
+        /// Stable law diagnostic.
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     /// A final object value violates a declared object or interface
     /// invariant. The owning declaration and id form its stable identity.
     #[error("{key}: invariant {} on {:?} was refused: {message}", id.as_str(), owner)]
@@ -849,6 +857,7 @@ impl<X> CommitError<X> {
             Self::EffectiveValues { .. } => "commit.effective_values",
             Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
             Self::AccountingPosting { reason, .. } => reason.code(),
+            Self::Law { reason, .. } => reason.code(),
             Self::InvariantViolation { .. } => "commit.invariant_violation",
             Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
             Self::InvariantModel { .. } => "commit.invariant_model",

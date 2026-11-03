@@ -7,7 +7,7 @@ import { compileDefinitions } from "../src/compiler/definitions.ts"
 import type { MappingSourceContract } from "../src/builder/mapping.ts"
 import { sourceMappedDiagnostics } from "../src/checker-abi.ts"
 import { compileModule } from "../src/compile-stdin.ts"
-import { compilePack } from "../src/pack.ts"
+import { artifactId, checkPack, compilePack, readArtifacts } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -147,3 +147,56 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
+
+test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts")
+  const source = readFileSync(fixture, "utf8")
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  const encoded = JSON.stringify(result.artifacts)
+  expect(encoded).toContain('"semanticsVersion":"1.0"')
+  expect(encoded).toContain('"itemSchema":')
+  expect(encoded).toContain('"accumulatorSchema":')
+  expect(encoded).toContain('"artifactId":"example.fold.step.rule"')
+  expect(result.warnings).toEqual([])
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  const golden = JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/typed-ordered-fold.json"), "utf8"))
+  expect(pack.artifacts).toEqual(golden)
+  if (checker) expect(checker.checkArtifactSet(result.artifacts).admitted).toBe(true)
+  for (const invalid of [
+    source.replace('identity: "id"', 'identity: "missing"'),
+    source.replace('rounding: "refuse"', 'rounding: "implicit"'),
+    source.replace('initial: input.slice.initial', 'initial: { total: "wrong", count: 0 }'),
+    source.replace('maxItems: 32', 'extra: true, maxItems: 32'),
+    source.replace('maxItems: 32', 'maxItems: input.slice.initial.count'),
+  ]) expect(compile(invalid).ok).toBe(false)
+}, 60_000)
+
+test("FOLD-OPERANDS refuses structural extra fields through const aliases", () => {
+  const source = readFileSync(join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts"), "utf8")
+  const literalItem = source.replace('id: Schema.String, amount:', 'id: Schema.Literal("row"), amount:').replace("items: input.slice.items", 'items: [{ id: "row", amount: 1 }]')
+  expect(compile(literalItem).ok).toBe(true)
+  expect(compile(literalItem.replace('id: "row"', 'id: "other"')).ok).toBe(false)
+  const wideItems = source.replace("items: Schema.Array(Item)", "items: Schema.Array(Schema.Struct({ id: Schema.String, amount: Schema.Finite, source: Schema.String }))")
+  const wideState = source.replace("initial: State", "initial: Schema.Struct({ total: Schema.Finite, count: Schema.Int, ids: Schema.Array(Schema.String), segments: Schema.Array(Schema.Array(Schema.Finite)), source: Schema.String })")
+  const alias = (text: string) => text.replace("const state = Norn.orderedFold", "const rows = input.slice.items; const seed = input.slice.initial; const state = Norn.orderedFold").replace("items: input.slice.items, initial: input.slice.initial", "items: rows, initial: seed")
+  for (const invalid of [wideItems, wideState, alias(wideItems), alias(wideState), alias(wideState).replace("items: rows", "items: []")]) {
+    const result = compile(invalid)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.diagnostics.some(d => d.code === "NORN-FLOW-TYPE")).toBe(true)
+  }
+}, 60_000)
+
+test("CP3 allocation goldens come from core-aligned typed declarations", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/jewelry/cp3-folds.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [join(TOOL_ROOT, "fixtures/stock/stock.source.ts"), fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  const authored = pack.artifacts.filter(a => a !== null && typeof a === "object" && "namespace" in a && a.namespace === "jewelry")
+  expect(authored).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/jewelry-folds.json"), "utf8")))
+  if (checker) {
+    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact).filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact)) || ["core.units", "core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact))))
+    expect(checked.diagnostics.diagnostics.filter(d => d.severity === "error")).toEqual([])
+    expect(checked.admitted).toBe(true)
+  }
+}, 60_000)

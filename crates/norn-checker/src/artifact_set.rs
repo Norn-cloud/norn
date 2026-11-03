@@ -302,8 +302,8 @@ pub fn resolve_artifact_set<'a>(
 /// per-artifact findings followed by the resolution findings, without set
 /// checks. Findings identical in `(code, artifactId, pointer)` are reported
 /// once; UI-law findings also distinguish their messages so each action effect
-/// at a render site remains visible. An empty result means the set resolves and
-/// is valid.
+/// at a render site remains visible. The set is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes remain available.
 #[must_use]
 pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
@@ -373,10 +373,12 @@ pub fn check_artifact_set(
             .chain(resolution)
             .collect(),
     };
+    let unit_findings = crate::unit_admission::check(&normalized_artifacts, &normalized_base);
     dedupe_findings(
         findings
             .into_iter()
             .chain(layout_findings)
+            .chain(unit_findings)
             .chain(crate::defined_concepts::check_cycles(
                 &normalized_artifacts,
                 &normalized_base,

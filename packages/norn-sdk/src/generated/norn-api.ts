@@ -2268,7 +2268,7 @@ export interface components {
          *     division and implicit rounding do not implement this contract.
          */
         NornIrFoldArithmetic: {
-            rounding: components["schemas"]["NornIrFoldRounding"];
+            rounding: components["schemas"]["NornIrRounding"];
             /**
              * Format: uint32
              * @description Quantity-ledger-compatible exact scaled integers; at most 18 places.
@@ -2285,8 +2285,6 @@ export interface components {
         };
         /** @enum {string} */
         NornIrFoldOrderKind: "string" | "integer";
-        /** @enum {string} */
-        NornIrFoldRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description Why a target member is not mapped.
          * @enum {string}
@@ -4225,6 +4223,13 @@ export interface components {
             currencySource?: components["schemas"]["NornIrDimensionPath"];
             /** @enum {string} */
             kind: "decimal";
+            /** @description VAL-RATE: currency per this unit, distinct from a quantity's `unit`. */
+            perUnit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+             * @enum {string}
+             */
+            rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
             /**
              * Format: uint64
              * @description Fraction digits every value is held at (`2` for cents). At most 28,
@@ -4778,6 +4783,11 @@ export interface components {
         NornIrRoleCondition: {
             anyOf: string[];
         };
+        /**
+         * @description FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.
+         * @enum {string}
+         */
+        NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).

@@ -62,7 +62,10 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: { readonly unit?: UnitRef } | { readonly currency: string }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+
+    /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
+    function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /**
      * A shared property type by name (EntityIR `ref`): a Norn Core registry
@@ -155,6 +158,7 @@ declare module "@norn/authoring" {
 
     interface InterfaceMeta<S extends Schema.Top> {
       readonly role?: "thing" | "happening"
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
       /** Canonical property markings, keyed by a declared property. */
@@ -259,6 +263,7 @@ declare module "@norn/authoring" {
         }
 
     interface ActionMeta<I extends Schema.Top, O extends Schema.Top> {
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
       readonly id: string
       readonly title: string
@@ -413,7 +418,7 @@ declare module "@norn/authoring" {
       readonly version: string
       readonly contract: "decide" | "sub_decision"
       /** Required sub-decision references, either local definitions or explicit artifact/version pins. */
-      readonly dependencies?: ReadonlyArray<DecisionDefinition | { readonly artifactId: string; readonly version: string }>
+      readonly dependencies?: ReadonlyArray<DecisionDefinition | import("../src/builder/envelope.ts").DependencyPin>
       readonly triggers?: ReadonlyArray<RuleTriggerSpec>
       readonly slice?: ReadonlyArray<SliceSpec>
       /** The decision's input and output contracts: Effect Schema structs, lowered to closed schemas. */
@@ -439,6 +444,19 @@ declare module "@norn/authoring" {
 
     /** Call a pinned sub-decision in a top-level const inside a decision callback. */
     function evaluate<I, O>(decision: DecisionDefinition<I, O>, input: I): O
+
+    /** A bounded, ordered application of a pinned step; compiled, never executed in JS. */
+    function orderedFold<I extends object, S extends object>(
+      step: DecisionDefinition<{ readonly accumulator: S; readonly item: I; readonly index: number }, S>,
+      input: { readonly items: ReadonlyArray<I>; readonly initial: S },
+      options: {
+        readonly identity: keyof I & string
+        readonly order: ReadonlyArray<{ readonly property: keyof I & string; readonly kind: "string" | "integer" }>
+        readonly maxItems: number
+        readonly maxAccumulatorBytes: number
+        readonly arithmetic: { readonly scale: number; readonly rounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }
+      },
+    ): S
 
     /** Pure calendar-date comparison; lowers to explicit ZEN date constructors. */
     function dateBefore(left: string, right: string): boolean

@@ -541,14 +541,5 @@ pub struct FoldArithmetic {
     /// Quantity-ledger-compatible exact scaled integers; at most 18 places.
     #[serde(deserialize_with = "crate::members::deserialize_u32")]
     pub scale: u32,
-    pub rounding: FoldRounding,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FoldRounding {
-    Refuse,
-    TowardZero,
-    HalfEven,
-    HalfAwayFromZero,
+    pub rounding: crate::Rounding,
 }
