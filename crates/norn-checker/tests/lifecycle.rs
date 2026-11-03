@@ -135,6 +135,10 @@ fn every_lifecycle_code_has_a_negative_fixture() {
             .any(|(code, _)| code == codes::INVALID_GUARD_DIAGNOSTIC)
     );
     covered.insert(codes::INVALID_GUARD_DIAGNOSTIC.to_owned());
+    assert!(run(&guard_diagnostic_override(), &[], None)
+        .iter()
+        .any(|(code, _)| code == codes::INHERITED_GUARD_DIAGNOSTIC));
+    covered.insert(codes::INHERITED_GUARD_DIAGNOSTIC.to_owned());
     let files = std::fs::read_dir(format!("{FIXTURES}/lifecycles/invalid"))
         .expect("fixture directory")
         .count();
@@ -511,6 +515,20 @@ fn inherited_path_property_survives_redeclaration_and_target_narrowing() {
     assert!(run(&[parent, child], &[], None).is_empty());
 }
 
+fn guard_diagnostic_override() -> [ObjectTypeDef; 2] {
+    let mut base = purchase_order();
+    let mut subtype = rush_purchase_order();
+    let base_transition = &mut base.lifecycles[0].transitions[0];
+    base_transition.guard_refusal_code = Some(codes::PUBLICATION_GUARD.to_owned());
+    let transition = subtype.lifecycles[0]
+        .transitions
+        .iter_mut()
+        .find(|transition| transition.id == base_transition.id)
+        .expect("narrowed transition");
+    transition.guard_refusal_code = Some("function.invocation.manifest_mismatch".to_owned());
+    [base, subtype]
+}
+
 #[test]
 fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
     for code in [
@@ -525,18 +543,8 @@ fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
             .any(|(code, _)| code == codes::INVALID_GUARD_DIAGNOSTIC);
         assert_eq!(refused, code != codes::PUBLICATION_GUARD);
     }
-    let mut base = purchase_order();
-    let mut subtype = rush_purchase_order();
-    let base_transition = &mut base.lifecycles[0].transitions[0];
-    base_transition.guard_refusal_code = Some(codes::PUBLICATION_GUARD.to_owned());
-    let transition = subtype.lifecycles[0]
-        .transitions
-        .iter_mut()
-        .find(|transition| transition.id == base_transition.id)
-        .expect("narrowed transition");
-    transition.guard_refusal_code = Some("function.invocation.manifest_mismatch".to_owned());
     assert!(
-        run(&[base, subtype], &[], None)
+        run(&guard_diagnostic_override(), &[], None)
             .iter()
             .any(|(code, _)| code == codes::INHERITED_GUARD_DIAGNOSTIC)
     );
