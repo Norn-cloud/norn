@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
+
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1914,6 +1916,8 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(match error {
+        CommitError::AtomicBoundary { key } => CommitError::AtomicBoundary { key },
+        AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
         CommitError::Law { key, reason } => CommitError::Law { key, reason },
         CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
         CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
@@ -1976,15 +1980,11 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         }
         CommitError::LinkRequired { parent, link } => CommitError::LinkRequired { parent, link },
         CommitError::TypeMismatch { key, concrete } => CommitError::TypeMismatch { key, concrete },
-        CommitError::EffectiveValues { key, reason } => {
-            CommitError::EffectiveValues { key, reason }
-        }
+        EffectiveValues { key, reason } => EffectiveValues { key, reason },
         CommitError::TraversalLimitExceeded { key, reason } => {
             CommitError::TraversalLimitExceeded { key, reason }
         }
-        CommitError::AccountingPosting { key, reason } => {
-            CommitError::AccountingPosting { key, reason }
-        }
+        AccountingPosting { key, reason } => AccountingPosting { key, reason },
         CommitError::InvariantViolation {
             key,
             owner,
