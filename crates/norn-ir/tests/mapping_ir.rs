@@ -236,3 +236,18 @@ proptest::proptest! {
         proptest::prop_assert_eq!(expected, repeated);
     }
 }
+
+#[test]
+fn obs_link_claim_missing_target_does_not_imply_a_clear() {
+    let claim = link_record().link_claims("observation").remove(0);
+    let mut wire = serde_json::to_value(claim).expect("wire");
+    wire.as_object_mut().expect("object").remove("target");
+    assert!(serde_json::from_value::<norn_ir::mapping::ObservedLinkClaim>(wire.clone()).is_err());
+    wire["target"] = serde_json::Value::Null;
+    assert!(
+        serde_json::from_value::<norn_ir::mapping::ObservedLinkClaim>(wire)
+            .expect("explicit clear")
+            .target
+            .is_none()
+    );
+}

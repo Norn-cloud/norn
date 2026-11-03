@@ -691,38 +691,65 @@ impl ObservationAuthorization {
     ) -> Result<(), ObservationRefusal> {
         let model = crate::CommitModel::new(catalog);
         let key = FactKey::new(claim.source_type.as_str(), &claim.source_key);
-        if source.key != key || (!commit.reads.contains(&source)
-            && !commit.writes.iter().any(|w| w.key == key && w.expected == source.expected))
+        if source.key != key
+            || (!commit.reads.contains(&source)
+                && !commit
+                    .writes
+                    .iter()
+                    .any(|w| w.key == key && w.expected == source.expected))
         {
-            return Err(ObservationRefusal::Encoding("claim source has no CAS evidence".into()));
+            return Err(ObservationRefusal::Encoding(
+                "claim source has no CAS evidence".into(),
+            ));
         }
-        let declaration = model.link(&key.object_type, claim.role.as_str())
+        let declaration = model
+            .link(&key.object_type, claim.role.as_str())
             .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
         if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
-            self.source_scopes.push((source.clone(), ObservedSourceOwner::from_provenance(&claim.provenance)));
+            self.source_scopes.push((
+                source.clone(),
+                ObservedSourceOwner::from_provenance(&claim.provenance),
+            ));
             self.prepared_items = self.prepared_items.saturating_add(1);
             if !commit.writes.iter().any(|w| w.key == key) {
                 self.observed_reads.push(source);
             }
         }
-        let target = claim.target.as_ref().map(|t| FactKey::new(t.object_type.as_str(), &t.key));
+        let target = claim
+            .target
+            .as_ref()
+            .map(|t| FactKey::new(t.object_type.as_str(), &t.key));
         if let Some(target) = &target {
             self.reference_targets.insert(target.clone());
             self.reference_targets.insert(model.canonical(target));
         }
-        for write in commit.links.iter().filter(|w| model.canonical(&w.key.source) == model.canonical(&key) && w.key.link == claim.role.as_str()) {
+        for write in commit.links.iter().filter(|w| {
+            model.canonical(&w.key.source) == model.canonical(&key)
+                && w.key.link == claim.role.as_str()
+        }) {
             let permitted = match &write.mutation {
-                LinkMutation::Add { .. } => target.as_ref().is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
-                LinkMutation::Remove => target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One,
+                LinkMutation::Add { .. } => target
+                    .as_ref()
+                    .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
+                LinkMutation::Remove => {
+                    target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One
+                }
             };
-            if !permitted { continue; }
+            if !permitted {
+                continue;
+            }
             let mut sealed = write.clone();
             if let LinkMutation::Add { values } = &mut sealed.mutation {
-                *values = catalog.effective_link_values(&key.object_type, claim.role.as_str(), values)
+                *values = catalog
+                    .effective_link_values(&key.object_type, claim.role.as_str(), values)
                     .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
             }
-            if !self.links.contains(&sealed) { self.links.push(sealed.clone()); }
-            if !self.convergent_links.contains(&sealed) { self.convergent_links.push(sealed); }
+            if !self.links.contains(&sealed) {
+                self.links.push(sealed.clone());
+            }
+            if !self.convergent_links.contains(&sealed) {
+                self.convergent_links.push(sealed);
+            }
         }
         Ok(())
     }

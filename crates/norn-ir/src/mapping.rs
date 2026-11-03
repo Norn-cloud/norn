@@ -707,6 +707,7 @@ pub struct ObservedLinkClaim {
     /// Relation declared by the canonical source concept.
     pub role: LinkId,
     /// Explicit canonical target, or an observed nullable-role clear.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub target: Option<ObservedLinkTarget>,
     /// Source row, mapping version and exact relation rule.
     pub provenance: InstanceProvenance,
