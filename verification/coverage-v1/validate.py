@@ -428,7 +428,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = merge_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
+        expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
@@ -507,7 +507,11 @@ df -h /
         if name == "test":
             preparation.append(nextest)
         if name != "plan":
-            preparation.insert(0, cleanup)
+            reclaim = copy.deepcopy(cleanup)
+            if name == "test":
+                reclaim["if"] = "${{ runner.environment == 'github-hosted' }}"
+                reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
+            preparation.insert(0, reclaim)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
