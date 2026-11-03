@@ -298,11 +298,8 @@ mod tests {
             let mut receipt =
                 norn_ir::RuntimeValue::from_json_text(set.admission_receipt.as_deref().unwrap())
                     .unwrap();
-            let replacement = RuntimeValue::from_json_text(value.to_string()).unwrap();
-            receipt
-                .as_object_mut()
-                .unwrap()
-                .insert(key.into(), replacement);
+            let value = RuntimeValue::from_json_text(value.to_string()).unwrap();
+            receipt.as_object_mut().unwrap().insert(key.into(), value);
             set.admission_receipt =
                 Some(String::from_utf8(receipt.canonical_json().unwrap()).unwrap());
             set.receipt_sha256 =
