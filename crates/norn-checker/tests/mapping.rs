@@ -43,6 +43,546 @@ const MAPPING_ID: &str = "erpnext.norn_core";
 const FASHION_SOURCE_ID: &str = "erpnext.fashion_source_schema";
 const FASHION_MAPPING_ID: &str = "erpnext.fashion_item.mapping";
 
+fn pinned_interpretation() -> (ArtifactEnvelope, Vec<ArtifactEnvelope>) {
+    use norn_ir::mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+    };
+    use norn_ir::{CompositionPackRoot, PackArtifactKind, PackArtifactRef};
+    let entities = model_artifacts();
+    let entity = entities.first().expect("one model entity");
+    let base: Vec<_> = ["toy.capacity", "toy.credit", "toy.margin"]
+        .into_iter()
+        .map(|id| {
+            let pack = CompositionPackRoot {
+                pack_id: id.to_owned(),
+                pack_version: "0.1".to_owned(),
+                pack_kind: None,
+                provides: None,
+                instances: None,
+                extensions: None,
+                artifacts: vec![PackArtifactRef {
+                    artifact_id: entity.artifact_id.clone(),
+                    version: entity.version.clone(),
+                    kind: PackArtifactKind::Entity,
+                    additional: BTreeMap::new(),
+                }],
+            };
+            envelope(
+                id,
+                "business_pack",
+                &serde_json::to_value(pack).expect("pack"),
+            )
+        })
+        .collect();
+    let endpoint = |layer: &ArtifactEnvelope| {
+        let pin = ArtifactRef::of(layer).expect("retained pack hashes");
+        InterpretationEndpoint {
+            artifact_id: pin.artifact_id,
+            version: pin.version,
+            sha256: pin.sha256,
+        }
+    };
+    let document = LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint(base.first().expect("source")),
+        target_layer: endpoint(base.get(1).expect("target")),
+        members: Vec::new(),
+    };
+    let mut artifact = envelope(
+        "toy.capacity_credit",
+        "mapping",
+        &serde_json::to_value(document).expect("interpretation"),
+    );
+    artifact.dependencies = base
+        .iter()
+        .map(|a| norn_ir::ArtifactDependency {
+            artifact_id: a.artifact_id.clone(),
+            kind: a.kind(),
+            version: Some(a.version.clone()),
+            required: true,
+        })
+        .collect();
+    (artifact, base)
+}
+
+#[test]
+fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
+    let (first, base) = pinned_interpretation();
+    let mut document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(first.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
+    let third = ArtifactRef::of(base.get(2).expect("third layer")).expect("pack identity");
+    document.target_layer = norn_ir::mapping::InterpretationEndpoint {
+        artifact_id: third.artifact_id,
+        version: third.version,
+        sha256: third.sha256,
+    };
+    let mut second = envelope(
+        "toy.capacity_margin",
+        "mapping",
+        &serde_json::to_value(document).expect("interpretation"),
+    );
+    second.dependencies = first.dependencies.clone();
+    let findings = norn_checker::mapping::check_mapping_artifacts(&[first, second], &base);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == "mapping.interpretation.unsupported")
+            .count(),
+        2
+    );
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == "core.composition.mapping_gap")
+            .count(),
+        2
+    );
+}
+
+fn complete_member_interpretation() -> (norn_ir::mapping::LawInterpretationIr, Vec<ArtifactEnvelope>)
+{
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let (artifact, mut base) = pinned_interpretation();
+    base.extend(model_artifacts());
+    let mut document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
+    let name = "commerce.SalesOrder".to_owned();
+    let mut members = vec![Member::Type {
+        type_name: name.clone(),
+    }];
+    members.extend(
+        [
+            "order_number",
+            "order_date",
+            "total_amount",
+            "is_large",
+            "status",
+        ]
+        .map(|property| Member::Property {
+            type_name: name.clone(),
+            property: property.to_owned(),
+        }),
+    );
+    members.push(Member::Link {
+        type_name: name.clone(),
+        link: "counterparty".to_owned(),
+    });
+    members.extend(
+        ["draft", "submitted", "cancelled"].map(|state| Member::State {
+            type_name: name.clone(),
+            lifecycle: "status".to_owned(),
+            state: state.to_owned(),
+        }),
+    );
+    members.extend(["submit", "cancel"].map(|transition| Member::Transition {
+        type_name: name.clone(),
+        lifecycle: "status".to_owned(),
+        transition: transition.to_owned(),
+    }));
+    document.members = members
+        .into_iter()
+        .map(|member| {
+            let source = MemberRef {
+                artifact_id: "commerce.SalesOrder.entity".to_owned(),
+                version: "0.1.0".to_owned(),
+                member,
+            };
+            norn_ir::mapping::MemberInterpretation {
+                target: source.clone(),
+                source,
+                transform: None,
+            }
+        })
+        .collect();
+    (document, base)
+}
+
+fn member_findings(
+    document: &norn_ir::mapping::LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let (mut artifact, _) = pinned_interpretation();
+    artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("JSON tree"),
+    )
+    .expect("mapping root");
+    norn_checker::mapping::check_mapping_artifacts(&[artifact], base)
+}
+
+#[test]
+fn map_members_total_contract_leaves_semantic_preservation_unsupported() {
+    let (document, base) = complete_member_interpretation();
+    let findings = member_findings(&document, &base);
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_eq!(
+        findings.first().expect("unsupported").code,
+        "mapping.interpretation.unsupported"
+    );
+}
+
+/// LAYERS-EDGE-CHAIN-1: each layer is checked before its receipt supplies authority.
+fn distinct_target_contract(
+    document: &mut norn_ir::mapping::LawInterpretationIr,
+    base: &mut Vec<ArtifactEnvelope>,
+) -> usize {
+    use norn_ir::definition_catalog::Member;
+    let source = base
+        .iter()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("source");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(source.payload.to_json_value()).expect("wire"))
+            .expect("object root");
+    root.object_type.name = ObjectTypeName("toy.Order".to_owned());
+    root.object_type.implements.clear();
+    let target = envelope(
+        "toy.Order.entity",
+        "entity",
+        &serde_json::to_value(root).expect("root"),
+    );
+    let layer = base.get_mut(1).expect("target pack");
+    let mut pack: norn_ir::CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(layer.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    pack.artifacts
+        .first_mut()
+        .expect("entity reference")
+        .artifact_id
+        .clone_from(&target.artifact_id);
+    layer.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(pack).expect("pack wire")).expect("tree"),
+    )
+    .expect("pack root");
+    document.target_layer.sha256 = ArtifactRef::of(layer).expect("pin").sha256;
+    for binding in &mut document.members {
+        binding.target.artifact_id.clone_from(&target.artifact_id);
+        match &mut binding.target.member {
+            Member::Type { type_name }
+            | Member::Property { type_name, .. }
+            | Member::Link { type_name, .. }
+            | Member::State { type_name, .. }
+            | Member::Transition { type_name, .. } => "toy.Order".clone_into(type_name),
+            Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => {
+                panic!("not a contract member")
+            }
+        }
+    }
+    let index = base.len();
+    base.push(target);
+    index
+}
+
+#[test]
+fn map_units_and_roles_refuse_changed_contracts_under_a_total_member_list() {
+    let (mut document, mut base) = complete_member_interpretation();
+    let index = distinct_target_contract(&mut document, &mut base);
+    assert!(
+        member_findings(&document, &base)
+            .iter()
+            .all(|f| f.code != "core.composition.mapping_gap")
+    );
+    for case in 0..4 {
+        let mut changed = base.clone();
+        let target = changed.get_mut(index).expect("target");
+        let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+            serde_json::to_value(target.payload.to_json_value()).expect("wire"),
+        )
+        .expect("root");
+        if case < 2 {
+            let p = root
+                .object_type
+                .properties
+                .iter_mut()
+                .find(|p| p.id.as_str() == "total_amount")
+                .expect("amount");
+            let norn_ir::PropertyType::Decimal { unit, scale, .. } = &mut p.property_type else {
+                panic!("decimal");
+            };
+            if case == 0 {
+                *unit = Some(norn_ir::UnitRef {
+                    system: norn_ir::UnitSystem::Ucum,
+                    code: "kg".to_owned(),
+                });
+            } else {
+                *scale = norn_ir::members::WholeNumber(2);
+            }
+        } else {
+            let link = root.object_type.links.first_mut().expect("link");
+            if case == 2 {
+                link.target = ObjectTypeName("fashion.Style".to_owned());
+            } else {
+                link.cardinality.to = norn_ir::Multiplicity::Many;
+            }
+        }
+        target.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+        )
+        .expect("entity");
+        assert!(
+            member_findings(&document, &changed)
+                .iter()
+                .any(|f| f.code == "core.composition.mapping_gap"),
+            "case {case}"
+        );
+    }
+}
+
+fn compiled_with_two_event_roles() -> CompiledMapping {
+    let mapping = erpnext_mapping();
+    let mut document: norn_ir::mapping::MappingIr = serde_json::from_value(
+        serde_json::to_value(mapping.payload.to_json_value()).expect("wire"),
+    )
+    .expect("mapping");
+    let order = document
+        .maps
+        .iter_mut()
+        .find(|m| m.id == "sales_order")
+        .expect("event map");
+    let mut second = order.links.first().expect("first role").clone();
+    second.link = LinkId("second_party".to_owned());
+    second.key = norn_ir::ZenExpression("input.name".to_owned());
+    order.links.push(second);
+    let mut artifacts = set_with(&mapping);
+    let entity = artifacts
+        .iter_mut()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("event type");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(entity.payload.to_json_value()).expect("wire"))
+            .expect("root");
+    let mut link = root.object_type.links.first().expect("first role").clone();
+    link.id = LinkId("second_party".to_owned());
+    root.object_type.links.push(link);
+    entity.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+    )
+    .expect("entity");
+    let mut mapping = mapping;
+    mapping.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("tree"),
+    )
+    .expect("mapping");
+    compile_mapping_artifact(&mapping, &artifacts, &[]).expect("two ordinary event roles compile")
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn map_units_generated_scales_require_exact_preservation(scale in 0u64..=28) {
+        let (mut document, mut base) = complete_member_interpretation();
+        let index = distinct_target_contract(&mut document, &mut base);
+        let target = base.get_mut(index).expect("target");
+        let mut root: norn_ir::EntityRootV2 = serde_json::from_value(
+            serde_json::to_value(target.payload.to_json_value()).expect("wire"),
+        ).expect("root");
+        let p = root.object_type.properties.iter_mut().find(|p| p.id.as_str() == "total_amount").expect("amount");
+        let norn_ir::PropertyType::Decimal { scale: declared, .. } = &mut p.property_type else { panic!("decimal"); };
+        *declared = norn_ir::members::WholeNumber(scale);
+        target.payload = norn_ir::ArtifactPayload::from_kind_json(&norn_ir::ArtifactKind::Entity,
+            serde_json::from_value(serde_json::to_value(root).expect("wire")).expect("tree"),
+        ).expect("entity");
+        let gap = member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap");
+        proptest::prop_assert_eq!(gap, scale != 6);
+    }
+
+    #[test]
+    fn event_multi_generated_object_keys_keep_event_identity_and_both_roles(suffix in "[A-Z0-9]{1,10}") {
+        let event = format!("EVENT-{suffix}");
+        let party = format!("PARTY-{suffix}");
+        let docs = [
+            document("Customer", &json!({"name": party, "customer_name": "Party", "customer_type": "Company", "custom_loyalty_tier": ""})),
+            document("Customer", &json!({"name": event, "customer_name": "Other", "customer_type": "Company", "custom_loyalty_tier": ""})),
+            document("Sales Order", &json!({"name": event, "customer": party, "transaction_date": "2026-09-29", "grand_total": 1, "docstatus": 0, "items": []})),
+        ];
+        let records = compiled_with_two_event_roles().apply(&docs, &UtcTimestamp("2026-10-01T00:00:00Z".to_owned())).expect("mapped observations");
+        let record = records.iter().find(|r| r.map == "sales_order").expect("one event");
+        proptest::prop_assert_eq!(&record.key, &event);
+        proptest::prop_assert_eq!(record.links.len(), 2);
+        let first = record.links.iter().find(|l| l.link.as_str() == "counterparty").expect("first role");
+        let second = record.links.iter().find(|l| l.link.as_str() == "second_party").expect("second role");
+        proptest::prop_assert_eq!(&first.key, &event);
+        proptest::prop_assert_eq!(&second.key, &event);
+        proptest::prop_assert_eq!(&first.target_key, &party);
+        proptest::prop_assert_eq!(&second.target_key, &event);
+        proptest::prop_assert_ne!(&first.target_key, &second.target_key);
+        proptest::prop_assert_ne!(&first.provenance.transform, &second.provenance.transform);
+    }
+}
+
+#[test]
+fn map_members_refuses_duplicates_unknown_members_kinds_and_transforms() {
+    let (document, base) = complete_member_interpretation();
+    for case in 0..5 {
+        let mut invalid = document.clone();
+        let first = invalid.members.first().expect("type binding").clone();
+        match case {
+            0 => invalid.members.push(first),
+            1 => invalid.members.first_mut().expect("binding").source.version = "9.0.0".to_owned(),
+            2 => {
+                invalid
+                    .members
+                    .first_mut()
+                    .expect("binding")
+                    .target
+                    .artifact_id = "toy.unknown".to_owned();
+            }
+            3 => invalid.members.get_mut(1).expect("property").target = first.target,
+            _ => {
+                invalid.members.first_mut().expect("binding").transform =
+                    Some(norn_ir::ZenExpression("input".to_owned()));
+            }
+        }
+        assert!(
+            member_findings(&invalid, &base)
+                .iter()
+                .any(|f| f.code == "core.composition.mapping_gap"),
+            "case {case}"
+        );
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn map_members_generated_omissions_refuse_and_permutations_preserve_coverage(index in 0usize..12) {
+        let (mut document, base) = complete_member_interpretation();
+        document.members.rotate_left(index);
+        proptest::prop_assert!(member_findings(&document, &base).iter().all(|f| f.code != "core.composition.mapping_gap"));
+        proptest::prop_assert!(document.members.pop().is_some());
+        proptest::prop_assert!(member_findings(&document, &base).iter().any(|f| f.code == "core.composition.mapping_gap"));
+    }
+}
+
+#[test]
+fn map_pins_refuse_stale_versions_and_mismatched_hashes() {
+    let (candidate, base) = pinned_interpretation();
+    let document: norn_ir::mapping::LawInterpretationIr = serde_json::from_value(
+        serde_json::to_value(candidate.payload.to_json_value()).expect("payload"),
+    )
+    .expect("interpretation");
+    for case in 0..3 {
+        let mut changed = document.clone();
+        match case {
+            0 => changed.source_layer.version = "0.2.0".to_owned(),
+            1 => changed.source_layer.sha256 = "a".repeat(64),
+            _ => changed.source_layer.artifact_id = "toy.unknown".to_owned(),
+        }
+        let mut invalid = envelope(
+            "toy.invalid",
+            "mapping",
+            &serde_json::to_value(changed).expect("interpretation"),
+        );
+        invalid.dependencies = candidate.dependencies.clone();
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[invalid], &base);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
+}
+
+#[test]
+fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
+    let (candidate, base) = pinned_interpretation();
+    let mut ambiguous = base.clone();
+    ambiguous.extend(base.clone());
+    let mut edited = base.clone();
+    edited.first_mut().expect("source").name.push_str(" edited");
+    for retained in [vec![], ambiguous, edited] {
+        let findings = norn_checker::mapping::check_mapping_artifacts(
+            std::slice::from_ref(&candidate),
+            &retained,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
+    let mut candidates = base;
+    candidates.push(candidate);
+    let findings = norn_checker::mapping::check_mapping_artifacts(&candidates, &[]);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+    );
+}
+
+#[test]
+fn map_pins_require_unique_required_exact_dependencies() {
+    for case in 0..5 {
+        let (mut candidate, base) = pinned_interpretation();
+        match case {
+            0 => candidate.dependencies.clear(),
+            1 => candidate.dependencies.first_mut().expect("source").required = false,
+            2 => candidate.dependencies.first_mut().expect("source").version = None,
+            3 => {
+                candidate.dependencies.first_mut().expect("source").version =
+                    Some("0.2.0".to_owned());
+            }
+            _ => candidate
+                .dependencies
+                .extend(candidate.dependencies.clone()),
+        }
+        let findings = norn_checker::mapping::check_mapping_artifacts(&[candidate], &base);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "mapping.interpretation.invalid_endpoint")
+        );
+    }
+}
+
+#[test]
+fn map_roles_unqualified_interpretations_refuse_admission_and_record_compilation() {
+    use norn_ir::mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+    };
+    let endpoint = |id: &str| InterpretationEndpoint {
+        artifact_id: id.to_owned(),
+        version: "1.0.0".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    let document = LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint("toy.capacity"),
+        target_layer: endpoint("toy.credit"),
+        members: Vec::new(),
+    };
+    let artifact = envelope(
+        "toy.capacity_credit",
+        "mapping",
+        &serde_json::to_value(document).expect("typed interpretation serializes"),
+    );
+    let findings = check_artifact_set(
+        std::slice::from_ref(&artifact),
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.is_error() && f.code == "mapping.interpretation.unsupported"),
+        "{findings:#?}"
+    );
+    assert!(compile_mapping_artifact(&artifact, &[], &[]).is_err());
+}
+
 fn ir_fixtures() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../norn-ir/tests/fixtures")
 }
@@ -95,7 +635,7 @@ fn map_roles_contract_does_not_admit_unimplemented_interpretations() {
     assert!(
         findings
             .iter()
-            .any(|d| d.is_error() && d.code == "mapping.validation.invalid_document"),
+            .any(|d| d.is_error() && d.code == "mapping.interpretation.unsupported"),
         "{findings:?}"
     );
 }
