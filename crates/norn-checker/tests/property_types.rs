@@ -372,8 +372,13 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
         assert!(norn_expr::rescale_decimal(&unsupported, &"0".parse().expect("number")).is_err());
     }
     assert!(
-        norn_expr::rescale_decimal(&PropertyType::Integer { additivity: Default::default() }, &"1".parse().expect("number"))
-            .is_err()
+        norn_expr::rescale_decimal(
+            &PropertyType::Integer {
+                additivity: Default::default()
+            },
+            &"1".parse().expect("number")
+        )
+        .is_err()
     );
 }
 

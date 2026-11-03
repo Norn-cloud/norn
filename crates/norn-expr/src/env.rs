@@ -1699,7 +1699,7 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 PropertyType::Text { format } => Type::Text { format: *format },
                 PropertyType::Integer { .. } => Type::Integer,
                 PropertyType::Decimal {
-        additivity: _,
+                    additivity: _,
                     scale,
                     unit,
                     rounding,

@@ -1802,9 +1802,11 @@ fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
         links: Vec::new(),
         property: PropertyId("currency".into()),
     });
-    let site = |scale, unit, currency_source, per_unit| json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {
+    let site = |scale, unit, currency_source, per_unit| {
+        json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {
         additivity: Default::default(),
-scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()});
+scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()})
+    };
     let slice = closed(
         &json!({"currency":{"type":"string","enum":["USD"]},"rate":site(6,None,currency.clone(),Some(unit(denominator))),"grams":site(3,Some(unit("g")),None,None)}),
     );

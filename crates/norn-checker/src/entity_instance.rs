@@ -1044,11 +1044,12 @@ impl EffectiveProperty {
                 EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
                 JsonValue::String(text),
             ) => text.parse::<norn_ir::Decimal>().map(RuntimeValue::Number),
-            (EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }), _) => {
-                Err(norn_ir::RuntimeValueError::InvalidJson {
-                    message: "numeric IR defaults must be exact decimal strings".to_owned(),
-                })
-            }
+            (
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
+                _,
+            ) => Err(norn_ir::RuntimeValueError::InvalidJson {
+                message: "numeric IR defaults must be exact decimal strings".to_owned(),
+            }),
             (EffectiveKind::Base(PropertyType::Record { .. }), JsonValue::Object(values)) => values
                 .iter()
                 .map(|(name, value)| {
@@ -1252,7 +1253,7 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
         }
         (
             PropertyType::Decimal {
-        additivity: candidate_additivity,
+                additivity: candidate_additivity,
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
@@ -1260,7 +1261,7 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 per_unit: candidate_per_unit,
             },
             PropertyType::Decimal {
-        additivity: previous_additivity,
+                additivity: previous_additivity,
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,

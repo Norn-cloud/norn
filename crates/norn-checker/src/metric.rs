@@ -570,7 +570,16 @@ impl<'a> Checker<'a> {
                 let mut operands = Vec::new();
                 for (field, operand) in [("numerator", numerator), ("denominator", denominator)] {
                     if let Some(&(_, referenced)) = self.metrics.get(operand.as_str()) {
-                        if !matches!(referenced.measure, BoundMeasure::Property { aggregate: MeasureAggregate::Sum | MeasureAggregate::Count, .. }) {
+                        if matches!(
+                            referenced.measure,
+                            BoundMeasure::Property {
+                                aggregate: MeasureAggregate::Avg
+                                    | MeasureAggregate::Min
+                                    | MeasureAggregate::Max
+                                    | MeasureAggregate::CountDistinct,
+                                ..
+                            }
+                        ) {
                             self.reject(codes::RATIO_AGGREGATION, &format!("{at}/measure/{field}"));
                         }
                         if referenced.time_dimension != metric.time_dimension {
@@ -622,22 +631,29 @@ impl<'a> Checker<'a> {
         aggregate: MeasureAggregate,
         at: &str,
     ) {
-            let EffectiveKind::Base(kind) = &property.kind else { return };
-            let refusal = match kind.additivity() {
-                norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
-                norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
-                norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
-                norn_ir::PropertyAdditivity::SemiAdditive
-                    if !matches!(metric.additivity, MetricAdditivity::SemiAdditive { .. })
-                        || aggregate != MeasureAggregate::Sum => Some(codes::SEMI_ADDITIVE_TIME),
-                norn_ir::PropertyAdditivity::SemiAdditive | norn_ir::PropertyAdditivity::Additive => None,
-            };
-            if let Some(code) = refusal {
-                self.reject(code, &format!("{at}/measure/property"));
-                if let Some(finding) = self.out.last_mut() {
-                    finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
-                }
+        let EffectiveKind::Base(kind) = &property.kind else {
+            return;
+        };
+        let refusal = match kind.additivity() {
+            norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
+            norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
+            norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
+            norn_ir::PropertyAdditivity::SemiAdditive
+                if !matches!(metric.additivity, MetricAdditivity::SemiAdditive { .. })
+                    || aggregate != MeasureAggregate::Sum =>
+            {
+                Some(codes::SEMI_ADDITIVE_TIME)
             }
+            norn_ir::PropertyAdditivity::SemiAdditive | norn_ir::PropertyAdditivity::Additive => {
+                None
+            }
+        };
+        if let Some(code) = refusal {
+            self.reject(code, &format!("{at}/measure/property"));
+            if let Some(finding) = self.out.last_mut() {
+                finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
+            }
+        }
     }
 
     fn property_metric(

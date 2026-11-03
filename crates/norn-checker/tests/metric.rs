@@ -297,7 +297,10 @@ fn ratios_check_units_currencies_object_grain_references_cycles_and_additivity()
     let mut average = other.clone();
     average["type_params"]["metric_aggregation_params"]["agg"] = json!("average");
     average["x-norn"]["additivity"] = json!({"kind":"non_additive"});
-    assert_code(&run(&sales, &average, &base_ratio), codes::RATIO_AGGREGATION);
+    assert_code(
+        &run(&sales, &average, &base_ratio),
+        codes::RATIO_AGGREGATION,
+    );
 
     other["x-norn"]["currency"] = json!({"property":{"links":["parent_sales_invoice"],"property":"currency"},"conversion":{"target":"USD","rate":{"property":"conversion_rate"}}});
     assert_code(&run(&sales, &other, &base_ratio), codes::UNIT_MISMATCH);
@@ -823,7 +826,7 @@ fn shared_and_inherited_monetary_types_keep_the_authoritative_currency_source() 
     let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
     let mut types = ontology[0].clone();
     types["artifactId"] = json!("erpnext.money_types.entity.v2");
-    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.money","type":{"kind":"decimal","scale":2,"currencySource":{"links":["parent_sales_invoice"],"property":"currency"}}}]});
+    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.money","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":2,"currencySource":{"links":["parent_sales_invoice"],"property":"currency"}}}]});
     ontology.as_array_mut().expect("array").push(types);
     for property in ontology[0]["payload"]["objectType"]["properties"]
         .as_array_mut()
@@ -1039,15 +1042,33 @@ fn numeric_additivity_is_required_even_for_count_and_extrema() {
     let (metric, question) = sales();
     for aggregate in ["sum", "average", "min", "max", "count", "count_distinct"] {
         let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
-        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
-        let amount = properties.iter_mut().find(|p| p["id"] == "net_amount").expect("amount");
-        amount["type"].as_object_mut().expect("type").remove("additivity");
+        let properties = ontology[0]["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties");
+        let amount = properties
+            .iter_mut()
+            .find(|p| p["id"] == "net_amount")
+            .expect("amount");
+        amount["type"]
+            .as_object_mut()
+            .expect("type")
+            .remove("additivity");
         let mut measure = metric.clone();
         measure["type_params"]["metric_aggregation_params"]["agg"] = json!(aggregate);
-        let findings = check_metrics_and_questions(&[decode(&measure)], &[decode(&question)], &catalog(&ontology.to_string()));
+        let findings = check_metrics_and_questions(
+            &[decode(&measure)],
+            &[decode(&question)],
+            &catalog(&ontology.to_string()),
+        );
         assert_code(&findings, codes::UNDECLARED_ADDITIVITY);
-        let refusal = findings.iter().find(|d| d.code == codes::UNDECLARED_ADDITIVITY).expect("refusal");
-        assert_eq!(refusal.remediation, Some(norn_checker::DiagnosticRemediation::FixDefinition));
+        let refusal = findings
+            .iter()
+            .find(|d| d.code == codes::UNDECLARED_ADDITIVITY)
+            .expect("refusal");
+        assert_eq!(
+            refusal.remediation,
+            Some(norn_checker::DiagnosticRemediation::FixDefinition)
+        );
     }
 }
 
@@ -1055,14 +1076,29 @@ fn numeric_additivity_is_required_even_for_count_and_extrema() {
 fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
     let (metric, question) = sales();
     for (class, expected) in [
-        (json!({"kind":"ratio", "numerator":"weight", "denominator":"volume"}), codes::RATIO_AGGREGATION),
+        (
+            json!({"kind":"ratio", "numerator":"weight", "denominator":"volume"}),
+            codes::RATIO_AGGREGATION,
+        ),
         (json!({"kind":"non_additive"}), codes::INVALID_ADDITIVITY),
         (json!({"kind":"semi_additive"}), codes::SEMI_ADDITIVE_TIME),
     ] {
         let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
-        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
-        properties.iter_mut().find(|p| p["id"] == "net_amount").expect("amount")["type"]["additivity"] = class;
-        assert_code(&check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string())), expected);
+        let properties = ontology[0]["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties");
+        properties
+            .iter_mut()
+            .find(|p| p["id"] == "net_amount")
+            .expect("amount")["type"]["additivity"] = class;
+        assert_code(
+            &check_metrics_and_questions(
+                &[decode(&metric)],
+                &[decode(&question)],
+                &catalog(&ontology.to_string()),
+            ),
+            expected,
+        );
     }
 }
 

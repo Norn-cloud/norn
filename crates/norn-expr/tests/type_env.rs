@@ -922,7 +922,7 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
             .find(|property| property.id.as_str() == "price")
             .unwrap();
         property.property_type = PropertyType::Decimal {
-        additivity: Default::default(),
+            additivity: Default::default(),
 
             scale: norn_ir::WholeNumber(2),
             unit: None,

@@ -477,7 +477,7 @@ pub fn decimal_expression_type(value: &JsonValue) -> Result<Option<crate::Type>,
     match decimal_refinement(value, "nornType")? {
         None => Ok(None),
         Some(norn_ir::PropertyType::Decimal {
-        additivity: _,
+            additivity: _,
             scale,
             unit,
             currency_source,
