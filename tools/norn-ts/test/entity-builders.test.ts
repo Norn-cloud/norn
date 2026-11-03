@@ -385,6 +385,7 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(ir[0].payload.objectType.links[1]).not.toHaveProperty("acyclic")
   const built = E.lowerEntity(E.objectType({
     name: "tree.Node", title: "Node", version: "0.1.0",
+    pathEquations: [{ id: "same_parent", left: ["parent"], right: ["parent"] }],
     properties: [E.property("name", E.text())],
     links: [
       { id: "parent", target: "tree.Node", cardinality: { to: "one", from: "many" }, acyclic: true },
