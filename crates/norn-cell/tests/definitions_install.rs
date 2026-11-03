@@ -7131,7 +7131,7 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
                 .insert("source_id".into(), Value::from("e\u{301}"));
         }
         let fired = std::rc::Rc::new(std::cell::Cell::new(false));
-        let signal = fired.clone();
+        let signal = std::rc::Rc::clone(&fired);
         *counter.before_transaction.borrow_mut() = Some(Box::new(move || {
             external.inject_mapping_bundle(&conflicting, &input)?;
             signal.set(true);
