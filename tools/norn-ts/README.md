@@ -28,3 +28,8 @@ scope, visibility, source pins and population identity.
 compute checker must admit the candidate and selected metric definitions before
 execution. Knowledge-time policy, richer populations, rendering and ambiguity
 interpretation remain separate qualification work.
+
+The native scrap-yield correspondence golden is regenerated with
+`bun src/cli.ts question fixtures/questions/scrap-yield.ts --out fixtures/questions/scrap-yield.question.json`.
+The authoring suite checks reproduction; the exact cell suite strictly decodes
+that same golden, compares it with the admitted native plan and evaluates it.

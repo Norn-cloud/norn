@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { compileDefinitions, compileQuestions } from "../src/compiler/definitions.ts"
-import { canonicalJson } from "../src/canonical.ts"
+import { canonicalJson, toJson } from "../src/canonical.ts"
+import { TOOL_ROOT } from "../src/profile.ts"
 
 const source = (overrides = "") => `
 import { Norn } from "@norn/authoring"
@@ -72,4 +73,13 @@ test("typed_question_lowering retains a referenced object identity and remains b
  expect(compile(body).ok).toBe(true)
  const bounded = withModule(source(), file => compileQuestions(file, {maxOutputBytes:1}))
  expect(bounded.ok).toBe(false)
+})
+
+// The Rust exact-cell test reads this same generated golden and compares it to its admitted plan.
+test("typed_question_lowering reproduces the native scrap-yield golden", () => {
+ const path = join(TOOL_ROOT,"fixtures/questions/scrap-yield.ts")
+ const result = compileQuestions(path)
+ if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+ const golden = toJson(JSON.parse(readFileSync(join(TOOL_ROOT,"fixtures/questions/scrap-yield.question.json"),"utf8")))
+ expect(canonicalJson(result.questions)).toBe(canonicalJson(golden))
 })
