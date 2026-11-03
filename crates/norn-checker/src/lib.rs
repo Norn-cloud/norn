@@ -36,6 +36,8 @@ pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
 pub mod duties;
+/// Closed-world control-model projection; admission consumes it in a later unit.
+pub mod controls_adapter;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;

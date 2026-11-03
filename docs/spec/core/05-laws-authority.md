@@ -168,3 +168,10 @@ obligations remain individually unknown. Source inspection and parity qualify
 this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+
+**CONTROL-REFS-1:** finite control-model projection requires exactly one
+ActionRoot for every referenced policy action. Missing or duplicate roots yield
+unknown (`None`), never safety proof evidence. This closure check grants no
+runtime access or availability witness. Named scenarios cover complete grants,
+an undeclared policy action, duplicate roots and sampled undeclared identities.
