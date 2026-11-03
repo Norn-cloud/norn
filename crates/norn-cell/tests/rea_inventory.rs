@@ -664,6 +664,40 @@ fn accounts(cell: &Cell, expected: &[(&str, &str)]) {
         .collect();
     assert_eq!(actual, expected, "complete USD account balances");
 }
+fn inventory(cell: &Cell, quantity: &str, value: &str, loss: &str, gross: &str) {
+    let mut available = 0;
+    let mut book_value = 0;
+    let mut discarded = 0;
+    let mut gross_total = 0;
+    for row in rows(cell, "Holding") {
+        assert_eq!(row["unit"].as_str(), Some("g"));
+        assert_eq!(row["valuation_currency"].as_str(), Some("USD"));
+        assert!(row["currency"].is_null());
+        gross_total += scaled(&row["gross"], 3);
+        match row["disposition"].as_str().unwrap() {
+            "available" => {
+                available += scaled(&row["quantity"], 3);
+                book_value += scaled(&row["value"], 2);
+            }
+            "lost" => {
+                discarded += scaled(&row["quantity"], 3);
+            }
+            "byproduct" => assert_eq!(scaled(&row["quantity"], 3), 0),
+            disposition => panic!("unknown disposition {disposition}"),
+        }
+    }
+    for (actual, expected, scale) in [
+        (available, quantity, 3),
+        (book_value, value, 2),
+        (discarded, loss, 3),
+        (gross_total, gross, 3),
+    ] {
+        assert_eq!(
+            actual,
+            scaled(&JsonValue::Number(expected.parse().unwrap()), scale)
+        );
+    }
+}
 fn receive(id: &str, quantity: i32, rate: i32, method: &str) -> Value {
     json!({"id":format!("RECEIPT-{id}"),"holding":id,"vault":"VAULT","company":"BUSINESS","party":"PARTY","event":format!("{id}-EVENT"),"debit":format!("{id}-INVENTORY"),"credit":format!("{id}-RNB"),"quantity":quantity,"rate":rate,"valuation_method":method})
 }
