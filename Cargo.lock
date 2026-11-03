@@ -1542,6 +1542,7 @@ dependencies = [
  "cedar-policy",
  "norn-ir",
  "norn-projections",
+ "proptest",
  "serde_json",
 ]
 
