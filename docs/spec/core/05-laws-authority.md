@@ -25,9 +25,23 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
+includes its primary target and the declared writer types, including effective
+subtypes. Catalog invocation entry points remain primary targets. Schema
+projection grants no permission: the actual policy, scope and capability grant
+still authorize every current/proposed resource, and the kernel still checks
+the closed writer footprint. Unbound or non-transition actions retain their
+existing target projection. The finite four-type writer domain is checked over
+all subsets with and without a synchronous binding; real PDP cases retain
+wrong-scope, wrong-role, absent-policy and absent-grant refusals.
+
 Generate initialization, non-vacuity, each-writer preservation, mapping totality/identity/unit/transition simulation/law preservation and open-boundary obligations from retained contracts. An empty implementor/domain is not non-vacuity evidence. Every writer introduced by rule, migration, connector or mapping changes the challenge. Missing/unsupported semantics remains unknown; runtime admission refuses safety predicates it cannot actually enforce.
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
+
+**LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
+
+**LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
@@ -133,3 +147,5 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.

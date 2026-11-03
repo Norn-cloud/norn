@@ -216,3 +216,21 @@ SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
 
+
+### Literal patch target correspondence
+
+**RULE-PATCH-SHAPE-1:** a closed, complete, duplicate-free literal patch is
+checked against the object type that its record actually targets. Optional
+shared-schema members owned by other declared targets do not become writes on
+that record. Actual members still obey that target's effective stored-property
+contract; a schema member declared by no target still refuses. Computed,
+non-literal, incomplete or duplicate-key shapes retain the full-schema check.
+The scanner must prove closure before applying this precision.
+
+Named correspondence scenarios cover the Exchange `eligible` patch alongside
+Ledger `account_code` and Conversion `output_gross`, invalid members/values on
+the actual target, and computed/incomplete fallbacks. Generated patch sets over
+two or three targets check that each record's errors depend on its own target.
+This is sampled checker correspondence; runtime stored-property checks remain
+mandatory. The allocating scanner and effective catalogs are outside the
+bounded Kani harness profile.
