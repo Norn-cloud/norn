@@ -38,6 +38,11 @@ proptest::proptest! {
                     store.commit(&batch).expect("change");
                     proptest::prop_assert!(matches!(store.commit(&batch).expect("redelivery"), CommitOutcome::Replayed(_)));
                 }
+                4 => {
+                    let mut forged = context.clone();
+                    forged.exclusions.insert(key, "caller-forged-finding".into());
+                    proptest::prop_assert!(matches!(view.advance(&store, forged, |_| Ok(true)), Err(CellError::ComputeRefused("core.compute.caller_exclusions"))));
+                }
                 _ => {}
             }
             let cursor = format!("fixture/{}", store.verified_head().expect("head").commits);

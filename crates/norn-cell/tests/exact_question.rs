@@ -238,13 +238,3 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
     );
     assert_eq!(historical.result.rows, excluded.rows);
 }
-
-proptest::proptest! {
-    #[test]
-    fn caller_exclusion_pins_never_confer_query_authority(pin in "[a-z0-9]{1,32}") {
-        let (store, plan, mut context) = fixture();
-        context.exclusions.insert("SYN-MELT-15-1".into(), pin);
-        proptest::prop_assert!(matches!(store.evaluate_question(&plan, context.clone(), |_| Ok(true)), Err(CellError::ComputeRefused("core.compute.caller_exclusions"))));
-        proptest::prop_assert!(matches!(norn_cell::compute::ivm::IncrementalQuestion::rebuild(&store, &plan, context, |_| Ok(true)), Err(CellError::ComputeRefused("core.compute.caller_exclusions"))));
-    }
-}
