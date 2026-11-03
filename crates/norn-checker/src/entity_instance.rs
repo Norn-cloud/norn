@@ -1650,7 +1650,11 @@ impl EffectiveCatalog {
             .extend(terms.iter().cloned());
     }
 
-    pub(crate) fn is_conserved_metric_term(&self, object_type: &str, property: &PropertyId) -> bool {
+    pub(crate) fn is_conserved_metric_term(
+        &self,
+        object_type: &str,
+        property: &PropertyId,
+    ) -> bool {
         self.conserved_metric_terms
             .get(object_type)
             .is_some_and(|terms| terms.contains(property))

@@ -644,7 +644,10 @@ impl<'a> Checker<'a> {
         };
         let refusal = match kind.additivity() {
             norn_ir::PropertyAdditivity::Undeclared
-                if self.catalog.is_conserved_metric_term(root, &property.id) => None,
+                if self.catalog.is_conserved_metric_term(root, &property.id) =>
+            {
+                None
+            }
             norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
             norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
             norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
