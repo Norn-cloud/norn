@@ -361,8 +361,7 @@ fn writer_helpers(
     helpers
 }
 
-// Trusted shell identity/role/grant inputs feed the real Cedar PDP. Business
-// eligibility and independent-person checks remain in the authored definitions.
+// The fixture supplies scoped principal/grant inputs to the real Cedar PDP.
 struct Principals {
     pdp: Pdp,
 }
