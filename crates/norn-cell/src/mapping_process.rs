@@ -1,10 +1,10 @@
 //! OBS-EVIDENCE-1: only cell-owned recomputation can authorize mapped observations.
-use crate::{CellError, SqliteCell, engine::SqlEngine, mapping_bundle::MappingBundle};
+use crate::{CellError, SqliteCell, StoreReader, engine::SqlEngine, mapping_bundle::MappingBundle};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
-    CellCommit, CellHost, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
-    Observed, TypeCatalog, World, load_slice,
+    CellCommit, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent, Observed,
+    TypeCatalog, World,
 };
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -24,6 +24,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         else {
             return Ok(false);
         };
+        if observation_id.starts_with("mapping-conflict:")
+            || observation_id.starts_with("mapping-identity:")
+        {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
         if observed.id.0 != observation_id {
@@ -41,6 +46,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             || observation_id != format!("mapping-bundle:{}", bundle.digest)
         {
             return Err(CellError::MappingBundleMismatch);
+        }
+        if self.store().read().mapping_conflict(&bundle)?.is_some()
+            || self.store().read().mapping_event_is_disputed(&bundle)?
+        {
+            return Err(CellError::UnsupportedMappingProfile);
         }
         let model = self.store().model().clone();
         let catalog = TypeCatalog::new(model.object_types())
@@ -60,7 +70,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             return Err(CellError::UnsupportedMappingProfile);
         }
-        for record in bundle.records {
+        for record in &bundle.records {
             if !record.links.is_empty()
                 || !record.cleared_links.is_empty()
                 || record.invocations.len() != 1
@@ -68,13 +78,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = load_slice(self, [key.clone()])?;
+            let slice = self.store().read().mapping_observation_slice(&key)?;
             let mut values = record
                 .invocations
-                .into_iter()
-                .next()
+                .first()
                 .ok_or(CellError::MappingBundleMismatch)?
-                .input;
+                .input
+                .clone();
             values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
             let prepared = prepare_observed_snapshot(
                 &catalog,
@@ -100,8 +110,28 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed(commit, authorization)
+        self.commit_observed_evidence(commit, &authorization, Some(&bundle))
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
+    }
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.
+    fn mapping_observation_slice(
+        &self,
+        key: &FactKey,
+    ) -> Result<norn_kernel::FactSlice, CellError> {
+        let state = norn_kernel::FactState {
+            version: norn_kernel::FactVersion(self.version(
+                crate::MAIN_WORLD,
+                key.object_type.as_str(),
+                &key.key,
+            )?),
+            values: self
+                .object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?
+                .map(|r| r.values),
+        };
+        Ok(norn_kernel::FactSlice::from([(key.clone(), state)]))
     }
 }

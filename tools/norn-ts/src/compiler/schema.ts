@@ -220,6 +220,21 @@ export class SchemaProjection {
         }
         return this.readAt(base, depth + 1)
       }
+      case "@norn/authoring#Norn.rate": {
+        const scale = this.unwrap(arg(0))
+        const value = ts.isNumericLiteral(scale) && /^(0|[1-9][0-9]*)$/.test(scale.getText()) ? Number(scale.getText()) : Number.NaN
+        if (!Number.isSafeInteger(value) || value > 18) throw new CompileError("NORN-FLOW-LITERAL", "Norn.rate scale must be an integer literal from 0 to 18", scale)
+        const options = this.objectLiteral(arg(1))
+        if ([...options.keys()].some(key => key !== "currency" && key !== "perUnit" && key !== "rounding") || !options.has("currency") || !options.has("perUnit")) throw new CompileError("NORN-FLOW-LITERAL", "Norn.rate requires exactly currency and perUnit", call)
+        const perNode = options.get("perUnit")!
+        const per = this.objectLiteral(perNode)
+        const system = this.stringLiteral(per.get("system"), perNode, "perUnit.system")
+        if (per.size !== 2 || (system !== "ucum" && system !== "qudt")) throw new CompileError("NORN-FLOW-LITERAL", "perUnit is exactly { system: ucum | qudt, code }", perNode)
+        const modeNode = options.get("rounding")
+        const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
+        if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
+        return { kind: "value-type", type: E.rate(value, this.stringLiteral(options.get("currency"), call, "currency"), { system, code: this.stringLiteral(per.get("code"), perNode, "perUnit.code") }, mode), node: call }
+      }
       case "@norn/authoring#Norn.decimal": {
         const scale = this.unwrap(arg(0))
         const value = ts.isNumericLiteral(scale) && /^(0|[1-9][0-9]*)$/.test(scale.getText()) ? Number(scale.getText()) : Number.NaN
@@ -227,19 +242,27 @@ export class SchemaProjection {
           throw new CompileError("NORN-FLOW-LITERAL", `Norn.decimal takes an integer literal scale between 0 and ${MAX_DECIMAL_SCALE}`, scale)
         }
         const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
-        for (const key of options.keys()) if (key !== "unit" && key !== "currency") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
+        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
         const unitNode = options.get("unit")
         const currencyNode = options.get("currency")
+        const modeNode = options.get("rounding")
+        const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
+        if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
+        const rounded = (type: E.PropertyType): E.PropertyType => {
+          if (type.kind !== "decimal") throw new CompileError("NORN-FLOW-LITERAL", "rounding requires Decimal", call)
+          return mode === undefined ? type : { ...type, rounding: mode }
+        }
+
         if (currencyNode !== undefined) {
           if (unitNode !== undefined) throw new CompileError("NORN-FLOW-LITERAL", "a monetary decimal declares a currency, not a unit", a[1]!)
-          return { kind: "value-type", type: E.money(value, this.stringLiteral(currencyNode, a[1]!, "the currency property")), node: call }
+          return { kind: "value-type", type: rounded(E.money(value, this.stringLiteral(currencyNode, a[1]!, "the currency property"))), node: call }
         }
-        if (unitNode === undefined) return { kind: "value-type", type: E.decimal(value), node: call }
+        if (unitNode === undefined) return { kind: "value-type", type: rounded(E.decimal(value)), node: call }
         const unit = this.objectLiteral(unitNode)
         const system = this.stringLiteral(unit.get("system"), unitNode, "unit.system")
         if (system !== "ucum" && system !== "qudt") throw new CompileError("NORN-FLOW-LITERAL", "unit.system is \"ucum\" or \"qudt\"", unitNode)
         if (unit.size !== 2) throw new CompileError("NORN-FLOW-LITERAL", "a unit is exactly { system, code }", unitNode)
-        return { kind: "value-type", type: E.decimal(value, { system, code: this.stringLiteral(unit.get("code"), unitNode, "unit.code") }), node: call }
+        return { kind: "value-type", type: rounded(E.decimal(value, { system, code: this.stringLiteral(unit.get("code"), unitNode, "unit.code") })), node: call }
       }
       case "@norn/authoring#Norn.ref":
         return { kind: "value-type", type: E.ref(this.stringLiteral(a[0], call, "the property type name")), node: call }
@@ -447,6 +470,10 @@ export class SchemaProjection {
         throw projection("closed schemas have no unions: use a literal union, or Schema.optionalKey for an absent member", schema.node)
       }
       case "value-type":
+        if (schema.type.kind === "decimal") {
+          if (schema.type.scale > 18) throw projection("closed exact sites require a scale from 0 to 18", schema.node)
+          return { type: "number", nornType: schema.type }
+        }
         if (temporalWire && (schema.type.kind === "timestamp" || schema.type.kind === "date")) return S.text()
         throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${schema.type.kind} type yet`, schema.node)
     }

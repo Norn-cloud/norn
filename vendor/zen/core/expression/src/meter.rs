@@ -33,7 +33,7 @@ pub struct BudgetExhausted {
 
 /// Shared, cloneable operation budget. Clones charge the same counter.
 #[derive(Debug, Clone)]
-pub struct Meter(Arc<Inner>, Option<crate::scaled::ScaledArithmetic>);
+pub struct Meter(Arc<Inner>, Option<crate::scaled::ScaledArithmetic>, bool);
 
 #[derive(Debug)]
 struct Inner {
@@ -55,12 +55,22 @@ impl Meter {
                 scan_steps: AtomicU64::new(0),
             }),
             None,
+            false,
         )
     }
 
     /// Uses a local numeric policy while retaining the caller's shared fuel.
     pub fn with_arithmetic(&self, arithmetic: crate::scaled::ScaledArithmetic) -> Self {
-        Self(self.0.clone(), Some(arithmetic))
+        Self(self.0.clone(), Some(arithmetic), false)
+    }
+
+    /// VAL-EXACT-1: retain exact intermediates; only the optional site may quantize.
+    pub fn with_exact_arithmetic(&self, site: Option<crate::scaled::ScaledArithmetic>) -> Self {
+        Self(self.0.clone(), site, true)
+    }
+
+    pub fn exact_arithmetic(&self) -> bool {
+        self.2
     }
 
     pub fn arithmetic(&self) -> Option<crate::scaled::ScaledArithmetic> {

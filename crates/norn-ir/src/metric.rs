@@ -12,7 +12,9 @@ use crate::{
 };
 
 /// A property reached by zero or more declared directional link roles.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DimensionPath {
     /// Forward or inverse roles, in traversal order; empty means the root object.

@@ -539,11 +539,13 @@ export interface components {
         NornIrActionCompensation: {
             actionId: string;
         };
-        /** @description Add an outgoing link alongside an ordinary action's business write. */
+        /** @description Declare a typed link inside the action's checked proposal. */
         NornIrActionCreateLink: {
-            /** @description Link declared on the effect's business object type. */
+            /** @description Link declared on the source object type. */
             link: string;
-            /** @description Input field naming an existing authorized declared-slice object. */
+            /** @description Optional source written by the same synchronous proposal (TXN-ATOMIC-1). */
+            source?: components["schemas"]["NornIrActionLinkSource"];
+            /** @description Required input field naming a captured or proposed target. */
             targetIdField: string;
             /** @description Fixed concrete target type. */
             targetType: string;
@@ -637,6 +639,13 @@ export interface components {
              */
             inputRequired?: boolean;
         };
+        /** @description A declared input-key source for a link within one action proposal. */
+        NornIrActionLinkSource: {
+            /** @description Required string input field containing its identity. */
+            idField: string;
+            /** @description Concrete type of an object written by the synchronous closure. */
+            objectType: string;
+        };
         NornIrActionPayload: {
             access?: components["schemas"]["NornIrAccessRef"];
             actionId: string;
@@ -656,6 +665,7 @@ export interface components {
             quantityEffect?: components["schemas"]["NornIrActionQuantityEffect"];
             scopeRequired: string[];
             slice?: components["schemas"]["NornIrSliceDeclaration"][];
+            synchronousRule?: components["schemas"]["NornIrActionRuleRef"];
             title?: string;
             uiEffects?: components["schemas"]["NornIrActionUiEffects"];
             writes?: components["schemas"]["NornIrActionWrite"][];
@@ -727,6 +737,13 @@ export interface components {
              * @description Scale expected by the pinned template parameter.
              */
             scale: number;
+        };
+        /** @description Closed reference to the admitted synchronous writer of an action. */
+        NornIrActionRuleRef: {
+            /** @description Exact RuleIR artifact identity. */
+            artifactId: string;
+            /** @description Exact artifact version; no latest-version resolution. */
+            version: string;
         };
         /**
          * @description Versioned, closed declarations for UI-facing effects that cannot be
@@ -4223,6 +4240,13 @@ export interface components {
             currencySource?: components["schemas"]["NornIrDimensionPath"];
             /** @enum {string} */
             kind: "decimal";
+            /** @description VAL-RATE: currency per this unit, distinct from a quantity's `unit`. */
+            perUnit?: components["schemas"]["NornIrUnitRef"];
+            /**
+             * @description VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.
+             * @enum {string}
+             */
+            rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
             /**
              * Format: uint64
              * @description Fraction digits every value is held at (`2` for cents). At most 28,

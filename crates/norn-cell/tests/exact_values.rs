@@ -270,3 +270,50 @@ fn old_pending_link_layout_is_refused_before_open_or_definition_reads() {
         assert_eq!(format, old_format);
     }
 }
+
+#[test]
+fn val_round_store_defaults_sets_and_record_members_use_the_declared_site() {
+    use serde_json::json;
+    let definition: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"value.Sample",
+        "properties":[
+            {"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"default":"1.005"},
+            {"id":"detail","type":{"kind":"record","members":[{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_even"}}]},"constraints":{"nullable":true}}
+        ]
+    })).expect("definition");
+    let model =
+        norn_cell::Model::from_definitions(&[definition], &[]).expect("trusted projection fixture");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("round.sqlite");
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("open");
+    let commit = |store: &mut CellStore, fact| {
+        store.commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "round/proof".into(),
+            facts: vec![fact],
+            ..CommitBatch::default()
+        })
+    };
+    let create: FactChange = serde_json::from_str(r#"{"op":"create","objectType":"value.Sample","key":"one","values":{"detail":{"amount":1.005}}}"#).expect("create");
+    commit(&mut store, create).expect("default and nested rounding");
+    let check = |store: &CellStore, amount: &str| {
+        let row = store
+            .read()
+            .object(MAIN_WORLD, "value.Sample", "one")
+            .expect("read")
+            .expect("row");
+        assert_eq!(row.values["amount"], exact(amount));
+        assert_eq!(row.values["detail"], exact(r#"{"amount":1}"#));
+    };
+    check(&store, "1.01");
+    let set: FactChange = serde_json::from_str(
+        r#"{"op":"set","objectType":"value.Sample","key":"one","property":"amount","value":-1.005}"#,
+    )
+    .expect("set");
+    commit(&mut store, set).expect("set rounding");
+    check(&store, "-1.01");
+    store.read().verify_ledger().expect("ledger");
+    drop(store);
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    check(&store, "-1.01");
+}

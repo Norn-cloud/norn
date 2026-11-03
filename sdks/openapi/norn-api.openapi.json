@@ -1329,7 +1329,7 @@
       },
       "NornIrActionCreateLink": {
         "type": "object",
-        "description": "Add an outgoing link alongside an ordinary action's business write.",
+        "description": "Declare a typed link inside the action's checked proposal.",
         "required": [
           "link",
           "targetType",
@@ -1338,11 +1338,15 @@
         "properties": {
           "link": {
             "type": "string",
-            "description": "Link declared on the effect's business object type."
+            "description": "Link declared on the source object type."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrActionLinkSource",
+            "description": "Optional source written by the same synchronous proposal (TXN-ATOMIC-1)."
           },
           "targetIdField": {
             "type": "string",
-            "description": "Input field naming an existing authorized declared-slice object."
+            "description": "Required input field naming a captured or proposed target."
           },
           "targetType": {
             "type": "string",
@@ -1529,6 +1533,25 @@
         },
         "additionalProperties": false
       },
+      "NornIrActionLinkSource": {
+        "type": "object",
+        "description": "A declared input-key source for a link within one action proposal.",
+        "required": [
+          "objectType",
+          "idField"
+        ],
+        "properties": {
+          "idField": {
+            "type": "string",
+            "description": "Required string input field containing its identity."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Concrete type of an object written by the synchronous closure."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrActionPayload": {
         "type": "object",
         "required": [
@@ -1611,6 +1634,9 @@
             "items": {
               "$ref": "#/components/schemas/NornIrSliceDeclaration"
             }
+          },
+          "synchronousRule": {
+            "$ref": "#/components/schemas/NornIrActionRuleRef"
           },
           "title": {
             "type": "string"
@@ -1770,6 +1796,25 @@
             "description": "Scale expected by the pinned template parameter.",
             "maximum": 9007199254740992,
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrActionRuleRef": {
+        "type": "object",
+        "description": "Closed reference to the admitted synchronous writer of an action.",
+        "required": [
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Exact RuleIR artifact identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Exact artifact version; no latest-version resolution."
           }
         },
         "additionalProperties": false
@@ -10494,6 +10539,20 @@
             "type": "string",
             "enum": [
               "decimal"
+            ]
+          },
+          "perUnit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "VAL-RATE: currency per this unit, distinct from a quantity's `unit`."
+          },
+          "rounding": {
+            "type": "string",
+            "description": "VAL-ROUND: explicit store/rescale mode; omission means exact/refuse.",
+            "enum": [
+              "refuse",
+              "toward_zero",
+              "half_even",
+              "half_away_from_zero"
             ]
           },
           "scale": {

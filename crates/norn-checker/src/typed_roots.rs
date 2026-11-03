@@ -172,6 +172,22 @@ fn validate_action_transaction_members(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
+    if let Some(pin) = decode_member!(
+        norn_ir::ActionRuleRef,
+        payload,
+        "synchronousRule",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty())
+    {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "synchronousRule needs a nonempty artifactId and exact version",
+            "payload.synchronousRule",
+            artifact_id,
+        ));
+    }
     if payload.contains_key("createLinks") {
         let _ = decode_member!(
             Vec<norn_ir::ActionCreateLink>,
@@ -1391,6 +1407,9 @@ fn is_action_member_name(value: &str) -> bool {
 /// profile's types. An object is opaque because `ZenTypeEnv::input_only` has
 /// no nested-record declarations; an unknown type fails closed.
 pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
+    if let Ok(Some(ty)) = norn_expr::schema::decimal_expression_type(schema) {
+        return Some(ty);
+    }
     let schema = schema.as_object()?;
     let type_value = schema.get("type")?;
     if let Some(members) = type_value.as_array() {
@@ -1416,7 +1435,15 @@ pub(crate) fn action_schema_type(schema: &JsonValue) -> Option<Type> {
         return None;
     }
     match type_value.as_string()? {
-        "string" => Some(Type::text()),
+        "string" => match schema.get("enum").and_then(JsonValue::as_array) {
+            Some(values) => Some(Type::enumeration(
+                values
+                    .iter()
+                    .map(JsonValue::as_string)
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            None => Some(Type::text()),
+        },
         "integer" => Some(Type::Integer),
         "number" => Some(Type::Number),
         "boolean" => Some(Type::Bool),
@@ -1469,6 +1496,7 @@ struct ActionExpressionSite<'a> {
     limits: &'a ResourceLimitProfile,
 }
 
+/// VAL-UNIT: retain informational unit inference at the action admission boundary.
 fn check_action_expression_with_cost(
     source: &ZenExpression,
     expected: &Type,
@@ -1504,7 +1532,15 @@ fn check_action_expression_with_cost(
         limits,
         &action_expression_root_bounds(environment),
     ) {
-        Ok(checked) => Some(checked.cost().units()),
+        Ok(checked) => {
+            for note in checked.notes() {
+                let mut diagnostic =
+                    invalid_diagnostic(note.code, note.message.clone(), path, artifact_id);
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                diagnostics.push(diagnostic);
+            }
+            Some(checked.cost().units())
+        }
         Err(findings) => {
             for finding in findings {
                 diagnostics.push(invalid_diagnostic(
@@ -1605,6 +1641,30 @@ pub fn validate_rule_ir_v2_payload(
             "payload.defaults",
             artifact_id,
         ));
+    }
+    if let Ok(text) = serde_json::to_string(payload)
+        && let Ok(root) = serde_json::from_str::<norn_ir::RuleRoot>(&text)
+    {
+        match norn_expr::graph::bind(&root) {
+            Err(reason) => diagnostics.push(invalid_diagnostic(
+                "core.values.inexact",
+                reason,
+                "payload.graph",
+                artifact_id,
+            )),
+            Ok(bindings) => {
+                for note in bindings.into_iter().flat_map(|binding| binding.notes) {
+                    let mut diagnostic =
+                        invalid_diagnostic(note.code, note.message, "payload.graph", artifact_id);
+                    diagnostic.severity = if note.code == "core.values.literal_unit" {
+                        norn_ir::DiagnosticSeverity::Info
+                    } else {
+                        norn_ir::DiagnosticSeverity::Error
+                    };
+                    diagnostics.push(diagnostic);
+                }
+            }
+        }
     }
     reject_rule_side_effect_fields(payload, diagnostics, artifact_id);
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);
