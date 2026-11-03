@@ -44,6 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
 use norn_checker::property_codec::{self, PropertyCodecError};
 use norn_checker::{
@@ -340,22 +341,24 @@ impl<'a> TypeCatalog<'a> {
             let expected = match &property.kind {
                 EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("valid decimal"),
                 EffectiveKind::Base(PropertyType::Record { .. }) => Some("valid record"),
-                _ => temporal_property_expected(property),
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    temporal_property_expected(property)
+                }
             };
             if let Some(expected) = expected {
                 property
                     .check_runtime_value(&value)
                     .map_err(|error| match error {
-                        norn_checker::entity_instance::InstanceError::Unsupported(feature) => {
-                            EffectiveValuesError::Unsupported {
+                        InstanceError::Unsupported(feature) => EffectiveValuesError::Unsupported {
+                            property: name.to_owned(),
+                            feature,
+                        },
+                        InstanceError::TypeMismatch(_) | InstanceError::ConstraintViolation(_) => {
+                            EffectiveValuesError::ValueType {
                                 property: name.to_owned(),
-                                feature,
+                                expected,
                             }
                         }
-                        _ => EffectiveValuesError::ValueType {
-                            property: name.to_owned(),
-                            expected,
-                        },
                     })?;
             }
             let value = property.canonical_runtime_value(&value);
