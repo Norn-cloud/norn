@@ -26,16 +26,16 @@ export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
-  /** One concept's authoritative objects; `undefined` when the server has no such read yet. */
-  readonly objectPage: (objectType: string) => Promise<Read<ObjectPage> | undefined>
-  /** One object with its links and source lineage; `undefined` when it is not readable. */
-  readonly object: (objectType: string, id: string) => Promise<ObjectReads | undefined>
+  /** One concept's authoritative objects; `null` when the server has no such read yet. */
+  readonly objectPage: (objectType: string) => Promise<Read<ObjectPage> | null>
+  /** One object with its links and source lineage; `null` when it is not readable. */
+  readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
 const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json"], { query: "?raw", import: "default", eager: true })
 
-const optional = <T,>(name: string): Read<T> | undefined =>
-  recordings[`../../../../fixtures/demo/${name}`] === undefined ? undefined : recorded<T>(name)
+const optional = <T,>(name: string): Read<T> | null =>
+  recordings[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
 
 /** Recorded object documents are named by the object's id with `/` written as `~`. */
 const objectFile = (objectType: string, id: string, read: string) => `explorer/objects/${objectType}/${id.replaceAll("/", "~")}.${read}.json`
@@ -58,6 +58,6 @@ export const recordedTransport: Transport = {
     const object = optional<ObjectRecord>(objectFile(objectType, id, "object"))
     const links = optional<LinkPage>(objectFile(objectType, id, "links"))
     const source = optional<SourceLineage>(objectFile(objectType, id, "source"))
-    return object && links && source ? { object, links, source } : undefined
+    return object && links && source ? { object, links, source } : null
   },
 }

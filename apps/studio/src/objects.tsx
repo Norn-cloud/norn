@@ -12,8 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
-import type { Read } from "./lib/exact.ts"
-import { factText, recordName } from "./lib/objects.ts"
+import { member, type Read } from "./lib/exact.ts"
+import { compareDecimals, factText, recordName } from "./lib/objects.ts"
 import { recordedTransport, type ObjectRecord } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
@@ -60,7 +60,7 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
       header: field.id.replaceAll("_", " "),
       accessorFn: ({ record, at }) => factText(field, record, page.numbers, at),
       sortingFn: field.decimal
-        ? (a, b) => Number(a.original.record.values[field.id] ?? Number.NEGATIVE_INFINITY) - Number(b.original.record.values[field.id] ?? Number.NEGATIVE_INFINITY)
+        ? (a, b) => compareDecimals(page.numbers.get(`${a.original.at}/values/${member(field.id)}`), page.numbers.get(`${b.original.at}/values/${member(field.id)}`))
         : "alphanumeric",
       meta: { numeric: field.decimal !== undefined },
     })),
@@ -136,7 +136,7 @@ export function ObjectsPage() {
       {(page.isPending || !catalog) && <p className="text-muted-foreground">Reading records…</p>}
       {page.isError && <p className="text-destructive">{page.error.message}</p>}
       {catalog && !concept && <p className="text-muted-foreground">This concept is not in the business model.</p>}
-      {concept && page.isSuccess && (page.data === undefined
+      {concept && page.isSuccess && (page.data === null
         ? <p className="text-muted-foreground">Records for this concept are not available yet.</p>
         : page.data.document.records.length === 0
           ? <p className="text-muted-foreground">No {title.toLowerCase()} records are stored yet.</p>
@@ -167,7 +167,7 @@ export function ObjectPage() {
       </div>
       {(reads.isPending || !catalog) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
-      {reads.isSuccess && !data && <p className="text-muted-foreground">This record is not available yet.</p>}
+      {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
       {data && concept && <>
         <section>
           <h2 className="pb-2 text-lg font-medium">Facts</h2>

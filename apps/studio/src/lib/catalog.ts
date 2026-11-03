@@ -9,7 +9,7 @@ export interface Field {
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
-  readonly decimal: { readonly unit: string | undefined; readonly currencyFrom: string | undefined } | undefined
+  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
 }
 
 export interface Relationship {
@@ -91,7 +91,7 @@ function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDe
     const def = types.get(type.name)
     return def ? decimalOf(def.type, types) : undefined
   }
-  return type.kind === "decimal" ? { unit: type.unit?.code, currencyFrom: type.currencySource?.property } : undefined
+  return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
 }
 
 /** Index the server's admitted artifacts; nothing is inferred beyond what they declare. */
