@@ -34,6 +34,7 @@ fn base() -> Result<Vec<ArtifactEnvelope>> {
         include_str!("../../../registry/core/artifacts/core.units.json"),
         include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.law.conversion_conservation.law.json"),
     ]
     .into_iter()
     .map(|s| serde_json::from_str(s).map_err(Into::into))
@@ -116,12 +117,13 @@ fn interfaces(base: &[ArtifactEnvelope]) -> Result<Vec<InterfaceDef>> {
 fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result<Value> {
     let (object, action) = authored(artifacts)?;
     let interfaces = interfaces(base)?;
+    let governing: Vec<_> = base.iter().chain(artifacts).cloned().collect();
     let definitions = [object.clone(), audit_type(object)];
     let model = Model::from_definitions_with_interfaces(&definitions, &[], &interfaces)?
-        .with_governing_laws(artifacts)?;
+        .with_governing_laws(&governing)?;
     let catalog = TypeCatalog::new(definitions.iter().take(1))
         .with_interfaces(&interfaces)
-        .with_governing_laws(artifacts);
+        .with_governing_laws(&governing);
     let mut checked = 0_u32;
     let mut committed = 0_u32;
     let mut nonzero_loss = 0_u32;
@@ -259,7 +261,7 @@ fn bind(
         records.push(record);
         checked_digests.push(checked_digest);
     }
-    if records.len() != 3 {
+    if records.len() != 6 {
         return Err("unexpected generated goal inventory; driver scope must be reviewed".into());
     }
     Ok((records, checked_digests))
