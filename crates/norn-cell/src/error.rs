@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// An effective property uses semantics the kernel cannot evaluate.
+    #[error(transparent)]
+    EffectiveValues(#[from] norn_kernel::EffectiveValuesError),
     /// Captured relation/delete output requires a processing profile beyond CP2.
     #[error("unsupported mapping processing profile")]
     UnsupportedMappingProfile,
