@@ -45,6 +45,8 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
+**LAW-COMMIT-1 (severity):** Only Error-severity law violations enter refusal journaling and delivery consumption; Warning violations remain quality findings and do not enter that refusal path.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
@@ -144,8 +146,9 @@ a pre-change checker receipt verifies against its original hash.
 a selected create-only writer, ordered derivations, preconditions, stored defaults
 and a pointwise predicate law. One empty store, singleton object identity and
 explicit finite decimal input intervals bound the claim. Unsupported constructs
-leave each affected goal unknown with a reason. Exact scales and units come from
-effective declarations; unlike interpretations and inexact literals refuse.
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
 
 Initialization is vacuous over the empty store. Writer preservation checks the
 proposal before law enforcement; non-vacuity needs a reachable law-satisfying
@@ -154,6 +157,22 @@ goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
 
-**LAW-COMMIT-1 (severity):** Only Error-severity law violations enter refusal journaling and delivery consumption; Warning violations remain quality findings and do not enter that refusal path.
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
