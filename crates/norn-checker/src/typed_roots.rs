@@ -172,6 +172,22 @@ fn validate_action_transaction_members(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
+    if let Some(pin) = decode_member!(
+        norn_ir::ActionRuleRef,
+        payload,
+        "synchronousRule",
+        ACTION_CODE,
+        diagnostics,
+        artifact_id
+    ) && (pin.artifact_id.trim().is_empty() || pin.version.trim().is_empty())
+    {
+        diagnostics.push(invalid_diagnostic(
+            ACTION_CODE,
+            "synchronousRule needs a nonempty artifactId and exact version",
+            "payload.synchronousRule",
+            artifact_id,
+        ));
+    }
     if payload.contains_key("createLinks") {
         let _ = decode_member!(
             Vec<norn_ir::ActionCreateLink>,
@@ -1480,6 +1496,7 @@ struct ActionExpressionSite<'a> {
     limits: &'a ResourceLimitProfile,
 }
 
+/// VAL-UNIT: retain informational unit inference at the action admission boundary.
 fn check_action_expression_with_cost(
     source: &ZenExpression,
     expected: &Type,
@@ -1515,7 +1532,15 @@ fn check_action_expression_with_cost(
         limits,
         &action_expression_root_bounds(environment),
     ) {
-        Ok(checked) => Some(checked.cost().units()),
+        Ok(checked) => {
+            for note in checked.notes() {
+                let mut diagnostic =
+                    invalid_diagnostic(note.code, note.message.clone(), path, artifact_id);
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                diagnostics.push(diagnostic);
+            }
+            Some(checked.cost().units())
+        }
         Err(findings) => {
             for finding in findings {
                 diagnostics.push(invalid_diagnostic(
