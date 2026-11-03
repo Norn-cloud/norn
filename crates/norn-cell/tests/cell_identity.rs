@@ -289,3 +289,38 @@ fn unversioned_cell_named_binding_cannot_gain_portable_provenance() {
         None
     );
 }
+
+#[test]
+fn reopen_refuses_a_later_journal_identity_after_metadata_is_restored() {
+    use norn_cell::engine::SqlEngine as _;
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let mut store =
+        CellStore::open_bound(&path, model(), StoreOptions::default(), &a()).expect("source");
+    store.commit(&CommitBatch::default()).expect("first commit");
+    store
+        .commit(&CommitBatch::default())
+        .expect("same-cell control");
+    drop(store);
+    let mut store = CellStore::open_bound(&path, model(), StoreOptions::default(), &a())
+        .expect("same-cell history reopens");
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("fixture engine");
+    let change_identity = |identity: &CellId| {
+        engine
+            .execute(
+                "UPDATE _norn_meta SET value = ?1 WHERE key = 'binding:cell_id'",
+                &[identity.as_str().into()],
+            )
+            .expect("identity fixture");
+    };
+    change_identity(&b());
+    store
+        .commit(&CommitBatch::default())
+        .expect("later foreign journal fixture");
+    change_identity(&a());
+    drop(store);
+    assert!(matches!(
+        CellStore::open_bound(&path, model(), StoreOptions::default(), &a()),
+        Err(CellError::BindingMismatch { .. })
+    ));
+}
