@@ -1,11 +1,13 @@
 {
-  "sha256": "e445a0763085e26f5bae5dc76dd34fd419e4c59420b65d85bad33fd8b493251e",
-  "origin": "authored",
-  "category": "code",
+  "sha256": "84bd9f2ef656e41131948e34264170ef4b797b533f06819911c5dd189820e50e",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/packs/canon/records.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",

@@ -88,9 +88,9 @@ pub use access::{
 };
 pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
-    ActionCreateLink, ActionInputDerivation, ActionQuantityEffect, ActionQuantityOperation,
-    ActionQuantityParameter, ActionRoot, ActionUiEffect, ActionUiEffects, ActionWrite, McpTool,
-    McpToolAnnotations, WriteChange,
+    ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
+    ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
+    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
 };
 pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
@@ -1221,6 +1221,7 @@ define_payload_root!(ActionPayload {
         slice => "slice" as Vec<SliceDeclaration>,
         derive => "derive" as Vec<ActionInputDerivation>,
         commands => "commands" as Vec<ActionCommand>,
+        synchronous_rule => "synchronousRule" as action::ActionRuleRef,
         writes => "writes" as Vec<ActionWrite>,
         compensation => "compensation" as ActionCompensation,
         access => "access" as AccessRef,
