@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use norn_kernel::CommitError::AccountingPosting;
+
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1983,9 +1985,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         CommitError::TraversalLimitExceeded { key, reason } => {
             CommitError::TraversalLimitExceeded { key, reason }
         }
-        CommitError::AccountingPosting { key, reason } => {
-            CommitError::AccountingPosting { key, reason }
-        }
+        AccountingPosting { key, reason } => AccountingPosting { key, reason },
         CommitError::InvariantViolation {
             key,
             owner,
