@@ -3390,13 +3390,18 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
         ]}}]
     })).unwrap();
     let key = FactKey::new("test.UnsupportedRecord", "unsupported");
+    let values = object(json!({"reading":{"elapsed":"PT1S"}}));
+    let catalog = TypeCatalog::new([&definition]);
+    assert!(matches!(norn_kernel::evaluate_invariants(
+        &catalog, &key, &values, &mut EvaluationBudget::default().units()
+    ), Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))));
     let mut native = CommandCell::new(|command| command.payload.clone())
         .with_types(vec![definition]);
     let refusal = native.commit(CellCommit {
         writes: vec![FactWrite {
             key: key.clone(),
             expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put { values: object(json!({"reading":{"elapsed":"PT1S"}})) },
+            mutation: FactMutation::Put { values },
         }],
         ..CellCommit::empty()
     }).expect_err("unsupported members cannot become validity findings");
