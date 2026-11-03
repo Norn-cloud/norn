@@ -16,15 +16,10 @@ use norn_checker::{
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal, EntityIrVersion, EntityRootV2,
-    PropertyType, RuntimeValue, WholeNumber,
+    PropertyType, WholeNumber,
 };
 use proptest::strategy::Strategy;
-use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
-use std::collections::BTreeMap;
-
-fn row(id: &str, input: i64, recovered: i64) -> FactWriteRow {
-    put(id, input, recovered, "2026-10-23T12:00:00Z", "gold")
-}
+use query_support::{CLOCK, TYPE, WORLD, fixture, load};
 
 fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
     let batch = CommitBatch {
@@ -38,11 +33,12 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
 }
 
 fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> QueryResult {
+    let visible = |row: &norn_cell::ObjectRecord| Ok(row.id != "G0");
     let exact = store
-        .evaluate_question(plan, context.clone(), |row| Ok(row.id != "G0"))
+        .evaluate_question(plan, context.clone(), visible)
         .expect("cell");
     let mut sql = store
-        .evaluate_question_duckdb(plan, context, |row| Ok(row.id != "G0"))
+        .evaluate_question_duckdb(plan, context, visible)
         .expect("SQL");
     assert_eq!(sql.engine, Engine::Duckdb);
     sql.engine = Engine::Cell;
@@ -50,12 +46,8 @@ fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> Que
     exact
 }
 
-fn rebind(
-    store: &CellStore,
-    plan: &QuestionPlan,
-    scales: [u64; 2],
-    sum: bool,
-) -> (CellStore, QuestionPlan) {
+fn scaled_fixture(scales: [u64; 2], sum: bool) -> (CellStore, QuestionPlan, QueryContext) {
+    let (store, plan, context) = fixture();
     let mut object = store.model().object_types().next().expect("type").clone();
     for property in &mut object.properties {
         if let PropertyType::Decimal { scale: places, .. } = &mut property.property_type {
@@ -96,7 +88,8 @@ fn rebind(
         property_types: &[],
     })
     .expect("model");
-    (CellStore::open_in_memory(model).expect("cell"), plan)
+    let store = CellStore::open_in_memory(model).expect("cell");
+    (store, plan, context)
 }
 
 #[test]
@@ -110,7 +103,7 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
     expected.engine = Engine::Ivm;
     assert_eq!(maintained.result(), &expected);
     for write in [
-        row("SYN-MELT-15-1", 75_000, 72_000),
+        scaled_row("SYN-MELT-15-1", 75_000, 72_000, [3, 3]),
         FactWriteRow::Delete {
             object_type: TYPE.into(),
             key: "SYN-MELT-15-1".into(),
@@ -128,28 +121,8 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
 }
 
 #[test]
-fn query_sql_exact_rounding_signs_zero_and_large_coefficients() {
-    for (input, recovered) in [
-        (128, 1),
-        (128, -1),
-        (-128, 1),
-        (-128, -1),
-        (0, 0),
-        (1, 9_000_000_000_000_000),
-    ] {
-        let (mut store, plan, context) = fixture();
-        commit(
-            &mut store,
-            vec![row("quoted'); DROP TABLE input;--", input, recovered)],
-        );
-        compare(&store, &plan, context);
-    }
-}
-
-#[test]
 fn query_sql_unsupported_declared_precision_refuses_while_cell_supports_empty_population() {
-    let (seed, plan, context) = fixture();
-    let (store, plan) = rebind(&seed, &plan, [7, 7], false);
+    let (store, plan, context) = scaled_fixture([7, 7], false);
     store
         .evaluate_question(&plan, context.clone(), |_| Ok(true))
         .expect("cell supports empty plan");
@@ -165,9 +138,8 @@ proptest::proptest! {
     fn generated_sql_matches_exact_rows_and_ids_after_visibility_filtering(
         population in proptest::collection::vec((-1000i64..1000,-1000i64..1000),1..8), sum in proptest::bool::ANY
     ) {
-        let (seed,base,context)=fixture();
-        let (mut store,plan)=rebind(&seed,&base,[3,3],sum);
-        let writes=population.iter().enumerate().map(|(i,(input,recovered))|row(&format!("G{i}"),*input,*recovered)).collect();
+        let (mut store,plan,context)=scaled_fixture([3,3],sum);
+        let writes=population.iter().enumerate().map(|(i,(input,recovered))|scaled_row(&format!("G{i}"),*input,*recovered,[3,3])).collect();
         commit(&mut store,writes);
         compare(&store,&plan,context);
     }
@@ -179,52 +151,38 @@ fn scaled_row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWri
     FactWriteRow::Put {
         object_type: TYPE.into(),
         key: id.into(),
-        values: BTreeMap::from([
-            ("input".into(), RuntimeValue::from(exact(input, scales[0]))),
-            (
-                "recovered".into(),
-                RuntimeValue::from(exact(recovered, scales[1])),
-            ),
-            ("loss".into(), RuntimeValue::from(Decimal::from(0i64))),
-            (
-                "occurred_at".into(),
-                RuntimeValue::from("2026-10-23T12:00:00Z"),
-            ),
-            ("metal".into(), RuntimeValue::from("gold")),
-        ]),
+        values: norn_ir::runtime_object! {
+            "input" => exact(input, scales[0]), "recovered" => exact(recovered, scales[1]),
+            "loss" => Decimal::from(0i64), "occurred_at" => "2026-10-23T12:00:00Z", "metal" => "gold",
+        },
     }
 }
 
 #[test]
-fn unequal_declared_scales_preserve_rounding_and_versioned_contributions() {
+fn rounding_and_declared_scales_preserve_envelopes_through_correction_and_retraction() {
+    let id = "quoted'); DROP TABLE input;--";
     for (scales, input, recovered) in [
+        ([3, 3], 128, 1),
+        ([3, 3], 128, -1),
+        ([3, 3], -128, 1),
+        ([3, 3], -128, -1),
+        ([3, 3], 0, 0),
+        ([3, 3], 1, 9_000_000_000_000_000),
         ([0, 3], 128, 1),
         ([6, 0], 3, 1),
         ([0, 6], 1, -1),
         ([6, 0], 0, 1),
     ] {
-        let (seed, base, context) = fixture();
-        let (mut store, plan) = rebind(&seed, &base, scales, false);
-        commit(
-            &mut store,
-            vec![scaled_row("visible", input, recovered, scales)],
-        );
-        compare(&store, &plan, context.clone());
-        commit(
-            &mut store,
-            vec![scaled_row(
-                "visible",
-                input,
-                recovered.checked_neg().expect("bounded sign"),
-                scales,
-            )],
-        );
-        compare(&store, &plan, context.clone());
+        let (mut store, plan, context) = scaled_fixture(scales, false);
+        for recovered in [recovered, recovered.checked_neg().expect("bounded sign")] {
+            commit(&mut store, vec![scaled_row(id, input, recovered, scales)]);
+            compare(&store, &plan, context.clone());
+        }
         commit(
             &mut store,
             vec![FactWriteRow::Delete {
                 object_type: TYPE.into(),
-                key: "visible".into(),
+                key: id.into(),
             }],
         );
         compare(&store, &plan, context);
@@ -239,8 +197,7 @@ proptest::proptest! {
         population in proptest::collection::vec((-1000i64..1000,-1000i64..1000),2..8), sum in proptest::bool::ANY
     ) {
         let scales=[scales.0,scales.1];
-        let (seed,base,context)=fixture();
-        let (mut store,plan)=rebind(&seed,&base,scales,sum);
+        let (mut store,plan,context)=scaled_fixture(scales,sum);
         let writes=population.iter().enumerate().map(|(i,(input,recovered))|scaled_row(&format!("G{i}"),*input,*recovered,scales)).collect();
         commit(&mut store,writes);
         compare(&store,&plan,context);

@@ -78,32 +78,11 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
 
-
 ## G7 embedded SQL correspondence (CP3 stretch)
 
-QUERY-ENGINE-1 / QUERY-GRAIN-1 / COMPUTE-DETERMINISTIC-1: the optional
-`norn-cell/duckdb` feature lowers the same admitted sum/ratio plan over its
-authorized, bounded exact contribution snapshot. Shared projection supplies
-identity, predicates and time buckets. Generated SQL stores each operand in
-DECIMAL at its own declared scale, sums at identity grain and rounds ratios
-once with HUGEINT quotient/remainder. Values use bound parameters; extension
-loading and external access are disabled. Unsupported kinds/scales refuse
-`core.compute.unsupported_engine`.
+QUERY-ENGINE-1 / QUERY-GRAIN-1 / COMPUTE-DETERMINISTIC-1: optional `norn-cell/duckdb` lowers the admitted bounded sum/ratio plan over the authorized exact contribution snapshot. Shared projection supplies identity, predicates and buckets. SQL uses per-operand DECIMAL scales 0–6, identity-grain sums and one HUGEINT quotient/remainder rounding; other shapes/scales refuse `core.compute.unsupported_engine`. Values are parameters; extension loading and external access are disabled.
 
-The obligation is complete equality with exact cell envelopes, totals, member
-amounts, versioned contribution IDs, lineage and frontier, normalizing only the
-engine label. `duckdb_question.rs` covers the unchanged scrap-yield fixture,
-correction/deletion with receipt-maintained IVM equality, signed rounding, zero denominators, large coefficients,
-hidden contributions, unsupported precision and native feature selection.
-Unequal-declared-scale scenarios exercise correction/retraction at scale pairs
-0/3, 6/0 and 0/6, including zero input. A generated property varies distinct
-operand scales 0–6, exact signed coefficients, visibility and sum/ratio plans.
-
-This carries the approved #426 adapter onto the current query prerequisite;
-#422's lineage-dependent fan-out test remains separate. Evidence is runtime
-and sampled SQL/FFI correspondence; no new Rust arithmetic kernel or Kani
-input is introduced. Historical selection, governed SQL authority and
-Iceberg/WellDB persistence remain TARGET.
+`duckdb_question.rs` compares complete cell/SQL envelopes, totals, versioned member amounts, lineage and frontier, normalizing only the engine label. Cases cover scrap-yield correction/retraction with IVM equality, signed midpoint rounding, zero denominators, large coefficients, hostile IDs, hidden contributions and unsupported precision. Unequal scales 0/3, 6/0 and 0/6 include correction/retraction and zero input. Two 16-case properties vary signed populations, sum/ratio selection and operand scales, always hiding G0. The target requires both `duckdb` and `native`; alternate feature selections are not tested here. This carries approved #426; #422's fan-out conformance is separate. Evidence is runtime/sampled SQL/FFI correspondence, with no new arithmetic kernel or Kani input. Historical selection, governed SQL authority and Iceberg/WellDB persistence remain TARGET.
 
 ## G5 native numeric drill-through
 LINEAGE-SUM-1 / DATA-LINEAGE (numeric path): `trace_question` re-evaluates the admitted plan under current host population visibility and requires the expected exact/complete result lineage pin. One transaction and shared decode budget cover membership, immutable canonical fact incarnations and authenticated emitting receipts. A revision/frontier/population/epoch change requires a fresh result. Exact operand sums are reconciled using the existing aggregate arithmetic; fact-version IDs remain ordered and catalog enrichment cannot enter numeric membership. Canonical values require a separate whole-record disclosure grant; denial remains explicit and does not alter amounts.
