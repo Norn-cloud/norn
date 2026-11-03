@@ -12,20 +12,27 @@ pub(crate) struct RetainedActions {
 impl RetainedActions {
     pub fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
         crate::routes::verify_retained(set, scope)?;
-        let RuntimeValue::Array(sources) = RuntimeValue::from_json_text(&set.canonical_set)
-            .map_err(Refusal::host)? else {
-                return Err(Refusal::host("retained set is not an array"));
-            };
-        let artifacts = sources.iter().map(norn_ir::runtime::decode)
-            .collect::<Result<Vec<ArtifactEnvelope>, _>>().map_err(Refusal::host)?;
+        let RuntimeValue::Array(sources) =
+            RuntimeValue::from_json_text(&set.canonical_set).map_err(Refusal::host)?
+        else {
+            return Err(Refusal::host("retained set is not an array"));
+        };
+        let artifacts = sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<ArtifactEnvelope>, _>>()
+            .map_err(Refusal::host)?;
         let mut actions = Vec::new();
         let mut roots = BTreeMap::new();
         let mut identities = BTreeSet::new();
         for (artifact, source) in artifacts.iter().zip(&sources) {
-            let source = source.get("payload").ok_or_else(|| Refusal::host("missing payload"))?;
+            let source = source
+                .get("payload")
+                .ok_or_else(|| Refusal::host("missing payload"))?;
             match artifact.kind() {
                 ArtifactKind::Action => {
-                    let action: ActionRoot = norn_ir::runtime::decode(source).map_err(Refusal::host)?;
+                    let action: ActionRoot =
+                        norn_ir::runtime::decode(source).map_err(Refusal::host)?;
                     if !identities.insert(action.action_id.clone()) {
                         return Err(Refusal::host("ambiguous retained action identity"));
                     }
@@ -40,39 +47,75 @@ impl RetainedActions {
                 _ => {}
             }
         }
-        let receipt: serde_json::Value = serde_json::from_str(set.admission_receipt.as_deref()
-            .ok_or_else(|| Refusal::host("missing retained receipt"))?).map_err(Refusal::host)?;
+        let receipt: serde_json::Value = serde_json::from_str(
+            set.admission_receipt
+                .as_deref()
+                .ok_or_else(|| Refusal::host("missing retained receipt"))?,
+        )
+        .map_err(Refusal::host)?;
         let binding = DecisionBinding {
-            profile_id: receipt.get("exprProfile").and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing expression profile"))?.into(),
-            environment_hash: receipt.pointer("/typeEnv/sha256").and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing type environment"))?.into(),
+            profile_id: receipt
+                .get("exprProfile")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| Refusal::host("missing expression profile"))?
+                .into(),
+            environment_hash: receipt
+                .pointer("/typeEnv/sha256")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| Refusal::host("missing type environment"))?
+                .into(),
         };
         let mut rules = Vec::new();
         let mut loaded = BTreeSet::new();
         for (_, action) in &actions {
-            let Some(pin) = &action.synchronous_rule else { continue };
-            if !loaded.insert((pin.artifact_id.clone(), pin.version.clone())) { continue }
-            let writer = artifacts.iter().find(|artifact| artifact.artifact_id == pin.artifact_id
-                && artifact.version == pin.version).ok_or_else(|| Refusal::host("missing pinned writer"))?;
-            let root = roots.get(&writer.artifact_id).ok_or_else(|| Refusal::host("missing writer graph"))?;
+            let Some(pin) = &action.synchronous_rule else {
+                continue;
+            };
+            if !loaded.insert((pin.artifact_id.clone(), pin.version.clone())) {
+                continue;
+            }
+            let writer = artifacts
+                .iter()
+                .find(|artifact| {
+                    artifact.artifact_id == pin.artifact_id && artifact.version == pin.version
+                })
+                .ok_or_else(|| Refusal::host("missing pinned writer"))?;
+            let root = roots
+                .get(&writer.artifact_id)
+                .ok_or_else(|| Refusal::host("missing writer graph"))?;
             let helpers = helper_closure(writer, &artifacts, &roots)?;
-            rules.push(SynchronousRule::admit(pin.clone(), root, &helpers, binding.clone()).map_err(Refusal::host)?);
+            rules.push(
+                SynchronousRule::admit(pin.clone(), root, &helpers, binding.clone())
+                    .map_err(Refusal::host)?,
+            );
         }
         Ok(Self { actions, rules })
     }
 }
-fn helper_closure(writer: &ArtifactEnvelope, artifacts: &[ArtifactEnvelope], roots: &BTreeMap<String, RuleRoot>)
-    -> Result<BTreeMap<String, RuleRoot>, Refusal> {
+fn helper_closure(
+    writer: &ArtifactEnvelope,
+    artifacts: &[ArtifactEnvelope],
+    roots: &BTreeMap<String, RuleRoot>,
+) -> Result<BTreeMap<String, RuleRoot>, Refusal> {
     let mut helpers = BTreeMap::new();
     let mut pending = vec![writer];
     while let Some(current) = pending.pop() {
-        for pin in current.dependencies.iter().filter(|pin| pin.kind == ArtifactKind::Rule) {
-            let artifact = artifacts.iter().find(|artifact| artifact.artifact_id == pin.artifact_id
-                && pin.version.as_deref() == Some(artifact.version.as_str()))
+        for pin in current
+            .dependencies
+            .iter()
+            .filter(|pin| pin.kind == ArtifactKind::Rule)
+        {
+            let artifact = artifacts
+                .iter()
+                .find(|artifact| {
+                    artifact.artifact_id == pin.artifact_id
+                        && pin.version.as_deref() == Some(artifact.version.as_str())
+                })
                 .ok_or_else(|| Refusal::host("missing exact helper dependency"))?;
             if !helpers.contains_key(&pin.artifact_id) {
-                let root = roots.get(&pin.artifact_id).ok_or_else(|| Refusal::host("missing helper graph"))?;
+                let root = roots
+                    .get(&pin.artifact_id)
+                    .ok_or_else(|| Refusal::host("missing helper graph"))?;
                 helpers.insert(pin.artifact_id.clone(), root.clone());
                 pending.push(artifact);
             }
