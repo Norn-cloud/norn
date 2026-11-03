@@ -694,6 +694,7 @@ fn observed_link_authority_seals_changed_and_unchanged_sources_and_both_ownershi
 }
 
 type ClaimCell = MemoryCell<norn_kernel::ObservationEvent, JsonObject, JsonObject>;
+/// Canonical endpoints and the registry claim type, including an inherited alias.
 fn claim_fixture() -> (
     Vec<ObjectTypeDef>,
     ClaimCell,
@@ -744,6 +745,7 @@ fn claim_fixture() -> (
     };
     (types, cell, claim)
 }
+/// Bind the immutable claim snapshot or read to its exact proposed edge.
 fn claimed_commit(
     catalog: &norn_kernel::TypeCatalog<'_>,
     cell: &ClaimCell,

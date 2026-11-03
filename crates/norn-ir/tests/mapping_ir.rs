@@ -137,6 +137,7 @@ fn vendor_mapping_contract_is_typed_without_changing_generic_wire_shape() {
     assert!(serde_json::from_value::<norn_ir::mapping::VendorMappingContract>(invalid).is_err());
 }
 
+/// One mapped source with an explicit endpoint and an observed nullable-role clear.
 fn link_record() -> norn_ir::mapping::MappedRecord {
     use norn_ir::mapping::{ActionInvocation, LinkPatch, MappedRecord};
     use norn_ir::{LinkId, ObjectTypeName};

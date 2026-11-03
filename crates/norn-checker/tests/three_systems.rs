@@ -447,6 +447,7 @@ proptest::proptest! {
     }
 }
 
+/// OBS-LINK-DECLARED: compiled outputs preserve every admitted source role.
 #[test]
 fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
     for system in SYSTEMS {
