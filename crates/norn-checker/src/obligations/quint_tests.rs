@@ -12,7 +12,7 @@ fn fixture() -> Vec<Value> {
     let mut entities: Vec<Value> =
         serde_json::from_str(include_str!("../../../../fixtures/law-ir/entities.json"))
             .expect("generated entities");
-    let mut laws: Vec<Value> =
+    let laws: Vec<Value> =
         serde_json::from_str(include_str!("../../../../fixtures/law-ir/laws.json"))
             .expect("generated laws");
     let mut object: norn_ir::EntityRootV2 =
@@ -47,8 +47,8 @@ fn fixture() -> Vec<Value> {
         })
         .collect();
     entities[0]["payload"] = serde_json::to_value(object).expect("typed object");
-    let mut law: norn_ir::LawIR =
-        serde_json::from_value(laws.remove(0)["payload"].clone()).expect("law");
+    let mut envelope = laws.first().cloned().expect("generated law envelope");
+    let mut law: norn_ir::LawIR = serde_json::from_value(envelope["payload"].clone()).expect("law");
     law.modality = norn_ir::LawModality::Always {};
     law.scope.root = norn_ir::LawRoot::Entity("erpnext.SalesOrder".into());
     law.response = norn_ir::LawResponse::Predicate {
@@ -56,16 +56,6 @@ fn fixture() -> Vec<Value> {
             "self.amount == self.remaining + self.difference".into(),
         ),
     };
-    let mut envelope = entities[0].clone();
-    envelope["artifactId"] = json!("test.conservation.law");
-    envelope["kind"] = json!("law");
-    envelope["dependencies"] = serde_json::to_value(vec![norn_ir::ArtifactDependency {
-        artifact_id: "erpnext.SalesOrder.entity".into(),
-        kind: norn_ir::ArtifactKind::Entity,
-        version: Some("0.1.0".into()),
-        required: true,
-    }])
-    .expect("law dependency");
     envelope["payload"] = serde_json::to_value(law).expect("typed law");
     let mut action: Value = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/retail-reorder.action.json"
