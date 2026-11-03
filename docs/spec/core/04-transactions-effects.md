@@ -69,3 +69,22 @@ Only the cell host resolves authenticated, scoped evidence; unsupported hosts re
 Execution stays closed until consumption and effects commit atomically, with no partial persistence on refusal.
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
+
+### TXN-CELL-1 — single-cell execution profile
+
+Every supported proposal key and actual admission read belongs to the bound
+host's cell, including link endpoints, membership/absence partitions, and keys
+discovered during graph traversal. Ownership is host evidence under the commit
+snapshot, never a law applicability label or request hint. Foreign or unknown
+ownership refuses `core.txn.atomic_boundary` before the host applies any effect.
+Outbound commands are local outbox enqueues, not remote atomic writes.
+
+The current supported immediate laws are pointwise; inherited/effective or
+otherwise unresolved dependencies retain their existing unsupported refusal.
+This profile produces no splittability label or distributed guarantee. A host
+supporting external dependencies must resolve ownership for both facts and
+complete membership partitions; unknown is not local.
+
+Named scenarios: **TXN-CELL-CROSS** refuses a foreign immediate-law read with
+unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
+inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.

@@ -1,0 +1,7 @@
+{
+  "code": "core.txn.atomic_boundary",
+  "message": "TXN-CELL-1: the complete supported atomic closure must belong to one cell; foreign or unknown ownership refuses without effects",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

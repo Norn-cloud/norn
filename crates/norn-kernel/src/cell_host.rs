@@ -599,6 +599,12 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// Atomic closure includes another cell or unknown ownership.
+    #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
+    AtomicBoundary {
+        /// The first non-local or unresolved dependency.
+        key: FactKey,
+    },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.
     #[error("{key} is protected by an owned child collection transaction")]
