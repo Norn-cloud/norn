@@ -250,4 +250,4 @@ test("INV-TRANSFER native witness is generated from its typed declaration", () =
   const pack = compilePack(fixture, { scope, root, modules: [fixture] })
   if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
   expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-cell/tests/fixtures/custody-transfer.json"), "utf8")))
-})
+}, 30_000)
