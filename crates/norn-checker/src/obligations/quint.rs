@@ -1,4 +1,4 @@
-//! Bounded declaration lowering. Solver status and activation authority live elsewhere.
+//! PROOF-QUINT-1: bounded declaration lowering. Solver status and activation authority live elsewhere.
 use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use norn_ir::{ActionRoot, ArtifactKind, LawIR};
 use serde_json::{Value, json};
@@ -93,35 +93,15 @@ fn demand(ok: bool, reason: &str) -> Result<(), String> {
 }
 fn scaled(text: &str, scale: u32) -> Result<i64, String> {
     demand(scale <= 6, "decimal scale exceeds exact bounded profile")?;
+    norn_ir::RuntimeValue::from_json_text(text).map_err(|_error| "invalid exact decimal")?;
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    demand(
-        !whole.is_empty()
-            && fraction.len() <= scale as usize
-            && fraction.bytes().all(|b| b.is_ascii_digit()),
-        "inexact decimal literal",
-    )?;
-    let sign = if whole.starts_with('-') { -1 } else { 1 };
-    let whole = whole
+    let padding = scale
+        .checked_sub(u32::try_from(fraction.len()).map_err(|_error| "decimal scale")?)
+        .ok_or("inexact decimal literal")?;
+    let zeros = "0".repeat(usize::try_from(padding).map_err(|_error| "decimal scale")?);
+    let result = format!("{whole}{fraction}{zeros}")
         .parse::<i64>()
-        .map_err(|_| "invalid bounded integer")?;
-    let fraction = if fraction.is_empty() {
-        0
-    } else {
-        fraction.parse::<i64>().map_err(|_| "invalid fraction")?
-    };
-    let result = whole
-        .checked_mul(10_i64.pow(scale))
-        .and_then(|v| {
-            v.checked_add(
-                sign * fraction
-                    * 10_i64.pow(
-                        scale
-                            - u32::try_from(text.split_once('.').map_or(0, |(_, f)| f.len()))
-                                .unwrap_or(0),
-                    ),
-            )
-        })
-        .ok_or("decimal overflow")?;
+        .map_err(|_error| "bounded decimal overflow")?;
     demand(
         result.unsigned_abs() <= 1_000_000,
         "decimal exceeds bounded arithmetic range",
@@ -136,7 +116,7 @@ pub(super) fn expression(
     scale: u32,
 ) -> Result<String, String> {
     demand(source.len() <= 4096, "expression exceeds lowering budget")?;
-    let lexer = regex_lite::Regex::new(r"^\s*(self\.[A-Za-z_][A-Za-z_0-9]*|input\.[A-Za-z_][A-Za-z_0-9]*|[0-9]+(?:\.[0-9]+)?|==|!=|<=|>=|[()+<>-]|and\b|or\b|not\b|true\b|false\b)").map_err(|_| "lexer")?;
+    let lexer = regex_lite::Regex::new(r"^\s*(self\.[A-Za-z_][A-Za-z_0-9]*|input\.[A-Za-z_][A-Za-z_0-9]*|[0-9]+(?:\.[0-9]+)?|==|!=|<=|>=|[()+<>-]|and\b|or\b|not\b|true\b|false\b)").map_err(|_error| "lexer")?;
     let mut rest = source;
     let mut tokens = Vec::new();
     while !rest.trim().is_empty() {
@@ -170,6 +150,10 @@ pub(super) fn expression(
     )?;
     Ok(result)
 }
+#[allow(
+    clippy::too_many_lines,
+    reason = "one closed lowering profile with explicit refusal at every unsupported declaration"
+)]
 fn lower(
     source: &DefinitionSource,
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
@@ -186,8 +170,9 @@ fn lower(
         .find(|a| a.artifact_id == bounds.action && a.kind() == ArtifactKind::Action)
         .ok_or("selected action absent")?;
     let action_json =
-        serde_json::to_value(selected.payload.to_json_value()).map_err(|_| "action")?;
-    let action: ActionRoot = serde_json::from_value(action_json.clone()).map_err(|_| "action")?;
+        serde_json::to_value(selected.payload.to_json_value()).map_err(|_error| "action")?;
+    let action: ActionRoot =
+        serde_json::from_value(action_json.clone()).map_err(|_error| "action")?;
     demand(
         action.slice.is_empty()
             && action.commands.is_empty()
@@ -214,7 +199,8 @@ fn lower(
         .and_then(Result::ok)
         .ok_or("effective object missing")?;
     demand(
-        object.unsupported().is_none()
+        object.properties.len() <= 16
+            && object.unsupported().is_none()
             && object.lifecycles.is_empty()
             && object.owned_collections.is_empty(),
         "unsupported effective object contract",
@@ -243,10 +229,12 @@ fn lower(
         let crate::EffectiveKind::Base(kind) = &property.kind else {
             return Err("unresolved property type".into());
         };
-        let declared = serde_json::to_value(kind).map_err(|_| "property")?;
+        let declared = serde_json::to_value(kind).map_err(|_error| "property")?;
         if id == identity {
             demand(
-                declared["kind"] == "text" && !bounds.inputs.contains_key(id),
+                declared["kind"] == "text"
+                    && !bounds.inputs.contains_key(id)
+                    && schema[id] == json!({"type":"string"}),
                 "identity must be singleton text",
             )?;
             object
@@ -254,7 +242,7 @@ fn lower(
                     id,
                     &norn_ir::RuntimeValue::String(bounds.identity.clone()),
                 )
-                .map_err(|_| "identity outside declaration")?;
+                .map_err(|_error| "identity outside declaration")?;
             continue;
         }
         demand(
@@ -286,7 +274,10 @@ fn lower(
         types.insert(variable.clone(), json!({"property":id,"type":declared}));
         if let Some((lo, hi)) = bounds.inputs.get(id) {
             let (lo, hi) = (scaled(lo, scale)?, scaled(hi, scale)?);
-            demand(lo <= hi && hi - lo <= 1024, "invalid finite interval")?;
+            demand(
+                lo <= hi && hi.checked_sub(lo).is_some_and(|width| width <= 1024),
+                "invalid finite interval",
+            )?;
             choices.push(format!("nondet i{index} = ({lo}).to({hi}).oneOf()"));
             fields.insert(id.to_owned(), format!("i{index}"));
         }
@@ -330,7 +321,7 @@ fn lower(
     for property in &object.properties {
         let id = property.id.as_str();
         if id != identity && !fields.contains_key(id) {
-            let default = serde_json::to_value(&property.default).map_err(|_| "default")?;
+            let default = serde_json::to_value(&property.default).map_err(|_error| "default")?;
             fields.insert(id.to_owned(), scaled(text(&default)?, scale)?.to_string());
         }
     }

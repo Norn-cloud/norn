@@ -24,7 +24,7 @@ fn fixture() -> Vec<Value> {
             id: norn_ir::PropertyId(id.into()),
             description: None,
             property_type: if id == "id" {
-                norn_ir::PropertyType::Text {}
+                norn_ir::PropertyType::Text { format: None }
             } else {
                 norn_ir::PropertyType::Decimal {
                     scale: norn_ir::WholeNumber(0),
@@ -52,7 +52,9 @@ fn fixture() -> Vec<Value> {
     law.modality = norn_ir::LawModality::Always {};
     law.scope.root = norn_ir::LawRoot::Entity("erpnext.SalesOrder".into());
     law.response = norn_ir::LawResponse::Predicate {
-        expression: "self.amount == self.remaining + self.difference".into(),
+        expression: norn_ir::ZenExpression(
+            "self.amount == self.remaining + self.difference".into(),
+        ),
     };
     let mut envelope = entities[0].clone();
     envelope["artifactId"] = json!("test.conservation.law");
@@ -139,9 +141,30 @@ proptest! {
     #[test]
     fn exact_decimal_lowering_agrees_with_native_arithmetic(a in 0..100_i64, b in 0..100_i64) {
         let fields = BTreeMap::from([("amount".into(), "a".into()), ("remaining".into(), "b".into())]);
-        let lowered = super::quint::expression("input.amount - input.remaining", &fields, 2).expect("lower");
-        let native = norn_expr::Expression::compile("input.amount - input.remaining").expect("native").evaluate(&norn_expr::Value::object([("input", norn_expr::Value::object([("amount", a.into()), ("remaining", b.into())]))]), norn_expr::EvaluationBudget::new(100)).expect("native eval");
+        let expr = "input.amount - input.remaining + 0.25";
+        let lowered = super::quint::expression(expr, &fields, 2).expect("lower");
+        let native = norn_expr::Expression::compile(expr).expect("native").evaluate(&norn_expr::Value::object([("input", norn_expr::Value::object([("amount", norn_expr::Value::Number(format!("0.{a:02}").parse().expect("decimal"))), ("remaining", norn_expr::Value::Number(format!("0.{b:02}").parse().expect("decimal")))]))]), norn_expr::EvaluationBudget::new(100)).expect("native eval");
         let translated = norn_expr::Expression::compile(&lowered).expect("common grammar").evaluate(&norn_expr::Value::object([("a", a.into()), ("b", b.into())]), norn_expr::EvaluationBudget::new(100)).expect("lowered eval");
-        prop_assert_eq!(native.value(), translated.value());
+        let scaled_native = norn_expr::Expression::compile("value * 100").expect("scale oracle").evaluate(&norn_expr::Value::object([("value", native.value().clone())]), norn_expr::EvaluationBudget::new(100)).expect("oracle");
+        prop_assert_eq!(scaled_native.value(), translated.value());
+    }
+}
+
+#[test]
+fn unsupported_syntax_and_inexact_literals_are_visible_refusals() {
+    let fields = BTreeMap::from([("amount".into(), "a".into())]);
+    for source in [
+        "input.amount * 2",
+        "input.amount / 2",
+        "input.amount + 0.001",
+        "actor.id",
+        "sum(input)",
+        "input.amounts",
+        "input.amount[0]",
+    ] {
+        assert!(
+            super::quint::expression(source, &fields, 2).is_err(),
+            "{source}"
+        );
     }
 }
