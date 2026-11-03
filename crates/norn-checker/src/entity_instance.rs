@@ -1267,7 +1267,7 @@ fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
     }
 }
 
-// METRIC-ADDITIVITY-MIGRATION: aggregation semantics never narrow stored values.
+/// METRIC-ADDITIVITY-MIGRATION: aggregation semantics never narrow stored values.
 fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<bool> {
     let (EffectiveKind::Base(candidate), EffectiveKind::Base(previous)) = (candidate, previous)
     else {
