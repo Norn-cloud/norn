@@ -257,7 +257,13 @@ impl Pdp {
         let entitlement_matches =
             evaluate_entitlements(request, scope, entitlements, explain_shadow);
         explanation.entitlement_evaluation = entitlement_matches.evaluation.clone();
-        let principal = &request.principal;
+        let Some(principal) = self.delegation.capability_principal(request) else {
+            explanation.delegation = ConjunctOutcome::Deny;
+            explanation.decision = PdpDecision::Deny(DenyReason::Delegation);
+            explanation.entitlement_evaluation.outcome = ConjunctOutcome::NotEvaluated;
+            set_shadow_counterfactual(&mut explanation, false, &entitlement_matches);
+            return explanation;
+        };
         let capability = CapabilityQuery {
             subject_id: &principal.subject_id,
             actor_kind: principal.actor_kind.as_str(),
@@ -274,13 +280,6 @@ impl Pdp {
             return explanation;
         }
         explanation.capability = ConjunctOutcome::Allow;
-        if !self.delegation.allows(request) {
-            explanation.delegation = ConjunctOutcome::Deny;
-            explanation.decision = PdpDecision::Deny(DenyReason::Delegation);
-            explanation.entitlement_evaluation.outcome = ConjunctOutcome::NotEvaluated;
-            set_shadow_counterfactual(&mut explanation, false, &entitlement_matches);
-            return explanation;
-        }
         explanation.delegation = ConjunctOutcome::Allow;
 
         let access = self.access_evaluation(request, scope, &entitlement_matches.enforced_kinds);

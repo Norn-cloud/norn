@@ -361,8 +361,12 @@ mod pdp {
     }
 
     fn pdp() -> Pdp {
+        pdp_for("alice")
+    }
+
+    fn pdp_for(subject: &str) -> Pdp {
         let grant = CapabilityGrant {
-            subject_id: "alice".to_owned(),
+            subject_id: subject.to_owned(),
             actor_kind: ActorKind::User,
             agent_session_id: None,
             scope: Some(scope()),
@@ -458,14 +462,14 @@ mod pdp {
             let (mut snapshot, request) = delegation_fixture();
             snapshot.cost = cost;
             snapshot.now = now;
-            proptest::prop_assert_eq!(pdp().with_delegation_snapshot(snapshot).decide(&request).is_allow(), cost > 0 && cost <= 5 && now < 90);
+            proptest::prop_assert_eq!(pdp_for("accountable-user").with_delegation_snapshot(snapshot).decide(&request).is_allow(), cost > 0 && cost <= 5 && now < 90);
         }
     }
 
     #[test]
     fn delegation_chain_requires_attenuation_and_current_parent() {
         let (snapshot, mut request) = delegation_fixture();
-        let allowed = pdp().with_delegation_snapshot(snapshot.clone());
+        let allowed = pdp_for("accountable-user").with_delegation_snapshot(snapshot.clone());
         assert_eq!(allowed.decide(&request), PdpDecision::Allow);
         assert_eq!(allowed.accountable_person(&request), Some("person-1"));
         assert!(!pdp().decide(&request).is_allow());
@@ -473,7 +477,7 @@ mod pdp {
             let mut current = snapshot.clone();
             current.cost = cost;
             assert_eq!(
-                pdp()
+                pdp_for("accountable-user")
                     .with_delegation_snapshot(current)
                     .decide(&request)
                     .is_allow(),
@@ -520,7 +524,7 @@ mod pdp {
                     leaf.capabilities.clear();
                 }
             }
-            let denied = pdp().with_delegation_snapshot(bad);
+            let denied = pdp_for("accountable-user").with_delegation_snapshot(bad);
             assert_eq!(
                 denied.decide(&request),
                 PdpDecision::Deny(DenyReason::Delegation),
@@ -528,6 +532,12 @@ mod pdp {
             );
             assert_eq!(denied.accountable_person(&request), None);
         }
+        let mut direct = request.clone();
+        direct.delegation = Delegation::Direct;
+        assert!(
+            !allowed.decide(&direct).is_allow(),
+            "chain authority cannot become direct authority"
+        );
         request.principal.roles.clear();
         assert!(
             !allowed.decide(&request).is_allow(),

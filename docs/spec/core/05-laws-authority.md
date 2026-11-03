@@ -125,8 +125,9 @@ The PDP accepts root-to-leaf grant pins only against the host-authenticated
 session and accountable person separately. Each hop retains its exact parent,
 scope and accountable person, narrows capability/action/resource sets, and never
 extends expiry or remaining budget. Missing/stale/cyclic chains refuse. The
-leaf matches `PrincipalInput`; existing capability and Cedar access checks remain
-mandatory. Unverified token text remains denied.
+leaf matches `PrincipalInput`; the capability gate checks the root issuer while
+Cedar checks the acting leaf. No independent direct leaf grant is minted; choosing
+Direct cannot bypass ancestor revocation. Both conjuncts remain mandatory. Unverified token text remains denied.
 
 Commit/dispatch hosts must reconstruct the snapshot from current grant generations,
 logical time and budget, serializing authorization with consumption. A cached PDP

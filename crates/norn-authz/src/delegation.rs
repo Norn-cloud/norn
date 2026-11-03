@@ -133,6 +133,22 @@ impl DelegationSnapshot {
         parent.is_some_and(|leaf| same_actor(&leaf.recipient, &request.principal))
     }
 
+    /// Capability authority is the authenticated root issuer, while Cedar
+    /// still evaluates the acting leaf. No independent leaf grant is minted.
+    pub(crate) fn capability_principal<'a>(
+        &'a self,
+        request: &'a AccessRequest,
+    ) -> Option<&'a PrincipalInput> {
+        match &request.delegation {
+            Delegation::Direct => Some(&request.principal),
+            Delegation::Chain(pins) if self.allows(request) => self
+                .grants
+                .get(&pins.first()?.id)
+                .map(|grant| &grant.issuer),
+            _ => None,
+        }
+    }
+
     /// Accountable identity only after the complete chain passes the PDP.
     pub(crate) fn accountable_person<'a>(&'a self, request: &AccessRequest) -> Option<&'a str> {
         let Delegation::Chain(pins) = &request.delegation else {
