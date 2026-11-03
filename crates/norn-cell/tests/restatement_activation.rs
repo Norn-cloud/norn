@@ -349,7 +349,24 @@ fn clock_ahead_restatement_sequence(receipt_offset: u64, query_lead: u64) {
     assert!(view(&store, &context).stale);
     drop(store);
     let store = finish_resumed_clock_build(&path, &model, &plan, &context, &query, point);
-    let current = view(&store, &context);
+    assert_clock_slice(&store, &plan, &context, &query, point);
+    let old_again = store
+        .read_restatement_at_version(ID, old_version, &context)
+        .expect("retained K1");
+    assert_eq!(
+        serde_json::to_vec(&old_again).expect("old K1"),
+        serde_json::to_vec(&old).expect("original K1")
+    );
+}
+
+fn assert_clock_slice(
+    store: &CellStore,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    query: &QueryContext,
+    point: KnowledgeCutoff,
+) {
+    let current = view(store, context);
     assert!(!current.stale);
     assert_eq!(week(&current).totals[0].canonical(), "292.5");
     assert_eq!(week(&current).value.expect("ratio").canonical(), "0.975");
@@ -366,14 +383,7 @@ fn clock_ahead_restatement_sequence(receipt_offset: u64, query_lead: u64) {
         point.recorded_at.as_millis()
     );
     assert_eq!(current.outputs["week"].result.known_as_of, point.frontier);
-    assert_same_slice(&store, &plan, &query, point);
-    let old_again = store
-        .read_restatement_at_version(ID, old_version, &context)
-        .expect("retained K1");
-    assert_eq!(
-        serde_json::to_vec(&old_again).expect("old K1"),
-        serde_json::to_vec(&old).expect("original K1")
-    );
+    assert_same_slice(store, plan, query, point);
 }
 
 #[test]
