@@ -473,9 +473,9 @@ fn collect_additivity_changes(
             candidate: new.additivity().clone(),
         });
     }
-    for member in &candidate.record_members {
+    for member in candidate.record_members() {
         if let Some(old) = previous
-            .record_members
+            .record_members()
             .iter()
             .find(|old| old.id == member.id)
         {
