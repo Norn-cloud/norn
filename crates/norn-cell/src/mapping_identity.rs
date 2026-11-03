@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct IdentityEvidence {
-    bundle: MappingBundle,
+pub(crate) struct IdentityEvidence {
+    pub(crate) bundle: MappingBundle,
     // Numeric bytes survive the inbox text profile without changing the spelling proof.
     identity: [Vec<u8>; 5],
-    finding: DataQualityFinding,
+    pub(crate) finding: DataQualityFinding,
 }
 
-fn keys(raw: &RuntimeValue, input: &MappingInput) -> Result<[String; 5], CellError> {
+pub(crate) fn keys(raw: &RuntimeValue, input: &MappingInput) -> Result<[String; 5], CellError> {
     let text = |name| {
         raw.get(name)
             .and_then(RuntimeValue::as_str)
@@ -133,7 +133,34 @@ pub(crate) fn capture<E: SqlEngine>(
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    fn identity_evidence(&self) -> Result<Vec<IdentityEvidence>, CellError> {
+    /// OBS-EVIDENCE-1: governed reads cannot consume disputed source subjects.
+    pub(crate) fn refuse_disputed_subject(
+        &self,
+        key: &norn_kernel::FactKey,
+    ) -> Result<(), CellError> {
+        if self.source_dispute_at(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)? {
+            return Err(CellError::QualityEvaluation(
+                "core.boundary.import_finding: disputed source identity".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// OBS-EVIDENCE-1: non-main reads cannot omit an unqualified source-evidence overlay.
+    pub(crate) fn source_dispute_at(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<bool, CellError> {
+        let disputed = self.indexed_source_dispute(world, object_type, key)?;
+        if disputed && world != crate::MAIN_WORLD {
+            return Err(CellError::SourceDisputeWorldUnqualified);
+        }
+        Ok(disputed)
+    }
+
+    pub(crate) fn identity_evidence(&self) -> Result<Vec<IdentityEvidence>, CellError> {
         let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
         let mut evidence = Vec::new();
         for values in rows {
@@ -170,12 +197,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// OBS-EVIDENCE-1: an ambiguous NFC bucket grants no convergence authority.
     pub(crate) fn identity_is_disputed(&self, bundle: &MappingBundle) -> Result<bool, CellError> {
         let key = keys(&bundle.raw, &bundle.input)?.map(|s| norn_ir::canonical::nfc(&s));
-        for evidence in self.identity_evidence()? {
-            if keys(&evidence.bundle.raw, &evidence.bundle.input)? == key {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.indexed_identity_dispute(&key)
     }
 
     pub(crate) fn identity_findings(
@@ -183,31 +205,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let root = self.root_type(object_type)?;
-        let mut findings = Vec::new();
-        for evidence in self.identity_evidence()? {
-            let [connector, partition, source, source_id, event_id] =
-                keys(&evidence.bundle.raw, &evidence.bundle.input)?;
-            let related = self.source_event_mapping_bundles(
-                &connector, &partition, &source, &source_id, &event_id,
-            )?;
-            let mut affected = false;
-            for bundle in related.iter().chain(std::iter::once(&evidence.bundle)) {
-                for record in &bundle.records {
-                    if record.key == key
-                        && self.retained_mapping_root(
-                            bundle.definitions_version,
-                            record.object_type.as_str(),
-                        )? == root
-                    {
-                        affected = true;
-                    }
-                }
-            }
-            if affected {
-                findings.push(evidence.finding);
-            }
-        }
-        Ok(findings)
+        self.indexed_source_findings(object_type, key, true)
     }
 }

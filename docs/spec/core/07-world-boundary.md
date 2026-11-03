@@ -85,7 +85,8 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
-OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence and authoritative promotion of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
+CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
+OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
@@ -149,3 +150,28 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 FUNCTION-HOST-1: `implementation.format: host` declares host-provided native code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The host must resolve its configured implementation by these exact pins or refuse.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
+
+OBS-DISPUTE-LOOKUP-1: governed subject lookups reuse a complete, recomputed
+in-memory subject index only while the native engine's private SQLite change
+counters remain unchanged; local writes, rollbacks and external commits invalidate
+it. Hosts without a connection revision reuse the index only inside the immutable
+commit-guard transaction, rebuilding for each ordinary read. This adds no admitted
+SQL statement or function.
+Rebuilding checks every retained conflict/NFC finding and all mapping contexts
+against their retained definitions before publishing positive or negative
+membership. Later mapping contexts therefore extend an existing dispute.
+No caller claim or persisted membership grants authority. A cold snapshot costs
+one evidence rebuild; repeated operands use indexed membership without decoding
+unrelated evidence. Bounded fact/reference reads apply their byte budget first.
+
+Indexes built by quality, guard or candidate validation remain transaction-local
+and cannot survive rollback. Native connection revisions are unavailable while
+uncommitted state is visible. A moving evidence revision retries at most three
+complete rebuild attempts; continued movement refuses the retryable
+`core.boundary.source_evidence_changed`, while stable recomputation disagreement
+continues to refuse `core.boundary.bundle_mismatch`.
+
+Interface-typed governed link targets resolve their concrete identity roots in the
+requested world before index lookup. If the identity is absent, every verified
+indexed root for that key is checked conservatively; an interface name never
+causes `UnknownObjectType` at the dispute fence or silently loses quarantine.

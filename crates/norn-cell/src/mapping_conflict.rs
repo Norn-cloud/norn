@@ -11,6 +11,7 @@ use norn_ir::{
 };
 use norn_kernel::{ObservationId, Observed};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Quarantined capture evidence; this never supplies canonical write authority.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -128,8 +129,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
+        self.indexed_source_findings(object_type, key, false)
+    }
+
+    pub(crate) fn verified_source_conflicts(&self) -> Result<Vec<MappingConflict>, CellError> {
         let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
-        let mut findings = Vec::new();
+        let mut conflicts = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let stored_id: String = row.get(0)?;
@@ -143,26 +148,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(CellError::MappingBundleMismatch);
             }
-            let root = self.root_type(object_type)?;
-            let mut affected = false;
-            let related = self.source_event_bundles(&conflict.incoming)?;
-            for bundle in related.iter().chain(std::iter::once(&conflict.incoming)) {
-                for subject in &bundle.records {
-                    if subject.key == key
-                        && self.retained_mapping_root(
-                            bundle.definitions_version,
-                            subject.object_type.as_str(),
-                        )? == root
-                    {
-                        affected = true;
-                    }
-                }
-            }
-            if affected {
-                findings.push(conflict.finding);
-            }
+            conflicts.push(conflict);
         }
-        Ok(findings)
+        Ok(conflicts)
     }
 
     /// Recompute boundary conflict evidence before disclosure under the caller's source policy.
@@ -206,4 +194,152 @@ pub(crate) fn capture<E: SqlEngine>(
         &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
     )?;
     Ok((id, inserted))
+}
+
+/// OBS-DISPUTE-LOOKUP-1: membership comes only from rechecked complete evidence.
+/// The index is disposable and valid only at an unchanged SQLite connection snapshot.
+#[derive(Debug, Default)]
+pub(crate) struct SourceDisputeIndex {
+    revision: Option<(u64, u64)>,
+    initialized: bool,
+    subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
+    identities: BTreeSet<[String; 5]>,
+    roots_by_key: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    fn build_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
+        for _attempt in 0..3 {
+            let revision = self.conn.read_cache_revision()?;
+            let collected = self.collect_source_dispute_index();
+            if self.conn.read_cache_revision()? != revision {
+                continue;
+            }
+            let mut index = collected?;
+            index.revision = revision;
+            index.initialized = true;
+            return Ok(index);
+        }
+        Err(CellError::SourceEvidenceChanged)
+    }
+
+    fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
+        let mut index = SourceDisputeIndex::default();
+        for conflict in self.verified_source_conflicts()? {
+            self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
+        }
+        for guard in self.identity_evidence()? {
+            index.identities.insert(crate::mapping_identity::keys(
+                &guard.bundle.raw,
+                &guard.bundle.input,
+            )?);
+            self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
+        }
+        Ok(index)
+    }
+
+    fn index_source_finding(
+        &self,
+        index: &mut SourceDisputeIndex,
+        incoming: &MappingBundle,
+        identity: bool,
+        finding: &DataQualityFinding,
+    ) -> Result<(), CellError> {
+        let related = self.source_event_bundles(incoming)?;
+        let mut subjects = BTreeSet::new();
+        for bundle in related.iter().chain(std::iter::once(incoming)) {
+            for record in &bundle.records {
+                subjects.insert((
+                    self.retained_mapping_root(
+                        bundle.definitions_version,
+                        record.object_type.as_str(),
+                    )?,
+                    record.key.clone(),
+                ));
+            }
+        }
+        for subject in subjects {
+            index
+                .roots_by_key
+                .entry(subject.1.clone())
+                .or_default()
+                .insert(subject.0.clone());
+            index
+                .subjects
+                .entry(subject)
+                .or_default()
+                .push((identity, finding.clone()));
+        }
+        Ok(())
+    }
+
+    fn with_source_dispute_index<T>(
+        &self,
+        read: impl FnOnce(&SourceDisputeIndex) -> T,
+    ) -> Result<T, CellError> {
+        let Some(cache) = self.source_disputes else {
+            return Ok(read(&self.build_source_dispute_index()?));
+        };
+        let revision = self.conn.read_cache_revision()?;
+        if revision.is_none() && !self.source_disputes_transaction {
+            return Ok(read(&self.build_source_dispute_index()?));
+        }
+        if !cache.borrow().initialized || cache.borrow().revision != revision {
+            let rebuilt = self.build_source_dispute_index()?;
+            *cache.borrow_mut() = rebuilt;
+        }
+        Ok(read(&cache.borrow()))
+    }
+
+    pub(crate) fn indexed_source_findings(
+        &self,
+        object_type: &str,
+        key: &str,
+        identity: bool,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
+        let roots = self.source_dispute_roots(crate::MAIN_WORLD, object_type, key)?;
+        self.with_source_dispute_index(|index| {
+            let mut seen = BTreeSet::new();
+            let mut findings = Vec::new();
+            for root in roots.as_ref().into_iter().flatten().chain(
+                index
+                    .roots_by_key
+                    .get(key)
+                    .into_iter()
+                    .flatten()
+                    .filter(|_root| roots.is_none()),
+            ) {
+                for (kind, finding) in index
+                    .subjects
+                    .get(&(root.clone(), key.to_owned()))
+                    .into_iter()
+                    .flatten()
+                {
+                    if *kind == identity && seen.insert(finding.id.clone()) {
+                        findings.push(finding.clone());
+                    }
+                }
+            }
+            findings
+        })
+    }
+
+    pub(crate) fn indexed_source_dispute(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+    ) -> Result<bool, CellError> {
+        let roots = self.source_dispute_roots(world, object_type, key)?;
+        self.with_source_dispute_index(|index| match &roots {
+            Some(roots) => roots
+                .iter()
+                .any(|root| index.subjects.contains_key(&(root.clone(), key.to_owned()))),
+            None => index.roots_by_key.contains_key(key),
+        })
+    }
+
+    pub(crate) fn indexed_identity_dispute(&self, keys: &[String; 5]) -> Result<bool, CellError> {
+        self.with_source_dispute_index(|index| index.identities.contains(keys))
+    }
 }

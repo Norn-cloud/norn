@@ -1,10 +1,10 @@
 //! OBS-EVIDENCE-1: only cell-owned recomputation can authorize mapped observations.
-use crate::{CellError, SqliteCell, engine::SqlEngine, mapping_bundle::MappingBundle};
+use crate::{CellError, SqliteCell, StoreReader, engine::SqlEngine, mapping_bundle::MappingBundle};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
-    Observed, TypeCatalog, World, load_slice,
+    Observed, TypeCatalog, World,
 };
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -78,7 +78,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = load_slice(self, [key.clone()])?;
+            let slice = self.store().read().mapping_observation_slice(&key)?;
             let mut values = record
                 .invocations
                 .into_iter()
@@ -113,5 +113,25 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         self.commit_observed(commit, authorization)
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
+    }
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.
+    fn mapping_observation_slice(
+        &self,
+        key: &FactKey,
+    ) -> Result<norn_kernel::FactSlice, CellError> {
+        let state = norn_kernel::FactState {
+            version: norn_kernel::FactVersion(self.version(
+                crate::MAIN_WORLD,
+                key.object_type.as_str(),
+                &key.key,
+            )?),
+            values: self
+                .object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?
+                .map(|r| r.values),
+        };
+        Ok(norn_kernel::FactSlice::from([(key.clone(), state)]))
     }
 }

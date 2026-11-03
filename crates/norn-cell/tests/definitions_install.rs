@@ -2937,6 +2937,9 @@ struct WriteCounter {
     attempts: std::rc::Rc<std::cell::Cell<usize>>,
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
+    evidence_reads: std::rc::Rc<std::cell::Cell<usize>>,
+    revision_bumps: std::rc::Rc<std::cell::Cell<usize>>,
+    revision_epoch: std::rc::Rc<std::cell::Cell<u64>>,
 }
 
 struct CountedEngine {
@@ -2957,12 +2960,42 @@ impl CountedEngine {
 }
 
 impl SqlEngine for CountedEngine {
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        let Some((writes, remote)) = self.inner.read_cache_revision()? else {
+            return Ok(None);
+        };
+        if self.counter.revision_bumps.get() > 0 {
+            self.counter
+                .revision_bumps
+                .set(self.counter.revision_bumps.get().saturating_sub(1));
+            let epoch = self
+                .counter
+                .revision_epoch
+                .get()
+                .checked_add(1)
+                .ok_or(CellError::OutOfRange("test revision"))?;
+            self.counter.revision_epoch.set(epoch);
+        }
+        let remote = remote
+            .checked_add(self.counter.revision_epoch.get())
+            .ok_or(CellError::OutOfRange("test revision"))?;
+        Ok(Some((writes, remote)))
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.record_write();
         self.inner.execute(sql, params)
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        if sql.contains("observation_id LIKE 'mapping-conflict:%'")
+            || sql.contains("observation_id LIKE 'mapping-identity:%'")
+        {
+            self.counter
+                .evidence_reads
+                .set(self.counter.evidence_reads.get().saturating_add(1));
+        }
+
         if sql.starts_with("SELECT \"_target\" FROM ") {
             assert!(sql.ends_with("LIMIT ?3"), "unbounded outgoing query: {sql}");
             assert!(matches!(params.last(), Some(SqlValue::Integer(limit)) if *limit <= 1001));
@@ -5284,7 +5317,6 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
-            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("second role").is_none());
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
@@ -6458,6 +6490,10 @@ norn_testkit::proptest::proptest! {
             }
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
+            norn_testkit::proptest::prop_assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("raw alternate").is_some());
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("alternate excluded").is_none());
+            let governed = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+            norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &governed).is_err());
             let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
@@ -6581,6 +6617,7 @@ norn_testkit::proptest::proptest! {
             drop(cell);
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
         }
+        let expected = norn_kernel::FactVersion(store.read().version(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("read before dispute"));
         let (guard_id, inserted) = store.inject_mapping_bundle(&decomposed, &input).expect("capture spelling");
         norn_testkit::proptest::prop_assert!(inserted && guard_id.starts_with("mapping-identity:"));
         let (canonical_id, _) = store.inject_mapping_bundle(&canonical, &input).expect("candidate retained");
@@ -6589,6 +6626,19 @@ norn_testkit::proptest::proptest! {
         if !first_nfc {
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&canonical_id), Err(CellError::UnsupportedMappingProfile)));
         }
+        let key = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load(&cell, &key).is_err());
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_bounded(&cell, &key, 4096).is_err());
+        norn_testkit::proptest::prop_assert!(norn_kernel::CellHost::load_reference(&cell, &key, 4096).is_err());
+        let link = norn_kernel::LinkKey::new(norn_kernel::FactKey::new("quality.Measurement", "MEAS-2"), "unused", key.clone());
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::load_link(&cell, &link), Err(CellError::QualityEvaluation(_))));
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::read_link_targets(&cell, &key, "unused", 1, 64), Err(CellError::QualityEvaluation(_))));
+        let mut stale = norn_kernel::CellCommit::empty();
+        stale.reads.push(norn_kernel::FactExpectation { key: key.clone(), expected });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, stale), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
+        let mut written = norn_kernel::CellCommit::empty();
+        written.writes.push(norn_kernel::FactWrite { key, expected, mutation: norn_kernel::FactMutation::Put { values:BTreeMap::from([("purity".into(), Value::from_json_text("0.90").expect("value"))]) } });
+        norn_testkit::proptest::prop_assert!(matches!(norn_kernel::CellHost::commit(&mut cell, written), Err(norn_kernel::CommitError::Host(CellError::QualityEvaluation(_)))));
         drop(cell);
         for delivery in 1..deliveries {
             store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
@@ -6687,5 +6737,347 @@ fn retained_mapping_root_survives_removal_of_an_unapplied_type() {
             .retained_mapping_root(previous.version, "quality.Measurement")
             .expect("retained subject"),
         "quality.Measurement"
+    );
+}
+
+fn source_dispute_world_fixture(
+    normalized: bool,
+) -> (
+    tempfile::TempDir,
+    CellStore,
+    norn_cell::ObjectRecord,
+    norn_cell::ObjectRecord,
+) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("world-dispute.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    let mut original = bundle_raw("MEAS-1", "0.90");
+    original
+        .input
+        .as_object_mut()
+        .expect("raw")
+        .insert("source_id".into(), Value::from("é"));
+    let (id, _) = store
+        .inject_mapping_bundle(&original, &input)
+        .expect("capture");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    cell.process_mapping_bundle(&id).expect("apply first");
+    let before = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("eligible")
+        .expect("record");
+    let model = cell.store().model().clone();
+    drop(cell);
+    store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    store
+        .commit(&CommitBatch {
+            world: "fork/test".into(),
+            scope: "org_demo/dev".into(),
+            logical_time: store.read().clock_floor().expect("clock"),
+            writes: vec![FactWriteRow::Put {
+                object_type: "quality.Measurement".into(),
+                key: "MEAS-1".into(),
+                values: before.values.clone(),
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("synthetic non-main fixture");
+    let fork = store
+        .read()
+        .object("fork/test", "quality.Measurement", "MEAS-1")
+        .expect("raw world")
+        .expect("record");
+    let mut candidate = if normalized {
+        original.clone()
+    } else {
+        bundle_raw("MEAS-1", "1.20")
+    };
+    candidate.input.as_object_mut().expect("raw").insert(
+        "source_id".into(),
+        Value::from(if normalized { "e\u{301}" } else { "é" }),
+    );
+    store
+        .inject_mapping_bundle(&candidate, &input)
+        .expect("durable dispute");
+    (dir, store, before, fork)
+}
+
+#[test]
+fn source_dispute_non_main_reads_refuse_until_core08_retains_the_frontier() {
+    for normalized in [false, true] {
+        let (_directory, store, before, fork) = source_dispute_world_fixture(normalized);
+        let reader = store.read();
+        let expected = "core.world.source_dispute_unqualified";
+        assert_eq!(
+            reader
+                .authoritative_object("fork/test", "quality.Measurement", "MEAS-1")
+                .expect_err("object refuses")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .authoritative_page("fork/test", "quality.Measurement", None, 10)
+                .expect_err("page refuses")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .observation_findings("fork/test", "quality.Measurement", "MEAS-1")
+                .expect_err("findings refuse")
+                .to_string(),
+            expected
+        );
+        assert_eq!(
+            reader
+                .observation_is_quarantined("fork/test", &fork)
+                .expect_err("governed predicate refuses")
+                .to_string(),
+            expected
+        );
+        assert!(
+            reader
+                .authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+                .expect("live quarantine")
+                .is_none()
+        );
+        assert_eq!(
+            reader
+                .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+                .expect("raw preserved"),
+            Some(before.clone())
+        );
+        assert_eq!(
+            reader
+                .object("fork/test", "quality.Measurement", "MEAS-1")
+                .expect("raw world preserved"),
+            Some(fork)
+        );
+        assert!(
+            reader
+                .authoritative_object("fork/test", "quality.Measurement", "OTHER")
+                .expect("unaffected absence")
+                .is_none()
+        );
+        let mut cell: norn_cell::SqliteCell<
+            norn_kernel::ObservationEvent,
+            norn_ir::RuntimeObject,
+            norn_ir::RuntimeObject,
+        > = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new())
+            .expect("native cell");
+        let mut written = norn_kernel::CellCommit::empty();
+        written.writes.push(norn_kernel::FactWrite {
+            key: norn_kernel::FactKey::new("quality.Measurement", "MEAS-1"),
+            expected: norn_kernel::FactVersion(before.version),
+            mutation: norn_kernel::FactMutation::Put {
+                values: before.values,
+            },
+        });
+        assert!(matches!(
+            norn_kernel::CellHost::commit(&mut cell, written),
+            Err(norn_kernel::CommitError::Host(
+                CellError::QualityEvaluation(_)
+            ))
+        ));
+    }
+}
+
+#[test]
+fn source_dispute_index_reuses_verified_snapshot_and_refuses_external_tampering() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("indexed-disputes.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    let (id, _) = store
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "0.90"), &input)
+        .expect("capture");
+    let mut cell =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    cell.process_mapping_bundle(&id).expect("canonical fact");
+    let model = cell.store().model().clone();
+    drop(cell);
+    store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("reopen");
+    for number in 0..16 {
+        let name = format!("MEAS-{number}");
+        store
+            .inject_mapping_bundle(&bundle_raw(&name, "0.90"), &input)
+            .expect("first");
+        store
+            .inject_mapping_bundle(&bundle_raw(&name, "1.20"), &input)
+            .expect("conflict");
+    }
+    drop(store);
+    let counter = WriteCounter::default();
+    let engine = CountedEngine {
+        inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+        counter: counter.clone(),
+    };
+    let store = CellStore::from_engine(engine, model).expect("counted store");
+    let cell: norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine> =
+        norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("host");
+    let clean = norn_kernel::FactKey::new("quality.Measurement", "unrelated");
+    let disputed = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+    counter.evidence_reads.set(0);
+    assert!(
+        norn_kernel::CellHost::load_reference(&cell, &disputed, 0)
+            .expect("budget first")
+            .is_none()
+    );
+    assert_eq!(counter.evidence_reads.get(), 0);
+    norn_kernel::CellHost::load(&cell, &clean).expect("warm complete index");
+    assert_eq!(
+        counter.evidence_reads.get(),
+        2,
+        "one conflict and one identity scan"
+    );
+    for _ in 0..32 {
+        norn_kernel::CellHost::load(&cell, &clean).expect("negative indexed lookup");
+        assert!(matches!(
+            norn_kernel::CellHost::load(&cell, &disputed),
+            Err(CellError::QualityEvaluation(_))
+        ));
+    }
+    assert_eq!(
+        counter.evidence_reads.get(),
+        2,
+        "no unrelated evidence is decoded per operand"
+    );
+    assert_interface_dispute_fences(&cell, &clean);
+    let external = NativeEngine::open(&path, StoreOptions::default()).expect("external connection");
+    external.execute("UPDATE _norn_inbox SET observed = json_set(observed, '$.input.finding.message', 'forged') WHERE observation_id LIKE 'mapping-conflict:%'", &[]).expect("synthetic corruption");
+    assert!(
+        norn_kernel::CellHost::load_bounded(&cell, &disputed, 0)
+            .expect("budget still first")
+            .is_none()
+    );
+    assert_eq!(counter.evidence_reads.get(), 2);
+    assert!(matches!(
+        norn_kernel::CellHost::load(&cell, &clean),
+        Err(CellError::MappingBundleMismatch)
+    ));
+    assert!(
+        counter.evidence_reads.get() > 2,
+        "external edit invalidates negative membership too"
+    );
+}
+
+// OBS-DISPUTE-LOOKUP-1: a later mapping context extends a cached source dispute.
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn source_dispute_index_refreshes_later_contexts_and_redelivery(prefix in "[A-Z]{1,5}", deliveries in 1usize..4) {
+        let dir = tempfile::tempdir().expect("directory");
+        let mut store = mapping_bundle_store(&dir.path().join("late-context.sqlite"));
+        let input = bundle_input();
+        let original = bundle_raw(&prefix, "0.90");
+        store.inject_mapping_bundle(&original, &input).expect("accepted");
+        store.inject_mapping_bundle(&bundle_raw(&prefix, "1.20"), &input).expect("conflict");
+        let alternate_key = format!("{prefix}-ALT");
+        norn_testkit::proptest::prop_assert!(store.read().observation_findings(MAIN_WORLD, "quality.Measurement", &alternate_key).expect("warm negative").is_empty());
+        let mut alternate = input.clone(); alternate.mapping = "quality.alternate".into();
+        for _ in 0..deliveries {
+            store.inject_mapping_bundle(&original, &alternate).expect("later context or replay");
+            let findings = store.read().observation_findings(MAIN_WORLD, "quality.Measurement", &alternate_key).expect("refreshed membership");
+            norn_testkit::proptest::prop_assert_eq!(findings.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn source_dispute_index_revision_is_unavailable_for_rolled_back_state() {
+    let engine = NativeEngine::open_in_memory().expect("engine");
+    engine
+        .execute("CREATE TABLE cache_test (value INTEGER)", &[])
+        .expect("table");
+    let before = engine
+        .read_cache_revision()
+        .expect("committed revision")
+        .expect("cacheable");
+    let rolled_back: Result<(), CellError> = engine.transaction(|| {
+        engine.execute("INSERT INTO cache_test VALUES (1)", &[])?;
+        assert_eq!(
+            engine.read_cache_revision()?,
+            None,
+            "uncommitted state cannot seed a persistent cache"
+        );
+        Err(CellError::Engine("intentional rollback".into()))
+    });
+    assert!(rolled_back.is_err());
+    let after = engine
+        .read_cache_revision()
+        .expect("committed revision")
+        .expect("cacheable again");
+    assert_ne!(before, after);
+    let count: i64 = engine
+        .query_row("SELECT COUNT(*) FROM cache_test", &[], |row| row.get(0))
+        .expect("rollback contents");
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn source_dispute_index_retries_churn_and_returns_a_distinct_retryable_refusal() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("revision-churn.sqlite");
+    let store = mapping_bundle_store(&path);
+    let model = store.model().clone();
+    drop(store);
+    let counter = WriteCounter::default();
+    let engine = CountedEngine {
+        inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+        counter: counter.clone(),
+    };
+    let store = CellStore::from_engine(engine, model).expect("store");
+    for churn in 1..=8 {
+        counter.revision_bumps.set(churn);
+        counter.evidence_reads.set(0);
+        let result = store
+            .read()
+            .observation_findings(MAIN_WORLD, "quality.Measurement", "clean");
+        if churn < 7 {
+            assert!(result.expect("bounded retry stabilizes").is_empty());
+        } else {
+            assert!(matches!(result, Err(CellError::SourceEvidenceChanged)));
+        }
+        assert!(
+            counter.evidence_reads.get() <= 6,
+            "at most three complete rebuild attempts"
+        );
+    }
+}
+
+fn assert_interface_dispute_fences(
+    cell: &norn_cell::SqliteCell<Value, Value, norn_ir::RuntimeObject, CountedEngine>,
+    clean: &norn_kernel::FactKey,
+) {
+    for target in ["MEAS-1", "MEAS-0"] {
+        let link = norn_kernel::LinkKey::new(
+            clean.clone(),
+            "unused",
+            norn_kernel::FactKey::new("quality.Measured", target),
+        );
+        assert!(
+            matches!(
+                norn_kernel::CellHost::load_link(cell, &link),
+                Err(CellError::QualityEvaluation(_))
+            ),
+            "both live and missing interface roots retain quarantine"
+        );
+    }
+    let link = norn_kernel::LinkKey::new(
+        clean.clone(),
+        "unused",
+        norn_kernel::FactKey::new("quality.Measured", "clean-interface"),
+    );
+    assert!(
+        matches!(
+            norn_kernel::CellHost::load_link(cell, &link),
+            Err(CellError::UnknownLink { .. })
+        ),
+        "clean interfaces reach ordinary link validation"
     );
 }
