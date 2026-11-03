@@ -128,9 +128,10 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
 }
 
 fn decimal_wire_schema(schema: &mut JsonObject) {
-    if schema.get("type").and_then(JsonValue::as_string) == Some("decimal") {
+    if schema.get("type").and_then(JsonValue::as_string) == Some("number")
+        && schema.get("nornType").and_then(JsonValue::as_object).and_then(|site| site.get("kind")).and_then(JsonValue::as_string) == Some("decimal") {
         schema.insert("type".to_owned(), JsonValue::String("string".to_owned()));
-        schema.remove("scale");
+        schema.remove("nornType");
     } else {
         for value in schema.values_mut() {
             if let JsonValue::Object(child) = value {

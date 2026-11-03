@@ -19,7 +19,11 @@ fn escape(value: &str) -> String {
 fn fields(schema: &serde_json::Value) -> Option<String> {
     let mut fields = String::new();
     for (name, property) in schema.get("properties")?.as_object()? {
-        let kind = property.get("type")?.as_str()?;
+        let kind = if property.pointer("/nornType/kind").and_then(serde_json::Value::as_str) == Some("decimal") {
+            "decimal"
+        } else {
+            property.get("type")?.as_str()?
+        };
         let input_type = match kind {
             "string" | "decimal" => "text",
             "integer" | "number" => "number",

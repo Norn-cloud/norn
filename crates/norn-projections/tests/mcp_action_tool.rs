@@ -25,7 +25,7 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     let mut action = fixture_action();
     action.input_schema = serde_json::from_value(json!({
         "type": "object", "additionalProperties": false,
-        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}, "amount": {"type": "decimal", "scale": 2}},
+        "properties": {"code": {"type": "string"}, "brand": {"type": "string"}, "amount": {"type": "number", "nornType": {"kind":"decimal", "scale":2}}},
         "required": ["code", "brand", "amount"]
     }))
     .expect("schema decodes");

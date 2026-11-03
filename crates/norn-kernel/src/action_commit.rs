@@ -5884,7 +5884,7 @@ mod reference_lineage_tests {
             r#"{
           "actionId":"test.decimal", "scopeRequired":["orgId","environmentId"],
           "idempotent":true, "ledgered":true,
-          "inputSchema":{"type":"object","properties":{"amount":{"type":"decimal","scale":2}},
+          "inputSchema":{"type":"object","properties":{"amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}},
             "required":["amount"],"additionalProperties":false},
           "outputSchema":{"type":"object","properties":{},"additionalProperties":false}
         }"#,
