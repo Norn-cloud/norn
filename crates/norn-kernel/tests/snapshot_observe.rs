@@ -996,10 +996,8 @@ fn observe_delete(
         .iter()
         .any(|write| write.key == tombstone_key(key) && write.expected != FactVersion::ABSENT)
     {
-        assert_eq!(
-            cell.commit(commit.clone()).unwrap_err(),
-            CommitError::IdentityReuse
-        );
+        let refusal = cell.commit(commit.clone()).unwrap_err();
+        assert_eq!(refusal, CommitError::IdentityReuse);
     }
     cell.commit_observed(commit, authorization).unwrap();
     events

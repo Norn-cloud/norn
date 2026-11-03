@@ -152,7 +152,7 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
         .expect("new authored delete");
     let replayed = rebuilt.store().read().dump().expect("after delete");
     let refusal = rebuilt
-        .commit(identity_proposal(&rebuilt, Some("new author")))
+        .commit(identity_proposal(&rebuilt, Some("new")))
         .expect_err("reuse");
     assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
     assert_eq!(rebuilt.store().read().dump().expect("unchanged"), replayed);
@@ -210,9 +210,7 @@ fn observed_reappearance_retains_identity_and_advances_its_version() {
     let deleted = cell.load(&key).expect("tombstone").version;
     let (commit, authority) = identity_observation(&cell, "reappear").into_parts();
     let before = cell.store().read().dump().expect("before reappearance");
-    let refusal = cell
-        .commit(commit.clone())
-        .expect_err("event JSON is not authority");
+    let refusal = cell.commit(commit.clone()).expect_err("unsealed");
     assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
     assert_eq!(cell.store().read().dump().expect("unchanged"), before);
     cell.commit_observed(commit, authority).expect("reappear");
