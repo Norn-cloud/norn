@@ -1,0 +1,72 @@
+{
+  "artifactId": "norn.ObservedLinkClaim.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Observed relation claim",
+  "namespace": "norn",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "OBS-LINK-CLAIM-1: an immutable source claim about a canonical relation; existence is evidence, never authored-write authority. MappingIR declares the relation and its endpoints. Resolution and quarantine are projections over these claims.",
+      "name": "norn.ObservedLinkClaim",
+      "properties": [
+        {
+          "id": "observation_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "source_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "source_key",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "role",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "target_type",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "target_key",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "evidence",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/norn.ObservedLinkClaim.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

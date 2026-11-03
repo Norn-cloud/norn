@@ -787,28 +787,32 @@ impl MappedRecord {
     /// Endpoint identity and per-rule provenance come from mapping evaluation.
     #[must_use]
     pub fn link_claims(&self, observation_id: &str) -> Vec<ObservedLinkClaim> {
-        self.links.iter().map(|patch| ObservedLinkClaim {
-            observation_id: observation_id.to_owned(),
-            source_type: patch.object_type.clone(),
-            source_key: patch.key.clone(),
-            role: patch.link.clone(),
-            target: Some(ObservedLinkTarget {
-                object_type: patch.target_type.clone(),
-                key: patch.target_key.clone(),
-            }),
-            provenance: patch.provenance.clone(),
-        }).chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
-            observation_id: observation_id.to_owned(),
-            source_type: self.object_type.clone(),
-            source_key: self.key.clone(),
-            role: role.clone(),
-            target: None,
-            provenance: {
-                let mut provenance = self.provenance.clone();
-                provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
-                provenance
-            },
-        })).collect()
+        self.links
+            .iter()
+            .map(|patch| ObservedLinkClaim {
+                observation_id: observation_id.to_owned(),
+                source_type: patch.object_type.clone(),
+                source_key: patch.key.clone(),
+                role: patch.link.clone(),
+                target: Some(ObservedLinkTarget {
+                    object_type: patch.target_type.clone(),
+                    key: patch.target_key.clone(),
+                }),
+                provenance: patch.provenance.clone(),
+            })
+            .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
+                observation_id: observation_id.to_owned(),
+                source_type: self.object_type.clone(),
+                source_key: self.key.clone(),
+                role: role.clone(),
+                target: None,
+                provenance: {
+                    let mut provenance = self.provenance.clone();
+                    provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
+                    provenance
+                },
+            }))
+            .collect()
     }
 }
 

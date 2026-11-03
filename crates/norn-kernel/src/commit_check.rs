@@ -576,6 +576,7 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     let sources: BTreeSet<_> = commit
         .links
         .iter()
+        .filter(|write| !authorization.is_some_and(|a| a.authorizes_convergent_link(write)))
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization

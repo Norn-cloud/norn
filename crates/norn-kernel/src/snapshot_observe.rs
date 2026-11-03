@@ -234,6 +234,7 @@ pub struct ObservationAuthorization {
     reference_targets: BTreeSet<FactKey>,
     source_scopes: Vec<(FactExpectation, ObservedSourceOwner)>,
     links: Vec<LinkWrite>,
+    convergent_links: Vec<LinkWrite>,
     owner_recreations: Vec<(FactKey, ObservedSourceOwner, FactWrite)>,
     pending_writes: Vec<FactWrite>,
     pending_sources: BTreeSet<FactKey>,
@@ -299,6 +300,7 @@ impl ObservationAuthorization {
             reference_targets: BTreeSet::new(),
             source_scopes: Vec::new(),
             links: Vec::new(),
+            convergent_links: Vec::new(),
             owner_recreations: Vec::new(),
             pending_writes: Vec::new(),
             pending_sources: BTreeSet::new(),
@@ -391,6 +393,7 @@ impl ObservationAuthorization {
         self.snapshot_chunks = None;
         self.source_scopes.extend(other.source_scopes);
         self.links.extend(other.links);
+        self.convergent_links.extend(other.convergent_links);
         self.owner_recreations.extend(other.owner_recreations);
         self.pending_writes.extend(other.pending_writes);
         self.pending_sources.extend(other.pending_sources);
@@ -670,6 +673,62 @@ impl ObservationAuthorization {
             }
         }
         Ok(())
+    }
+
+    /// OBS-LINK-CONVERGE-1: seal one recomputed canonical relation claim.
+    /// The trusted mapping boundary authenticates its retained bundle and pins.
+    /// This permits only its exact edge changes, with a CAS-bound source; it
+    /// confers no ownership on a source system and exempts no endpoint/type law.
+    ///
+    /// # Errors
+    /// Missing source expectation, undeclared role, or an unrelated mutation.
+    pub fn seal_observed_link_claim<E, C, T>(
+        &mut self,
+        catalog: &TypeCatalog<'_>,
+        claim: &norn_ir::mapping::ObservedLinkClaim,
+        source: FactExpectation,
+        commit: &CellCommit<E, C, T>,
+    ) -> Result<(), ObservationRefusal> {
+        let model = crate::CommitModel::new(catalog);
+        let key = FactKey::new(claim.source_type.as_str(), &claim.source_key);
+        if source.key != key || (!commit.reads.contains(&source)
+            && !commit.writes.iter().any(|w| w.key == key && w.expected == source.expected))
+        {
+            return Err(ObservationRefusal::Encoding("claim source has no CAS evidence".into()));
+        }
+        let declaration = model.link(&key.object_type, claim.role.as_str())
+            .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
+        if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
+            self.source_scopes.push((source.clone(), ObservedSourceOwner::from_provenance(&claim.provenance)));
+            self.prepared_items = self.prepared_items.saturating_add(1);
+            if !commit.writes.iter().any(|w| w.key == key) {
+                self.observed_reads.push(source);
+            }
+        }
+        let target = claim.target.as_ref().map(|t| FactKey::new(t.object_type.as_str(), &t.key));
+        if let Some(target) = &target {
+            self.reference_targets.insert(target.clone());
+            self.reference_targets.insert(model.canonical(target));
+        }
+        for write in commit.links.iter().filter(|w| model.canonical(&w.key.source) == model.canonical(&key) && w.key.link == claim.role.as_str()) {
+            let permitted = match &write.mutation {
+                LinkMutation::Add { .. } => target.as_ref().is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
+                LinkMutation::Remove => target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One,
+            };
+            if !permitted { continue; }
+            let mut sealed = write.clone();
+            if let LinkMutation::Add { values } = &mut sealed.mutation {
+                *values = catalog.effective_link_values(&key.object_type, claim.role.as_str(), values)
+                    .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+            }
+            if !self.links.contains(&sealed) { self.links.push(sealed.clone()); }
+            if !self.convergent_links.contains(&sealed) { self.convergent_links.push(sealed); }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn authorizes_convergent_link(&self, write: &LinkWrite) -> bool {
+        self.convergent_links.contains(write)
     }
 
     /// Seal pending-record changes from trusted mapping preparation. Retained

@@ -454,9 +454,15 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
         let mut roles = BTreeSet::new();
         for record in mapped {
             let claims = record.link_claims(&format!("synthetic-bundle:{system}"));
-            assert_eq!(claims.len(), record.links.len() + record.cleared_links.len());
+            assert_eq!(
+                claims.len(),
+                record.links.len() + record.cleared_links.len()
+            );
             for patch in &record.links {
-                let claim = claims.iter().find(|claim| claim.role == patch.link).expect("declared claim");
+                let claim = claims
+                    .iter()
+                    .find(|claim| claim.role == patch.link)
+                    .expect("declared claim");
                 assert_eq!(claim.source_type, patch.object_type);
                 assert_eq!(claim.source_key, patch.key);
                 let target = claim.target.as_ref().expect("explicit canonical endpoint");
@@ -464,19 +470,36 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
                 assert_eq!(target.key, patch.target_key);
                 assert_eq!(claim.provenance, patch.provenance);
                 assert!(target.key.starts_with("demo/"));
-                assert_eq!(claim.provenance.transform.as_deref(), Some(format!("{}.{}", record.map, patch.link.as_str()).as_str()));
+                assert_eq!(
+                    claim.provenance.transform.as_deref(),
+                    Some(format!("{}.{}", record.map, patch.link.as_str()).as_str())
+                );
                 roles.insert((record.map.clone(), patch.link.0.clone()));
             }
         }
         for (map, role) in [
-            ("party_role", "agent"), ("holding", "item"), ("holding", "owner"),
-            ("holding", "custodian"), ("order", "provider"), ("order", "receiver"),
-            ("order", "resource"), ("delivery", "provider"), ("delivery", "receiver"),
-            ("delivery", "resource"), ("delivery", "fulfils"), ("settlement", "payer"),
+            ("party_role", "agent"),
+            ("holding", "item"),
+            ("holding", "owner"),
+            ("holding", "custodian"),
+            ("order", "provider"),
+            ("order", "receiver"),
+            ("order", "resource"),
+            ("delivery", "provider"),
+            ("delivery", "receiver"),
+            ("delivery", "resource"),
+            ("delivery", "fulfils"),
+            ("settlement", "payer"),
             ("settlement", "payee"),
         ] {
-            assert!(roles.contains(&(map.into(), role.into())), "{system}: {map}.{role}");
+            assert!(
+                roles.contains(&(map.into(), role.into())),
+                "{system}: {map}.{role}"
+            );
         }
-        assert_eq!(roles.contains(&("posting".into(), "event".into())), system != "shopify");
+        assert_eq!(
+            roles.contains(&("posting".into(), "event".into())),
+            system != "shopify"
+        );
     }
 }

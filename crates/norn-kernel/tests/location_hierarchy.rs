@@ -692,3 +692,40 @@ fn observed_link_authority_seals_changed_and_unchanged_sources_and_both_ownershi
         })
         .expect("authored replacement remains authorized");
 }
+
+#[test]
+fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership() {
+    use norn_ir::{LinkId, ObjectTypeName};
+    use norn_ir::mapping::{ObservedLinkClaim, ObservedLinkTarget};
+    use norn_kernel::{FactExpectation, ObservationAuthorization, ObservationEvent, TypeCatalog};
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([
+        {"name":"test.Source", "links":[{"id":"target","target":"test.Target","cardinality":{"to":"one","from":"many"}}]},
+        {"name":"test.Target"}
+    ])).expect("types");
+    let catalog = TypeCatalog::new(types.iter());
+    let mut cell: MemoryCell<ObservationEvent, JsonObject, JsonObject> = MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone()).with_types(types.clone());
+    cell.commit(CellCommit { writes: vec![create("test.Source", "one"), create("test.Target", "two"), create("test.Target", "other")], ..CellCommit::empty() }).expect("initial objects");
+    let source = FactKey::new("test.Source", "one");
+    let target = FactKey::new("test.Target", "two");
+    let provenance = serde_json::from_value(serde_json::json!({
+        "source":{"system":"synthetic-a","record":"rows/one"},
+        "mappingVersion":"synthetic.mapping@1", "transform":"row.target", "recordedAt":"2026-11-03T00:00:00Z"
+    })).expect("provenance");
+    let claim = ObservedLinkClaim { observation_id: "bundle:first".into(), source_type: source.object_type.clone(), source_key: source.key.clone(), role: LinkId("target".into()), target: Some(ObservedLinkTarget { object_type: target.object_type.clone(), key: target.key.clone() }), provenance };
+    let read = FactExpectation { key: source.clone(), expected: FactVersion(1) };
+    let commit = CellCommit { reads: vec![read.clone()], links: vec![LinkWrite { key: LinkKey::new(source.clone(), "target", target), expected: FactVersion::ABSENT, mutation: LinkMutation::Add { values: JsonObject::new() } }], ..CellCommit::empty() };
+    let mut authority = ObservationAuthorization::empty();
+    authority.seal_observed_link_claim(&catalog, &claim, read.clone(), &commit).expect("first claim");
+    let mut second = claim.clone(); second.provenance.source.system = "synthetic-b".into(); second.observation_id = "bundle:second".into();
+    authority.seal_observed_link_claim(&catalog, &second, read, &commit).expect("corroboration");
+    let mut forged = commit.clone(); forged.links[0].key.target = FactKey::new("test.Target", "other");
+    assert!(matches!(cell.commit_observed(forged, authority.clone()), Err(norn_kernel::CommitError::ObservationAuthorization)));
+    cell.commit_observed(commit, authority).expect("one convergent edge");
+    let mut wrong = claim; wrong.target.as_mut().expect("target").object_type = ObjectTypeName("test.Source".into());
+    wrong.target.as_mut().expect("target").key = "one".into();
+    let read = FactExpectation { key: source.clone(), expected: FactVersion(1) };
+    let commit = CellCommit { reads: vec![read.clone()], links: vec![LinkWrite { key: LinkKey::new(source.clone(), "target", source), expected: FactVersion::ABSENT, mutation: LinkMutation::Add { values: JsonObject::new() } }], ..CellCommit::empty() };
+    let mut authority = ObservationAuthorization::empty();
+    authority.seal_observed_link_claim(&catalog, &wrong, read, &commit).expect("intent only");
+    assert!(matches!(cell.commit_observed(commit, authority), Err(norn_kernel::CommitError::LinkTarget { .. })));
+}
