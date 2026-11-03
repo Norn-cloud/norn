@@ -224,8 +224,10 @@ fn bind(
         if kind == "non_vacuity" {
             payload["status"] = result["nonVacuity"]["status"].clone();
         }
-        let record = challenge.record_evidence(&pins, &serde_json::to_string(&payload)?)?;
-        if challenge.evidence_identity(&pins, &record) != EvidenceIdentity::Current {
+        let checked_payload = serde_json::to_string(&payload)?;
+        let checked_digest = format!("{:x}", Sha256::digest(checked_payload.as_bytes()));
+        let record = challenge.record_evidence(&pins, &checked_payload)?;
+        if challenge.evidence_identity(&pins, &checked_digest, &record) != EvidenceIdentity::Current {
             return Err("fresh result identity refused".into());
         }
         records.push(record);
@@ -293,7 +295,8 @@ fn main() -> Result<()> {
     let restored_records = bind(&restored, &restored_result, &tool, &bounds)?;
     let prior = original_records.first().ok_or("no bound result")?;
     let changed_pins = bad.evidence_pins(prior.pins.goal_index, tool.clone(), &bounds, 0)?;
-    if bad.evidence_identity(&changed_pins, prior) != EvidenceIdentity::Unknown {
+    let prior_digest = format!("{:x}", Sha256::digest(prior.result_json.as_bytes()));
+    if bad.evidence_identity(&changed_pins, &prior_digest, prior) != EvidenceIdentity::Unknown {
         return Err("stale pass accepted for changed writer".into());
     }
     println!(
