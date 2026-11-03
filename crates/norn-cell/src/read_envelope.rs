@@ -16,7 +16,7 @@ where
     I: Serialize + DeserializeOwned,
 {
     /// Wrap an already authorized local point read in snapshot evidence.
-    /// The server supplies the current PDP CommitBinding after authorization;
+    /// The server supplies the current PDP [`CommitBinding`] after authorization;
     /// this method does not turn a supplied binding into permission to read.
     /// The existing native load profile supports main only, never a caller-labelled fork.
     ///

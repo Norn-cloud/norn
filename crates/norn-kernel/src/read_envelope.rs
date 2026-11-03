@@ -29,7 +29,7 @@ pub struct DefinitionPin {
     pub admission_receipt: Option<String>,
 }
 
-/// Existing CommitBinding pins, copied without creating another authority model.
+/// Existing [`CommitBinding`] pins, copied without creating another authority model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthorityPin {
@@ -138,7 +138,7 @@ pub struct ReadToken {
 pub struct ReadTokenMismatch;
 
 impl ReadToken {
-    /// Compare every context pin against trusted current server context.
+    /// Compare every context pin against trusted expected server context.
     ///
     /// # Errors
     /// Any context mismatch, or stale/incomplete evidence where exact is required.
