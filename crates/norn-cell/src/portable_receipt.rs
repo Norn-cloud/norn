@@ -176,10 +176,24 @@ pub(crate) fn validate_dispatches(
     mode: ReceiptMode,
 ) -> Result<(), CellError> {
     if matches!(mode, ReceiptMode::LegacyReplay) {
-        return Ok(());
+        return validate_legacy_dispatches(batch);
     }
     let cell = crate::cell_identity::read(engine)?;
     validate_batch_dispatches(cell.as_ref(), batch, commit)
+}
+
+pub(crate) fn validate_legacy_dispatches(batch: &CommitBatch) -> Result<(), CellError> {
+    for effect in &batch.effects {
+        if let crate::EffectRow::Enqueue { command } = effect
+            && let Some(invocation) = function_invocation(&command.command)?
+            && invocation.provenance_commit.qualified().is_some()
+        {
+            return Err(CellError::Encoding(
+                "qualified Function provenance requires its retained portable envelope".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_batch_dispatches(

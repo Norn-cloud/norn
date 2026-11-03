@@ -1,0 +1,7 @@
+{
+  "code": "core.boundary.identity_mismatch",
+  "message": "qualified provenance does not match its invocation identity",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T6"
+}

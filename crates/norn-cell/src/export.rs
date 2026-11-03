@@ -207,6 +207,9 @@ impl ExportRecord {
                 body.commit_seq,
             )
             .map_err(|_refused| ExportError::IdentityMismatch)?;
+        } else {
+            crate::portable_receipt::validate_legacy_dispatches(&self.batch)
+                .map_err(|_refused| ExportError::IdentityMismatch)?;
         }
         self.manifest_at(seq)
     }

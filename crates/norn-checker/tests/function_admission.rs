@@ -791,4 +791,8 @@ fn qualified_invocation_world_must_match_its_provenance() {
         found_codes(&check_function_invocation(&invocation, &admitted))
             .contains(codes::PROVENANCE_MISMATCH)
     );
+    assert!(
+        found_codes(&check_function_invocation(&invocation, &admitted))
+            .contains(codes::PROVENANCE_BOUNDARY_MISMATCH)
+    );
 }

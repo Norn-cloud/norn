@@ -461,3 +461,49 @@ fn exported_command_matches_the_retained_generation_and_commit() {
         RuntimeValue::String("final".into())
     );
 }
+
+#[test]
+fn qualified_function_without_portable_envelope_refuses_export_and_replay() {
+    let mut source = store(1);
+    let mut invocation: FunctionInvocation = serde_json::from_str(include_str!(
+        "../../../fixtures/function/invocation.wasm.json"
+    ))
+    .expect("invocation");
+    invocation.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1));
+    let batch = CommitBatch {
+        effects: vec![command(function_envelope(
+            norn_ir::runtime::encode(&invocation).expect("invocation"),
+        ))],
+        ..CommitBatch::default()
+    };
+    source.commit(&batch).expect("qualified control");
+    let mut record = source.export_record(1).expect("record").expect("present");
+    record
+        .advance(&norn_cell::export::ExportManifest::default())
+        .expect("qualified export");
+    let mut foreign = invocation.clone();
+    foreign.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(id(2), "fork".into(), 99));
+    for invocation in [invocation, foreign] {
+        record.batch.effects = vec![command(function_envelope(
+            norn_ir::runtime::encode(&invocation).expect("invocation"),
+        ))];
+        record.receipt.body.request_hash = local_hash(&record.batch);
+        record.receipt.hash = local_hash(&record.receipt.body);
+        record.portable_receipt = None;
+        assert!(matches!(
+            record.advance(&norn_cell::export::ExportManifest::default()),
+            Err(norn_cell::export::ExportError::IdentityMismatch)
+        ));
+        let hash = record.hash().expect("self-consistent fixture");
+        assert!(
+            CellStore::rebuild_export_history(
+                NativeEngine::open_in_memory().expect("engine"),
+                &[record.clone()],
+                &hash
+            )
+            .is_err()
+        );
+    }
+}

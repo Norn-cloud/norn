@@ -175,7 +175,11 @@ New commits atomically retain a versioned portable receipt envelope with the
 local receipt hash and qualified position in the export journal. A missing
 envelope remains local-only. Verified replay preserves that absence and never
 mints portable evidence for old history. Neither the old receipt nor its hash is
-rewritten. Portable validation checks envelope, originating cell/world, local
+rewritten. Qualified Function provenance without its retained portable envelope
+refuses both export verification and replay; removing that envelope cannot select
+a legacy format. Invocation identity mismatches emit `core.boundary.identity_mismatch`
+alongside the existing `function.invocation.provenance_mismatch` adapter code.
+Portable validation checks envelope, originating cell/world, local
 sequence and exact receipt hash together.
 
 Named scenarios: **CELL-QUALIFY-NO-ALIAS** (same key/sequence/operation in distinct
