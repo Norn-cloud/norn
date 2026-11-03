@@ -70,6 +70,76 @@ Execution stays closed until consumption and effects commit atomically, with no 
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
+### TXN-CELL-1 — single-cell execution profile
+
+Every supported proposal key and actual admission read belongs to the bound
+host's cell, including link endpoints, membership/absence partitions, and keys
+discovered during graph traversal. Ownership is host evidence under the commit
+snapshot, never a law applicability label or request hint. Foreign or unknown
+ownership refuses `core.txn.atomic_boundary` before the host applies any effect.
+Outbound commands are local outbox enqueues, not remote atomic writes.
+Consumed timer incarnations, command generations and observations also require
+local ownership before any pending-delivery read or effect.
+
+The current supported immediate laws are pointwise; inherited/effective or
+otherwise unresolved dependencies retain their existing unsupported refusal.
+This profile produces no splittability label or distributed guarantee. A host
+supporting external dependencies must resolve ownership for both facts and
+complete membership partitions; unknown is not local.
+
+Named scenarios: **TXN-CELL-CROSS** refuses a foreign immediate-law read with
+unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
+inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
+**TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
+consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
+
+### Durable flow scheduling and identity (#515)
+
+Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in
+`flow_identity` and `timer_schedule` implement these named invariants:
+
+- **FLOW-KEY-1:** a durable attempt key is the Norn1 digest of a canonical,
+  domain-separated tuple containing scope, world, pinned flow/version, instance,
+  admitted step site and attempt. Identical delivery preserves the key; changing
+  any component changes the identity (subject to SHA-256 collision resistance).
+  Structural framing prevents delimiter aliases. Reusing a durable step object
+  at two authoring sites remains invalid; hashing does not replace admission.
+- **FLOW-TIME-1:** the scheduling time is `max(host clock sample, persisted cell
+  clock floor)`. Delay addition is checked; overflow refuses the whole proposal.
+  No evaluator reads wall time. A virtual clock can supply every test sample.
+- **FLOW-ORDER-1:** among live timers due at that time, select the least `(due,
+  timer id)`, independent of enumeration order. The cell retains one incarnation
+  per timer identity; selection grants neither permission nor consumption.
+
+Named scenarios: **FLOW-KEY-FRAMING** separates ambiguous colon-delimited
+components and each identity dimension; **FLOW-KEY-REDELIVERY** returns the same
+SQLite receipt after reopen without a second event; **FLOW-KEY-MISMATCH** refuses
+changed payload under an existing key; **FLOW-TIME-BOUNDARY** checks exact due
+boundaries, clock rollback, empty queues and overflow. Generated tests sample key
+uniqueness, arbitrary redelivery orders and scheduling correspondence. The bounded
+Kani harness checks full-width deadline arithmetic and ordering over three live
+identities, not cryptographic collision freedom or scheduler liveness. Run it with
+`kani --fail-fast --output-format terse verification/kernel-l1/timer_schedule_kani.rs`.
+This harness is enrolled source evidence, not a promoted full-profile gate.
+
+The dispatch integration is a subsequent implementation unit. It must persist
+schedule/cancel alongside lifecycle state, commands and receipts, re-enter the
+same governed action path with current authority/laws, and consume the exact timer
+incarnation atomically with the accepted consequence. A timer never confers
+permission. At-least-once firing plus durable attempt identity provides one
+committed effect: a retry after a lost acknowledgement reuses the original
+commit's attempt idempotency key, so the existing receipt lookup returns the
+stored receipt instead of committing again. Provider retries use the separate, attempt-independent operation
+key only with an explicit provider deduplication/lookup contract; uncertain
+non-idempotent outcomes require reconciliation. No universal external exactly-once
+claim follows from a local receipt.
+
+Reopen resumes committed pending timers using the persisted clock floor. Restore
+must reconstruct timers from the verified committed prefix while fencing automatic
+timer dispatch, as it fences pending external commands. Replay itself performs
+nothing. Only explicit governed resumption may clear the restore fence after
+current scope, world, authority and pinned definitions are validated. These firing
+and restore requirements are not implemented by the pure helpers alone.
 
 ## Bounded synchronous action profile
 

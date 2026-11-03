@@ -573,6 +573,12 @@ impl Model {
         self.effective_objects.values()
     }
 
+    pub(crate) fn query_contract(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
+        self.effective_objects
+            .get(name)
+            .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
+    }
+
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`
     /// over this store is built from them).
     pub fn object_types(&self) -> impl Iterator<Item = &ObjectTypeDef> {

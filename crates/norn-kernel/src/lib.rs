@@ -62,6 +62,7 @@ mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
+pub mod flow_identity;
 pub mod governing_laws;
 pub mod limits;
 pub mod naming_series;
@@ -76,6 +77,7 @@ pub mod receipt_binding;
 pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
+pub mod timer_schedule;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
@@ -128,3 +130,8 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+/// Conservative ownership boundary for cell-local atomic execution.
+pub mod execution_profile;
+
+mod profile_ownership;

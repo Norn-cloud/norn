@@ -267,3 +267,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .collect(),
     }
 }
+
+/// Single-cell execution diagnostic shared with runtime admission.
+pub mod execution_profile;

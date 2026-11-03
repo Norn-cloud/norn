@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
+
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1916,6 +1918,8 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
     use norn_kernel::CommitError::{self as Error, IdentityCollision};
 
     Ok(match error {
+        Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
+        AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
         Error::Law { key, reason } => Error::Law { key, reason },
         IdentityCollision {
             owner,
@@ -1983,11 +1987,11 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         Error::LinkCardinality { key, endpoint } => Error::LinkCardinality { key, endpoint },
         Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
         Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
-        Error::EffectiveValues { key, reason } => Error::EffectiveValues { key, reason },
+        EffectiveValues { key, reason } => EffectiveValues { key, reason },
         Error::TraversalLimitExceeded { key, reason } => {
             Error::TraversalLimitExceeded { key, reason }
         }
-        Error::AccountingPosting { key, reason } => Error::AccountingPosting { key, reason },
+        AccountingPosting { key, reason } => AccountingPosting { key, reason },
         Error::InvariantViolation {
             key,
             owner,
