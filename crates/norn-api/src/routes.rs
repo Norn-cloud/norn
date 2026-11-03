@@ -200,6 +200,7 @@ mod tests {
             &ResourceLimitProfile::norn_limits_v1(),
         )
         .unwrap();
+        assert!(checked.receipt.admitted);
         let input = InstalledDefinitionInput {
             canonical_set: format!("[{SOURCE}]"),
             registry: vec!["synthetic.library@1.0.0".into()],
