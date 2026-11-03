@@ -19,6 +19,7 @@ norn-projections = { path = "../norn-projections" }
 cedar-policy = { version = "4.13.0", default-features = false }
 
 [dev-dependencies]
+proptest = "1.11.0"
 serde_json = "1.0.150"
 
 [lints]

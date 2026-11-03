@@ -5,8 +5,8 @@
 //! 1. the request is well formed and carries an explicit scope;
 //! 2. **capability**: some scoped capability grant matches exactly
 //!    ([`crate::CapabilityGrant`], evaluated by Cedar over the grant set);
-//! 3. **delegation (Biscuit slot)**: the principal acts directly; any
-//!    presented token denies until Biscuit verification lands;
+//! 3. **delegation**: direct authority or a current trusted attenuation chain;
+//!    unverified token text denies;
 //! 4. **access**: the admitted `AccessIR` policy set permits the request.
 //!
 //! Every error (malformed input, schema mismatch, evaluation error) denies.
@@ -28,8 +28,8 @@ use crate::grants::{CapabilityQuery, CompiledGrants, scope_record, uid};
 use crate::lower::{ACTION_TYPE, ACTOR_TYPE, ROLE_TYPE, SCOPE_ATTRIBUTE, cedar_type_name};
 use crate::lower::{DECLASSIFY_ACTION_ID, MARKING_RESOURCE_TYPE, REVEAL_ACTION_ID};
 use crate::request::{
-    AccessRequest, AttrValue, CapabilityGrant, Delegation, EntitlementInput, EntityRef,
-    ResourceInput, ScopeKey, is_exact_value,
+    AccessRequest, AttrValue, CapabilityGrant, EntitlementInput, EntityRef, ResourceInput,
+    ScopeKey, is_exact_value,
 };
 
 /// Why the PDP denied. The decision is the contract; the reason is for audit.
@@ -42,7 +42,7 @@ pub enum DenyReason {
     AbsentScope,
     /// No capability grant matches.
     Capability,
-    /// A delegated token was presented (unsupported until Biscuit lands).
+    /// Delegation is unsupported, stale, malformed or exceeds its parent.
     Delegation,
     /// The `AccessIR` policies do not permit the request.
     Access,
@@ -135,6 +135,7 @@ pub struct Pdp {
     access: ValidatedPolicySet,
     grants: CompiledGrants,
     entitlements: Vec<EntitlementInput>,
+    delegation: crate::DelegationSnapshot,
 }
 
 impl Pdp {
@@ -151,7 +152,26 @@ impl Pdp {
             access,
             grants: CompiledGrants::compile(grants)?,
             entitlements: Vec::new(),
+            delegation: crate::DelegationSnapshot::default(),
         })
+    }
+
+    /// Bind the trusted store snapshot for this authorization attempt. Hosts
+    /// must refresh it at commit/dispatch and serialize budget consumption.
+    #[must_use]
+    pub fn with_delegation_snapshot(mut self, snapshot: crate::DelegationSnapshot) -> Self {
+        self.delegation = snapshot;
+        self
+    }
+
+    /// Return the authenticated accountable person only for an allowed chain.
+    /// Direct/session identity alone does not establish an accountable person.
+    #[must_use]
+    pub fn accountable_person(&self, request: &AccessRequest) -> Option<&str> {
+        self.decide(request)
+            .is_allow()
+            .then(|| self.delegation.accountable_person(request))
+            .flatten()
     }
 
     /// The admitted policy set, retained when refreshing capability grants.
@@ -254,7 +274,7 @@ impl Pdp {
             return explanation;
         }
         explanation.capability = ConjunctOutcome::Allow;
-        if request.delegation != Delegation::Direct {
+        if !self.delegation.allows(request) {
             explanation.delegation = ConjunctOutcome::Deny;
             explanation.decision = PdpDecision::Deny(DenyReason::Delegation);
             explanation.entitlement_evaluation.outcome = ConjunctOutcome::NotEvaluated;
