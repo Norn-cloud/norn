@@ -8,6 +8,8 @@ import { TOOL_ROOT } from "../src/profile.ts"
 import { checkPack } from "../src/pack.ts"
 import { checker } from "./checker.ts"
 
+if (process.env.CI && !checker) throw new Error("MVP-CONSTITUTION requires the real Wasm checker in CI")
+
 const root = join(TOOL_ROOT, "../..")
 const sourcePath = "scripts/demo/constitution.source.ts"
 const fixture = join(root, "crates/norn-cell/tests/fixtures/constitution.json")

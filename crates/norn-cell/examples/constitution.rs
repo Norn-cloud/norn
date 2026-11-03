@@ -88,7 +88,8 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                 Err(error) => {
                     if error.code() != "core.laws.violated" { return Err(format!("unexpected refusal: {error:?}").into()); }
                     if before != cell.store().read().dump()? { return Err("refusal changed the complete SQLite state".into()); }
-                    counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":input-output,"code":error.code(),"atomicUnchanged":true}));
+                    counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":input-output,
+                        "code":error.code(),"explanation":error.to_string(),"atomicUnchanged":true}));
                 }
             }
         }
