@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { L, S, X } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { compileDefinitionFiles, compileDefinitions } from "../src/compiler/definitions.ts"
@@ -70,4 +71,32 @@ test("predicate builder reuses the existing typed ZEN expression renderer", () =
 test("counterexamples quote the precise witness without proof claims", () => {
   const rendered = renderCounterexample(goldens[0]!.payload, { state: { status: "shipped", paid: false }, trace: ["submit", "ship"], reason: "An unpaid order reached shipped" })
   expect(rendered).toContain("An unpaid order reached shipped"); expect(rendered).toContain("submit → ship"); expect(rendered).toContain("erpnext.no_unpaid_ship")
+})
+
+
+test.skipIf(!process.env[CHECKER_PKG_ENV])("explain_uncovered_writer", async () => {
+  const pkg = process.env[CHECKER_PKG_ENV]
+  if (!pkg) throw new Error(`${CHECKER_PKG_ENV} is required for explanation qualification`)
+  const abi: unknown = await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)
+  if (typeof abi !== "object" || abi === null || !("explainArtifactSet" in abi) || typeof abi.explainArtifactSet !== "function") {
+    throw new Error("The checker package must export explainArtifactSet")
+  }
+  const entities: unknown = JSON.parse(readFileSync(join(ROOT, "entities.json"), "utf8"))
+  if (!Array.isArray(entities)) throw new Error("Expected the law fixture's entity array")
+  const response: unknown = JSON.parse(abi.explainArtifactSet(JSON.stringify([...entities, ...goldens]), "{}", "law", "erpnext.no_unpaid_ship", "{}"))
+  expect(response).toMatchObject({
+    format: "norn/explain@2",
+    admitted: true,
+    diagnostics: [],
+    report: {
+      laws: [expect.objectContaining({
+        proof: "unknown",
+        sourcePath: "fixtures/law-ir/laws.source.ts",
+        whyUnknown: expect.arrayContaining([
+          expect.objectContaining({ writer: expect.objectContaining({ kind: "transition", objectType: "erpnext.SalesOrder" }), footprint: expect.any(String), fix: expect.any(String) }),
+          expect.objectContaining({ footprint: "migration", fix: expect.any(String) }),
+        ]),
+      })],
+    },
+  })
 })
