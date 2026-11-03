@@ -42,7 +42,7 @@ impl WorkersEngine {
     }
 }
 
-fn backend(error: JsValue) -> CellError {
+fn backend(error: &JsValue) -> CellError {
     CellError::Engine(format!("DO SQLite: {error:?}"))
 }
 
@@ -67,7 +67,7 @@ fn encode(value: &SqlValue) -> JsValue {
     clippy::cast_possible_truncation,
     reason = "finite integral values are checked against the exact JS integer range before conversion"
 )]
-fn decode(value: JsValue) -> Result<SqlValue, CellError> {
+fn decode(value: &JsValue) -> Result<SqlValue, CellError> {
     if value.is_null() {
         return Ok(SqlValue::Null);
     }
@@ -87,10 +87,10 @@ fn decode(value: JsValue) -> Result<SqlValue, CellError> {
         return Ok(SqlValue::Integer(number as i64));
     }
     if value.is_instance_of::<js_sys::ArrayBuffer>() {
-        return Ok(SqlValue::Blob(Uint8Array::new(&value).to_vec()));
+        return Ok(SqlValue::Blob(Uint8Array::new(value).to_vec()));
     }
     if value.is_instance_of::<Uint8Array>() {
-        return Ok(SqlValue::Blob(Uint8Array::new(&value).to_vec()));
+        return Ok(SqlValue::Blob(Uint8Array::new(value).to_vec()));
     }
     Err(CellError::Engine("unsupported DO SQL value".into()))
 }
@@ -111,13 +111,13 @@ impl SqlEngine for WorkersEngine {
         validate_bindings(sql, params)?;
         let bindings = params.iter().map(encode).collect::<Array>();
         rows(&self.storage, sql, &bindings)
-            .map_err(backend)?
+            .map_err(|error| backend(&error))?
             .iter()
             .map(|row| {
                 if !Array::is_array(&row) {
                     return Err(CellError::Engine("invalid DO SQL row".into()));
                 }
-                Array::from(&row).iter().map(decode).collect()
+                Array::from(&row).iter().map(|value| decode(&value)).collect()
             })
             .collect()
     }
@@ -156,7 +156,7 @@ impl SqlEngine for WorkersEngine {
             {
                 Err(refusal)
             }
-            (Err(error), _) => Err(backend(error).into()),
+            (Err(error), _) => Err(backend(&error).into()),
             (Ok(_), Some(Ok(value))) => Ok(value),
             (Ok(_), None | Some(Err(_))) => {
                 Err(CellError::Engine("transaction callback/rollback missing".into()).into())

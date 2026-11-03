@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.environ["NORN_WORKERS_SQL_PROJECT"]).resolve()
 URL = "http://127.0.0.1:9876"
 
 

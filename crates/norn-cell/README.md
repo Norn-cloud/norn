@@ -27,11 +27,19 @@ transaction control. Cursors are drained before returning. Large exact values
 use the shared store's text representation. See the `workers_sql` example for
 real-runtime checks; it is an adapter probe, not a governed action endpoint.
 
-Build the example with `cargo rustc --locked -p norn-cell --no-default-features
---example workers_sql --target wasm32-unknown-unknown --profile wasm-release`,
-then run matching `wasm-bindgen --target web --out-name workers_sql --out-dir
-crates/norn-cell/examples/workers-sql/pkg` on the resulting example Wasm.
-With esbuild and the pinned celld on PATH, run `celld dev --port 9876` from
-`examples/workers-sql`. `/` exercises the adapter; `/state` returns semantic
-SQLite/alarm state; `/alarm-refusal` must return 422 with identical state.
-Restart without `--clean` and compare `/state` before rerunning `/`.
+Build and run with generated files and durable state outside the checkout:
+
+```sh
+export NORN_WORKERS_SQL_PROJECT="$CARGO_TARGET_DIR/workers-sql"
+mkdir -p "$NORN_WORKERS_SQL_PROJECT"
+cp crates/norn-cell/examples/workers-sql/{worker.mjs,wrangler.json} "$NORN_WORKERS_SQL_PROJECT/"
+cargo rustc --locked -p norn-cell --no-default-features --example workers_sql \
+  --target wasm32-unknown-unknown --profile wasm-release
+wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" \
+  --target web --out-name workers_sql --out-dir "$NORN_WORKERS_SQL_PROJECT/pkg"
+python3 crates/norn-cell/examples/workers-sql/check.py
+```
+
+Use matching wasm-bindgen, esbuild on PATH, and celld v0.6.3 (pin/checksum in
+[#728](https://github.com/Norn-cloud/norn/issues/728#issuecomment-6604974784)).
+The probe compares semantic SQLite/alarm state after refusal and restart.
