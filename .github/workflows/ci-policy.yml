@@ -279,10 +279,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Require durable revocation recording
-        env:
-          RESULT: ${{ needs.rights-revocation.result }}
-        run: test "$RESULT" = success || test "$RESULT" = skipped
       # A comment event carries the issue, not the pull request: read the PR
       # from the API, taking base and head from the same snapshot.
       - name: Resolve the pull request
@@ -298,6 +294,10 @@ jobs:
             core.setOutput('base_sha', data.base.sha);
             core.setOutput('head_sha', data.head.sha);
             core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+      - name: Require durable revocation recording
+        env:
+          RESULT: ${{ needs.rights-revocation.result }}
+        run: test "$RESULT" = success || test "$RESULT" = skipped
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.pr.outputs.base_sha }}

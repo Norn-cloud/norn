@@ -641,6 +641,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
+        'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
         'Persist the rights revocation boundary': ('b1d480d4e4763cf3673ba594d322c7ad875ed86836aafe5809bb571dfbf38a4e', ['script', 'retries'], False, None),
         'Record admin approvals of the exact PR head': ('9bb5580dbcfba692875168ea96f875b0621661898949100b067e596781bbe8f6', ['script'], True, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
@@ -650,6 +651,9 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     def api_step(step: dict) -> None:
         digest, inputs, tolerated_failure, condition = programs[step["name"]]
         allowed = {"name", "uses", "with"} | ({"continue-on-error"} if tolerated_failure else set()) | ({"if"} if condition else set())
+        if step["name"] == "Resolve the pull request":
+            allowed.add("id")
+            require(step.get("id") == "pr", "policy resolution must bind failure publication and queue removal")
         require(set(step) == allowed
                 and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
                 and step.get("continue-on-error", False) is tolerated_failure
@@ -694,13 +698,15 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         is_pr = text == source
         collector = "Record admin approvals of the exact PR head" if is_pr else "Record admin approvals of the queued heads"
         reporter = "Report trusted policy on the exact PR head" if is_pr else "Report trusted policy on the group head"
-        for name in (collector, reporter):
+        for name in (collector, reporter, *(["Resolve the pull request"] if is_pr else [])):
             matching = [step for step in steps if step.get("name") == name]
             require(len(matching) == 1, f"missing trusted API step: {name}")
             api_step(matching[0])
         if is_pr:
             require(job.get("needs") == "rights-revocation", "policy must await durable revocation recording")
-            require(steps[0] == {"name": "Require durable revocation recording",
+            require(steps[0].get("name") == "Resolve the pull request",
+                    "resolve the head before recording refusal so revocation still dequeues it")
+            require(steps[1] == {"name": "Require durable revocation recording",
                     "env": {"RESULT": "${{ needs.rights-revocation.result }}"},
                     "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
                     "failed/cancelled recording must fail policy before admission")
