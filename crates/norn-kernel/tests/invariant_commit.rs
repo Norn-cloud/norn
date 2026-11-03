@@ -3514,6 +3514,26 @@ fn law_interface_transitive_and_diamond_implementors_govern_once_with_the_interf
     );
 }
 
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn law_interface_missing_ancestors_refuse_before_law_filtering(missing in "missing.[A-Z][a-z]{0,12}") {
+        use norn_testkit::proptest::prelude::*;
+        use norn_kernel::governing_laws::LawEvaluationError;
+        let (types, mut interfaces) = definitions();
+        interfaces[0].extends.push(norn_ir::InterfaceName(missing.clone()));
+        let mut law = serde_json::to_value(interface_invariant_law(&[INTERFACE], "named_item")).unwrap();
+        law["payload"]["subject"] = json!(missing);
+        law["payload"]["scope"] = json!({"root":{"kind":"entity", "id":missing}, "objectTypes":[missing]});
+        law["payload"]["response"]["objectType"] = json!(missing);
+        let laws = [serde_json::from_value(law).unwrap()];
+        let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let key = FactKey::new(ITEM, "missing-interface");
+        prop_assert!(matches!(retained.governing_laws(&key.object_type), Err(LawEvaluationError::Invalid(name)) if name == missing));
+        let mut budget = EvaluationBudget::default().units();
+        prop_assert!(matches!(norn_kernel::governing_laws::evaluate(&retained, &key, &named_values("named"), &mut budget), Err(LawEvaluationError::Invalid(name)) if name == missing));
+    }
+}
+
 #[test]
 fn law_interface_mixed_scopes_and_misowned_invariants_refuse() {
     use norn_kernel::governing_laws::LawEvaluationError;

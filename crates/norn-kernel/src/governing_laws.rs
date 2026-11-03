@@ -95,6 +95,12 @@ impl TypeCatalog<'_> {
             }
             return Err(LawEvaluationError::Invalid(object_type.as_str().to_owned()));
         }
+        if !self.law_artifacts.is_empty() {
+            // LAW-COMPLETE-1: unresolved interface ancestors cannot hide retained laws.
+            let _ = self
+                .invariants(object_type)
+                .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))?;
+        }
         let is_a = |name: &str| {
             self.lineage(object_type)
                 .iter()
