@@ -13,11 +13,10 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
-/// Generic MCP catalog and dispatch boundary.
-pub mod mcp;
-
 /// Shared cell and definition epoch.
 pub mod host;
+/// Generic MCP catalog and dispatch boundary.
+pub mod mcp;
 /// Authorized read services shared by transports.
 pub mod routes;
 
