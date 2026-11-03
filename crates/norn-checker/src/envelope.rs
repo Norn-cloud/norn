@@ -1198,6 +1198,7 @@ fn validate_action_payload(
             "uiEffects",
             "quantityEffect",
             "createLinks",
+            "synchronousRule",
         ],
         "payload",
         diagnostics,

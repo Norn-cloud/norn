@@ -78,6 +78,7 @@ pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
+    pub(crate) action_rules: &'a [crate::SynchronousRule],
     pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
@@ -111,6 +112,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
         Self {
+            action_rules: &[],
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -121,6 +123,13 @@ impl<'a> TypeCatalog<'a> {
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// Admitted, immutable synchronous writers available to governed actions.
+    #[must_use]
+    pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
+        self.action_rules = rules;
+        self
     }
 
     /// OBS-EVIDENCE-1: bind the retained law artifacts of this definition snapshot.
@@ -2435,7 +2444,7 @@ pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
     }
 }
 
-fn fact_key(change: &FactChange) -> FactKey {
+pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {
         FactChange::Create {
             object_type, key, ..
