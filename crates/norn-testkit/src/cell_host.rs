@@ -1914,6 +1914,7 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(match error {
+        CommitError::AtomicBoundary { key } => CommitError::AtomicBoundary { key },
         CommitError::Law { key, reason } => CommitError::Law { key, reason },
         CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
         CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
