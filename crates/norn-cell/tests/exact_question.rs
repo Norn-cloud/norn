@@ -163,7 +163,14 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
     let (mut host, plan, context) = quality_fixture();
     let mut view = IncrementalQuestion::rebuild(host.store(), &plan, context.clone(), |_| Ok(true))
         .expect("rebuild");
-    let before = KnowledgeCutoff { recorded_at:norn_kernel::LogicalTime::from_millis(CLOCK), frontier:host.store().verified_head().expect("pre-quarantine").commits };
+    let before = KnowledgeCutoff {
+        recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
+        frontier: host
+            .store()
+            .verified_head()
+            .expect("pre-quarantine")
+            .commits,
+    };
     capture_quality(&mut host, 80_000, "bad-source");
     let cutoff = KnowledgeCutoff {
         recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
@@ -181,14 +188,32 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .remove(0);
     assert_eq!(excluded.context.exclusions["SYN-MELT-15-1"], finding.id);
     assert_eq!(excluded.freshness, Freshness::Incomplete);
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers/scrap-yield.quarantine.finding.json");
-    let text = format!("{}\n", serde_json::to_string_pretty(&finding).expect("finding document"));
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/demo/answers/scrap-yield.quarantine.finding.json"
+    );
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&finding).expect("finding document")
+    );
     if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-        std::fs::create_dir_all(std::path::Path::new(path).parent().expect("directory")).expect("fixture directory");
+        std::fs::create_dir_all(std::path::Path::new(path).parent().expect("directory"))
+            .expect("fixture directory");
         std::fs::write(path, &text).expect("bless finding");
     }
-    assert_eq!(std::fs::read_to_string(path).expect("retained finding"), text);
-    assert!(host.store().evaluate_question_known_at(&plan, context.clone(), before, |_| Ok(true)).expect("before finding").result.context.exclusions.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(path).expect("retained finding"),
+        text
+    );
+    assert!(
+        host.store()
+            .evaluate_question_known_at(&plan, context.clone(), before, |_| Ok(true))
+            .expect("before finding")
+            .result
+            .context
+            .exclusions
+            .is_empty()
+    );
     let mut reference = excluded.clone();
     reference.engine = Engine::Ivm;
     assert_eq!(
@@ -219,7 +244,6 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
     );
     assert_eq!(historical.result.rows, excluded.rows);
 }
-
 
 proptest::proptest! {
     #[test]
