@@ -24,6 +24,16 @@ impl Modify for ContractSchemas {
         for (name, schema) in artifact_envelope_schemas()
             .into_iter()
             .chain(project_schemars_components(
+                schemars::schema_for!(norn_ir::RuntimeObject),
+                "NornActionInput",
+                "NornAction",
+            ))
+            .chain(project_schemars_components(
+                action_call_record_schema(),
+                "NornActionCallRecord",
+                "NornAction",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::requirement_display::requirement_view_schema(),
                 "NornIrRequirementView",
                 "NornIrRequirement",
@@ -80,6 +90,15 @@ impl Modify for ContractSchemas {
                 .insert(name, utoipa::openapi::RefOr::T(schema));
         }
     }
+}
+
+#[allow(
+    clippy::expect_used,
+    reason = "receipt schema is generated and checked from kernel types"
+)]
+fn action_call_record_schema() -> Value {
+    serde_json::from_str(norn_kernel::ActionCallRecord::schema_json())
+        .expect("generated kernel receipt schema")
 }
 
 /// The checker's stable diagnostics JSON document (`norn-checker/diagnostics@1`).

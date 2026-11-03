@@ -298,6 +298,53 @@ impl Schema {
         }
     }
 
+    /// Decode action wire decimals without a floating-point intermediate.
+    /// Other fields retain their values; the closed schema checks them afterward.
+    ///
+    /// # Errors
+    /// Refuses non-string decimals, invalid literals and excess scale.
+    pub fn decode_action_input(
+        &self,
+        value: norn_ir::RuntimeValue,
+        path: &str,
+    ) -> Result<norn_ir::RuntimeValue, Violation> {
+        use norn_ir::{Decimal, RuntimeValue};
+        match (self, value) {
+            (Self::Decimal(_), RuntimeValue::String(text)) => {
+                let decimal = Decimal::parse(&text)
+                    .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
+                let decoded = RuntimeValue::Number(decimal);
+                let value =
+                    Value::try_from(&decoded).map_err(|e| Violation::new(path, e.to_string()))?;
+                self.check(&value, path)?;
+                Ok(RuntimeValue::Number(decimal))
+            }
+            (Self::Decimal(_), _) => {
+                Err(Violation::new(path, "decimal input requires a JSON string"))
+            }
+            (Self::Object { properties, .. }, RuntimeValue::Object(members)) => members
+                .into_iter()
+                .map(|(name, value)| {
+                    let value = match properties.get(&name) {
+                        Some(schema) => {
+                            schema.decode_action_input(value, &format!("{path}.{name}"))?
+                        }
+                        None => value,
+                    };
+                    Ok((name, value))
+                })
+                .collect::<Result<_, _>>()
+                .map(RuntimeValue::Object),
+            (Self::Array(items), RuntimeValue::Array(values)) => values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| items.decode_action_input(value, &format!("{path}[{index}]")))
+                .collect::<Result<_, _>>()
+                .map(RuntimeValue::Array),
+            (_, value) => Ok(value),
+        }
+    }
+
     /// Checks `value` against this schema.
     ///
     /// # Errors
@@ -723,6 +770,12 @@ pub fn action_environment(
     };
     let mut fields = records.remove(&name).ok_or("missing action input record")?;
     let properties = schema.properties().ok_or("missing input fields")?;
+    for derivation in action.derive.iter().filter(|step| !step.input_required) {
+        let target = fields
+            .get_mut(&derivation.field)
+            .ok_or("unknown derivation target")?;
+        *target = target.clone().optional();
+    }
     for derivation in action.derive.iter().take(completed) {
         let target = properties
             .get(&derivation.field)
@@ -854,6 +907,42 @@ mod tests {
 
     fn num(text: &str) -> Value {
         Value::Number(text.parse::<Number>().unwrap())
+    }
+
+    #[test]
+    fn action_decimal_wire_is_exact_text_and_bounded_by_scale() {
+        use norn_ir::{Decimal, RuntimeValue};
+        let wire: JsonValue =
+            serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#)
+                .unwrap();
+        assert!(Schema::parse(&wire, "amount").is_ok());
+        let schema = Schema::parse_action(&wire, "amount").unwrap();
+        for text in ["0", "125.50", "-2.01", "9007199254740993.25"] {
+            let decoded = schema
+                .decode_action_input(RuntimeValue::String(text.into()), "amount")
+                .unwrap();
+            assert_eq!(decoded, RuntimeValue::Number(Decimal::parse(text).unwrap()));
+            assert!(
+                schema
+                    .check(&Value::try_from(&decoded).unwrap(), "amount")
+                    .is_ok()
+            );
+        }
+        for bad in [
+            RuntimeValue::Number(Decimal::from(125_u64)),
+            RuntimeValue::Null,
+            RuntimeValue::String("1.001".into()),
+            RuntimeValue::String("NaN".into()),
+            RuntimeValue::String("99999999999999999999999999999999999".into()),
+        ] {
+            assert!(schema.decode_action_input(bad, "amount").is_err());
+        }
+        let mut invalid = wire.as_object().unwrap().clone();
+        invalid.insert(
+            "nornType".into(),
+            serde_json::from_str(r#"{"kind":"decimal","scale":19}"#).unwrap(),
+        );
+        assert!(Schema::parse_action(&JsonValue::Object(invalid), "amount").is_err());
     }
 
     #[test]
