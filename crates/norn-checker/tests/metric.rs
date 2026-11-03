@@ -900,7 +900,7 @@ fn keyed_compute_fixture() -> (Vec<MetricDefinition>, QuestionIR, EffectiveCatal
 }
 
 #[test]
-fn query_grain_keyed_sum_preserves_typed_identity_and_freshness() {
+fn property_additivity_declared_sum_preserves_typed_identity_and_freshness() {
     use norn_checker::metric::compute::admit;
     let (definitions, question, catalog) = keyed_compute_fixture();
     let plan = admit(&definitions, &question, &catalog, 100).expect("keyed sum");
@@ -1065,7 +1065,7 @@ fn invoice_totals_require_their_authoritative_currency() {
 }
 
 #[test]
-fn numeric_additivity_is_required_even_for_count_and_extrema() {
+fn property_additivity_refuses_every_undeclared_numeric_aggregate() {
     let (metric, question) = sales();
     for aggregate in ["sum", "average", "min", "max", "count", "count_distinct"] {
         let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
