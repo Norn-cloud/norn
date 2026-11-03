@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "bind" => DriverMode::Bind,
         _ => return Err("invalid driver mode".into()),
     };
-    run(DriverRequest {
+    run(&DriverRequest {
         mode,
         original: Path::new(original),
         mutant: Path::new(mutant),
