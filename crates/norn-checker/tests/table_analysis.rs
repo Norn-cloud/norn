@@ -280,3 +280,23 @@ fn overlap_witness_identity_bytes_are_bounded_before_allocation() {
         assert_eq!(analyze_table(&large, &boolean()), Err(Unknown::Limit));
     }
 }
+
+#[test]
+fn existing_analysis_outputs_are_byte_pinned() {
+    let mut outputs = Vec::new();
+    for policy in ["first", "collect"] {
+        for conditions in [
+            vec![],
+            vec!["true"],
+            vec!["false", "false", "true"],
+            vec!["true", "false", "null"],
+        ] {
+            outputs.push(analyze_table(&table(policy, &conditions), &boolean()));
+        }
+    }
+    outputs.push(analyze_table(&table("first", &[""]), &Schema::Integer));
+    assert_eq!(
+        format!("{outputs:?}"),
+        include_str!("../../../fixtures/rule-ir-v2/analysis/outputs.expected.txt")
+    );
+}
