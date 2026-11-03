@@ -31,16 +31,23 @@ command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", P
 [scripts.wrapper.quarantine-evidence]
 command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc", PROPTEST_CASES = "16" } }
 
+[scripts.setup.kani-068-install]
+command = ["cargo", "install", "--locked", "--root", "target/demo-kani-0.68", "kani-verifier", "--version", "=0.68.0"]
+
+[scripts.setup.kani-068-setup]
+command = ["target/demo-kani-0.68/bin/kani", "setup"]
+slow-timeout = { period = "300s", terminate-after = 2 }
+
 [scripts.setup.decimal-kani-0]
-command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "canonical_decimal_preserves_bounded_values", "--output-format", "terse"]
+command = ["target/demo-kani-0.68/bin/kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "canonical_decimal_preserves_bounded_values", "--output-format", "terse"]
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [scripts.setup.decimal-kani-1]
-command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_multiplier_is_exact_in_bounded_profile", "--output-format", "terse"]
+command = ["target/demo-kani-0.68/bin/kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_multiplier_is_exact_in_bounded_profile", "--output-format", "terse"]
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [scripts.setup.decimal-kani-2]
-command = ["kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_overflow_refuses", "--output-format", "terse"]
+command = ["target/demo-kani-0.68/bin/kani", "verification/canonical-values-v1/decimal_kani.rs", "--harness", "decimal_scale_overflow_refuses", "--output-format", "terse"]
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [profile.drop-01]
@@ -48,7 +55,7 @@ default-filter = '''binary_id(norn-cell::exact_values) | binary_id(norn-expr::pr
 
 [[profile.drop-01.scripts]]
 filter = "all()"
-setup = ["decimal-kani-0", "decimal-kani-1", "decimal-kani-2"]
+setup = ["kani-068-install", "kani-068-setup", "decimal-kani-0", "decimal-kani-1", "decimal-kani-2"]
 
 [profile.drop-02]
 default-filter = '''binary(=jewelry_demo) & test(=authored_laws_admit_refuse_and_render_en_ar)'''

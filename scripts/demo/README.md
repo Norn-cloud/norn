@@ -29,14 +29,14 @@ cargo nextest run --profile drop-02
 
 | Profile | Evidence selected |
 | --- | --- |
-| `drop-01` | Exact values, codecs, units and three bounded Kani harnesses; requires Kani 0.68.0 |
+| `drop-01` | Exact values, codecs, units and three bounded Kani harnesses; installs the exact Kani 0.68.0 tool through Cargo/native setup |
 | `drop-02` | Freshly authored law, admission/refusals, generated obligations and EN/AR rendering |
 | `drop-03` | Freshly authored catalog, bounded reads, kernel PDP and write refusals |
 | `drop-04` | Fresh allocation goldens and seven exact fold scenarios |
 | `drop-05` | Twelve quarantine/recovery scenarios; sampled properties use 16 cases |
 | `drop-06` | Fresh pricing declarations and both native SQLite scenarios |
-| `drop-07` | Three incremental/recompute scenarios; unavailable until #497 is main |
-| `drop-08` | Ten cutoff/restatement scenarios; unavailable until #497 is main |
+| `drop-07` | Three incremental/recompute scenarios |
+| `drop-08` | Ten cutoff/restatement scenarios |
 | `drop-09` | Fresh pack goldens and eight synthetic three-system mapping scenarios |
 | `drop-constitution` | Loss mutation/refusal/restoration; generated goals remain unknown (#565) |
 

@@ -4,7 +4,7 @@ import { Norn } from "@norn/authoring"
 // CURRENT admission fragment; full REA composition is TARGET in README.md.
 export const Melt = Norn.type({
   name: "demo.Melt", title: "Melt measurement", version: "0.1.0",
-  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity", required: true }],
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   properties: Schema.Struct({
     id: Schema.String,
     input_fine_g: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
