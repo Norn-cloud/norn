@@ -11,7 +11,10 @@ const ROOT = resolve(TOOL_ROOT, "../..")
 const Envelope = Schema.Struct({ artifactId: Schema.String, payload: Schema.Unknown })
 
 function publication() {
-  const result = compilePack(join(ROOT, "registry/core/src"), { scope: {}, registry: "registry/core", root: ROOT })
+  const result = compilePack(join(ROOT, "registry/core/src"), {
+    scope: {}, registry: "registry/core", root: ROOT,
+    modules: [join(ROOT, "registry/core/src/analytics.ts")],
+  })
   if (!result.ok) throw new Error(JSON.stringify(result.failures))
   const artifacts = result.artifacts.filter(artifact => Schema.decodeUnknownSync(Envelope)(artifact).artifactId.startsWith("core.analytics."))
   expect(artifacts).toHaveLength(6)
