@@ -927,8 +927,7 @@ mod tests {
                 .iter_mut()
                 .find(|property| &property.id == id)
                 .expect("conservation term");
-            let EffectiveKind::Base(PropertyType::Decimal { per_unit, .. }) =
-                &mut property.kind
+            let EffectiveKind::Base(PropertyType::Decimal { per_unit, .. }) = &mut property.kind
             else {
                 panic!("decimal term")
             };
