@@ -14,8 +14,8 @@ pub mod mcp;
 
 /// Shared default-deny host authorization.
 pub mod authz;
+mod defs;
 /// Shared cell and definition epoch.
 pub mod host;
 /// Authorized read services shared by transports.
 pub mod routes;
-mod defs;
