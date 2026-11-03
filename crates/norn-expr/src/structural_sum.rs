@@ -74,20 +74,20 @@ fn property(node: &Node<'_>) -> Option<PropertyId> {
 }
 
 fn collect(node: &Node<'_>, terms: &mut Vec<PropertyId>) -> Option<()> {
-    match unwrapped(node) {
-        Node::Binary {
-            left,
-            operator: Operator::Arithmetic(ArithmeticOperator::Add),
-            right,
-        } => {
-            collect(left, terms)?;
-            collect(right, terms)
-        }
-        node if terms.len() < 64 => {
-            terms.push(property(node)?);
-            Some(())
-        }
-        _ => None,
+    let node = unwrapped(node);
+    if let Node::Binary {
+        left,
+        operator: Operator::Arithmetic(ArithmeticOperator::Add),
+        right,
+    } = node
+    {
+        collect(left, terms)?;
+        collect(right, terms)
+    } else if terms.len() < 64 {
+        terms.push(property(node)?);
+        Some(())
+    } else {
+        None
     }
 }
 
