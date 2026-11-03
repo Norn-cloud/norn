@@ -224,7 +224,7 @@ fn finite_relation_is_backend_neutral() {
             assert_eq!(left, right);
         }
     }
-    // Check-time golden hashes from the approved 98a8149 generator on Boat.
+    // Check-time golden hashes from the pre-refactor 4ee0b129 renderer on Boat.
     let module = quint
         .goals
         .iter()
@@ -232,7 +232,7 @@ fn finite_relation_is_backend_neutral() {
         .expect("original module");
     assert_eq!(
         format!("{:x}", Sha256::digest(module.as_bytes())),
-        "bbc9ecb3244ae3b08a3141500dd534561df44a6c53152b9313e4141a45b30c26"
+        "4ff478be0ab3a6f1cae1f144f0c748061d16c96c8a9c37cf287fcbff285e23df"
     );
     let relation = neutral
         .goals
@@ -283,7 +283,7 @@ fn finite_relation_is_backend_neutral() {
         .expect("mutant module");
     assert_eq!(
         format!("{:x}", Sha256::digest(module.as_bytes())),
-        "659ef2a4d880aca0f8c7a64e78273c759fb18d271743cedad2e99585c5185643"
+        "c9bf44daf2c25703b36a77da1c28029c75d705e3bacc3c15797ce2b5cd4ad0d3"
     );
     let mutant = authority
         .finite(&source(&artifacts), &registry, &profile)

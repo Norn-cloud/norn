@@ -69,7 +69,7 @@ fn emit(model: &CreateRelation) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "module generated {{\n{}\nvar present: bool\naction init = all {{ present' = false, {initial} }}\naction write = {{\n{}\nall {{ not(present), {}, present' = true, {updates} }}\n}}\naction step = any {{ write, all {{ present' = present, {frame} }} }}\nval law = not(present) or not({condition}) or ({response})\nval unreachable = not(present and ({condition}) and ({response}))\n}}\n",
+        "module generated {{\n{}\nvar present: bool\naction init = all {{ present' = false, {initial} }}\naction write = {{\n{}\nall {{ not(present), {}, present' = true, {updates} }}\n}}\naction idle = all {{ present' = present, {frame} }}\naction step = any {{ write, idle }}\nval law = not(present) or not({condition}) or ({response})\nval unreachable = not(present and ({condition}) and ({response}))\n}}\n",
         variables
             .iter()
             .map(|v| format!("var {v}: int"))
