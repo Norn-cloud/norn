@@ -572,7 +572,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation", "dependencies"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -607,8 +607,9 @@ class DefinitionCompiler {
       preconditions: members.has("preconditions") ? this.list(need("preconditions")).map((e, index) => this.zenAt(e, this.string(need("id")) + ".action", `/payload/preconditions/${index}`, "")) : [],
       commands: members.has("commands") ? this.list(need("commands")).map((c) => this.command(c)) : [],
       createLinks: members.has("createLinks") ? this.list(need("createLinks")).map((entry) => {
-        const m = this.closedRecord(entry, ["link", "targetType", "targetIdField"], ["link", "targetType", "targetIdField"])
-        return { link: this.string(m.get("link")!), targetType: this.typeName(m.get("targetType")!, OBJECT_TYPES), targetIdField: this.string(m.get("targetIdField")!) }
+        const m = this.closedRecord(entry, ["link", "targetType", "targetIdField", "source"], ["link", "targetType", "targetIdField"])
+        const source = m.has("source") ? this.closedRecord(m.get("source")!, ["objectType", "idField"], ["objectType", "idField"]) : undefined
+        return { link: this.string(m.get("link")!), targetType: this.typeName(m.get("targetType")!, OBJECT_TYPES), targetIdField: this.string(m.get("targetIdField")!), ...(source ? { source: { objectType: this.typeName(source.get("objectType")!, OBJECT_TYPES), idField: this.string(source.get("idField")!) } } : {}) }
       }) : [],
       writes: members.has("writes")
         ? this.list(need("writes")).map((w) => {
@@ -618,6 +619,7 @@ class DefinitionCompiler {
             return { entityKind: this.typeName(m.get("type")!, OBJECT_TYPES), change }
           })
         : [],
+      ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),
@@ -883,6 +885,12 @@ class DefinitionCompiler {
   }
 
   /** Resolve a local Norn.decision reference or read an explicit artifact/version pin. */
+  private synchronousRule(input: ts.Expression): NonNullable<A.ActionDef["synchronousRule"]> {
+    const pin = this.decisionDependency(input)
+    if (pin.kind !== undefined && pin.kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL", "synchronous writer must pin a rule", input)
+    return { artifactId: pin.artifactId, version: pin.version }
+  }
+
   private decisionDependency(input: ts.Expression): R.DecisionDependencyPin {
     const referenced = this.deref(input)
     if (ts.isCallExpression(referenced)) {

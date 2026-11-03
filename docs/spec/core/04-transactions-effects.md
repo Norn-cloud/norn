@@ -80,3 +80,80 @@ RECEIPT-STORE-AUTH-1: the intake ledger event binds the canonical digest of the 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
 RECEIPT-ONCE-1 commit-context limit: acceptance requires the exact authenticated intake frontier. Receipts are not re-authenticated after intervening commits, even unrelated commits; acceptance then refuses without consumption or effects, while retained evidence remains readable. Expected receipt refusals are typed precondition failures (`action.receipt_refused`) with safe reason detail; SQL/storage failures remain internal and redacted. Named scenario: intervening_commit_refuses_without_consuming_receipt. Post-demo receipt refresh is tracked with native memory accounting in https://github.com/Norn-cloud/norn/issues/508.
+
+## Bounded synchronous action profile
+
+TXN-RULE-1 / TXN-CLOSED-1: an action may name one exact `synchronousRule`
+artifactId/version and must declare the same required Rule dependency. Initial
+admission accepts this contract only on transition actions and requires one
+matching `decide` artifact whose required scope is covered by the action.
+Missing, ambiguous, wrong-version, wrong-contract or uncovered-scope bindings
+refuse. Unknown pin members and null pins refuse strict decoding.
+
+Execution resolves the exact admitted writer before host access. A missing or
+ambiguous closure refuses rather than executing only the primary transition.
+The immutable `SynchronousRule` seals its RuleIR root, helper closure and decision
+binding. The ActionCall receipt binds their canonical digest together with the
+action, scope and world; changed writer intent cannot replay an earlier success.
+Named round-trip/refusal scenarios, generated version-pin cases and authoring
+dependency correspondence bind this contract to the code. Pin resolution
+traverses heap-backed artifact catalogs; the existing Kani profiles cannot call
+that catalog/serde admission path. No new bounded arithmetic primitive or
+handwritten application proof is introduced.
+
+The pinned pure graph evaluates over the same authorized captured slice and
+effective input, with the authenticated call actor and operation ID. It shares
+the action's remaining fuel; exhaustion refuses. Rule facts are applied before
+the primary transition so its guards see the computed proposal. Each actual
+writer must be declared, and modifications require a captured object. Reserved
+framework writes, deletes and a second primary transition refuse. Every current
+and proposed object is authorized; fact, absence and membership fences remain
+in force. Facts, the primary transition and the ActionCall receipt finalize in
+one cell commit. Rule output is facts-only in this profile; existing action
+command declarations enqueue payment intent in that same commit. Dispatch and
+payment success remain external.
+
+
+### Atomic proposal links (TXN-ATOMIC-1, TXN-CLOSED-1)
+
+The synchronous writer's closed fact schema has finite nonempty `objectType`
+and supported `op` enums. Admission conservatively takes their Cartesian product
+and unions it with the primary effect; this must equal the action's write set.
+Open targets and unsupported operations refuse admission. Preparation still
+checks every actual effect against that set.
+
+A create-link binding optionally names a concrete source type and required
+string input key. Without it the primary object remains the source. Explicit
+sources require the transition/synchronous-rule profile. Every source must be
+written in the same checked proposal; each target is the captured primary, a
+required slice object, or an object created in that proposal. The link must be declared with the exact
+target type. All proposed facts are authorized before commit. Duplicate concrete
+links and dangling endpoints refuse. Link versions and all fact/absence/slice
+fences join the existing single cell commit; no link is persisted earlier.
+These rules are domain-neutral. The correspondence scenarios cover bidirectional
+links to a newly created secondary fact, exact replay, and refusal before writes.
+
+The link closure is bounded at sixteen bindings, checked before host access.
+The source is an object-only closed binding; explicit nulls, sequence aliases,
+unknown members and duplicate members refuse. Bounded inline list indexes in
+authored expressions retain the declared item schema and resolve at compilation.
+Malformed or out-of-range inline indexes refuse. Indexes into declared runtime
+arrays refuse during authoring because the admitted expression profile supports
+only indexes into list literals; no nullable missing-item semantics are inferred.
+
+`typed_atomic_writer_admits_and_an_uncovered_creation_refuses` checks full
+artifact-set admission, including the action's dependency pin, against the
+compiler-generated fixture. Separately,
+`atomic_action_links_outbox_and_receipt_survive_reopen_and_exact_retry` checks
+kernel/SQLite correspondence using extracted object types and an independently
+admitted rule; it does not recheck the action envelope's dependency pin.
+Both directions of the link,
+the secondary fact, primary transition, receipt and one pending payment intent
+survive reopening; exact retry changes no table and changed principal refuses.
+`late_link_failure_and_secondary_denial_persist_no_partial_proposal` covers a
+host-side cardinality failure and denied secondary authority, with complete
+SQLite dumps unchanged before and after reopening. No provider executes.
+This is runtime-enforced correspondence plus sampled generated identities and
+writer footprints, not a proof of application conservation or approval policy.
+
+

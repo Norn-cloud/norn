@@ -21,8 +21,9 @@ export interface ActionInputDerivation {
   readonly inputRequired?: boolean
 }
 
-/** Outgoing link to an existing, authorized object loaded by the action's slice. */
+/** Typed proposal link; an explicit source must be written in the same closure. */
 export interface ActionCreateLink {
+  readonly source?: { readonly objectType: string; readonly idField: string }
   readonly link: string
   readonly targetType: string
   readonly targetIdField: string
@@ -88,6 +89,7 @@ export interface ActionDef {
   /** Boolean ZEN Expressions over `input` and the declared `slice`. */
   readonly preconditions: ReadonlyArray<string>
   readonly commands: ReadonlyArray<ActionCommand>
+  readonly synchronousRule?: { readonly artifactId: string; readonly version: string }
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
   readonly effect?: ActionEffect
@@ -159,10 +161,11 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,
+    synchronousRule: def.synchronousRule,
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
   }
   const artifact = envelope(
-    { kind: "action", dependencies:pinnedDependencies(def.dependencies,"entity"), artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
+    { kind: "action", dependencies: [...pinnedDependencies(def.dependencies, "entity"), ...(def.synchronousRule ? [{ ...def.synchronousRule, kind: "rule", required: true }] : [])], artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
     payload,
     options,
   )
