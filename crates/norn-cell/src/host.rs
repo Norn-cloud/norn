@@ -1277,6 +1277,7 @@ where
             &[],
             &[],
             &[],
+            None,
         )
     }
 
@@ -1293,7 +1294,33 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[])
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None)
+    }
+
+    pub(crate) fn commit_observed_evidence(
+        &mut self,
+        mut commit: CellCommit<E, C, I>,
+        authorization: &ObservationAuthorization,
+        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+    ) -> Result<CommitReceipt, CommitError<CellError>>
+    where
+        E: From<ObservationEvent>,
+    {
+        if !authorization.validates(&commit) {
+            return Err(CommitError::ObservationAuthorization);
+        }
+        let references = authorization.reference_reads(&commit).to_vec();
+        authorization.append_findings(&mut commit);
+        self.commit_with_authorization(
+            commit,
+            Some(authorization),
+            None,
+            None,
+            &[],
+            &references,
+            &[],
+            mapped_bundle,
+        )
     }
 
     #[allow(
@@ -1310,6 +1337,7 @@ where
         derived: &[(FactKey, Vec<String>)],
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
+        mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1402,6 +1430,60 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
+            // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
+            if let Some(bundle) = mapped_bundle {
+                reader
+                    .recheck_mapping_bundle(bundle)
+                    .map_err(CommitError::Host)?;
+                if reader
+                    .installed_definitions(None)
+                    .map_err(CommitError::Host)?
+                    .map(|d| d.version)
+                    != Some(bundle.definitions_version)
+                {
+                    return Err(CommitError::Host(CellError::MappingBundleMismatch));
+                }
+                if reader
+                    .mapping_conflict(bundle)
+                    .map_err(CommitError::Host)?
+                    .is_some()
+                    || reader
+                        .mapping_event_is_disputed(bundle)
+                        .map_err(CommitError::Host)?
+                {
+                    return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
+                }
+            }
+            if authorization.is_none() {
+                for key in commit
+                    .reads
+                    .iter()
+                    .map(|r| &r.key)
+                    .chain(commit.writes.iter().map(|w| &w.key))
+                    .chain(references.iter().map(|r| &r.key))
+                    .chain(property_reads.iter().map(|(r, _)| &r.key))
+                    .chain(
+                        commit
+                            .links
+                            .iter()
+                            .flat_map(|w| [&w.key.source, &w.key.target]),
+                    )
+                {
+                    reader
+                        .refuse_disputed_subject(key)
+                        .map_err(CommitError::Host)?;
+                }
+                for read in &commit.link_reads {
+                    reader
+                        .refuse_disputed_subject(&read.source)
+                        .map_err(CommitError::Host)?;
+                    for target in &read.targets {
+                        reader
+                            .refuse_disputed_subject(&target.key.target)
+                            .map_err(CommitError::Host)?;
+                    }
+                }
+            }
             let model = reader.model();
             let catalog = TypeCatalog::new(model.object_types())
                 .with_interfaces(model.interfaces())
@@ -1479,6 +1561,7 @@ where
 
     fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(key)?;
         let version = version_of(&reader, key)?;
         let values = reader
             .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
@@ -1516,6 +1599,7 @@ where
             crate::reactive::BudgetedIdentityRead::Missing => (None, None),
             crate::reactive::BudgetedIdentityRead::Exhausted => return Ok(None),
         };
+        reader.refuse_disputed_subject(key)?;
         Ok(Some(BoundedFact {
             concrete_type,
             state: FactState { version, values },
@@ -1556,10 +1640,13 @@ where
             },
             BudgetedRead::Exhausted => return Ok(None),
         };
+        reader.refuse_disputed_subject(key)?;
         Ok(Some(state))
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
+        self.store.read().refuse_disputed_subject(&key.source)?;
+        self.store.read().refuse_disputed_subject(&key.target)?;
         link_state(&self.store.read(), key)
     }
 
@@ -1571,6 +1658,7 @@ where
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
         let reader = self.store.read();
+        reader.refuse_disputed_subject(source)?;
         let targets = reader.link_targets_with_versions(
             MAIN_WORLD,
             source.object_type.as_str(),
@@ -1588,6 +1676,7 @@ where
         let mut reads = Vec::with_capacity(targets.len());
         for (target, target_type, version) in targets {
             let key = LinkKey::new(source.clone(), link, FactKey::new(target_type, target));
+            reader.refuse_disputed_subject(&key.target)?;
             reads.push(LinkReadTarget {
                 version: FactVersion(version),
                 key,
@@ -1606,7 +1695,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[])
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None)
     }
 
     fn commit_action_references(
@@ -1626,6 +1715,7 @@ where
             &[],
             proof.reference_reads(),
             proof.property_reads(),
+            None,
         )
     }
 
@@ -1643,31 +1733,18 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[])
+        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None)
     }
 
     fn commit_observed(
         &mut self,
-        mut commit: CellCommit<E, C, I>,
+        commit: CellCommit<E, C, I>,
         authorization: ObservationAuthorization,
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
         E: From<ObservationEvent>,
     {
-        if !authorization.validates(&commit) {
-            return Err(CommitError::ObservationAuthorization);
-        }
-        let references = authorization.reference_reads(&commit).to_vec();
-        authorization.append_findings(&mut commit);
-        self.commit_with_authorization(
-            commit,
-            Some(&authorization),
-            None,
-            None,
-            &[],
-            &references,
-            &[],
-        )
+        self.commit_observed_evidence(commit, &authorization, None)
     }
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {

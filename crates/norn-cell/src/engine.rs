@@ -142,6 +142,20 @@ pub trait SqlEngine {
     /// The closure's error, or a backend begin/commit/rollback error.
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X>;
 
+    /// Optional connection-local revision for disposable verified read caches.
+    /// Equal revisions must imply unchanged database contents on this connection,
+    /// including local writes/rollbacks and commits by other connections.
+    /// Hosts without this capability return `None`; no cache survives their read boundary.
+    /// Return `None` while uncommitted state could later roll back without
+    /// changing the token. Native engines only offer revisions in autocommit mode.
+    /// This is a host optimization, not an extension of admitted SQL.
+    ///
+    /// # Errors
+    /// Backend revision-read failures refuse cached access.
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        Ok(None)
+    }
+
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -401,6 +415,18 @@ impl rusqlite::types::ToSql for SqlValue {
 
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        if !self.conn.is_autocommit() {
+            return Ok(None);
+        }
+        let external: i64 = self
+            .conn
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let external = u64::try_from(external)
+            .map_err(|_negative| CellError::OutOfRange("SQLite cache revision"))?;
+        Ok(Some((self.conn.total_changes(), external)))
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);

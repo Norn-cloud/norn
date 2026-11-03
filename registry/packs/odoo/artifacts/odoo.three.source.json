@@ -1,0 +1,881 @@
+{
+  "artifactId": "odoo.three.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic odoo snapshot and incremental profile",
+  "namespace": "odoo",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-record-replay",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "stock.quant",
+        "field": "unit",
+        "id": "holding_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "sale.order.line",
+        "field": "unit",
+        "id": "order_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "stock.move",
+        "field": "unit",
+        "id": "delivery_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "account.payment",
+        "field": "kind",
+        "id": "settlement_kind",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "payment"
+          },
+          {
+            "value": "refund"
+          }
+        ]
+      },
+      {
+        "dataset": "stock.quant",
+        "field": "valuation_method",
+        "id": "holding_valuation_method",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "moving_average"
+          }
+        ]
+      },
+      {
+        "dataset": "stock.move",
+        "field": "posting_state",
+        "id": "delivery_posting_state",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "posted"
+          }
+        ]
+      },
+      {
+        "dataset": "account.move.line",
+        "field": "posting_state",
+        "id": "posting_posting_state",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "posted"
+          }
+        ]
+      },
+      {
+        "dataset": "account.move.line",
+        "field": "currency",
+        "id": "posting_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      },
+      {
+        "dataset": "account.move.line",
+        "field": "account_role",
+        "id": "posting_account_role",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "cogs"
+          },
+          {
+            "value": "inventory"
+          }
+        ]
+      },
+      {
+        "dataset": "account.move.line",
+        "field": "book",
+        "id": "posting_book",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "demo/stock-usd"
+          }
+        ]
+      },
+      {
+        "dataset": "account.payment",
+        "field": "currency",
+        "id": "settlement_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "product.product",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_0",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "stock.quant",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_1",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "res.partner",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_2",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "sale.order.line",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_3",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "stock.move",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_4",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "account.move.line",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_5",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "account.payment",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_6",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "product.product",
+        "kind": "document",
+        "nativeName": "Synthetic product.product"
+      },
+      {
+        "id": "stock.quant",
+        "kind": "document",
+        "nativeName": "Synthetic stock.quant"
+      },
+      {
+        "id": "res.partner",
+        "kind": "document",
+        "nativeName": "Synthetic res.partner"
+      },
+      {
+        "id": "sale.order.line",
+        "kind": "document",
+        "nativeName": "Synthetic sale.order.line"
+      },
+      {
+        "id": "stock.move",
+        "kind": "document",
+        "nativeName": "Synthetic stock.move"
+      },
+      {
+        "id": "account.move.line",
+        "kind": "document",
+        "nativeName": "Synthetic account.move.line"
+      },
+      {
+        "id": "account.payment",
+        "kind": "document",
+        "nativeName": "Synthetic account.payment"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "product.product",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "product.product",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "product.product",
+        "name": "code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "product.product",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "product.product",
+        "name": "sku",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "product.product",
+        "name": "price",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "resource_code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "location",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "item_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "owner_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "custodian_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "stock_cost",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "cost_currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "res.partner",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "res.partner",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "res.partner",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "res.partner",
+        "name": "role",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "due_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "sale.order.line",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "occurred_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "order_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "account_code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "amount",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "book",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "account_role",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "event_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "x_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "amount",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "kind",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "payer_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.payment",
+        "name": "payee_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.quant",
+        "name": "valuation_method",
+        "nativeType": "SyntheticText",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock.move",
+        "name": "posting_state",
+        "nativeType": "SyntheticText",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "account.move.line",
+        "name": "posting_state",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-02T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "681adbdf0de776701a4390dd3f94a25cbdfd657501b0f2a2e14398ceb647fb8a",
+      "uri": "registry/packs/odoo/synthetic.json"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-odoo",
+      "version": "odoo-three/1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/odoo/artifacts/odoo.three.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
