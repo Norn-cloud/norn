@@ -2614,6 +2614,7 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
                     ..CellCommit::empty()
                 })
                 .unwrap();
+            let before = visible(&host.cell, &keys);
             let links_before = host
                 .cell
                 .read_link_targets(&keys[0], "members", 10, 10_000)
