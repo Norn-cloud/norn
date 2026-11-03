@@ -112,9 +112,7 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     let proposal = identity_proposal(&cell, Some("changed business key"));
     let before = cell.store().read().dump().expect("before");
     for _ in 0..2 {
-        let refusal = cell
-            .commit(proposal.clone())
-            .expect_err("explicit restoration required");
+        let refusal = cell.commit(proposal.clone()).expect_err("restore required");
         assert_eq!(refusal.code(), norn_checker::IDENTITY_REUSE);
         assert_eq!(refusal.to_string(), norn_checker::IDENTITY_REUSE_MESSAGE);
         assert_eq!(cell.store().read().dump().expect("unchanged"), before);
@@ -132,10 +130,8 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
             values: BTreeMap::from([("code".into(), RuntimeValue::from(key))]),
         })
         .collect();
-    assert!(matches!(
-        store.commit(&canonical),
-        Err(CellError::IdentityReuse)
-    ));
+    let refusal = store.commit(&canonical).expect_err("canonical recreation");
+    assert!(matches!(refusal, CellError::IdentityReuse));
     assert_eq!(store.read().dump().expect("canonical refusal"), before);
     store
         .commit(&batch(
@@ -148,12 +144,9 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     let records = (1..=3)
         .map(|seq| store.export_record(seq).expect("export").expect("record"))
         .collect::<Vec<_>>();
-    let rebuilt = CellStore::rebuild_export_history(
-        norn_cell::engine::NativeEngine::open_in_memory().expect("engine"),
-        &records,
-        &records[2].hash().expect("retained head"),
-    )
-    .expect("retained embedding prefix");
+    let engine = norn_cell::engine::NativeEngine::open_in_memory().expect("engine");
+    let head = records[2].hash().expect("retained head");
+    let rebuilt = CellStore::rebuild_export_history(engine, &records, &head).expect("rebuild");
     assert_eq!(rebuilt.read().dump().expect("replayed"), committed);
     let mut rebuilt =
         IdentityCell::new(rebuilt, "org_a", |_| JsonObject::new()).expect("rebuilt host");
@@ -171,10 +164,7 @@ fn authored_identity_reuse_refuses_before_writes_and_after_reopen() {
     assert_eq!(rebuilt.store().read().dump().expect("unchanged"), replayed);
     drop(store);
     let store = CellStore::open(&path, model(), StoreOptions::default()).expect("reopen raw");
-    assert_eq!(
-        store.read().dump().expect("retained raw semantics"),
-        committed
-    );
+    assert_eq!(store.read().dump().expect("raw semantics"), committed);
 }
 
 fn identity_observation(
@@ -233,18 +223,15 @@ fn observed_reappearance_retains_identity_and_advances_its_version() {
         norn_checker::IDENTITY_REUSE
     );
     assert_eq!(cell.store().read().dump().expect("unchanged"), before);
-    cell.commit_observed(commit, authority)
-        .expect("source reappearance");
+    cell.commit_observed(commit, authority).expect("reappear");
     let reappeared = cell.load(&key).expect("same identity");
     assert!(reappeared.exists());
     assert!(reappeared.version > deleted);
     let after = cell.store().read().dump().expect("observed state");
     drop(cell);
     let cell = identity_cell(&path);
-    assert_eq!(
-        cell.load(&key).expect("retained version").version,
-        reappeared.version
-    );
+    let reopened = cell.load(&key).expect("retained version").version;
+    assert_eq!(reopened, reappeared.version);
     assert_eq!(cell.store().read().dump().expect("stable reopen"), after);
 }
 
