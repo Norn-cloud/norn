@@ -418,3 +418,25 @@ fn parent_interface_inverse_attributes_reach_child_interface_implementers() {
     );
     assert!(projection.schema.contains("sources?: Set<"));
 }
+
+
+#[test]
+fn synchronous_writer_authorization_projects_exact_declared_resource_types() {
+    let (types, properties, actions) = representative_model();
+    let names = ["alpha.Root", "alpha.Child", "alpha.Target", "alpha.SpecialTarget"];
+    for synchronous in [false, true] {
+        for mask in 0_u8..16 {
+            let mut source = serde_json::to_value(&actions[0]).expect("action");
+            source["effectProgram"] = serde_json::json!({"kind":"fire_transition","objectIdField":"id","objectKind":"alpha.Root","entityArtifactId":"alpha.Root","entityArtifactVersion":"1.0.0","lifecycle":"status","transition":"approve"});
+            source["writes"] = serde_json::json!(names.iter().enumerate().filter(|(i,_)| mask & (1_u8 << i) != 0).map(|(_,name)| serde_json::json!({"entityKind":name,"change":"modified"})).collect::<Vec<_>>());
+            if synchronous { source["synchronousRule"] = serde_json::json!({"artifactId":"alpha.writer.rule","version":"1.0.0"}); }
+            let projected = project_cedar_schema_with_catalog(&types, &[], &properties, &[action(source)]);
+            let mut expected = vec!["alpha::Child", "alpha::Root"];
+            if synchronous && mask & 0b1100 != 0 { expected.push("alpha::SpecialTarget"); }
+            if synchronous && mask & 0b0100 != 0 { expected.push("alpha::Target"); }
+            assert!(projected.schema.contains(&format!("resource: [{}]",expected.join(", "))), "mask={mask}, synchronous={synchronous}: {}",projected.schema);
+            assert!(!projected.resource_actions.contains_key(&norn_ir::ObjectTypeName("alpha.Target".into())));
+            assert!(!projected.resource_actions.contains_key(&norn_ir::ObjectTypeName("alpha.SpecialTarget".into())));
+        }
+    }
+}
