@@ -1236,6 +1236,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         digests: &'a PendingDigests,
     ) -> Self {
         self.pending_digests = Some((commit, digests));
+        self
+    }
+
     pub(crate) const fn with_source_disputes(
         mut self,
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
