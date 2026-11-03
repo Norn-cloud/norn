@@ -691,6 +691,26 @@ impl ObservationAuthorization {
     ) -> Result<(), ObservationRefusal> {
         let model = crate::CommitModel::new(catalog);
         let key = FactKey::new(claim.source_type.as_str(), &claim.source_key);
+        let claim_key = FactKey::new(
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+            claim
+                .id()
+                .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?,
+        );
+        let values = claim
+            .values()
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+        let retained = self
+            .read_findings
+            .iter()
+            .any(|read| read.key == claim_key && read.values == values);
+        let written = self.writes.iter().any(|write| write.write.key == claim_key
+            && matches!(&write.write.mutation, FactMutation::Put { values: prepared } if prepared == &values));
+        if !retained && !written {
+            return Err(ObservationRefusal::Encoding(
+                "claim has no prepared immutable evidence".into(),
+            ));
+        }
         if source.key != key
             || (!commit.reads.contains(&source)
                 && !commit
@@ -1270,6 +1290,31 @@ pub struct PreparedObservation {
 }
 
 impl PreparedObservation {
+    /// Compose a prepared snapshot into the same atomic observation turn.
+    ///
+    /// # Errors
+    /// The destination consumes a different delivery.
+    pub fn append_to(
+        self,
+        commit: &mut CellCommit<ObservationEvent, JsonObject, JsonObject>,
+        authorization: &mut ObservationAuthorization,
+    ) -> Result<(), ObservationRefusal> {
+        if self.commit.consumes != commit.consumes {
+            return Err(ObservationRefusal::Encoding(
+                "snapshot composition changed its delivery".into(),
+            ));
+        }
+        let (part, authority) = self.into_parts();
+        commit.reads.extend(part.reads);
+        commit.writes.extend(part.writes);
+        commit.events.extend(part.events);
+        commit.effects.extend(part.effects);
+        commit.links.extend(part.links);
+        commit.link_reads.extend(part.link_reads);
+        authorization.merge(authority);
+        Ok(())
+    }
+
     /// Split the public commit from its opaque observation authorization.
     #[must_use]
     pub fn into_parts(

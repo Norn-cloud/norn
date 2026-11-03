@@ -693,11 +693,12 @@ fn observed_link_authority_seals_changed_and_unchanged_sources_and_both_ownershi
         .expect("authored replacement remains authorized");
 }
 
-#[test]
-fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership() {
-    use norn_ir::mapping::{ObservedLinkClaim, ObservedLinkTarget};
-    use norn_ir::{LinkId, ObjectTypeName};
-    use norn_kernel::{FactExpectation, ObservationAuthorization, ObservationEvent, TypeCatalog};
+type ClaimCell = MemoryCell<norn_kernel::ObservationEvent, JsonObject, JsonObject>;
+fn claim_fixture() -> (
+    Vec<ObjectTypeDef>,
+    ClaimCell,
+    norn_ir::mapping::ObservedLinkClaim,
+) {
     let mut types: Vec<ObjectTypeDef> = serde_json::from_value(serde_json::json!([
         {"name":"test.Source", "links":[{"id":"target","target":"test.Target","cardinality":{"to":"one","from":"many"}}]},
         {"name":"test.Target"}
@@ -709,10 +710,8 @@ fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership()
     types.push(
         serde_json::from_value(declaration["payload"]["objectType"].clone()).expect("claim type"),
     );
-    let catalog = TypeCatalog::new(types.iter());
-    let mut cell: MemoryCell<ObservationEvent, JsonObject, JsonObject> =
-        MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
-            .with_types(types.clone());
+    let mut cell = ClaimCell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
     cell.commit(CellCommit {
         writes: vec![
             create("test.Source", "one"),
@@ -722,117 +721,176 @@ fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership()
         ..CellCommit::empty()
     })
     .expect("initial objects");
-    let source = FactKey::new("test.Source", "one");
-    let target = FactKey::new("test.Target", "two");
     let provenance = serde_json::from_value(serde_json::json!({
         "source":{"system":"synthetic-a","record":"rows/one"},
         "mappingVersion":"synthetic.mapping@1", "transform":"row.target", "recordedAt":"2026-11-03T00:00:00Z"
     })).expect("provenance");
-    let claim = ObservedLinkClaim {
+    let claim = norn_ir::mapping::ObservedLinkClaim {
         observation_id: "bundle:first".into(),
-        source_type: source.object_type.clone(),
-        source_key: source.key.clone(),
-        role: LinkId("target".into()),
-        target: Some(ObservedLinkTarget {
-            object_type: target.object_type.clone(),
-            key: target.key.clone(),
+        source_type: norn_ir::ObjectTypeName("test.Source".into()),
+        source_key: "one".into(),
+        role: norn_ir::LinkId("target".into()),
+        target: Some(norn_ir::mapping::ObservedLinkTarget {
+            object_type: norn_ir::ObjectTypeName("test.Target".into()),
+            key: "two".into(),
         }),
         provenance,
     };
-    let claim_key = FactKey::new(
+    (types, cell, claim)
+}
+fn claimed_commit(
+    catalog: &norn_kernel::TypeCatalog<'_>,
+    cell: &ClaimCell,
+    claim: &norn_ir::mapping::ObservedLinkClaim,
+) -> (
+    CellCommit<norn_kernel::ObservationEvent, JsonObject, JsonObject>,
+    norn_kernel::ObservationAuthorization,
+) {
+    let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
+    let read = norn_kernel::FactExpectation {
+        key: source.clone(),
+        expected: cell.load(&source).expect("source").version,
+    };
+    let target = claim.target.as_ref().expect("explicit target fixture");
+    let key = LinkKey::new(
+        source,
+        claim.role.as_str(),
+        FactKey::new(target.object_type.as_str(), &target.key),
+    );
+    let state = cell.load_link(&key).expect("link state");
+    let links = if state.values.is_none() {
+        vec![LinkWrite {
+            key,
+            expected: state.version,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }]
+    } else {
+        vec![]
+    };
+    let mut commit = CellCommit {
+        reads: vec![read.clone()],
+        links,
+        ..CellCommit::empty()
+    };
+    let mut authority = norn_kernel::ObservationAuthorization::empty();
+    assert!(
+        authority
+            .seal_observed_link_claim(catalog, claim, read.clone(), &commit)
+            .is_err(),
+        "unprepared claim bytes confer no authority"
+    );
+    let key = FactKey::new(
         norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
         claim.id().expect("claim id"),
     );
+    let slice = norn_kernel::load_slice(cell, [key]).expect("claim slice");
     let turn = norn_kernel::DecisionTurn {
         id: claim.observation_id.clone(),
         now: norn_kernel::LogicalTime::EPOCH,
         world: norn_kernel::World::Main,
         consumes: None,
     };
-    let slice = norn_kernel::load_slice(&cell, [claim_key.clone()]).expect("slice");
-    let (prepared, authorization) =
-        norn_kernel::snapshot_observe::prepare_observed_link_claim_snapshot(
-            &catalog, &slice, &turn, &claim,
-        )
-        .expect("claim snapshot")
-        .into_parts();
-    cell.commit_observed(prepared, authorization)
-        .expect("claim stored atomically");
-    assert_eq!(
-        cell.load(&claim_key).expect("claim").values,
-        Some(claim.values().expect("projection"))
+    norn_kernel::snapshot_observe::prepare_observed_link_claim_snapshot(
+        catalog, &slice, &turn, claim,
+    )
+    .expect("claim snapshot")
+    .append_to(&mut commit, &mut authority)
+    .expect("same atomic turn");
+    authority
+        .seal_observed_link_claim(catalog, claim, read, &commit)
+        .expect("exact claim authority");
+    (commit, authority)
+}
+#[test]
+fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership() {
+    let (types, mut cell, claim) = claim_fixture();
+    let catalog = norn_kernel::TypeCatalog::new(types.iter());
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    assert!(
+        matches!(
+            cell.commit(commit.clone()),
+            Err(norn_kernel::CommitError::ObservationAuthorization)
+        ),
+        "authored claim writes refuse"
     );
-    let forged = CellCommit {
-        writes: vec![FactWrite {
-            key: FactKey::new(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE, "forged"),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: claim.values().expect("projection"),
-            },
-        }],
-        ..CellCommit::empty()
-    };
-    assert!(matches!(
-        cell.commit(forged),
-        Err(norn_kernel::CommitError::ObservationAuthorization)
-    ));
-    let read = FactExpectation {
-        key: source.clone(),
-        expected: FactVersion(1),
-    };
-    let commit = CellCommit {
-        reads: vec![read.clone()],
-        links: vec![LinkWrite {
-            key: LinkKey::new(source.clone(), "target", target),
-            expected: FactVersion::ABSENT,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        }],
-        ..CellCommit::empty()
-    };
-    let mut authority = ObservationAuthorization::empty();
-    authority
-        .seal_observed_link_claim(&catalog, &claim, read.clone(), &commit)
-        .expect("first claim");
-    let mut second = claim.clone();
-    second.provenance.source.system = "synthetic-b".into();
-    second.observation_id = "bundle:second".into();
-    authority
-        .seal_observed_link_claim(&catalog, &second, read, &commit)
-        .expect("corroboration");
     let mut forged = commit.clone();
     forged.links[0].key.target = FactKey::new("test.Target", "other");
     assert!(matches!(
         cell.commit_observed(forged, authority.clone()),
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
+    let key = FactKey::new(
+        norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+        claim.id().expect("id"),
+    );
+    assert!(cell.load(&key).expect("absent claim").values.is_none());
     cell.commit_observed(commit, authority)
-        .expect("one convergent edge");
-    let mut wrong = claim;
-    wrong.target.as_mut().expect("target").object_type = ObjectTypeName("test.Source".into());
-    wrong.target.as_mut().expect("target").key = "one".into();
-    let read = FactExpectation {
-        key: source.clone(),
-        expected: FactVersion(1),
-    };
-    let commit = CellCommit {
-        reads: vec![read.clone()],
-        links: vec![LinkWrite {
-            key: LinkKey::new(source.clone(), "target", source),
-            expected: FactVersion::ABSENT,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        }],
-        ..CellCommit::empty()
-    };
-    let mut authority = ObservationAuthorization::empty();
-    authority
-        .seal_observed_link_claim(&catalog, &wrong, read, &commit)
-        .expect("intent only");
+        .expect("one convergent edge plus claim");
+    assert_eq!(
+        cell.load(&key).expect("claim").values,
+        Some(claim.values().expect("projection"))
+    );
+    let mut second = claim;
+    second.provenance.source.system = "synthetic-b".into();
+    second.observation_id = "bundle:second".into();
+    let (commit, authority) = claimed_commit(&catalog, &cell, &second);
+    assert!(
+        commit.links.is_empty(),
+        "corroboration adds provenance, not another edge"
+    );
+    cell.commit_observed(commit, authority)
+        .expect("second source");
+    assert!(
+        cell.load(&FactKey::new(
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+            second.id().expect("id")
+        ))
+        .expect("second provenance")
+        .values
+        .is_some()
+    );
+}
+#[test]
+fn obs_link_wrong_endpoint_type_refuses_claim_and_edge_atomically() {
+    let (types, mut cell, mut claim) = claim_fixture();
+    let target = claim.target.as_mut().expect("target");
+    target.object_type = norn_ir::ObjectTypeName("test.Source".into());
+    target.key = "one".into();
+    let catalog = norn_kernel::TypeCatalog::new(types.iter());
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
     assert!(matches!(
         cell.commit_observed(commit, authority),
         Err(norn_kernel::CommitError::LinkTarget { .. })
     ));
+    assert!(
+        cell.load(&FactKey::new(
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+            claim.id().expect("id")
+        ))
+        .expect("absent claim")
+        .values
+        .is_none()
+    );
+}
+#[test]
+fn obs_link_missing_endpoint_refuses_claim_and_edge_atomically() {
+    let (types, mut cell, mut claim) = claim_fixture();
+    claim.target.as_mut().expect("target").key = "missing".into();
+    let catalog = norn_kernel::TypeCatalog::new(types.iter());
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::DanglingLink { .. })
+    ));
+    assert!(
+        cell.load(&FactKey::new(
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+            claim.id().expect("id")
+        ))
+        .expect("absent claim")
+        .values
+        .is_none()
+    );
 }
