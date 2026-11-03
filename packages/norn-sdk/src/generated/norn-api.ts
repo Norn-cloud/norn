@@ -1709,6 +1709,34 @@ export interface components {
             /** @description The terminal property. */
             property: string;
         };
+        /**
+         * EffectiveLawInstance
+         * @description LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+         *     identity, concrete subject, attachment and complete origin paths.
+         *     This projection is not a new law or evidence of preservation.
+         */
+        NornIrEffectiveLawInstance: {
+            /** @description Declared governing boundary, including retained pack/app attachments. */
+            attachment: components["schemas"]["NornIrLawRoot"];
+            /** @description Explicit typed member substitutions; no rewritten child LawIR. */
+            bindings: {
+                [key: string]: components["schemas"]["NornIrMemberRef"];
+            };
+            /** @description LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope. */
+            instancePaths: components["schemas"]["NornIrPackInstanceRef"][][];
+            /** @description Original law artifact/version and stable law member ID. */
+            law: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of the unchanged law artifact. */
+            lawDigest: string;
+            /** @description Original governed concept/interface/container identity. */
+            origin: components["schemas"]["NornIrMemberRef"];
+            /** @description Every inheritance, containment or mapping path; a diamond retains all. */
+            paths: components["schemas"]["NornIrMemberRef"][][];
+            /** @description Concrete implementing type, independently pinned. */
+            subject: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of that concrete type artifact. */
+            subjectDigest: string;
+        };
         /** @description A recognized source action and the checked predicate that admits it. */
         NornIrEntitlementActionMap: {
             /** @description Exact Norn action id. */
@@ -2944,7 +2972,7 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"];
+        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"] | components["schemas"]["NornIrLawRootOneOf4"];
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -2968,6 +2996,12 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        };
+        /** @description Exact retained composition-pack boundary. */
+        NornIrLawRootOneOf4: {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrLawScope: {
@@ -4597,6 +4631,10 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrRequirementLawScope: {
@@ -4669,6 +4707,8 @@ export interface components {
             everyCommittedState: string;
             grounding: string;
             obligation: string;
+            /** @description Required to render a pack-rooted law; other roots never read it. */
+            pack?: string | null;
             permission: string;
             prohibition: string;
             sameCommit: string;
