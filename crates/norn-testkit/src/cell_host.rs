@@ -1930,6 +1930,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
     use norn_kernel::CommitError::{self as Error, IdentityCollision};
 
     Ok(match error {
+        Error::IdentityReuse => Error::IdentityReuse,
         Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
         AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
         Error::Law { key, reason } => Error::Law { key, reason },
