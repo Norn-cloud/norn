@@ -147,7 +147,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                 ]),
                 actor: "driver:operator".into(),
                 input: serde_json::from_value(
-                    json!({"id":"melt", "input_fine_g":input,"output_fine_g":output}),
+                    json!({"id":"melt", "input_quantity":input,"output_quantity":output}),
                 )?,
                 idempotency_key: "convert".into(),
                 object_type: None,
@@ -166,7 +166,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                         .values
                         .ok_or("missing committed conversion")?;
                     let expected = RuntimeValue::from_json_text(required_loss.to_string())?;
-                    if values.get("loss_fine_g") != Some(&expected) {
+                    if values.get("loss_quantity") != Some(&expected) {
                         return Err(
                             "committed mass does not satisfy the independent integer oracle".into(),
                         );
