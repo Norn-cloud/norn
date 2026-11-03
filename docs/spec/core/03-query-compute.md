@@ -104,3 +104,9 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Declared candidate space
+
+`METRIC-DECLARED-SPACE-1`: enumerate explicitly additive numeric properties with direct time properties, direct/single-link scalar dimensions and existing calendar grains. Units do not imply additivity; undeclared, ratio, semi-additive and non-additive properties produce no sum candidate. Ordering is deterministic, candidates stay uncertified, native property contracts remain unchanged, and selection passes through existing compute admission. Unsupported selections retain its refusals. Law-derived candidates are a separate refinement.
+
+Named scenarios: `declared_space_is_deterministic_and_exposes_dimensions_and_grains`, `declared_space_never_infers_additivity_from_units_or_other_contracts`. Evidence is structural and sampled.
