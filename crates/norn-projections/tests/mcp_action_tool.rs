@@ -52,7 +52,8 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     );
     assert_eq!(
         tool["inputSchema"]["properties"]["amount"]["anyOf"],
-        json!([{"type":"string"},{"type":"null"}])
+        json!([{"type":"string", "nornType":{"kind":"decimal","scale":2},
+            "description":"Exact decimal text as a JSON string, for example \"125.50\". Use a dot decimal separator; do not send a JSON number."},{"type":"null"}])
     );
     assert_eq!(
         tool["_meta"]["norn/inputDerivations"],

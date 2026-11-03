@@ -30,6 +30,8 @@ mod action_contract_tests {
             serde_json::from_str(&super::openapi_json().unwrap()).unwrap();
         let schemas = &document["components"]["schemas"];
         assert!(schemas["NornActionInput"]["additionalProperties"].is_object());
+        assert!(schemas["NornActionInput"]["additionalProperties"]["description"].as_str().unwrap().contains("exact-decimal"));
+        assert!(schemas.get("NornActionJsonValue").is_none());
         let record = &schemas["NornActionCallRecord"]["properties"];
         for name in [
             "actionId",
