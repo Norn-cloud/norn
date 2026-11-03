@@ -169,7 +169,7 @@ proptest! {
     fn exact_decimal_lowering_agrees_with_native_arithmetic(a in 0..100_i64, b in 0..100_i64) {
         let fields = BTreeMap::from([("amount".into(), "a".into()), ("remaining".into(), "b".into())]);
         let expr = "input.amount - input.remaining + 0.250";
-        let lowered = super::quint::expression(expr, &fields, 2).expect("lower");
+        let lowered = super::finite::expression(expr, &fields, 2).expect("lower");
         let native = norn_expr::Expression::compile(expr).expect("native").evaluate(&norn_expr::Value::object([("input", norn_expr::Value::object([("amount", norn_expr::Value::Number(format!("0.{a:02}").parse().expect("decimal"))), ("remaining", norn_expr::Value::Number(format!("0.{b:02}").parse().expect("decimal")))]))]), norn_expr::EvaluationBudget::new(100)).expect("native eval");
         let translated = norn_expr::Expression::compile(&lowered).expect("common grammar").evaluate(&norn_expr::Value::object([("a", a.into()), ("b", b.into())]), norn_expr::EvaluationBudget::new(100)).expect("lowered eval");
         let scaled_native = norn_expr::Expression::compile("value * 100").expect("scale oracle").evaluate(&norn_expr::Value::object([("value", native.value().clone())]), norn_expr::EvaluationBudget::new(100)).expect("oracle");
@@ -190,8 +190,111 @@ fn unsupported_syntax_and_inexact_literals_are_visible_refusals() {
         "input.amount[0]",
     ] {
         assert!(
-            super::quint::expression(source, &fields, 2).is_err(),
+            super::finite::expression(source, &fields, 2).is_err(),
             "{source}"
         );
     }
+}
+
+#[test]
+fn finite_relation_is_backend_neutral() {
+    let mut artifacts = fixture();
+    let original = source(&artifacts);
+    let registry = BTreeSet::new();
+    let authority = ApprovedContract::approve(
+        &original,
+        &registry,
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("admitted");
+    let profile = bounds(&artifacts);
+    let neutral = authority
+        .finite(&original, &registry, &profile)
+        .expect("finite relation");
+    let quint = authority
+        .quint(&original, &registry, &profile)
+        .expect("projection");
+    assert_eq!(neutral.challenge.sha256(), quint.challenge.sha256());
+    assert_eq!(neutral.bounds, quint.bounds);
+    assert_eq!(neutral.goals.len(), quint.goals.len());
+    for (relation, module) in neutral.goals.iter().zip(&quint.goals) {
+        assert_eq!(relation.is_ok(), module.is_ok());
+        if let (Err(left), Err(right)) = (relation, module) {
+            assert_eq!(left, right);
+        }
+    }
+    // Check-time golden hashes from the pre-refactor 4ee0b129 renderer on Boat.
+    let module = quint
+        .goals
+        .iter()
+        .find_map(|goal| goal.as_ref().ok())
+        .expect("original module");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(module.as_bytes())),
+        "4ff478be0ab3a6f1cae1f144f0c748061d16c96c8a9c37cf287fcbff285e23df"
+    );
+    let relation = neutral
+        .goals
+        .iter()
+        .find_map(|goal| goal.as_ref().ok())
+        .expect("eligible");
+    assert_eq!(relation.writer_artifact, profile.action);
+    assert_eq!(relation.identity, profile.identity);
+    assert_eq!(
+        relation
+            .state
+            .iter()
+            .map(|field| field.property.as_str())
+            .collect::<Vec<_>>(),
+        ["amount", "difference", "remaining"]
+    );
+    assert_eq!(
+        relation
+            .inputs
+            .iter()
+            .map(|input| (input.property.as_str(), input.lower, input.upper))
+            .collect::<Vec<_>>(),
+        [("amount", 2, 12), ("remaining", 1, 12)]
+    );
+    let difference = relation
+        .state
+        .iter()
+        .find(|field| field.property.as_str() == "difference")
+        .expect("declaration");
+    let update = |model: &norn_ir::verification::finite::CreateRelation| {
+        model
+            .updates
+            .iter()
+            .find(|(symbol, _)| symbol == &difference.symbol)
+            .expect("write")
+            .1
+            .as_str()
+            .to_owned()
+    };
+    assert!(update(relation).contains(" - "));
+    artifacts[2]["payload"]["derive"] = json!([]);
+    let module = authority
+        .quint(&source(&artifacts), &registry, &profile)
+        .expect("mutant projection")
+        .goals
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("mutant module");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(module.as_bytes())),
+        "c9bf44daf2c25703b36a77da1c28029c75d705e3bacc3c15797ce2b5cd4ad0d3"
+    );
+    let mutant = authority
+        .finite(&source(&artifacts), &registry, &profile)
+        .expect("mutant");
+    let mutant = mutant
+        .goals
+        .iter()
+        .find_map(|goal| goal.as_ref().ok())
+        .expect("mutant relation");
+    assert_eq!(update(mutant), "0");
+    assert_eq!(relation.inputs, mutant.inputs);
+    assert_eq!(relation.state, mutant.state);
 }
