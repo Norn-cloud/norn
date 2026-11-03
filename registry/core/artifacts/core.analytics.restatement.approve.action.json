@@ -1,0 +1,64 @@
+{
+  "artifactId": "core.analytics.restatement.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve analytical restatement",
+  "namespace": "core",
+  "payload": {
+    "actionId": "core.analytics.restatement.approve",
+    "effectProgram": {
+      "entityArtifactId": "core.analytics.Restatement.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "core.analytics.Restatement",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Approve analytical restatement",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "core.analytics.Restatement"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.restatement.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

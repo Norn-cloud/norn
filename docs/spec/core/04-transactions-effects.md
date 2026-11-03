@@ -72,6 +72,29 @@ Execution stays closed until consumption and effects commit atomically, with no 
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
+### TXN-CELL-1 — single-cell execution profile
+
+Every supported proposal key and actual admission read belongs to the bound
+host's cell, including link endpoints, membership/absence partitions, and keys
+discovered during graph traversal. Ownership is host evidence under the commit
+snapshot, never a law applicability label or request hint. Foreign or unknown
+ownership refuses `core.txn.atomic_boundary` before the host applies any effect.
+Outbound commands are local outbox enqueues, not remote atomic writes.
+Consumed timer incarnations, command generations and observations also require
+local ownership before any pending-delivery read or effect.
+
+The current supported immediate laws are pointwise; inherited/effective or
+otherwise unresolved dependencies retain their existing unsupported refusal.
+This profile produces no splittability label or distributed guarantee. A host
+supporting external dependencies must resolve ownership for both facts and
+complete membership partitions; unknown is not local.
+
+Named scenarios: **TXN-CELL-CROSS** refuses a foreign immediate-law read with
+unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
+inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
+**TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
+consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in

@@ -38,3 +38,42 @@ Native scenarios cover 98%/97.5%, signed ties, zero/range refusals, weekly bucke
 Kani includes the production module: full-width sum/ratio safety, zero-divisor refusal, and exhaustive i16 numerators with signed 128 divisors (nearest, tie-away and sign correspondence).
 The broader symbolic i16-divisor correspondence attempt timed out at 600 seconds; it is not counted as proof. Functional ratio evidence remains bounded; no universal arithmetic theorem is claimed.
 Storage/frontier enforcement and #353 cell-fixture correspondence follow in the next G2 cut. IVM and governed-read qualification remain separate cuts.
+
+## G2 result envelope
+
+The QUERY-ENGINE-1 envelope retains exact decimal totals and per-object-version
+contributions, declared source-partition cursor vectors, watermarks, scope and
+population/epoch/mapping pins. Null denotes an unavailable ratio, never invented
+zero. `known_as_of` is an actual knowledge revision; an effective cutoff alone
+is not a historical-knowledge API. This cut adds data contracts only: the
+producer must validate pins, complete reads and freshness. Exact transport and
+opaque cursor separation have conformance tests. There is no new handwritten
+pure function or arithmetic primitive requiring another proptest/Kani harness;
+the producing evaluator and existing arithmetic kernel own that evidence.
+
+## G2 cell reference execution
+
+COMPUTE-DETERMINISTIC-1 / QUERY-GRAIN-1 use the shared projector and arithmetic
+inside one cell transaction. A full bounded metadata/decode scan precedes
+publication; budget exhaustion refuses rather than returning a partial total.
+Effective model contracts and tenant scope must match. The trusted host supplies
+visibility, source progress and Core 07 exclusions; this adds no quality law or
+permission authority. Required source partitions retain opaque cursor vectors;
+missing coverage/quarantine is incomplete; heartbeat lag above the declared
+maximum, or a future heartbeat, is stale. Bound tenant scope is checked before scanning even an empty population.
+The envelope binds actual ledger/knowledge revision, model/declarations, window,
+mapping/population/epoch, contributions and frontier. This G2 current-world
+evaluator does not select historical knowledge; `evaluate_question_known_at`
+(ASOF-KNOWLEDGE-1, Core 08) owns authenticated knowledge-cutoff evaluation.
+The unchanged #353 CSV is a generated numerical fixture, not authenticated
+training knowledge. Native cell scenarios cover 98%/97.5%, immutable prior
+results, exact contribution membership, unavailable zero-input ratios and
+visibility/quarantine separation. Governing commit-read qualification follows G4.
+
+QUERY-FRESH-1 analytical labels: complete coverage at the observed frontier with zero heartbeat lag is exact; positive lag within the admitted maximum is fresh; excessive/future heartbeat age is stale; missing coverage or quarantine is incomplete. Governed freshness refusal remains G4.
+
+G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomputation uses exact signed contribution adjustment designed for delta-maintenance reuse. Retraction reverses an admitted addition without rounding; only the final ratio rounds. A generated sequence/reverse-sequence property and production arithmetic Kani retraction harness qualify this primitive. Receipt-driven maintenance and restart correspondence are the next cut; no IVM qualification is claimed here.
+
+## G3 receipt-maintained generations
+QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
+A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.

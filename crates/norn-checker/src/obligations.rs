@@ -19,6 +19,10 @@ mod induction;
 pub mod normative;
 /// Source-bound Core 06 overlay obligation generation.
 pub mod overlay;
+/// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod quint;
+#[cfg(test)]
+mod quint_tests;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 9 also binds verified retained-layer authority; profile 8 bound
