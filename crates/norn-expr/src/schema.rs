@@ -770,6 +770,10 @@ pub fn action_environment(
     };
     let mut fields = records.remove(&name).ok_or("missing action input record")?;
     let properties = schema.properties().ok_or("missing input fields")?;
+    for derivation in action.derive.iter().filter(|step| !step.input_required) {
+        let target = fields.get_mut(&derivation.field).ok_or("unknown derivation target")?;
+        *target = target.clone().optional();
+    }
     for derivation in action.derive.iter().take(completed) {
         let target = properties
             .get(&derivation.field)
