@@ -29,8 +29,8 @@ export type Source =
 export interface Feed {
   readonly system: string
   readonly dataset: string
-  /** Declared source per fact or relationship id; one missing here is not mapped by this system. */
-  readonly facts: ReadonlyMap<string, Source>
+  /** Declared sources per fact or relationship id (a link may be declared more than once); one missing here is not mapped by this system. */
+  readonly facts: ReadonlyMap<string, readonly Source[]>
 }
 
 /** Read one declared mapping expression: `input.code`, `'on_hand'`, `null` or anything else. */
@@ -131,11 +131,11 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     for (const map of artifact.payload.maps) {
       const target = entityName.get(map.target.entity) ?? map.target.entity
       targets.add(target)
-      const facts = new Map<string, Source>([
-        ...(map.properties ?? []).map(({ property, value }): [string, Source] => [property, sourceOf(value)]),
-        ...(map.links ?? []).map(({ link, key }): [string, Source] => [link, sourceOf(key)]),
-      ])
-      for (const { member, note, reason } of map.gaps ?? []) facts.set(member, { kind: "gap", note: note ?? reason.replaceAll("_", " ") })
+      const facts = new Map<string, Source[]>()
+      const add = (id: string, source: Source) => facts.set(id, [...facts.get(id) ?? [], source])
+      for (const { property, value } of map.properties ?? []) add(property, sourceOf(value))
+      for (const { link, key } of map.links ?? []) add(link, sourceOf(key))
+      for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", note: note ?? reason.replaceAll("_", " ") }])
       feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]

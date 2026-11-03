@@ -34,13 +34,22 @@ test("each system's declared source for a fact, including a declared gap", () =>
   const holding = catalog.byName.get("canon.Holding")
   const feed = (system: string) => holding?.feeds.find((candidate) => candidate.system === system)
   expect(feed("ERPNext")?.dataset).toBe("Warehouse Lot Balance")
-  expect(feed("ERPNext")?.facts.get("quantity")).toEqual({ kind: "field", field: "quantity" })
-  expect(feed("ERPNext")?.facts.get("quantity_basis")).toEqual({ kind: "fixed", value: "on_hand" })
-  expect(feed("ERPNext")?.facts.get("currency")).toEqual({ kind: "empty" })
-  expect(feed("Shopify")?.facts.get("stock_cost")?.kind).toBe("gap")
-  expect(feed("ERPNext")?.facts.get("owner")).toEqual({ kind: "field", field: "owner_ref" })
+  expect(feed("ERPNext")?.facts.get("quantity")).toEqual([{ kind: "field", field: "quantity" }])
+  expect(feed("ERPNext")?.facts.get("quantity_basis")).toEqual([{ kind: "fixed", value: "on_hand" }])
+  expect(feed("ERPNext")?.facts.get("currency")).toEqual([{ kind: "empty" }])
+  expect(feed("Shopify")?.facts.get("stock_cost")?.[0]?.kind).toBe("gap")
+  expect(feed("ERPNext")?.facts.get("owner")).toEqual([{ kind: "field", field: "owner_ref" }])
   const delivery = catalog.byName.get("canon.Delivery")?.feeds.find((candidate) => candidate.system === "Shopify")
-  expect(delivery?.facts.get("reverses")?.kind).toBe("gap")
+  expect(delivery?.facts.get("reverses")?.[0]?.kind).toBe("gap")
+})
+
+test("a link declared twice keeps both declared sources", () => {
+  const artifacts = [
+    { kind: "entity", artifactId: "demo.Thing.entity", name: "Thing", payload: { entityVersion: "2.0", objectType: { name: "demo.Thing", properties: [] } } },
+    { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-odoo" } } },
+    { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.Thing.entity" }, links: [{ link: "party", key: "input.a" }, { link: "party", key: "input.b" }] }] } },
+  ] as unknown as readonly Artifact[]
+  expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds[0]?.facts.get("party")).toEqual([{ kind: "field", field: "a" }, { kind: "field", field: "b" }])
 })
 
 test("laws attach to the concepts they govern", () => {

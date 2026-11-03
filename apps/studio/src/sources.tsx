@@ -82,8 +82,8 @@ function SourceCell({ source }: { readonly source: Source | undefined }) {
 /** Each fact against each system's record that feeds it, as the admitted mappings declare. */
 function SourceMatrix({ concept }: { readonly concept: Concept }) {
   const gaps = new Map<string, { readonly system: string; readonly note: string; readonly facts: string[] }>()
-  for (const { system, facts } of concept.feeds) for (const [fact, source] of facts) {
-    if (source.kind !== "gap") continue
+  for (const { system, facts } of concept.feeds) for (const [fact, [source]] of facts) {
+    if (source?.kind !== "gap") continue
     const key = `${system}\u0000${source.note}`
     const gap = gaps.get(key) ?? { system, note: source.note, facts: [] }
     gap.facts.push(fact.replaceAll("_", " "))
@@ -101,7 +101,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           ...concept.relationships.map(({ id, target }) => ({ id, label: `${id.replaceAll("_", " ")} → ${conceptTitle(target)}` }))].map(({ id, label }) => (
           <TableRow key={id}>
             <TableCell className="font-medium">{label}</TableCell>
-            {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}><SourceCell source={facts.get(id)} /></TableCell>)}
+            {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}>{(facts.get(id) ?? [undefined]).map((source, index) => <div key={index}><SourceCell source={source} /></div>)}</TableCell>)}
           </TableRow>
         ))}
       </DenseTable>
