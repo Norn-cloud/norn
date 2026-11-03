@@ -1,4 +1,4 @@
-//! Direct governing-law resolution and evaluation on the shared metered expression engine.
+//! Governing-law resolution and evaluation on the shared metered expression engine.
 use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{EvaluationBudget, Expression, Value};
@@ -72,6 +72,8 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
 }
 impl TypeCatalog<'_> {
     /// LAW-COMPLETE-1: never silently omit an applicable inherited/effective law.
+    /// LAW-INTERFACE-1: a law scoped to exactly one type or interface governs it
+    /// and every type that extends or implements it, once per governed type.
     ///
     /// # Errors
     /// Unknown subject, malformed declaration, or scope unsupported until B2.
@@ -105,9 +107,9 @@ impl TypeCatalog<'_> {
             if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) {
                 continue;
             }
-            if law.subject != object_type.as_str()
-                || !matches!(&law.scope.root, LawRoot::Entity(name) if name == object_type.as_str())
-                || law.scope.object_types != [object_type.as_str()]
+            if !is_a(&law.subject)
+                || !matches!(&law.scope.root, LawRoot::Entity(name) if *name == law.subject)
+                || law.scope.object_types != [law.subject.as_str()]
             {
                 return Err(LawEvaluationError::UnsupportedUntilB2(law.id));
             }
@@ -142,17 +144,13 @@ fn invariant_binding<'a>(
     else {
         return Ok(None);
     };
-    let invariants = catalog
-        .invariants(subject)
-        .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))?;
-    if object_type != &law.subject
-        || subject.as_str() != law.subject
-        || invariants
-            .iter()
-            .filter(|item| item.id.as_str() == invariant_id)
-            .count()
-            != 1
-    {
+    let owners = |name: &str| {
+        catalog
+            .contract_invariant_owners(name, invariant_id)
+            .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))
+    };
+    let declared = owners(&law.subject)?;
+    if object_type != &law.subject || declared.len() != 1 || owners(subject.as_str())? != declared {
         return Err(LawEvaluationError::Invalid(format!(
             "{}: invariant reference is missing, ambiguous or outside its retained subject",
             law.id
@@ -246,11 +244,13 @@ pub(crate) fn classify(
         if !supported(&law) || pin(artifact, &law).as_ref() != Ok(rule_ref) {
             continue;
         }
-        if catalog
-            .governing_laws(&ObjectTypeName(law.subject.clone()))
-            .is_ok()
-            && invariant_binding(catalog, &ObjectTypeName(law.subject.clone()), &law).is_ok()
-        {
+        let governs = |subject: &ObjectTypeName| {
+            catalog.governing_laws(subject).is_ok_and(|laws| {
+                laws.iter()
+                    .any(|retained| std::ptr::eq(*retained, *artifact))
+            }) && invariant_binding(catalog, subject, &law).is_ok()
+        };
+        if catalog.object_type_names().iter().any(governs) {
             return match law.severity {
                 LawSeverity::Error => DataQualityRuleClassification::Integrity,
                 LawSeverity::Warning => DataQualityRuleClassification::Quality,

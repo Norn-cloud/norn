@@ -577,6 +577,48 @@ impl<'a> TypeCatalog<'a> {
             .collect())
     }
 
+    /// Owners of the invariants named `id` in the effective contract of the
+    /// object type or interface `name`.
+    ///
+    /// # Errors
+    /// Returns the name of an unknown type or of a missing interface.
+    pub(crate) fn contract_invariant_owners(
+        &self,
+        name: &str,
+        id: &str,
+    ) -> Result<Vec<InvariantOwner>, ObjectTypeName> {
+        if self.types.contains_key(name) {
+            return Ok(self
+                .invariants(&ObjectTypeName(name.to_owned()))?
+                .into_iter()
+                .filter(|item| item.id.as_str() == id)
+                .map(|item| item.owner)
+                .collect());
+        }
+        let interface = self
+            .interfaces
+            .get(name)
+            .copied()
+            .ok_or_else(|| ObjectTypeName(name.to_owned()))?;
+        let lineage = norn_expr::env::interface_lineage(interface, |parent| {
+            self.interfaces.get(parent.as_str()).copied()
+        })
+        .map_err(|missing| ObjectTypeName(missing.0))?;
+        Ok(lineage
+            .into_iter()
+            .filter(|owner| owner.invariants.iter().any(|item| item.id.as_str() == id))
+            .map(|owner| InvariantOwner::Interface(owner.name.clone()))
+            .collect())
+    }
+
+    /// Every retained object type name.
+    pub(crate) fn object_type_names(&self) -> Vec<ObjectTypeName> {
+        self.types
+            .keys()
+            .map(|name| ObjectTypeName((*name).to_owned()))
+            .collect()
+    }
+
     /// Pin an invariant owner to its canonical `EntityIR` declaration content.
     ///
     /// Artifact envelopes are not retained by this kernel catalog, so findings

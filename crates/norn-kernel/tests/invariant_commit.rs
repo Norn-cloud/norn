@@ -3417,6 +3417,157 @@ fn law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin() {
     );
 }
 
+fn interface_invariant_law(scope: &[&str], invariant: &str) -> norn_ir::ArtifactEnvelope {
+    let mut law = serde_json::to_value(invariant_amount_law()).expect("law");
+    law["artifactId"] = json!("invariant.named.law");
+    law["payload"]["id"] = json!("named_item_required");
+    law["payload"]["subject"] = json!(INTERFACE);
+    law["payload"]["scope"] =
+        json!({"root":{"kind":"entity", "id":INTERFACE}, "objectTypes":scope});
+    law["payload"]["response"] =
+        json!({"kind":"invariant", "objectType":INTERFACE, "invariantId":invariant});
+    serde_json::from_value(law).expect("interface law")
+}
+
+fn named_values(item_id: &str) -> JsonObject {
+    object(json!({"item_id":item_id, "amount":1, "status":"draft"}))
+}
+
+#[test]
+fn law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin() {
+    let (mut types, mut interfaces) = definitions();
+    interfaces.push(
+        serde_json::from_value(json!({"name":"invariant.Labelled", "extends":[INTERFACE]}))
+            .expect("diamond interface"),
+    );
+    types[0]
+        .implements
+        .push(norn_ir::InterfaceName("invariant.Labelled".into()));
+    let laws = [interface_invariant_law(&[INTERFACE], "named_item")];
+    let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
+    for ty in [ITEM, SUBTYPE] {
+        let governed = retained.governing_laws(&ObjectTypeName(ty.into())).unwrap();
+        assert_eq!(governed.len(), 1, "{ty}");
+        let key = FactKey::new(ty, "unnamed");
+        let mut budget = EvaluationBudget::default().units();
+        let failure =
+            norn_kernel::governing_laws::evaluate(&retained, &key, &named_values(""), &mut budget)
+                .unwrap()
+                .pop()
+                .expect("violation");
+        assert!(
+            matches!(&failure.rule_ref, DataQualityRuleRef::Law { artifact_id, law_id, .. }
+            if artifact_id == "invariant.named.law" && law_id == "named_item_required")
+        );
+        assert!(matches!(failure.invariant.as_deref(), Some(bound)
+            if bound.failure.owner == InvariantOwner::Interface(norn_ir::InterfaceName(INTERFACE.into()))));
+        assert_eq!(
+            retained
+                .classify_data_quality_rule(&failure.rule_ref)
+                .unwrap(),
+            norn_kernel::DataQualityRuleClassification::Integrity
+        );
+        let mut budget = EvaluationBudget::default().units();
+        assert!(
+            norn_kernel::governing_laws::evaluate(
+                &retained,
+                &key,
+                &named_values("named"),
+                &mut budget
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+    let mut native = cell()
+        .with_types(types)
+        .with_interfaces(interfaces)
+        .with_governing_laws(laws.to_vec());
+    let write = |ty: &str, item_id: &str| CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(ty, item_id),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: named_values(item_id),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    native
+        .commit(write(ITEM, "named"))
+        .expect("implementor admits");
+    let before = native.ledger().len();
+    assert!(matches!(
+        native.commit(write(SUBTYPE, "")),
+        Err(CommitError::Law {
+            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(_),
+            ..
+        })
+    ));
+    assert_eq!(native.ledger().len(), before);
+    assert!(
+        native
+            .load(&FactKey::new(SUBTYPE, ""))
+            .unwrap()
+            .values
+            .is_none()
+    );
+}
+
+#[test]
+fn law_interface_mixed_scopes_and_misowned_invariants_refuse() {
+    use norn_kernel::governing_laws::LawEvaluationError;
+    let (types, interfaces) = definitions();
+    let item = ObjectTypeName(ITEM.into());
+    let mixed = [interface_invariant_law(&[INTERFACE, ITEM], "named_item")];
+    assert!(matches!(
+        catalog(&types, &interfaces)
+            .with_governing_laws(&mixed)
+            .governing_laws(&item),
+        Err(LawEvaluationError::UnsupportedUntilB2(_))
+    ));
+    let mut concrete =
+        serde_json::to_value(interface_invariant_law(&[INTERFACE], "named_item")).unwrap();
+    concrete["payload"]["response"]["objectType"] = json!(ITEM);
+    for law in [
+        interface_invariant_law(&[INTERFACE], "positive_amount"),
+        interface_invariant_law(&[INTERFACE], "missing"),
+        serde_json::from_value(concrete).unwrap(),
+    ] {
+        let laws = [law];
+        let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let mut budget = EvaluationBudget::default().units();
+        assert!(matches!(
+            norn_kernel::governing_laws::evaluate(
+                &retained,
+                &FactKey::new(ITEM, "misowned"),
+                &named_values(""),
+                &mut budget
+            ),
+            Err(LawEvaluationError::Invalid(_))
+        ));
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn law_interface_runtime_matches_the_shared_evaluator_for_implementors(item_id in "[a-z]{0,3}", subtype in norn_testkit::proptest::bool::ANY) {
+        use norn_testkit::proptest::prelude::*;
+        let (types, interfaces) = definitions();
+        let laws = [interface_invariant_law(&[INTERFACE], "named_item")];
+        let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let key = FactKey::new(if subtype { SUBTYPE } else { ITEM }, "generated");
+        let values = named_values(&item_id);
+        let shared = norn_kernel::evaluate_invariants(&retained, &key, &values, &mut EvaluationBudget::default().units()).unwrap();
+        let governed = norn_kernel::governing_laws::evaluate(&retained, &key, &values, &mut EvaluationBudget::default().units()).unwrap();
+        prop_assert_eq!(governed.is_empty(), !item_id.is_empty());
+        prop_assert_eq!(
+            shared.into_iter().map(|failure| (failure.owner, failure.outcome)).collect::<Vec<_>>(),
+            governed.into_iter().map(|failure| (failure.invariant.expect("bound").failure.owner, failure.outcome)).collect::<Vec<_>>()
+        );
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #[test]
     fn law_invariant_runtime_matches_the_existing_evaluator(amount in -1000i64..1000) {
