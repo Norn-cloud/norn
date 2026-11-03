@@ -94,6 +94,26 @@ where
     deserializer.deserialize_map(LocaleVisitor { validate_entry })
 }
 
+/// Escape bidirectional control characters in text-only display values.
+#[must_use]
+pub fn visible(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
+        {
+            out.extend(c.escape_unicode());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+/// Isolate an identifier or expression after escaping embedded direction controls.
+#[must_use]
+pub fn isolate(text: &str) -> String {
+    format!("\u{2068}{}\u{2069}", visible(text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
