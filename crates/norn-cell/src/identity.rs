@@ -164,34 +164,8 @@ fn check_key<E: SqlEngine>(
     .into_iter()
     .chain(columns.iter().map(|(_, name)| quote_identifier(name)))
     .collect::<Vec<_>>();
-    let size = selected
-        .iter()
-        .map(|name| format!("COALESCE(length(CAST({name} AS BLOB)), 0)"))
-        .collect::<Vec<_>>()
-        .join(" + ");
-    let bound = rows_left
-        .checked_add(1)
-        .ok_or(CellError::OutOfRange("identity scan limit"))?;
     let table_name = quote_identifier(&table.table);
-    let preflight = format!(
-        "SELECT COUNT(*), COALESCE(SUM(n), 0) FROM (SELECT {size} AS n FROM {table_name} LIMIT {bound})"
-    );
-    let (count, bytes) = reader
-        .conn
-        .query_optional(&preflight, params![], |row| {
-            Ok((row.get::<i64>(0)?, row.get::<i64>(1)?))
-        })?
-        .ok_or_else(|| CellError::Encoding("identity preflight returned no count".into()))?;
-    let count =
-        usize::try_from(count).map_err(|_negative| CellError::OutOfRange("identity row count"))?;
-    let bytes =
-        usize::try_from(bytes).map_err(|_negative| CellError::OutOfRange("identity byte count"))?;
-    *rows_left = rows_left
-        .checked_sub(count)
-        .ok_or(CellError::OutOfRange("normalized identity scan rows"))?;
-    *bytes_left = bytes_left
-        .checked_sub(bytes)
-        .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
+    let count = scan_count(reader.conn, &table_name, &selected, rows_left, bytes_left)?;
     let projection = read_projection(
         &[(WORLD_COLUMN, false), (SCOPE_COLUMN, false)]
             .into_iter()
@@ -248,4 +222,40 @@ fn check_key<E: SqlEngine>(
         }
     }
     Ok(())
+}
+
+fn scan_count<E: SqlEngine>(
+    engine: &E,
+    table_name: &str,
+    columns: &[String],
+    rows_left: &mut usize,
+    bytes_left: &mut usize,
+) -> Result<usize, CellError> {
+    let size = columns
+        .iter()
+        .map(|name| format!("COALESCE(length(CAST({name} AS BLOB)), 0)"))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let bound = rows_left
+        .checked_add(1)
+        .ok_or(CellError::OutOfRange("identity scan limit"))?;
+    let preflight = format!(
+        "SELECT COUNT(*), COALESCE(SUM(n), 0) FROM (SELECT {size} AS n FROM {table_name} LIMIT {bound})"
+    );
+    let (count, bytes) = engine
+        .query_optional(&preflight, params![], |row| {
+            Ok((row.get::<i64>(0)?, row.get::<i64>(1)?))
+        })?
+        .ok_or_else(|| CellError::Encoding("identity preflight returned no count".into()))?;
+    let count =
+        usize::try_from(count).map_err(|_negative| CellError::OutOfRange("identity row count"))?;
+    let bytes =
+        usize::try_from(bytes).map_err(|_negative| CellError::OutOfRange("identity byte count"))?;
+    *rows_left = rows_left
+        .checked_sub(count)
+        .ok_or(CellError::OutOfRange("normalized identity scan rows"))?;
+    *bytes_left = bytes_left
+        .checked_sub(bytes)
+        .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
+    Ok(count)
 }
