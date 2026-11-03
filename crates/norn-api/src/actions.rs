@@ -101,12 +101,13 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
 }
 
 /// Exact action invocation; the actor comes exclusively from the transport.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionRequest {
     /// Admitted action identity.
     pub action_id: String,
     /// Exact business arguments.
+    #[schema(schema_with = action_input_schema)]
     pub input: RuntimeObject,
     /// Stable retry identity.
     pub idempotency_key: String,
@@ -115,23 +116,36 @@ pub struct ActionRequest {
 }
 
 /// Successful committed or replayed kernel record.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionResponse {
     /// Whether this was an identical retry.
     pub replayed: bool,
     /// Kernel call record without transport reinterpretation.
+    #[schema(schema_with = action_record_schema)]
     pub record: norn_kernel::ActionCallRecord,
 }
-/// Transport-neutral action service over one tenant's admitted cell.
-/// HTTP, MCP and Workers/DO hosts call this same function; only adapters decode
-/// transport metadata and render the returned receipt or shared refusal.
-/// The authenticated actor comes from the trusted host, never action input.
-/// Scope is plain Rust data; the action revision pin is `request.version`.
-/// Authorization, definition epoch, kernel commit and retry replay stay here.
-///
+fn action_input_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornActionInput")
+}
+fn action_record_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornActionCallRecord")
+}
+/// Commit or replay an admitted action under the host's definition epoch.
+/// Trusted transports supply the actor; authorization and storage remain server-owned.
 /// # Errors
-/// Scope, policy, revision, argument and kernel refusals change no business state.
+/// Scope, policy, version, arguments or kernel refusal.
+#[utoipa::path(post, path = "/v1/actions", request_body = ActionRequest,
+    responses(
+        (status = 200, body = ActionResponse),
+        (status = 400, body = Refusal),
+        (status = 403, body = Refusal),
+        (status = 404, body = Refusal),
+        (status = 409, body = Refusal),
+        (status = 422, body = Refusal),
+        (status = 429, body = Refusal),
+        (status = 500, body = Refusal)
+    ))]
 pub fn call_action_in_epoch<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &DefinitionsQuery,
