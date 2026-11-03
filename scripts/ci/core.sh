@@ -233,6 +233,8 @@ def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
     return weights[task] + (compile_seconds if compiles_tests(task) else 0)
+def bin_cost(tasks):
+    return sum(weights[task] for task in tasks) + (compile_seconds if any(map(compiles_tests, tasks)) else 0)
 
 if set(weights) != known:
     raise SystemExit("bundle task inventory differs from core.sh")
@@ -261,6 +263,17 @@ for count in range(1, min(6, len(tasks)) + 1):
         costs[index] += added_cost(index)
         bins[index].append(task)
         compiled[index] |= compiles_tests(task)
+    if len(tasks) >= 2 * count:
+        for index in range(count):
+            if len(bins[index]) != 1:
+                continue
+            donor, task = min(
+                ((donor, task) for donor in range(count) if len(bins[donor]) > 2 for task in bins[donor]),
+                key=lambda move: (bin_cost(bins[index] + [move[1]]) - bin_cost(bins[index]),
+                                  -bin_cost(bins[move[0]]), move[1], move[0]))
+            bins[donor].remove(task)
+            bins[index].append(task)
+    costs = [bin_cost(tasks) for tasks in bins]
     candidates.append((max(max(costs), target_seconds), count, bins))
 bins = min(candidates, default=(0, 0, []))[2]
 bundles = [{"id": f"b{index}", "tasks": tasks} for index, tasks in enumerate(bins) if tasks]

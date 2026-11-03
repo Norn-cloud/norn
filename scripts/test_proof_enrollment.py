@@ -250,6 +250,7 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
         self.assertGreaterEqual(len(self.full["bundle"]), 4)
         self.assertLessEqual(len(self.full["bundle"]), 6)
+        self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()
         reordered["phase"].reverse()
