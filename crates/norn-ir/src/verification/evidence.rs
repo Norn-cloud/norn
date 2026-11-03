@@ -37,7 +37,7 @@ pub struct EvidencePins {
 }
 
 /// A result and its source identity. Deserializing or matching it grants no status.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceRecord {
     /// Complete expected run identity.

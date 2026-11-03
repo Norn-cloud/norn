@@ -1,5 +1,5 @@
 //! PROOF-GUARANTEE-1 / PROOF-BIND-1: typed results, never proof authority.
-use super::evidence::{EvidencePins, EvidenceTool};
+use super::evidence::{EvidenceRecord, EvidenceTool};
 use crate::UnitRef;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -126,10 +126,9 @@ pub struct GoalGuarantee {
     pub verdict: GuaranteeVerdict,
     /// Actual evidence level.
     pub level: GuaranteeLevel,
-    /// Actual checked result pins; absent for unsupported goals.
-    pub pins: Option<EvidencePins>,
-    /// Exact independently retained result digest.
-    pub result_sha256: Option<String>,
+    /// Actual bound result bytes, pins and digest; absent for unsupported goals.
+    /// Presentation never replaces the controller's independent result pin.
+    pub evidence: Option<EvidenceRecord>,
     /// Actual trace when a counterexample or reachability witness was returned.
     pub scenario: Option<GuaranteeScenario>,
 }
