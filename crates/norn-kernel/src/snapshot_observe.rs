@@ -235,6 +235,7 @@ pub struct ObservationAuthorization {
     source_scopes: Vec<(FactExpectation, ObservedSourceOwner)>,
     links: Vec<LinkWrite>,
     convergent_links: Vec<LinkWrite>,
+    claims: BTreeMap<FactKey, JsonObject>,
     owner_recreations: Vec<(FactKey, ObservedSourceOwner, FactWrite)>,
     pending_writes: Vec<FactWrite>,
     pending_sources: BTreeSet<FactKey>,
@@ -301,6 +302,7 @@ impl ObservationAuthorization {
             source_scopes: Vec::new(),
             links: Vec::new(),
             convergent_links: Vec::new(),
+            claims: BTreeMap::new(),
             owner_recreations: Vec::new(),
             pending_writes: Vec::new(),
             pending_sources: BTreeSet::new(),
@@ -397,6 +399,7 @@ impl ObservationAuthorization {
         self.source_scopes.extend(other.source_scopes);
         self.links.extend(other.links);
         self.convergent_links.extend(other.convergent_links);
+        self.claims.extend(other.claims);
         self.owner_recreations.extend(other.owner_recreations);
         self.pending_writes.extend(other.pending_writes);
         self.pending_sources.extend(other.pending_sources);
@@ -709,7 +712,7 @@ impl ObservationAuthorization {
             .any(|read| read.key == claim_key && read.values == values);
         let written = self.writes.iter().any(|write| write.write.key == claim_key
             && matches!(&write.write.mutation, FactMutation::Put { values: prepared } if prepared == &values));
-        if !retained && !written {
+        if self.claims.get(&claim_key) != Some(&values) || (!retained && !written) {
             return Err(ObservationRefusal::Encoding(
                 "claim has no prepared immutable evidence".into(),
             ));
@@ -779,6 +782,12 @@ impl ObservationAuthorization {
 
     pub(crate) fn authorizes_convergent_link(&self, write: &LinkWrite) -> bool {
         self.convergent_links.contains(write)
+    }
+
+    pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
+        write.expected == FactVersion(0)
+            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key) == Some(values))
+            && self.authorizes_write(write)
     }
 
     /// Seal pending-record changes from trusted mapping preparation. Retained
@@ -1543,7 +1552,14 @@ pub fn prepare_observed_link_claim_snapshot(
     let values = claim
         .values()
         .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
-    prepare_observed_snapshot(
+    if slice.get(&key).is_some_and(|state| {
+        state.version != FactVersion(0) && state.values.as_ref() != Some(&values)
+    }) {
+        return Err(ObservationRefusal::Encoding(
+            "immutable claim changed".into(),
+        ));
+    }
+    let mut prepared = prepare_observed_snapshot(
         catalog,
         slice,
         turn,
@@ -1553,7 +1569,9 @@ pub fn prepare_observed_link_claim_snapshot(
             lifecycles: &[],
             provenance: &claim.provenance,
         },
-    )
+    )?;
+    prepared.authorization.claims.insert(key, values);
+    Ok(prepared)
 }
 
 fn effective_observed_values(
