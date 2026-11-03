@@ -29,7 +29,7 @@ command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-native-run-incremental-equals-recompute"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "incremental_question", "-E", "test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart)"]
+command = { command-line = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "incremental_question", "-E", "test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart)"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc" } }
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-native-run-restatement-and-old-as-of-answer"]
