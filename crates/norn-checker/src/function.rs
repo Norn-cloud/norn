@@ -68,6 +68,8 @@ pub mod codes {
     pub const DEPENDENCY_CLOSURE_MISMATCH: &str = "function.manifest.dependency_closure_mismatch";
     /// The packaging, platform, or capabilities do not fit the profile.
     pub const PROFILE_MISMATCH: &str = "function.manifest.profile_mismatch";
+    /// Host implementations cannot enter through authored manifest admission.
+    pub const AUTHORED_HOST: &str = "function.manifest.authored_host";
     /// A determinism claim lacks an evidence field its profile requires.
     pub const MISSING_DETERMINISM_EVIDENCE: &str = "function.manifest.missing_determinism_evidence";
     /// An evidence field holds a value the profile does not admit.
@@ -254,6 +256,7 @@ fn require_digest(digest: &Digest, code: &str, what: &str, span: Span, out: &mut
 }
 
 /// Check a manifest. Empty when it is admissible. See the module docs.
+/// FUNCTION-HOST-1: authored and pack manifests cannot authorize Host code.
 #[must_use]
 pub fn check_function_manifest(manifest: &FunctionManifest) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -506,19 +509,13 @@ fn check_closure(manifest: &FunctionManifest, out: &mut Vec<Diagnostic>) {
 
 fn check_profile(manifest: &FunctionManifest, out: &mut Vec<Diagnostic>) {
     let format = manifest.implementation.format;
-    // FUNCTION-HOST-1: existing unqualified/non-cacheable producer semantics.
+    // FUNCTION-HOST-1: namespace text and pins never authorize authored host code.
     if format == ImplementationFormat::Host {
-        let pinned = format!(
-            "{}/{}@{}",
-            manifest.runtime.id, manifest.runtime.version, manifest.implementation.digest
-        );
-        if manifest.implementation.locator.as_deref() != Some(pinned.as_str()) {
-            out.push(error(
-                codes::MUTABLE_IDENTITY,
-                "a host implementation pins crate name/version and source-tree digest".to_owned(),
-                at(["implementation", "locator"]),
-            ));
-        }
+        out.push(error(
+            codes::AUTHORED_HOST,
+            "host Functions are engine built-ins and cannot be installed by authored or pack definitions; use a typed WASM component or external worker".to_owned(),
+            at(["implementation", "format"]),
+        ));
     }
     let deterministic = !matches!(manifest.determinism, DeterminismProfile::Effectful(_));
     match &manifest.determinism {
