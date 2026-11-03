@@ -1937,7 +1937,7 @@ proptest::proptest! {
         let definitions: Vec<_> = flags.iter().enumerate().map(|(index, protected)| {
             let mut definition = serde_json::json!({"name":format!("test.Level{index}"),
                 "properties":[{"id":"system", "type":{"kind":"integer"}, "protected":protected}]});
-            if index > 0 { definition["extends"] = serde_json::json!(format!("test.Level{}", index - 1)); }
+            if let Some(parent) = index.checked_sub(1) { definition["extends"] = serde_json::json!(format!("test.Level{parent}")); }
             definition
         }).collect();
         let layer = Layer::from_json(&serde_json::json!({"objectTypes":definitions}));
