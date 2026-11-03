@@ -71,12 +71,8 @@ fn query_eligibility_and_visibility_do_not_change_the_quarantine_authority() {
     context
         .exclusions
         .insert("SYN-MELT-15-1".into(), "core07-finding".into());
-    let result = store
-        .evaluate_question(&plan, context.clone(), |_| Ok(true))
-        .expect("excluded");
-    assert_eq!(result.freshness, Freshness::Incomplete);
-    assert!(!result.complete);
-    assert_eq!(result.rows["\"2026-10-19\""].members.len(), 3);
+    assert!(matches!(store.evaluate_question(&plan, context.clone(), |_| Ok(true)),
+        Err(CellError::ComputeRefused("core.compute.caller_exclusions"))));
     context.exclusions.clear();
     context.population_pin = "fixture-without-G2".into();
     context.authorization_epoch = 2;
@@ -154,4 +150,28 @@ fn typed_question_lowering_matches_the_native_scrap_yield_question() {
     let week = result.rows.get("\"2026-10-19\"").expect("showcase week");
     assert_eq!(week.value.expect("ratio").canonical(), "0.98");
     assert_eq!(week.members.len(), 4);
+}
+
+
+#[test]
+fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
+    use norn_cell::{KnowledgeCutoff, compute::{Engine, ivm::IncrementalQuestion}};
+    let (mut host, plan, context) = quality_fixture();
+    let mut view = IncrementalQuestion::rebuild(host.store(), &plan, context.clone(), |_| Ok(true)).expect("rebuild");
+    capture_quality(&mut host, 80_000, "bad-source");
+    let cutoff = KnowledgeCutoff { recorded_at:norn_kernel::LogicalTime::from_millis(CLOCK), frontier:host.store().verified_head().expect("head").commits };
+    let excluded = host.store().evaluate_question(&plan, context.clone(), |_| Ok(true)).expect("excluded");
+    let finding = host.store().read().observation_findings(&context.world, TYPE, "SYN-MELT-15-1").expect("finding").remove(0);
+    assert_eq!(excluded.context.exclusions["SYN-MELT-15-1"], finding.id);
+    assert_eq!(excluded.freshness, Freshness::Incomplete);
+    let mut reference = excluded.clone(); reference.engine = Engine::Ivm;
+    assert_eq!(view.advance(host.store(), context.clone(), |_| Ok(true)).expect("delta"), &reference);
+    capture_quality(&mut host, 73_500, "corrected-source");
+    let corrected = host.store().evaluate_question(&plan, context.clone(), |_| Ok(true)).expect("corrected");
+    assert!(corrected.context.exclusions.is_empty());
+    reference = corrected; reference.engine = Engine::Ivm;
+    assert_eq!(view.advance(host.store(), context.clone(), |_| Ok(true)).expect("recovery delta"), &reference);
+    let historical = host.store().evaluate_question_known_at(&plan, context, cutoff, |_| Ok(true)).expect("historical");
+    assert_eq!(historical.result.context.exclusions, excluded.context.exclusions);
+    assert_eq!(historical.result.rows, excluded.rows);
 }

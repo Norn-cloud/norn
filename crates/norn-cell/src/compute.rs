@@ -55,7 +55,7 @@ pub struct QueryContext {
     pub source_cursors: Frontier,
     /// Watermarks for required dependencies.
     pub watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
-    /// Core 07 disposition: excluded identity → finding/evidence pin.
+    /// Engine-owned excluded identity → finding ID. Nonempty caller input refuses.
     pub exclusions: BTreeMap<String, String>,
 }
 /// Declared execution strategy; qualification belongs to the producing evaluator.
@@ -198,6 +198,10 @@ impl<E: SqlEngine> CellStore<E> {
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
+            let mut context = context;
+            if !context.exclusions.is_empty() {
+                return Err(refused("core.compute.caller_exclusions"));
+            }
             self.check_question_scope(&context.scope)?;
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
@@ -273,7 +277,11 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused("core.compute.stale_input"));
                 }
                 members.insert(id.clone());
-                if !visible(&record)? || context.exclusions.contains_key(&id) {
+                if !visible(&record)? {
+                    continue;
+                }
+                if let Some(finding) = reader.question_findings(&context.world, &record, cutoff.map(|c| c.frontier))?.first() {
+                    context.exclusions.insert(id.clone(), finding.id.clone());
                     continue;
                 }
                 if let Some(value) = project(plan, &record.values).map_err(refused)? {

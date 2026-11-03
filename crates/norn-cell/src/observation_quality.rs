@@ -118,6 +118,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
+    /// DATA-QUARANTINE: resolve real exclusion pins at the selected knowledge frontier.
+    /// The caller must supply a receipt-authenticated record at that frontier.
+    pub(crate) fn question_findings(
+        &self,
+        world: &str,
+        record: &ObjectRecord,
+        frontier: Option<u64>,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
+        let mut findings: Vec<_> = self.review_findings_at(
+            world, &record.object_type, &record.id, Some(record), frontier.unwrap_or(u64::MAX),
+        )?.into_iter().filter_map(|(finding, quarantines)|
+            (quarantines && finding.status == DataQualityFindingStatus::Open).then_some(finding)
+        ).collect();
+        if self.source_dispute_at(world, &record.object_type, &record.id)? {
+            if frontier.is_some() {
+                return Err(CellError::ComputeRefused("core.world.source_dispute_unqualified"));
+            }
+            findings.extend(self.source_conflict_findings(&record.object_type, &record.id)?);
+            findings.extend(self.identity_findings(&record.object_type, &record.id)?);
+        }
+        findings.retain(|f| f.status == DataQualityFindingStatus::Open);
+        findings.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(findings)
+    }
+
     fn review_findings(
         &self,
         world: &str,
@@ -125,7 +150,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         let current = self.object(world, object_type, key)?;
-        if let Some(record) = &current
+        self.review_findings_at(world, object_type, key, current.as_ref(), u64::MAX)
+    }
+
+    // DATA-QUARANTINE / ASOF-KNOWLEDGE-1: recovery uses the selected incarnation.
+    fn review_findings_at(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        current: Option<&ObjectRecord>,
+        frontier: u64,
+    ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
+        if let Some(record) = current
             && self
                 .object_at_version(world, object_type, key, record.version)?
                 .as_ref()
@@ -138,8 +175,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut after = 0i64;
         loop {
             let sequences = self.conn.query(
-                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 ORDER BY seq LIMIT 64"),
-                params![world, object_type, key, after],
+                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND commit_seq <= ?5 ORDER BY seq LIMIT 64"),
+                params![world, object_type, key, after, to_i64(frontier.min(i64::MAX as u64), "finding frontier")?],
             )?;
             if sequences.is_empty() {
                 break;
@@ -167,7 +204,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             == norn_kernel::DataQualityRuleClassification::Integrity
                             || (class == norn_kernel::DataQualityRuleClassification::Builtin
                                 && finding.severity == norn_ir::DataQualitySeverity::Error);
-                        if let Some(record) = &current
+                        if let Some(record) = current
                             && !norn_kernel::snapshot_observe::finding_rule_is_violated(
                                 &catalog,
                                 &FactKey::new(object_type, key),

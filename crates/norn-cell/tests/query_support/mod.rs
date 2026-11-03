@@ -222,3 +222,38 @@ pub(crate) fn loss_plan() -> QuestionPlan {
     question.metrics = serde_json::from_value(json!([{"metric":"demo.loss"}])).expect("selection");
     admit(&[metric], &question, &catalog, 100).expect("admitted exact loss")
 }
+
+
+pub(crate) type QualityHost = norn_cell::SqliteCell<norn_kernel::ObservationEvent, norn_kernel::cell_host::JsonObject, norn_kernel::cell_host::JsonObject>;
+pub(crate) fn quality_fixture() -> (QualityHost, QuestionPlan, QueryContext) {
+    let (base, plan, mut context) = fixture();
+    let mut object = base.model().object_types().find(|o| o.name.as_str() == TYPE).expect("conversion").clone();
+    let mut encoded = serde_json::to_value(&object).expect("object");
+    encoded["invariants"] = json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
+    object = serde_json::from_value(encoded).expect("invariant");
+    let model = Model::from_definitions(&[object.clone()], &[]).expect("model");
+    let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store.install_definitions(model, norn_cell::InstalledDefinitionInput {
+        canonical_set: serde_json::to_string(&vec![artifact]).expect("set"), registry: vec![], receipt_sha256:"synthetic-quality-v1".into(), admission_receipt:None, readmission:None,
+        diff:json!({"added":{"count":1,"ids":["demo.Conversion.entity"]}}), installed_at:CLOCK, layout:None,
+    }, Some(0), "synthetic").expect("install");
+    context.world = norn_cell::MAIN_WORLD.into();
+    store.commit(&CommitBatch { world:context.world.clone(), scope:context.scope.clone(), logical_time:CLOCK, writes:fixture_writes(), ..CommitBatch::default() }).expect("load");
+    (norn_cell::SqliteCell::new(store, "synthetic", |_| BTreeMap::new()).expect("host"), plan, context)
+}
+pub(crate) fn capture_quality(host: &mut QualityHost, recovered: i64, delivery: &str) {
+    use norn_kernel::{CellHost, Observed, ObservationId, Provenance, FactKey, DecisionTurn, World, TypeCatalog, load_slice};
+    use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
+    let FactWriteRow::Put { values, .. } = put("SYN-MELT-15-1",75_000,recovered,"2026-10-23T12:01:00Z","gold") else { unreachable!() };
+    let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({"source":{"system":"synthetic-erpnext","record":"SYN-MELT-15-1"},"mappingVersion":"synthetic.measurements@1","recordedAt":"2026-10-26T00:00:00Z","sourceFields":["input","recovered"]})).expect("provenance");
+    let observation = Observed { id:ObservationId(delivery.into()), provenance:Provenance { source:"synthetic-erpnext".into(), source_id:"SYN-MELT-15-1".into(), observed_at:host.now(), mapping_version:"synthetic.measurements@1".into() }, input:BTreeMap::from([("values".into(), V::Object(values.clone())),("provenance".into(),norn_ir::runtime::encode(&provenance).expect("encode"))]) };
+    host.inject(&observation).expect("inject");
+    let pending = host.observe().expect("observe").expect("pending");
+    let model = host.store().model().clone();
+    let catalog = TypeCatalog::new(model.object_types());
+    let key = FactKey::new(TYPE,"SYN-MELT-15-1");
+    let slice = load_slice(host,[key.clone()]).expect("slice");
+    let turn = DecisionTurn { id:delivery.into(), now:host.now(), world:World::Main, consumes:Some(pending.consumed()) };
+    commit_observed_snapshot(host,&catalog,&slice,&turn,ObservedSnapshot { key:&key, values:&values, lifecycles:&[], provenance:&provenance }).expect("capture");
+}

@@ -239,6 +239,10 @@ impl IncrementalQuestion {
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
+        let mut context = context;
+        if !context.exclusions.is_empty() {
+            return Err(refused("core.compute.caller_exclusions"));
+        }
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
@@ -250,8 +254,27 @@ impl IncrementalQuestion {
         } else {
             (verified, None)
         };
-        let changed = self.changed_keys(store, &context, &head)?;
+        let mut changed = self.changed_keys(store, &context, &head)?;
         let mut history = reader.history_read_seeded(receipt);
+        let candidates: BTreeSet<_> = self.members.union(&changed).cloned().collect();
+        for id in candidates {
+            let selected = if let Some(cutoff) = self.knowledge {
+                super::historical::historical_record(&mut history, &context.world, self.plan.grain().as_str(), &id, cutoff, store.model().model_hash(), &mut budget)?
+            } else {
+                reader.object_with_budget(&context.world, self.plan.grain().as_str(), &id, &mut budget)?
+            };
+            match selected {
+                BudgetedRead::Found(record) => {
+                    if record.scope != context.scope { return Err(stale()); }
+                    if visible(&record)? && let Some(finding) = reader.question_findings(&context.world, &record, self.knowledge.map(|c| c.frontier))?.first() {
+                        context.exclusions.insert(id.clone(), finding.id.clone());
+                    }
+                }
+                BudgetedRead::Missing => {}
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            }
+        }
+        changed.extend(self.result.context.exclusions.keys().chain(context.exclusions.keys()).filter(|id| self.result.context.exclusions.get(*id) != context.exclusions.get(*id)).cloned());
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;

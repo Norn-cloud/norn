@@ -38,8 +38,6 @@ proptest::proptest! {
                     store.commit(&batch).expect("change");
                     proptest::prop_assert!(matches!(store.commit(&batch).expect("redelivery"), CommitOutcome::Replayed(_)));
                 }
-                4 => { context.exclusions.insert(key, "core07-finding".into()); }
-                5 => { context.exclusions.remove(&key); }
                 _ => {}
             }
             let cursor = format!("fixture/{}", store.verified_head().expect("head").commits);

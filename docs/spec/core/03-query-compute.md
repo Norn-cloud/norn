@@ -81,3 +81,19 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Cell-owned quarantine exclusions (DATA-QUARANTINE)
+
+Question execution resolves exclusion identity → finding ID from durable open
+findings under their retained governing definitions. Recovery evaluates the
+selected record incarnation; historical selection admits only findings committed
+by its authenticated knowledge frontier. The existing observation findings read
+returns the evidence document (rule, source, offending values and reason).
+Callers supplying nonempty `QueryContext.exclusions` refuse with
+`core.compute.caller_exclusions`; the field is engine-owned in answer documents.
+Visible candidates only disclose exclusion pins. Incremental maintenance retracts
+changes in finding disposition even when the aggregate input is unchanged.
+Historical source-dispute overlays remain refused as
+`core.world.source_dispute_unqualified` until their frontier is retained.
+
+Named scenario: `data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm`.
