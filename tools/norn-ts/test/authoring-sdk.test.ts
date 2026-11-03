@@ -243,3 +243,11 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
     expect(checked.admitted).toBe(true)
   }
 }, 60_000)
+
+
+test("INV-OVERDRAW native witness is generated from its typed declaration", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/delivery-race.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-cell/tests/fixtures/delivery-race.json"), "utf8")))
+})
