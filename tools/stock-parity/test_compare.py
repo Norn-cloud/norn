@@ -133,6 +133,3 @@ class Contract(unittest.TestCase):
         self.assertNotIn('native-gl', public)
         self.assertEqual(len(self.report()['cases'][0]['checkpoints'][1]['rawGl']['norn']), 1)
 
-
-if __name__ == '__main__':
-    unittest.main()
