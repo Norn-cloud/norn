@@ -1,3 +1,5 @@
+//! Ontology-derived metric candidates, checked through the existing compute path.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
