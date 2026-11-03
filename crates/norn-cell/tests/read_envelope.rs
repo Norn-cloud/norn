@@ -8,7 +8,7 @@
 use norn_cell::{CellStore, Model, SqliteCell, engine::NativeEngine};
 use norn_ir::{RuntimeValue, cell_id::CellId};
 use norn_kernel::read_envelope::{Completeness, ReadRequirement, ReadSemantics};
-use norn_kernel::{FactKey, authz::CommitBinding};
+use norn_kernel::{CellHost as _, FactKey, authz::CommitBinding};
 use norn_testkit::proptest::prelude::*;
 
 fn binding() -> CommitBinding {
@@ -77,7 +77,6 @@ fn native_point_read_captures_local_frontier_and_existing_authority_pins() {
     let wire = serde_json::to_value(&envelope).expect("wire");
     assert_eq!(wire["token"]["format"], "norn.cell.read/v1");
     assert!(wire["token"]["context"]["frontier"].is_object());
-    use norn_kernel::CellHost as _;
     host.commit(norn_kernel::CellCommit::empty())
         .expect("commit");
     let fresh = host
@@ -104,8 +103,8 @@ proptest! {
         match changed {
             0 => context.frontier.cell = CellId::try_from("00000000000000000000000000000002".to_owned()).expect("other id"),
             1 => context.frontier.world.push_str(&suffix),
-            2 => context.frontier.revision += 1,
-            3 => context.definition_pin.version += 1,
+            2 => context.frontier.revision = context.frontier.revision.checked_add(1).expect("revision"),
+            3 => context.definition_pin.version = context.definition_pin.version.checked_add(1).expect("definition version"),
             4 => context.definition_pin.model_hash.push_str(&suffix),
             5 => context.definition_pin.admission_receipt = Some(suffix),
             6 => context.authority_pin.action_id.push_str(&suffix),
