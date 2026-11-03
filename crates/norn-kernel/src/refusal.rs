@@ -541,7 +541,8 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }

@@ -201,3 +201,13 @@ fn discovered_graph_dependency_cannot_escape_the_profile() {
         Err(CommitError::AtomicBoundary { .. })
     ));
 }
+
+#[test]
+fn boundary_code_survives_refusal_adapters() {
+    let commit: CommitError<Infallible> = CommitError::AtomicBoundary { key: law_key(1) };
+    let decision: norn_kernel::DecisionRefusal<Infallible> =
+        norn_kernel::DecisionRefusal::AtomicBoundary { key: law_key(1) };
+    assert_eq!(commit.code(), "core.txn.atomic_boundary");
+    assert_eq!(decision.code(), commit.code());
+    assert_eq!(decision.category(), commit.category());
+}
