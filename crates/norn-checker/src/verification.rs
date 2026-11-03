@@ -422,6 +422,343 @@ fn scope_members(
     Some(out)
 }
 
+/// LAW-COMPLETE-1 / LAW-CONTAINED-INSTANCE-1: project unchanged laws with every
+/// origin/retained instance path. Empty instances are not non-vacuity evidence.
+/// This structural projection grants no runtime or proof authority.
+///
+/// # Errors
+/// Refuses inadmissible inputs, unavailable subjects, unresolved app/pack instances
+/// and incomplete provenance under the supplied graph/path budget.
+pub fn effective_law_instances(
+    artifacts: &[ArtifactEnvelope],
+    context: &crate::EntityArtifactSetContext<'_>,
+    budget: Budget,
+) -> Result<Vec<norn_ir::verification::EffectiveLawInstance>, Vec<Diagnostic>> {
+    let findings = crate::check_artifact_set(artifacts, context);
+    if findings.iter().any(Diagnostic::is_error) {
+        return Err(findings);
+    }
+    let pool: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
+    let Some(first) = pool.iter().find(|a| a.kind() == ArtifactKind::Law) else {
+        return Ok(Vec::new());
+    };
+    let refused = || {
+        vec![finding(
+            codes::CLOSURE_REFUSED,
+            first,
+            "/payload",
+            "effective law paths exceed their budget or are incomplete",
+        )]
+    };
+    if pool.len() > budget.max_nodes {
+        return Err(refused());
+    }
+    let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, context.registry);
+    let (owners, edges) = law_type_graph(&pool, &catalog);
+    let digests = pool
+        .iter()
+        .map(|a| {
+            crate::ArtifactRef::of(a)
+                .map(|r| ((a.artifact_id.as_str(), a.version.as_str()), r.sha256))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map_err(|_error| refused())?;
+    let mut path_work = LawPathWork::default();
+    if edges
+        .values()
+        .try_fold(0usize, |count, next| count.checked_add(next.len()))
+        .is_none_or(|count| count > budget.max_edges)
+    {
+        return Err(refused());
+    }
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    let projection = LawProjection {
+        catalog: &catalog,
+        owners: &owners,
+        edges: &edges,
+        digests: &digests,
+        base: context.base,
+        budget,
+    };
+    for artifact in pool.iter().filter(|a| a.kind() == ArtifactKind::Law) {
+        projection.append(artifact, &mut out, &mut bytes, &mut path_work)?;
+    }
+    out.sort_by_cached_key(|a| {
+        (
+            a.law.clone(),
+            a.subject.clone(),
+            a.bindings.clone(),
+            a.instance_paths
+                .first()
+                .and_then(|p| p.last())
+                .map(|p| p.instance_id.clone()),
+        )
+    });
+    Ok(out)
+}
+
+fn contained_paths(
+    membership: Option<&RetainedLawMembership>,
+    subject: &norn_ir::definition_catalog::MemberRef,
+) -> Vec<Vec<Vec<norn_ir::PackInstanceRef>>> {
+    let Some(membership) = membership else {
+        return vec![Vec::new()];
+    };
+    let key = norn_ir::definition_catalog::ArtifactKey {
+        artifact_id: subject.artifact_id.clone(),
+        version: subject.version.clone(),
+    };
+    let mut grouped: BTreeMap<String, Vec<Vec<norn_ir::PackInstanceRef>>> = BTreeMap::new();
+    for path in membership.get(&key).into_iter().flatten() {
+        if let Some(last) = path.last() {
+            grouped
+                .entry(last.instance_id.clone())
+                .or_default()
+                .push(path.clone());
+        }
+    }
+    grouped.into_values().collect()
+}
+
+struct LawProjection<'a> {
+    catalog: &'a EffectiveCatalog,
+    owners: &'a LawOwners,
+    edges: &'a LawEdges,
+    digests: &'a LawDigests<'a>,
+    base: &'a [ArtifactEnvelope],
+    budget: Budget,
+}
+
+impl LawProjection<'_> {
+    fn append(
+        &self,
+        artifact: &ArtifactEnvelope,
+        out: &mut Vec<norn_ir::verification::EffectiveLawInstance>,
+        bytes: &mut usize,
+        path_work: &mut LawPathWork,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let refused = || {
+            vec![finding(
+                codes::CLOSURE_REFUSED,
+                artifact,
+                "/payload",
+                "effective law paths exceed their budget or are incomplete",
+            )]
+        };
+        let law = decode(artifact).map_err(|detail| {
+            vec![finding(
+                codes::INVALID_DOCUMENT,
+                artifact,
+                "/payload",
+                detail,
+            )]
+        })?;
+        let membership = matches!(law.scope.root, LawRoot::App(_) | LawRoot::Pack(_))
+            .then(|| retained_law_membership(artifact, self.base, self.budget))
+            .transpose()?;
+        let origin = self.owners.get(&law.subject).ok_or_else(refused)?;
+        let targets = self
+            .catalog
+            .target_types(&law.subject)
+            .ok_or_else(refused)?;
+        if let Some(membership) = &membership {
+            let scoped = |at: &norn_ir::definition_catalog::MemberRef| {
+                membership.contains_key(&norn_ir::definition_catalog::ArtifactKey {
+                    artifact_id: at.artifact_id.clone(),
+                    version: at.version.clone(),
+                })
+            };
+            if !scoped(origin)
+                && !targets
+                    .iter()
+                    .filter_map(|name| self.owners.get(name))
+                    .any(scoped)
+            {
+                return Err(refused());
+            }
+        }
+        for target in targets {
+            let subject = self.owners.get(&target).ok_or_else(refused)?;
+            let paths = law_paths(
+                &law.subject,
+                &target,
+                self.edges,
+                self.owners,
+                self.budget,
+                path_work,
+            )
+            .ok_or_else(refused)?;
+            let mut instance = law_instance(artifact, &law, subject, origin, paths, self.digests)
+                .ok_or_else(refused)?;
+            let groups = contained_paths(membership.as_ref(), subject);
+            for instance_paths in groups {
+                instance.instance_paths = instance_paths;
+                *bytes = bytes.saturating_add(
+                    norn_canonical::serialize_json_verbatim(&instance)
+                        .map_err(|_error| refused())?
+                        .len(),
+                );
+                if *bytes > 8_388_608 || out.len() >= self.budget.max_nodes {
+                    return Err(refused());
+                }
+                out.push(instance.clone());
+            }
+        }
+        Ok(())
+    }
+}
+
+type LawDigests<'a> = BTreeMap<(&'a str, &'a str), String>;
+
+fn law_instance(
+    artifact: &ArtifactEnvelope,
+    law: &LawIR,
+    subject: &norn_ir::definition_catalog::MemberRef,
+    origin: &norn_ir::definition_catalog::MemberRef,
+    paths: Vec<Vec<norn_ir::definition_catalog::MemberRef>>,
+    digests: &LawDigests<'_>,
+) -> Option<norn_ir::verification::EffectiveLawInstance> {
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    Some(norn_ir::verification::EffectiveLawInstance {
+        law: MemberRef {
+            artifact_id: artifact.artifact_id.clone(),
+            version: artifact.version.clone(),
+            member: Member::Law {
+                law: law.id.clone(),
+            },
+        },
+        law_digest: digests
+            .get(&(artifact.artifact_id.as_str(), artifact.version.as_str()))?
+            .clone(),
+        subject: subject.clone(),
+        subject_digest: digests
+            .get(&(subject.artifact_id.as_str(), subject.version.as_str()))?
+            .clone(),
+        attachment: law.scope.root.clone(),
+        origin: origin.clone(),
+        paths,
+        instance_paths: Vec::new(),
+        bindings: BTreeMap::from([("self".to_owned(), subject.clone())]),
+    })
+}
+
+type LawOwners = BTreeMap<String, norn_ir::definition_catalog::MemberRef>;
+type LawEdges = BTreeMap<String, BTreeSet<String>>;
+
+fn law_type_graph(pool: &[ArtifactEnvelope], catalog: &EffectiveCatalog) -> (LawOwners, LawEdges) {
+    use norn_ir::definition_catalog::{Member, MemberRef};
+    let mut owners = BTreeMap::new();
+    let mut edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for artifact in pool {
+        let mut declare = |name: &str, parents: Vec<String>| {
+            owners.insert(
+                name.to_owned(),
+                MemberRef {
+                    artifact_id: artifact.artifact_id.clone(),
+                    version: artifact.version.clone(),
+                    member: Member::Type {
+                        type_name: name.to_owned(),
+                    },
+                },
+            );
+            for parent in parents {
+                edges.entry(parent).or_default().insert(name.to_owned());
+            }
+        };
+        if let Some(Ok(object)) = catalog.object_type(&artifact.artifact_id) {
+            declare(object.name.as_str(), Vec::new());
+        }
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            match *root {
+                norn_ir::EntityRoot::V2(root) => declare(
+                    root.object_type.name.as_str(),
+                    root.object_type
+                        .extends
+                        .iter()
+                        .map(|p| p.as_str().to_owned())
+                        .chain(
+                            root.object_type
+                                .implements
+                                .iter()
+                                .map(|i| i.as_str().to_owned()),
+                        )
+                        .collect(),
+                ),
+                norn_ir::EntityRoot::V2Interface(root) => declare(
+                    root.interface.name.as_str(),
+                    root.interface
+                        .extends
+                        .iter()
+                        .map(|p| p.as_str().to_owned())
+                        .collect(),
+                ),
+                norn_ir::EntityRoot::V1(_)
+                | norn_ir::EntityRoot::V2Extension(_)
+                | norn_ir::EntityRoot::V2PropertyTypes(_)
+                | norn_ir::EntityRoot::V2Markings(_) => {}
+            }
+        }
+    }
+    (owners, edges)
+}
+
+#[derive(Default)]
+struct LawPathWork {
+    steps: usize,
+    copies: usize,
+    bytes: usize,
+}
+
+fn law_paths(
+    origin: &str,
+    target: &str,
+    edges: &BTreeMap<String, BTreeSet<String>>,
+    owners: &BTreeMap<String, norn_ir::definition_catalog::MemberRef>,
+    budget: Budget,
+    work: &mut LawPathWork,
+) -> Option<Vec<Vec<norn_ir::definition_catalog::MemberRef>>> {
+    let mut pending = vec![vec![origin]];
+    let mut paths = Vec::new();
+    while let Some(path) = pending.pop() {
+        work.steps = work.steps.saturating_add(1);
+        if work.steps > budget.max_steps || path.len() > budget.max_nodes {
+            return None;
+        }
+        let last = *path.last()?;
+        if last == target {
+            let mut resolved = Vec::new();
+            for name in path {
+                let reference = owners.get(name)?;
+                work.bytes = work.bytes.saturating_add(
+                    norn_canonical::serialize_json_verbatim(reference)
+                        .ok()?
+                        .len(),
+                );
+                if work.bytes > 8_388_608 {
+                    return None;
+                }
+                resolved.push(reference.clone());
+            }
+            paths.push(resolved);
+        } else {
+            for next in edges.get(last).into_iter().flatten().rev() {
+                if path.contains(&next.as_str()) {
+                    return None;
+                }
+                work.copies = work.copies.saturating_add(path.len().saturating_add(1));
+                if work.copies > budget.max_edges {
+                    return None;
+                }
+                let mut child = path.clone();
+                child.push(next.as_str());
+                pending.push(child);
+            }
+        }
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
 impl LawContext<'_> {
     /// LAW-COMPLETE-1: validate the declaration even with zero implementors,
     /// then check every concrete subject selected by the shared catalog.
