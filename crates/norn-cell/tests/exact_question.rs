@@ -130,3 +130,35 @@ proptest::proptest! {
             if lag == 0 { Freshness::Exact } else if lag <= 5_000 { Freshness::Fresh } else { Freshness::Stale });
     }
 }
+
+#[test]
+fn typed_question_lowering_matches_the_native_scrap_yield_question() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = std::process::Command::new("bun")
+        .current_dir(&root)
+        .arg("tools/norn-ts/src/cli.ts")
+        .arg("question")
+        .arg("tools/norn-ts/fixtures/questions/scrap-yield.ts")
+        .output()
+        .expect("the repository's pinned Bun authoring toolchain");
+    assert!(
+        output.status.success(),
+        "question compiler: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let questions: Vec<norn_ir::QuestionIR> =
+        serde_json::from_slice(&output.stdout).expect("strict native QuestionIR");
+    let [question] = questions.as_slice() else {
+        panic!("one typed question")
+    };
+    let (mut store, plan, context) = fixture();
+    assert_eq!(question, plan.question(), "all admitted semantics survive lowering");
+    load(&mut store);
+    let result = store
+        .evaluate_question(&plan, context, |_| Ok(true))
+        .expect("the existing exact cell path");
+    assert_eq!(result.rows.len(), 16);
+    let week = result.rows.get("\"2026-10-19\"").expect("showcase week");
+    assert_eq!(week.value.expect("ratio").canonical(), "0.98");
+    assert_eq!(week.members.len(), 4);
+}
