@@ -260,7 +260,11 @@ pub fn run(args: &[String]) -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "bounded binder fixtures")]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "bounded binder fixtures"
+)]
 mod tests {
     use super::{assessment, scenario};
     use serde_json::json;
