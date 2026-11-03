@@ -142,6 +142,18 @@ fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
     plan.as_of_instant()
         .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
 }
+fn check_question_cutoff(
+    plan: &QuestionPlan,
+    cutoff: Option<crate::KnowledgeCutoff>,
+) -> Result<(), CellError> {
+    if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
+        let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        if !asof_matches(plan, point.recorded_at.as_millis()) {
+            return Err(refused("core.compute.stale_input"));
+        }
+    }
+    Ok(())
+}
 fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
     let seconds = i64::try_from(millis.div_euclid(1000)).ok()?;
     let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
@@ -220,12 +232,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<T, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
-            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
-                let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-                if !asof_matches(plan, point.recorded_at.as_millis()) {
-                    return Err(refused("core.compute.stale_input"));
-                }
-            }
+            check_question_cutoff(plan, cutoff)?;
             self.check_question_model(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
