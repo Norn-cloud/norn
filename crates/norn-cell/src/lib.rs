@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod catalog;
+pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;

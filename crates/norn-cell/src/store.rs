@@ -1960,8 +1960,11 @@ impl<E: SqlEngine> CellStore<E> {
     /// engine already contains a store for another format or model;
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
+    /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
+    /// Hosts excluding these functions must use [`Self::from_engine_with_identity_source`]
+    /// or [`Self::from_engine_bound`]. Reopening never invokes the identity source.
     pub fn from_engine(conn: E, model: Model) -> Result<Self, CellError> {
-        Self::init(conn, model)
+        Self::from_engine_with_identity_source(conn, model, crate::cell_identity::generate)
     }
 
     /// Atomically initialize, bind and install a tenant's first admitted set.
@@ -1980,7 +1983,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut store = Self::unverified(conn, model);
         if let Some(active) = Self::read_active_definitions(&store.conn)? {
             let installation = store
-                .export_record(active.commit_seq)?
+                .local_export_record(active.commit_seq)?
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
@@ -2089,7 +2092,11 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
+    fn init_schema(
+        conn: &E,
+        model: &Model,
+        source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<(), CellError> {
         validate_store_format(conn)?;
         for statement in SYSTEM_DDL {
             conn.execute_batch(statement)?;
@@ -2112,6 +2119,12 @@ impl<E: SqlEngine> CellStore<E> {
         match (meta("format")?, meta("ddl_hash")?) {
             (None, None) => {
                 let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
+                let cell_id = source(conn)?;
+                conn.execute(&insert, params!["binding:cell_id", cell_id.as_str()])?;
+                conn.execute(
+                    &insert,
+                    params!["binding:cell_identity_format", crate::cell_identity::FORMAT],
+                )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
             }
@@ -2146,14 +2159,24 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(())
     }
 
-    fn init(conn: E, model: Model) -> Result<Self, CellError> {
-        conn.transaction(|| Self::init_schema(&conn, &model))?;
+    /// Open with an injectable identity source, called only for a fresh store.
+    /// CELL-ID-1: existing identities and legacy unqualified histories are retained.
+    ///
+    /// # Errors
+    /// Store admission or identity source failure.
+    pub fn from_engine_with_identity_source(
+        conn: E,
+        model: Model,
+        mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
+        conn.transaction(|| Self::init_schema(&conn, &model, &mut source))?;
         let store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
         let (head, boundary) = store.conn.transaction(|| {
+            crate::cell_identity::verify_history(&store.conn)?;
             let verified = store
                 .read()
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
@@ -2194,12 +2217,12 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self.export_record(version.commit_seq)?.ok_or_else(|| {
-                    CellError::LedgerCorrupt {
+                let record = self
+                    .local_export_record(version.commit_seq)?
+                    .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: version.commit_seq,
                         reason: "installed definitions have no typed export record".to_owned(),
-                    }
-                })?;
+                    })?;
                 let installation =
                     record
                         .definition_install
@@ -2307,11 +2330,28 @@ impl<E: SqlEngine> CellStore<E> {
     /// Bind the file to `value` under the identity key `key` (for example
     /// the tenant scope it serves): recorded on first use, and checked on
     /// every later open, so a file is never served under another identity.
+    /// Logical cell keys only validate an existing versioned binding; they
+    /// cannot add an identity or format marker to a legacy file.
     ///
     /// # Errors
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        if key == crate::cell_identity::FORMAT_KEY {
+            if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
+                return Ok(());
+            }
+            return Err(CellError::BindingMismatch {
+                key: key.to_owned(),
+                expected: crate::cell_identity::FORMAT.to_owned(),
+                found: value.to_owned(),
+            });
+        }
+        if key == crate::cell_identity::KEY {
+            let id = norn_ir::cell_id::CellId::try_from(value.to_owned())
+                .map_err(|reason| CellError::Encoding(reason.to_owned()))?;
+            return self.require_cell_id(&id);
+        }
         let meta_key = format!("binding:{key}");
         self.conn.transaction(|| -> Result<(), CellError> {
             let found: Option<String> = self.conn.query_optional(
@@ -2544,7 +2584,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::Begun)?;
             if let Some(identity) = provisioning {
                 if Self::engine_is_fresh(&self.conn)? {
-                    Self::init_schema(&self.conn, &self.model)?;
+                    Self::init_schema(&self.conn, &self.model, &mut crate::cell_identity::generate)?;
                     for (key, value) in [("binding:scope", batch.scope.as_str()), ("binding:provision", identity)] {
                         self.conn.execute(
                             &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
@@ -2562,6 +2602,7 @@ impl<E: SqlEngine> CellStore<E> {
                         || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
+                    crate::cell_identity::verify_history(&self.conn)?;
                     let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
@@ -2879,7 +2920,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let head = head.ok_or_else(|| CellError::Encoding("pending result command disappeared".to_owned()))?;
             crate::payload_storage::remember_command(&self.conn, command_id, generation, head.commit_seq)?;
-            let outcome = match self.export_record(head.commit_seq)? {
+            let outcome = match self.local_export_record(head.commit_seq)? {
                 Some(record) => crate::payload_storage::encode_result(&self.conn, &record.batch.scope, &record.batch.world, outcome)?,
                 None => canonical_json(outcome)?,
             };

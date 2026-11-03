@@ -101,3 +101,31 @@ VAL-RATE's initial graph binding admits one direct expression node between input
 
 - **VAL-RATE-PRICE:** Given fixed USD, a 15 USD/g rate and 20 g, typed admission/evaluation produces USD 300 at the destination Money scale; a nonzero remainder under Refuse refuses.
 - **VAL-RATE-MISMATCH:** Given USD/g, combining mg, an EUR destination, Rate × Rate or an erased numeric operand refuses; quantity-versus-literal comparison records `core.values.literal_unit` naming g.
+
+### CELL-ID-1 — durable logical cell boundary
+
+A fresh store obtains one opaque 128-bit CellId from an injectable source and
+persists its 32 lowercase hexadecimal digits as `binding:cell_id`, alongside
+`binding:cell_identity_format = norn.cell.identity/v1`, in the creation
+transaction. Scope and physical host do not contribute to it. Reopen validates
+its canonical representation and its retained journal binding. An explicitly
+bound open refuses a different identity. An existing unqualified file remains
+local-only: binding/adoption and portable export are unsupported. Existing
+receipts and history retain their original bytes and hash format.
+
+Restore requires the caller's explicit expected cell binding and matches it
+against the verified export before publishing a destination. Internal replay into
+an empty engine retains that same identity. Migration to another CellId is
+unsupported. This cut does not yet qualify individual receipts or local keys for
+portable use.
+
+Named scenarios: **CELL-ID-ONCE** generates once and reopens without calling the
+source; **CELL-ID-SCOPE** gives independent same-scope stores distinct identities;
+**CELL-ID-OPEN** refuses a different expected CellId; **CELL-ID-RESTORE** refuses
+a different or missing target binding without publishing a destination;
+**CELL-ID-LEGACY** refuses portable export/adoption of unqualified history.
+
+The format marker is mandatory for portable identity. An old generic binding
+named `cell_id`, even when it contains 32 hexadecimal digits, stays unqualified.
+**CELL-ID-UNVERSIONED** checks that neither open nor binding the marker can adopt
+that history; local replay remains valid and portable export refuses.

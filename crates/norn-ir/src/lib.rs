@@ -37,6 +37,7 @@ use serde_json::value::RawValue;
 pub mod access;
 pub mod action;
 pub mod business_pack;
+pub mod cell_id;
 pub mod connector;
 pub mod customization;
 pub mod data_quality;

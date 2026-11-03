@@ -879,7 +879,7 @@ where
         // One exact journal lookup, never a scan or a recursive walk. A retry
         // enqueue shares the preceding result commit, so its retained batch
         // already carries the complete materialized lineage of earlier runs.
-        let Some(record) = self.store.export_record(pending.commit_seq)? else {
+        let Some(record) = self.store.local_export_record(pending.commit_seq)? else {
             events.push(0);
             return Ok(());
         };

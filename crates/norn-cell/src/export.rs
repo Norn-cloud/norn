@@ -130,6 +130,13 @@ impl ExportRecord {
         {
             return Err(ExportError::UnsupportedFormat);
         }
+        if crate::cell_identity::from_bindings(&self.bindings)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return Err(ExportError::IdentityMismatch);
+        }
         if self.ddl_hash != hash_json(&self.ddl_sql)? {
             return Err(invalid("DDL hash mismatch"));
         }
