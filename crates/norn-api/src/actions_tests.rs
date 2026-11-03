@@ -227,7 +227,12 @@ fn call(
     actor: Option<&str>,
     version: u64,
 ) -> Result<ActionResponse, Refusal> {
-    call_action_in_epoch(host, &query(), actor, request(host, action, key, input, version))
+    call_action_in_epoch(
+        host,
+        &query(),
+        actor,
+        request(host, action, key, input, version),
+    )
 }
 #[test]
 fn stock_receive_commits_replays_and_refuses_before_partial_effects() {
