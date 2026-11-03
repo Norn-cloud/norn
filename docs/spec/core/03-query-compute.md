@@ -100,3 +100,9 @@ Named scenario: `data_quarantine_pins_real_findings_and_historical_recovery_equa
 
 Regression: `quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pins`
 checks that reusing an answer context re-derives pins at the historical frontier.
+
+## Structural sum extraction
+
+`EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
+
+Named scenarios: `structural_sum_accepts_parentheses_and_literal_members`, `structural_sum_refuses_other_operations_and_reads`, `structural_sum_bounds_and_malformed_source_fail_closed`, `structural_sum_preserves_generated_terms`. Evidence is structural and sampled, not algebraic proof.
