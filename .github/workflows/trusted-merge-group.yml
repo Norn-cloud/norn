@@ -14,6 +14,7 @@ jobs:
   trusted-policy:
     if: github.event.workflow_run.event == 'merge_group' && github.event.workflow_run.head_repository.full_name == github.repository
     permissions:
+      actions: read
       contents: read
       issues: read
       pull-requests: read
@@ -50,6 +51,57 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            const evidencePath = `${process.env.RUNNER_TEMP}/maintainer-approval.json`;
+            require('fs').rmSync(evidencePath, { force: true });
+            const pages = new Map(), definitions = new Map();
+            const rightsEvents = async (number, created) => {
+              if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(created)) throw new Error('Missing PR creation boundary');
+              const pending = [], comments = new Set();
+              let expected, witnessed = false;
+              const admission = context.payload.workflow_run?.id || context.runId;
+              for (let page = 1; page <= 100; page++) {
+                if (!pages.has(page)) pages.set(page, (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'ci-policy.yml', per_page: 100, page })).data.workflow_runs);
+                const runs = pages.get(page);
+                if (!Array.isArray(runs) || !runs.length) break;
+                for (const run of runs) {
+                  if (!Number.isSafeInteger(run.run_number) || run.run_number < 1 ||
+                      (expected !== undefined && run.run_number !== expected)) throw new Error('Incomplete rights event history');
+                  expected = run.run_number - 1;
+                  witnessed ||= run.id === admission;
+                  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(run.created_at)) throw new Error('Invalid rights event timestamp');
+                  if (run.created_at < created) {
+                    if (!witnessed) throw new Error('Admission event missing from rights history');
+                    return { pending, comments: [...comments] };
+                  }
+                  if (run.event === 'issue_comment') {
+                    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: run.id, filter: 'all', per_page: 100 });
+                    const writers = jobs.filter(job => job.name.startsWith('Record durable rights revocations for PR '));
+                    if (!writers.length) {
+                      if (!definitions.has(run.head_sha)) {
+                        const { data } = await github.rest.repos.getContent({ owner, repo, path: '.github/workflows/ci-policy.yml', ref: run.head_sha });
+                        if (data.type !== 'file' || data.encoding !== 'base64') throw new Error('Unavailable rights event policy');
+                        definitions.set(run.head_sha, Buffer.from(data.content, 'base64').toString('utf8'));
+                      }
+                      if (definitions.get(run.head_sha).includes('name: Record durable rights revocations for PR ')) pending.push(run.id);
+                    } else {
+                      if (new Set(writers.map(job => job.name)).size !== 1 || writers.some(job => !Number.isSafeInteger(job.id))) throw new Error('Ambiguous rights recorder');
+                      const writer = writers.reduce((latest, job) => latest.id > job.id ? latest : job);
+                      const tag = writer.name.match(/^Record durable rights revocations for PR (\d+) comment (\d+) revoke (true|false)$/);
+                      if (!tag) throw new Error('Invalid rights event identity');
+                      if (Number(tag[1]) === number) {
+                        comments.add(Number(tag[2]));
+                        if (tag[3] === 'true' && (writer.status !== 'completed' || writer.conclusion !== 'success')) pending.push(run.id);
+                      }
+                    }
+                  }
+                  if (run.run_number === 1) {
+                    if (!witnessed) throw new Error('Admission event missing from rights history');
+                    return { pending, comments: [...comments] };
+                  }
+                }
+              }
+              throw new Error('Rights event history unavailable; a new PR requires fresh review');
+            };
             const base = '${{ steps.group.outputs.base_sha }}';
             const head = '${{ github.event.workflow_run.head_sha }}';
             // A commenter the API does not know as a user (a bot) has no
@@ -74,6 +126,7 @@ jobs:
               const pullHead = commit.parents[1].sha;
               const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: pullHead });
               for (const pr of pulls.filter((pr) => pr.head.sha === pullHead)) {
+                const events = await rightsEvents(pr.number, pr.created_at);
                 const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
                   .filter(status => status.context.toLowerCase() === 'rights-revocation')
                   .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
@@ -82,7 +135,7 @@ jobs:
                   if (!comment.user || !['/approve-gates', '/ack-rights', '/revoke-rights'].some(command => (comment.body || '').trim().startsWith(command))) continue;
                   comments.push({ id: comment.id, user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
                 }
-                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, base_sha: pr.base.sha, comments, revocations });
+                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, base_sha: pr.base.sha, comments, revocations, pending_revocations: events.pending, acknowledgment_events: events.comments });
               }
               sha = commit.parents[0].sha;
             }

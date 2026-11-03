@@ -930,7 +930,7 @@ fn git_in(fixture: &Fixture, args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("git fixture");
-    assert!(out.status.success(), "git {args:?}: {out:?}");
+    assert!(out.status.success(), "git fixture failed");
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
@@ -1164,7 +1164,7 @@ fn bound_report(f: &Fixture, head: &str) -> provenance::Report {
 
 fn rights_document(head: &str, base: &str) -> Value {
     json!({"repository":"Norn-cloud/norn", "head_repository":"Norn-cloud/norn",
-        "head_sha":head, "base_sha":base, "revocations":[], "comments":[{"id":1,"user":"owner","permission":"admin",
+        "head_sha":head, "base_sha":base, "pending_revocations":[], "acknowledgment_events":[1,2,3], "revocations":[], "comments":[{"id":1,"user":"owner","permission":"admin",
         "body":format!("/ack-rights {head}"), "created_at":"2026-11-03T00:00:00Z", "updated_at":"2026-11-03T00:00:00Z"}]})
 }
 
@@ -1188,9 +1188,17 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
         "nonadmin",
         "revoked",
         "duplicate",
+        "unreconciled",
+        "missing-events",
+        "legacy-ack",
     ] {
         let mut doc = document.clone();
         match mutation {
+            "unreconciled" => doc["pending_revocations"] = json!([42]),
+            "missing-events" => {
+                doc.as_object_mut().unwrap().remove("pending_revocations");
+            }
+            "legacy-ack" => doc["acknowledgment_events"] = json!([]),
             "missing" => doc["comments"] = json!([]),
             "repository" => doc["repository"] = json!("other/repo"),
             "stale" => doc["head_sha"] = json!(base),
@@ -1863,4 +1871,75 @@ fn durable_revocation_history_cannot_be_hidden_by_context_case_or_saturation() {
             .unwrap_err()
             .contains("exhausted")
     );
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "execute real API programs over synthetic saved workflow events"
+)]
+fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fresh_review() {
+    let (candidate, base, heads, group_head) = merge_group(&[&|f| {
+        f.write(
+            "crates/norn-ir/src/lib.rs",
+            b"pub enum ArtifactKind { Entity, Law }\n",
+        );
+    }]);
+    let temporary = tempfile::tempdir().unwrap();
+    let trusted = temporary.path().join("base");
+    git_in(
+        &candidate,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            trusted.to_str().unwrap(),
+            &base,
+        ],
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../verification/coverage-v1/negative_canaries.py");
+    let output = std::process::Command::new("python3")
+        .args([
+            script.to_str().unwrap(),
+            "--rights-recovery",
+            &heads[0],
+            &base,
+            &group_head,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "saved-event fixture execution failed"
+    );
+    let documents: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let evidence = temporary.path().join("rights.json");
+    for removal in ["edited", "deleted"] {
+        for stage in ["pending", "premature", "partial", "reconciled", "fresh"] {
+            for kind in ["pr", "group"] {
+                let head = if kind == "pr" { &heads[0] } else { &group_head };
+                git_in(&candidate, &["checkout", "--quiet", "--detach", head]);
+                fs::write(
+                    &evidence,
+                    documents[format!("{removal}-{stage}")][kind].to_string(),
+                )
+                .unwrap();
+                let report = norn_skeleton_guard::ci::check_with_rights(
+                    candidate.root(),
+                    &trusted,
+                    head,
+                    "Norn-cloud/norn",
+                    None,
+                    &evidence,
+                );
+                assert_eq!(
+                    report.errors.is_empty(),
+                    stage == "fresh",
+                    "{removal}/{stage}/{kind}"
+                );
+            }
+        }
+    }
 }

@@ -67,7 +67,9 @@ explicitly revokes it. Base-owned append-only commit status history retains the
 revocation boundary across comment edits/deletions; a fresh acknowledgment must
 postdate the recorded boundary. Merge groups also refuse unreviewed cross-side
 payload/rights-record combinations, including rights changes already on base.
-Human source review remains necessary. The gate binds all
+Failed revocation events remain pending in saved Actions jobs until the original
+event is successfully reconciled; later gate approvals cannot clear them. Missing
+or incomplete event history fails closed. Human source review remains necessary. The gate binds all
 inspected bytes and records to the immutable candidate tree. Expanded archives
 must match that source commit exactly; generated exports require an independently
 verified external binding and are refused without one. Nested evidence and

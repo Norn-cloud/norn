@@ -641,11 +641,11 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
-        'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
+        'Resolve the pull request': ('77ee31967cc3351930d8984f33b0f19caec0b59600236000a53094b4391e28eb', ['script', 'retries'], False, None),
         'Persist the rights revocation boundary': ('b1d480d4e4763cf3673ba594d322c7ad875ed86836aafe5809bb571dfbf38a4e', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('9bb5580dbcfba692875168ea96f875b0621661898949100b067e596781bbe8f6', ['script'], True, None),
+        'Record admin approvals of the exact PR head': ('3a5d0cbb2e712e78486e67d3c41bd76d91e4201ea9b1be5c8ebf36c99ead33f8', ['script'], True, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('8a3f74e3ded7517aa9db20c511cf4a59a4cd9a1385e41090bef22dccbf2a74b9', ['script'], True, None),
+        'Record admin approvals of the queued heads': ('3051e6caa6077067d7ba6df0f65784329019427aae51cfa238f785caa0060f6b', ['script'], True, None),
         'Report trusted policy on the group head': ('006a4ebe5ab690da267c9b0665a11c68b979fd4f9d53b73aac2054642c53cb27', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
@@ -665,7 +665,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     public = yaml.load(source, Loader=WorkflowLoader)
     ledger = public["jobs"].get("rights-revocation", {})
     expected_ledger = {
-        "name": "Record durable rights revocations",
+        "name": "Record durable rights revocations for PR ${{ github.event.issue.number }} comment ${{ github.event.comment.id }} revoke ${{ contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')) }}",
         "if": ("github.event_name == 'issue_comment' && github.event.issue.pull_request && "
                "(contains(github.event.comment.body, '/revoke-rights') || "
                "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))"),
@@ -695,6 +695,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                 and all(key not in scope.get("defaults", {}).get("run", {})
                         for scope in (job, workflow) for key in ("shell", "working-directory")),
                 "trusted rights: missing or wrong exact-head evidence/binding command")
+        require(job.get("permissions", {}).get("actions") == "read", "trusted event reconciliation requires read-only Actions access")
         is_pr = text == source
         collector = "Record admin approvals of the exact PR head" if is_pr else "Record admin approvals of the queued heads"
         reporter = "Report trusted policy on the exact PR head" if is_pr else "Report trusted policy on the group head"
@@ -712,7 +713,8 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                     "failed/cancelled recording must fail policy before admission")
         scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
         for contract in ("'/ack-rights'", "'/revoke-rights'", "id: comment.id", "base_sha: pr.base.sha",
-                         "head_sha: pr.head.sha", "permission: await permission(comment.user.login)",
+                         "head_sha: pr.head.sha", "pending_revocations: events.pending", "acknowledgment_events: events.comments",
+                         "permission: await permission(comment.user.login)",
                          "github.rest.issues.listComments", "github.rest.repos.getCollaboratorPermissionLevel"):
             require(contract in scripts, f"trusted rights: missing live API contract {contract}")
         require(job.get("concurrency", {}).get("cancel-in-progress") is True,

@@ -831,6 +831,17 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         .get("comments")
         .and_then(serde_json::Value::as_array)
         .ok_or("missing rights comments")?;
+    let pending = evidence
+        .get("pending_revocations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing pending revocation history")?;
+    if !pending.is_empty() {
+        return Err("unreconciled rights revocation events".into());
+    }
+    let events = evidence
+        .get("acknowledgment_events")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing acknowledgment event history")?;
     let boundary = rights_revocation_boundary(evidence)?;
     let mut decisions = Vec::new();
     let mut ids = BTreeSet::new();
@@ -870,7 +881,10 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         if !rights_timestamp(created) || !rights_timestamp(updated) {
             return Err("invalid rights comment timestamp".into());
         }
-        if ack && boundary.is_some_and(|at| created <= at) {
+        if ack
+            && (!events.iter().any(|event| event.as_u64() == Some(id))
+                || boundary.is_some_and(|at| created <= at))
+        {
             continue;
         }
         let user = comment

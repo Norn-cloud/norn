@@ -1708,64 +1708,122 @@ def evidence_inventory_canaries() -> None:
     )
 
 
-def durable_rights_history_canaries(source: str, merge: str) -> None:
-    public = yaml.safe_load(source)
-    group = yaml.safe_load(merge)
-    writer = public["jobs"]["rights-revocation"]["steps"][0]["with"]["script"]
-    pr_collector = next(step["with"]["script"] for step in public["jobs"]["trusted-policy"]["steps"]
-                        if step.get("name") == "Record admin approvals of the exact PR head")
-    group_collector = next(step["with"]["script"] for step in group["jobs"]["trusted-policy"]["steps"]
-                           if step.get("name") == "Record admin approvals of the queued heads")
-    pr_collector = pr_collector.replace("${{ steps.pr.outputs.number }}", "7")
-    group_collector = group_collector.replace("${{ steps.group.outputs.base_sha }}", "base").replace("${{ github.event.workflow_run.head_sha }}", "group")
-    harness = """const assert = require('assert');
-const head = '1'.repeat(40), history = [];
-const context = {repo: {owner:'Norn-cloud',repo:'norn'},payload:{}};
-let admin = true, missing = false, unavailable = false;
-const pr = {number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:'base'}};
-const comments = [{id:1,user:{login:'owner'},body:'/ack-rights '+head,created_at:'2026-11-03T00:00:00Z',updated_at:'2026-11-03T00:00:00Z'}];
-const github = {rest:{repos:{
-  getCollaboratorPermissionLevel: async () => {if(missing) throw {status:404}; if(unavailable) throw {status:503}; return {data:{permission:admin?'admin':'read'}};},
-  createCommitStatus: async value => { history.push({...value,id:history.length+1,created_at:'2026-11-03T00:01:00Z'}); },
-  listCommitStatusesForRef: function statuses(){},
-  getCommit: async () => ({data:{parents:[{sha:'base'},{sha:head}]}}),
-  listPullRequestsAssociatedWithCommit: async () => ({data:[pr]})},
-  pulls:{get:async () => ({data:pr})},issues:{listComments:function comments(){}}},
-  paginate: async (method,args) => {if(method===github.rest.repos.listCommitStatusesForRef){assert.equal(args.ref,head);return history;}return comments;}};
-async function record(payload) {context.payload=payload;
-""" + writer + """\n}
-async function collectPR() {
-""" + pr_collector + """\nreturn JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/maintainer-approval.json')); }
-async function collectGroup() {
-""" + group_collector + """\nreturn JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/maintainer-approval.json')); }
-(async () => {
- const revoke = {id:2,user:{login:'owner'},body:'/revoke-rights '+head};
- await record({comment:revoke});
- // Editing the revocation to ordinary text still records its prior command.
- await record({comment:{...revoke,body:'ordinary text'},changes:{body:{from:revoke.body}}});
- // A deleted comment is absent from the live comment API, but not from status history.
- await record({comment:revoke});
- assert.equal(history.filter(s=>s.context==='rights-revocation').length,3);
- assert(history.every(s=>s.sha===head && s.state===(s.context==='rights-revocation'?'success':'failure')));
- history[0].context='RIGHTS-REVOCATION'; // Context names are case-insensitive.
- const evidence = await collectPR();
- assert.equal(evidence.revocations.length,3);
- assert.equal(evidence.comments.length,1);
- const groupEvidence = await collectGroup();
- assert.deepEqual(groupEvidence.pull_requests[0].revocations,evidence.revocations);
- admin=false; await record({comment:revoke}); assert.equal(history.length,6);
- await record({comment:{...revoke,user:null}}); assert.equal(history.length,6);
- missing=true; await record({comment:revoke}); assert.equal(history.length,6);
- missing=false; unavailable=true; let failed=false;
- try {await record({comment:revoke});} catch(error) {failed=true;}
- assert(failed); assert.equal(history.length,6);
- console.log('durable revocation: created, edited, deleted and group history passed');
+def rights_recovery_evidence(head: str, base: str, group_head: str) -> dict:
+    public = yaml.safe_load((ROOT / ".github/workflows/ci-policy.yml").read_text())
+    group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
+    def program(job: dict, name: str) -> str:
+        return next(step["with"]["script"] for step in job["steps"] if step.get("name") == name)
+    pr_job, group_job = public["jobs"]["trusted-policy"], group["jobs"]["trusted-policy"]
+    programs = {
+        "writer": public["jobs"]["rights-revocation"]["steps"][0]["with"]["script"],
+        "pr": program(pr_job, "Record admin approvals of the exact PR head"),
+        "group": program(group_job, "Record admin approvals of the queued heads"),
+        "publisher": program(pr_job, "Report trusted policy on the exact PR head"),
+    }
+    replacements = {"${{ steps.pr.outputs.number }}": "7", "${{ steps.pr.outputs.head_sha }}": head,
+                    "${{ steps.pr.outputs.base_sha }}": base,
+                    "${{ steps.pr.outputs.head_repository }}": "Norn-cloud/norn",
+                    "${{ steps.pr.outputs.created_at }}": "2026-11-03T00:00:00Z",
+                    "${{ steps.group.outputs.base_sha }}": base,
+                    "${{ github.event.workflow_run.head_sha }}": group_head,
+                    "${{ job.status }}": "failure"}
+    for key, script in programs.items():
+        for before, after in replacements.items():
+            script = script.replace(before, after)
+        programs[key] = script
+    harness = r"""const assert = require('assert'), fs = require('fs');
+const {head,base,groupHead,programs} = JSON.parse(process.env.RIGHTS_CASE);
+const execute = code => new (Object.getPrototypeOf(async function(){}).constructor)('github','context',code)(github,context);
+const context = {repo:{owner:'Norn-cloud',repo:'norn'},payload:{},runId:104,serverUrl:'https://github.com'};
+const pr = {number:7,created_at:'2026-11-03T00:00:00Z',head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:base}};
+let history,comments,runs,jobs,clock,unavailable=false,readFailure=false,admin=true,missing=false,lookupFailure=false;
+const path=process.env.RUNNER_TEMP+'/maintainer-approval.json';
+const tag=(comment,revoke)=>`Record durable rights revocations for PR 7 comment ${comment} revoke ${revoke}`;
+const job=(id,comment,revoke,conclusion)=>({id,name:tag(comment,revoke),status:'completed',conclusion});
+const run=(id,event,at)=>({id,run_number:id,event,created_at:at,head_sha:'default'});
+const github={rest:{repos:{
+ getCollaboratorPermissionLevel:async()=>{if(lookupFailure)throw {status:503};if(missing)throw {status:404};return {data:{permission:admin?'admin':'read'}}},
+ createCommitStatus:async value=>{if(unavailable)throw {status:503};history.push({...value,id:history.length+1,created_at:clock})},
+ listCommitStatusesForRef:function statuses(){},
+ getContent:async()=>({data:{type:'file',encoding:'base64',content:Buffer.from('name: Record durable rights revocations for PR ').toString('base64')}}),
+ getCommit:async()=>({data:{parents:[{sha:base},{sha:head}]}}),
+ listPullRequestsAssociatedWithCommit:async()=>({data:[pr]})},
+ pulls:{get:async()=>{throw Error('collector must use the resolved PR snapshot')}},
+ issues:{listComments:function comments(){}},
+ actions:{listWorkflowRuns:async args=>{if(readFailure)throw {status:503};return {data:{workflow_runs:runs.slice((args.page-1)*2,args.page*2)}}},listJobsForWorkflowRun:function jobs(){}}},
+ paginate:async(method,args)=>{
+   if(method===github.rest.repos.listCommitStatusesForRef){assert.equal(args.ref,head);return history}
+   if(method===github.rest.actions.listJobsForWorkflowRun){assert.equal(args.filter,'all');return jobs[args.run_id]||[]}
+   assert.equal(method,github.rest.issues.listComments);return comments;
+ }};
+async function collect(kind){context.payload=kind==='group'?{workflow_run:{id:105}}:{};context.runId=104;await execute(programs[kind]);return JSON.parse(fs.readFileSync(path))}
+async function record(payload){context.payload=payload;await execute(programs.writer)}
+async function publish(){await execute(programs.publisher)}
+const evidence={};
+async function snapshot(name){evidence[name]={pr:await collect('pr'),group:await collect('group')}}
+(async()=>{
+ for(const removal of ['edited','deleted']){
+  history=[];clock='2026-11-03T00:01:00Z';
+  comments=[{id:1,user:{login:'owner'},body:'/ack-rights '+head,created_at:pr.created_at,updated_at:pr.created_at}];
+  runs=[run(105,'merge_group','2026-11-03T00:01:04Z'),run(104,'issue_comment','2026-11-03T00:01:03Z'),run(103,'issue_comment','2026-11-03T00:01:02Z'),run(102,'issue_comment','2026-11-03T00:01:01Z'),run(101,'issue_comment','2026-11-03T00:00:01Z'),run(100,'push','2026-11-02T23:59:59Z')];
+  jobs={101:[job(1010,1,false,'skipped')],102:[job(1020,9,true,'failure')],103:[job(1030,9,true,'failure')],104:[job(1040,4,false,'skipped')]};
+  const revoke={id:9,user:{login:'owner'},body:'/revoke-rights '+head};
+  const removed=removal==='edited'?{comment:{...revoke,body:'ordinary text'},changes:{body:{from:revoke.body}}}:{comment:revoke};
+  for(const payload of [{comment:revoke},removed]){
+   unavailable=true;
+   for(let retry=0;retry<4;retry++)await assert.rejects(()=>record(payload));
+   // The real always() publisher reports failure after exhausted recording retries.
+   unavailable=false;await publish();
+  }
+  assert(!history.some(status=>status.context==='rights-revocation'));
+  await snapshot(removal+'-pending');
+  assert.deepEqual(evidence[removal+'-pending'].pr.pending_revocations,[103,102]);
+  assert.deepEqual(evidence[removal+'-pending'].group.pull_requests[0].pending_revocations,[103,102]);
+  // Even a fresh review cannot clear unreconciled recording failures.
+  comments.push({...comments[0],id:2,created_at:'2026-11-03T00:01:30Z',updated_at:'2026-11-03T00:01:30Z'});
+  runs.unshift(run(106,'issue_comment','2026-11-03T00:01:31Z'));jobs[106]=[job(1060,2,false,'skipped')];
+  await snapshot(removal+'-premature');
+  clock='2026-11-03T00:02:00Z';await record({comment:revoke});jobs[102].push(job(2020,9,true,'success'));
+  await snapshot(removal+'-partial');assert.deepEqual(evidence[removal+'-partial'].pr.pending_revocations,[103]);
+  clock='2026-11-03T00:02:01Z';await record(removed);jobs[103].push(job(2030,9,true,'success'));
+  history.find(s=>s.context==='rights-revocation').context='RIGHTS-REVOCATION';
+  await snapshot(removal+'-reconciled');assert.deepEqual(evidence[removal+'-reconciled'].pr.pending_revocations,[]);
+  comments.push({...comments[0],id:3,created_at:'2026-11-03T00:03:00Z',updated_at:'2026-11-03T00:03:00Z'});
+  runs.unshift(run(107,'issue_comment','2026-11-03T00:03:01Z'));jobs[107]=[job(1070,3,false,'skipped')];
+  await snapshot(removal+'-fresh');assert.deepEqual(evidence[removal+'-fresh'].pr.acknowledgment_events.sort(),[1,2,3,4,9]);
+  assert.equal(evidence[removal+'-fresh'].pr.head_sha,head);assert.equal(evidence[removal+'-fresh'].pr.base_sha,base);
+  // A deleted run, a hidden admission run or expired history cannot hide pending events.
+  const complete=[...runs];
+  for(const filter of [r=>r.id!==102,r=>r.id!==104,r=>r.id!==100]){
+   runs=complete.filter(filter);
+   for(const kind of ['pr','group']){
+    await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path));
+   }
+  }
+  runs=complete;readFailure=true;
+  for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path))}
+  readFailure=false;
+  // Unmaterialized and skipped potential revocations stay pending.
+  for(const replacement of [[],[job(3030,9,true,'skipped')],[{...job(3031,9,true,null),status:'in_progress'}]]){
+   const prior=jobs[103];jobs[103]=replacement;const result=await collect('pr');assert(result.pending_revocations.includes(103));jobs[103]=prior;
+  }
+  const count=history.length;admin=false;await record({comment:revoke});assert.equal(history.length,count);
+  await record({comment:{...revoke,user:null}});assert.equal(history.length,count);
+  missing=true;await record({comment:revoke});assert.equal(history.length,count);missing=false;admin=true;lookupFailure=true;await assert.rejects(()=>record({comment:revoke}));lookupFailure=false;
+ }
+ console.log(JSON.stringify(evidence));
 })().catch(error=>{console.error(error);process.exit(1)});
 """
     with tempfile.TemporaryDirectory() as directory:
         result = subprocess.run(["bun", "-e", harness], check=True, capture_output=True, text=True,
-                                env={**os.environ, "RUNNER_TEMP": directory}, timeout=20)
-    print(result.stdout.strip())
+                                env={**os.environ, "RUNNER_TEMP": directory, "RIGHTS_CASE": json.dumps({
+                                    "head": head, "base": base, "groupHead": group_head, "programs": programs})}, timeout=30)
+    return json.loads(result.stdout)
+
+
+def durable_rights_history_canaries(source: str, merge: str) -> None:
+    rights_recovery_evidence("1" * 40, "2" * 40, "3" * 40)
+    print("durable revocation: failed creation/removal, reconciliation and fresh review passed for PRs/groups")
 
 
 def rights_workflow_canaries() -> None:
@@ -1844,6 +1902,9 @@ def rights_workflow_canaries() -> None:
 
 
 def main() -> int:
+    if len(sys.argv) == 5 and sys.argv[1] == "--rights-recovery":
+        print(json.dumps(rights_recovery_evidence(*sys.argv[2:])))
+        return 0
     if sys.argv[1:] == ["--workflow-contract"]:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
         workflow_verdict_canaries(source)

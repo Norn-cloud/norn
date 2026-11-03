@@ -36,6 +36,15 @@ checks read the complete history and require a new, unedited acknowledgment
 created strictly after the latest recorded revocation. Same-second review fails
 closed. Missing history or failed recording cannot admit a head. A saturated
 status ledger requires a new head rather than losing later revocations.
+The saved Actions job identifies each comment and whether it could revoke rights
+before the recorder calls any API. Both collectors require a complete run-number
+sequence back to PR creation and successful reconciliation of every revocation
+job. Failed, cancelled, skipped or unmaterialized recorders remain pending even
+if every status write failed and the comment disappeared. Re-run the original
+revocation workflow (retaining its event payload), then post a fresh review after
+its successful receipt. Rerunning only an admission job does not reconcile it.
+Acknowledgments must also have a saved event under this protocol. Missing or
+expired event history fails closed; a new PR requires fresh rights review.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits
@@ -44,7 +53,7 @@ changes also require renewed review, including metadata already on the queue
 base; a clean textual merge alone does not review their combined meaning.
 
 For `git archive`, add `--distribution --root <expanded> --source-root <git>
---base-root <trusted> --head <source commit> --repository Norn-cloud/norn`.
+--base-root <trusted> --head <full lowercase source commit SHA> --repository Norn-cloud/norn`.
 Member sets and bytes, including control files, must match that independent
 source. Inventories generated from the distribution itself are never accepted.
 Generated release members need a separately verified export binding (unsupported
