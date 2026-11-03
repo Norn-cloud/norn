@@ -1049,12 +1049,19 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
 fn invoice_totals_require_their_authoritative_currency() {
     let (mut metric, _) = sales();
     metric["type_params"]["expr"] = json!("grand_total");
-    metric["type_params"]["metric_aggregation_params"]["semantic_model"] = json!("erpnext.SalesInvoice");
+    metric["type_params"]["metric_aggregation_params"]["semantic_model"] =
+        json!("erpnext.SalesInvoice");
     metric["x-norn"]["timeDimension"] = json!({"property":"posting_date"});
     metric["x-norn"]["defaultFilters"] = json!([]);
-    metric["x-norn"].as_object_mut().expect("policy").remove("currency");
+    metric["x-norn"]
+        .as_object_mut()
+        .expect("policy")
+        .remove("currency");
     let metric: MetricDefinition = decode(&metric);
-    assert_code(&check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)), codes::CURRENCY_SOURCE_MISMATCH);
+    assert_code(
+        &check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)),
+        codes::CURRENCY_SOURCE_MISMATCH,
+    );
 }
 
 #[test]
