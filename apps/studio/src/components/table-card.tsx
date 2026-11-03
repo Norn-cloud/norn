@@ -12,7 +12,7 @@ export function TableCard({ children, className }: { children: ReactNode; classN
       data-slot="table-card"
       className={cn(
         "overflow-hidden rounded-sm border bg-card text-meta tabular-nums",
-        "[&_thead]:bg-surface-subtle [&_th]:h-10 [&_th]:text-meta [&_th]:font-medium [&_th]:text-muted-foreground [&_td]:h-11 [&_td]:py-0",
+        "[&_thead]:bg-surface-subtle [&_th]:h-10 [&_th]:text-meta [&_th]:font-medium [&_th]:text-muted-foreground [&_td]:h-11 [&_td]:py-2",
         className,
       )}
     >
