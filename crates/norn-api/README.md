@@ -72,8 +72,4 @@ before or after initialization and does not unlock tool access.
 
 `mcp_workers` serves `/mcp` and `/catalog` through the shared Rust Session/checker.
 Only artifact/context content is checked: no file paths, raw tables/columns,
-physical schema browsing or SQL. Governed bindings remain allowed when available;
-actions await #500. Trusted ORG/ENVIRONMENT/ORIGIN configure scope, not user grants.
-Build like `workers_sql`, copy the `mcp-workers` config outside the checkout to
-`$NORN_MCP_PROJECT`, set `NORN_MCP_REFERENCE` to built `mcp_reference`, and run
-`mcp-workers/check.py` for native/celld correspondence, refusals and session restart.
+physical schema browsing or SQL. Governed bindings remain allowed; actions await #500.

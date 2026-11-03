@@ -6,14 +6,11 @@ from pathlib import Path
 import subprocess
 import signal
 import time
-import urllib.error
 import urllib.request
-
 project = Path(os.environ['NORN_MCP_PROJECT']).resolve()
 URL = 'http://127.0.0.1:9876'
 assert subprocess.check_output(['celld', '--version'], text=True).strip() == 'celld 0.6.3'
 transcript, observed = [], []
-
 def stop(child):
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if child.poll() is None:
@@ -42,14 +39,10 @@ def start():
     except BaseException:
         stop(child)
         raise
-
-
 child = start()
 session = None
-count = 0
-
 def send(method='POST', path='/mcp', message=None, headers=None, status=200):
-    global session, count
+    global session
     headers = dict(headers or {})
     headers.setdefault('Norn-Org', 'demo')
     headers.setdefault('Norn-Environment', 'dev')
@@ -71,7 +64,6 @@ def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     observed.append(actual)
     assert actual['status'] == status, actual
     session = actual['session'] or session
-    count += 1
     return json.loads(raw) if raw else None
 
 def rpc(method, params=None):
@@ -85,7 +77,6 @@ def host_catalog_excludes_raw_storage(catalog):
     assert schema['additionalProperties'] is False
     assert set(schema['properties']) == {'artifacts', 'context'}
     assert all(v['type'] == 'string' for v in schema['properties'].values())
-
 try:
     send(message=rpc('tools/list'), status=400)
     send(message=rpc('initialize', {'protocolVersion': '2025-11-25'}))
@@ -114,10 +105,10 @@ try:
     child = start()
     expected = json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
     assert observed == expected, (observed, expected)
+    count = len(transcript)
     transcript, observed = [], []
     send(message=rpc('tools/list'), status=404)
-    session = None
     assert observed == json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
-    print(f'PASS: {count} real-celld/native correspondences; negative catalog, raw refusal, checker, scope, origin, bounds, restart')
+    print(f'PASS: {count + len(transcript)} real-celld/native correspondences; negative catalog, raw refusal, checker, scope, origin, bounds, restart')
 finally:
     stop(child)
