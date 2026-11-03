@@ -139,10 +139,8 @@ pub(crate) fn classify(
             .governing_laws(&ObjectTypeName(law.subject.clone()))
             .is_ok()
         {
-            return match law.severity {
-                LawSeverity::Error => DataQualityRuleClassification::Integrity,
-                LawSeverity::Warning => DataQualityRuleClassification::Quality,
-            };
+            // LAW-COMMIT-1: display severity cannot relax governing authority.
+            return DataQualityRuleClassification::Integrity;
         }
     }
     DataQualityRuleClassification::Unverified
@@ -195,7 +193,7 @@ pub fn evaluate(
         };
         if let Err(outcome) = result {
             failures.push(LawFailure {
-                refuses_native: law.severity == LawSeverity::Error,
+                refuses_native: true,
                 outcome,
                 rule_ref: pin(artifact, &law)?,
                 severity: match law.severity {
