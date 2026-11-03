@@ -1,3 +1,5 @@
+import * as E from "../src/builder/expr.ts"
+import * as S from "../src/builder/schema.ts"
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -147,6 +149,47 @@ test("explicitly generic authored packs do not assert vendor parity", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts).toContainEqual(expect.objectContaining({kind:"mapping",payload:expect.objectContaining({extensions:{"norn.mapping.generic/1.0.0":{parity:"unqualified"}}})}))
 })
+test("TXN-RULE-1 authoring emits a required exact synchronous writer pin", () => {
+  const fixture = readFileSync(join(TOOL_ROOT, "fixtures/definitions/create-linked.source.ts"), "utf8")
+  const source = fixture.replace('  writes: [{ type: Order', '  synchronousRule: { artifactId: "demo.effects.rule", version: "1.0.0" },\n  writes: [{ type: Order')
+  const result = compile(source)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", dependencies: [{artifactId: "demo.effects.rule", version: "1.0.0", kind: "rule", required: true}], payload: expect.objectContaining({synchronousRule: {artifactId: "demo.effects.rule", version: "1.0.0"}})}))
+  const combined = compile(source.replace('  synchronousRule:', '  dependencies: [{ artifactId: "demo.base.entity", version: "1.0.0" }],\n  synchronousRule:'))
+  if (!combined.ok) throw new Error(JSON.stringify(combined.diagnostics))
+  expect(combined.artifacts).toContainEqual(expect.objectContaining({kind: "action", dependencies: [{artifactId: "demo.base.entity", version: "1.0.0", kind: "entity", required: true}, {artifactId: "demo.effects.rule", version: "1.0.0", kind: "rule", required: true}]}))
+})
+
+
+test("TXN-RULE-1 execution fixture is generated from typed authoring", () => {
+  const fixture = join(TOOL_ROOT, "fixtures/decisions/action-writer.source.ts")
+  const pack = compilePack(fixture, { scope, root, modules: [fixture] })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  expect(pack.artifacts).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-kernel/tests/fixtures/action-writer.json"), "utf8")))
+})
+
+
+test("TXN-ATOMIC-1 authoring retains explicit proposal link sources", () => {
+  const fixture = readFileSync(join(TOOL_ROOT, "fixtures/definitions/create-linked.source.ts"), "utf8")
+  const result = compile(fixture.replace('link: "customer",', 'source: { objectType: Order, idField: "number" }, link: "customer",'))
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.artifacts).toContainEqual(expect.objectContaining({kind: "action", payload: expect.objectContaining({createLinks: [expect.objectContaining({source: {objectType: "demo.Order", idField: "number"}})]})}))
+})
+
+
+test("declared array indexes refuse while bounded inline lists retain item typing", () => {
+  const schema = S.record({rows: S.array(S.record({value: S.number}))})
+  const scope = new Map([["input", {zen: "", schema}]])
+  for (let index = 0; index < 32; index++) {
+    const expression = E.ref("input", "rows", String(index), "value")
+    expect(() => E.render(expression, scope)).toThrow("runtime array indexes")
+    expect(() => E.typeOf(expression, scope)).toThrow("runtime array indexes")
+  }
+  const inline = new Map([["input", {inline: E.record({rows: E.list(E.record({value: E.lit(7)}))}), scope: new Map(), schema}]])
+  expect(E.render(E.ref("input", "rows", "0", "value"), inline)).toBe("7")
+  expect(E.typeOf(E.ref("input", "rows", "0", "value"), inline)).toEqual(S.number)
+  for (const index of ["1", "-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), inline)).toThrow()
+})
 
 test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
   const fixture = join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts")
@@ -195,7 +238,7 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
   const authored = pack.artifacts.filter(a => a !== null && typeof a === "object" && "namespace" in a && a.namespace === "jewelry")
   expect(authored).toEqual(JSON.parse(readFileSync(join(root, "crates/norn-decisions/tests/fixtures/jewelry-folds.json"), "utf8")))
   if (checker) {
-    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact).filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact)) || ["core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact))))
+    const checked = checkPack(checker, pack.artifacts, readArtifacts(join(root, "registry/core/artifacts")).map(entry => entry.artifact).filter(artifact => /^core\.(Agent|AgentRole|Resource|Commitment|Hold|EconomicEvent|LedgerEffect|Claim)\.interface$/.test(artifactId(artifact)) || ["core.units", "core.value_types.entity", "std.value_types.entity"].includes(artifactId(artifact))))
     expect(checked.diagnostics.diagnostics.filter(d => d.severity === "error")).toEqual([])
     expect(checked.admitted).toBe(true)
   }

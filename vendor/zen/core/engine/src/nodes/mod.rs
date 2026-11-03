@@ -12,5 +12,5 @@ pub(crate) mod transform_attributes;
 pub use context::{NodeContext, NodeContextBase, NodeContextConfig, NodeContextExt};
 pub use definition::NodeHandler;
 pub(crate) use definition::{NodeDataType, TraceDataType};
-pub use extensions::{DecisionContracts, NodeHandlerExtensions};
+pub use extensions::{DecisionContracts, ExpressionContract, NodeHandlerExtensions};
 pub use result::{NodeError, NodeRequest, NodeResponse, NodeResult};

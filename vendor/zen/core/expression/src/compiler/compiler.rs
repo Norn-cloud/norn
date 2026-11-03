@@ -428,6 +428,45 @@ impl<'arena, 'bytecode_ref> CompilerInner<'arena, 'bytecode_ref> {
                     operator: operator.to_string(),
                 }),
             },
+            Node::FunctionCall {
+                kind: FunctionKind::Internal(InternalFunction::Round),
+                arguments,
+            } if arguments.len() == 3
+                || (arguments.len() == 2
+                    && matches!(arguments.get(1), Some(Node::Number(n)) if n.to_u32().is_some_and(|n| n <= 28) && n.fract().is_zero())) =>
+            {
+                use crate::scaled::Rounding;
+                let invalid = || CompilerError::InvalidFunctionCall {
+                    name: "round".into(),
+                    message: "requires a literal scale and rounding mode".into(),
+                };
+                let Some(Node::Number(n)) = arguments.get(1) else {
+                    return Err(invalid());
+                };
+                let scale = n
+                    .to_u32()
+                    .filter(|_| n.fract().is_zero())
+                    .ok_or_else(invalid)?;
+                let rounding = match arguments.get(2) {
+                    None => None,
+                    Some(Node::String("refuse")) => Some(Rounding::Refuse),
+                    Some(Node::String("toward_zero")) => Some(Rounding::TowardZero),
+                    Some(Node::String("half_even")) => Some(Rounding::HalfEven),
+                    Some(Node::String("half_away_from_zero")) => Some(Rounding::HalfAwayFromZero),
+                    _ => return Err(invalid()),
+                };
+                if rounding.is_some() && scale > 18 {
+                    return Err(invalid());
+                }
+                self.emit(Opcode::ExactSite { scale, rounding });
+                self.compile_argument(
+                    FunctionKind::Internal(InternalFunction::Round),
+                    arguments,
+                    0,
+                )?;
+                self.emit(Opcode::Rescale { scale });
+                Ok(self.emit(Opcode::ExactSiteEnd))
+            }
             Node::FunctionCall { kind, arguments } => match kind {
                 FunctionKind::Internal(_) | FunctionKind::Deprecated(_) => {
                     let function = FunctionRegistry::get_definition(kind).ok_or_else(|| {

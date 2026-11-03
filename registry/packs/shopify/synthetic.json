@@ -1,0 +1,153 @@
+{
+  "profile": "synthetic-shopify-three/1",
+  "capability": "synthetic_snapshot_incremental",
+  "snapshotWatermark": 10,
+  "productionCdc": false,
+  "snapshot": [
+    {
+      "dataset": "Customer",
+      "record": {
+        "id": "SYN-SHOPIFY-owner",
+        "metafield_norn_ref": "demo/party/owner",
+        "label": "Owner",
+        "role": "owner"
+      }
+    },
+    {
+      "dataset": "Customer",
+      "record": {
+        "id": "SYN-SHOPIFY-custodian",
+        "metafield_norn_ref": "demo/party/custodian",
+        "label": "Custodian",
+        "role": "custodian"
+      }
+    },
+    {
+      "dataset": "Customer",
+      "record": {
+        "id": "SYN-SHOPIFY-customer",
+        "metafield_norn_ref": "demo/party/customer",
+        "label": "Customer",
+        "role": "customer"
+      }
+    },
+    {
+      "dataset": "ProductVariant",
+      "record": {
+        "id": "SYN-SHOPIFY-item",
+        "metafield_norn_ref": "demo/item/gold",
+        "code": "GOLD",
+        "label": "Gold scrap",
+        "sku": "SHARED-SKU",
+        "price": 150
+      }
+    },
+    {
+      "dataset": "InventoryLevel",
+      "record": {
+        "id": "SYN-SHOPIFY-holding-north",
+        "metafield_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 200,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian"
+      }
+    },
+    {
+      "dataset": "InventoryLevel",
+      "record": {
+        "id": "SYN-SHOPIFY-holding-south",
+        "metafield_norn_ref": "demo/holding/owner/south/gold",
+        "resource_code": "GOLD",
+        "quantity": 200,
+        "unit": "g",
+        "location": "south",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian"
+      }
+    },
+    {
+      "dataset": "OrderLine",
+      "record": {
+        "id": "SYN-SHOPIFY-order",
+        "metafield_norn_ref": "demo/order/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "due_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold"
+      }
+    }
+  ],
+  "incremental": [
+    {
+      "sequence": 11,
+      "operation": "upsert",
+      "dataset": "FulfillmentLine",
+      "record": {
+        "id": "SYN-SHOPIFY-delivery",
+        "metafield_norn_ref": "demo/delivery/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "occurred_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold",
+        "order_ref": "demo/order/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 11,
+      "operation": "upsert",
+      "dataset": "FulfillmentLine",
+      "record": {
+        "id": "SYN-SHOPIFY-delivery",
+        "metafield_norn_ref": "demo/delivery/1/line/1",
+        "quantity": 20,
+        "unit": "g",
+        "occurred_at": "2026-11-02T12:00:00Z",
+        "provider_ref": "demo/party/owner",
+        "receiver_ref": "demo/party/customer",
+        "holding_ref": "demo/holding/owner/north/gold",
+        "order_ref": "demo/order/1/line/1",
+        "posting_state": "posted"
+      }
+    },
+    {
+      "sequence": 12,
+      "operation": "upsert",
+      "dataset": "InventoryLevel",
+      "record": {
+        "id": "SYN-SHOPIFY-holding-north",
+        "metafield_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 180,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian"
+      }
+    },
+    {
+      "sequence": 13,
+      "operation": "upsert",
+      "dataset": "Transaction",
+      "record": {
+        "id": "SYN-SHOPIFY-settlement",
+        "metafield_norn_ref": "demo/settlement/1",
+        "amount": 150,
+        "currency": "USD",
+        "kind": "payment",
+        "payer_ref": "demo/party/customer",
+        "payee_ref": "demo/party/owner"
+      }
+    }
+  ]
+}

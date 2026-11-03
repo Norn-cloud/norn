@@ -21,7 +21,7 @@ const DIR = join(TOOL_ROOT, "fixtures/schema")
 const REGISTRY = { base: [{
   irVersion: "0.1", artifactId: "fixture.currency.entity", kind: "entity", namespace: "fixture", name: "Synthetic currency", version: "0.1.0", lifecycle: "active", scope: {}, dependencies: [], provenance: { source: "system" },
   payload: { entityVersion: "2.0", propertyTypes: [{ name: "iso4217.currency_code", type: { kind: "text" } }] },
-}] }
+}, JSON.parse(readFileSync(join(TOOL_ROOT, "../../registry/core/artifacts/core.units.json"), "utf8"))] }
 const options = (name: string) => ({
   scope: { orgId: "org_demo", environmentId: "dev" },
   sourcePath: `tools/norn-ts/fixtures/schema/${name}.source.ts`,

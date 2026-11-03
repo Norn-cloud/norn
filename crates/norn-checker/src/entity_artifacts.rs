@@ -157,9 +157,9 @@ pub fn check_artifact_set_entity_model(
 /// ([`crate::check_artifact`]) of every artifact in `artifacts`, then
 /// [`check_artifact_set_entity_model`] over the layer. Findings identical in
 /// `(code, artifactId, pointer)` are reported once (the first occurrence,
-/// per-artifact findings first). An empty result means every artifact and
-/// the layer as a whole are valid. This is the recommended entry point; the
-/// base layer in `context` is not re-checked.
+/// per-artifact findings first). The layer is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes may remain. This is
+/// the recommended entry point; the base layer in `context` is not re-checked.
 #[must_use]
 pub fn check_entity_artifacts(
     artifacts: &[ArtifactEnvelope],

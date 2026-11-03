@@ -45,7 +45,7 @@ use norn_ir::canonical::{CanonicalJsonError, HashProfile, JsonValue};
 use norn_ir::{
     InterfaceDef, InterfaceName, Link, LinkCardinality, Multiplicity, ObjectTypeDef,
     ObjectTypeExtension, ObjectTypeName, Property, PropertyType, PropertyTypeDef, PropertyTypeName,
-    ResourceLimitProfile, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
+    ResourceLimitProfile, Rounding, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
 };
 
 use crate::actor;
@@ -53,9 +53,13 @@ use crate::actor;
 /// Identifier of the type-environment format.
 pub const TYPE_ENV_ID: &str = "norn.expr.env";
 
-/// Version of the type-environment format. Any change to how an environment
-/// is derived or serialized is a new version.
-pub const TYPE_ENV_VERSION: u32 = 1;
+/// Version of the type-environment format. Bump when existing bytes or their
+/// meaning change, not for a canonically defaulted optional field that occurs
+/// only in newly admitted policies.
+pub const TYPE_ENV_VERSION: u32 = 2;
+
+mod version;
+pub use version::TypeEnvVersion;
 
 /// The hash profile the environment content hash is computed under.
 pub const TYPE_ENV_HASH_PROFILE: HashProfile = HashProfile::Norn1;
@@ -90,6 +94,12 @@ pub enum Type {
         scale: u64,
         /// The unit of a quantity, if declared.
         unit: Option<UnitRef>,
+        /// Money currency binding, relative to the value owner.
+        currency_source: Option<norn_ir::metric::DimensionPath>,
+        /// VAL-RATE: denominator unit; requires a currency source.
+        per_unit: Option<UnitRef>,
+        /// Effective destination mode; omitted declarations become Refuse.
+        rounding: Rounding,
     },
     /// Any exact decimal number (no declared scale).
     Number,
@@ -164,7 +174,7 @@ impl Type {
         Self::List(Box::new(self))
     }
 
-    fn to_canonical_value(&self) -> JsonValue {
+    fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
         match self {
             Self::Bool => kind("bool", []),
             Self::Text { format } => match format {
@@ -172,24 +182,58 @@ impl Type {
                 Some(format) => kind("text", [("format", string(text_format(*format)))]),
             },
             Self::Integer => kind("integer", []),
-            Self::Decimal { scale, unit } => {
-                let scale = ("scale", number(*scale));
-                match unit {
-                    None => kind("decimal", [scale]),
-                    Some(unit) => kind(
-                        "decimal",
-                        [
-                            scale,
-                            (
-                                "unit",
-                                object([
-                                    ("system", string(unit_system(unit.system))),
-                                    ("code", string(&unit.code)),
-                                ]),
-                            ),
-                        ],
-                    ),
+            Self::Decimal {
+                scale,
+                unit,
+                rounding,
+                currency_source,
+                per_unit,
+            } => {
+                let mut fields = vec![("scale", number(*scale))];
+                if let Some(unit) = unit {
+                    fields.push((
+                        "unit",
+                        object([
+                            ("system", string(unit_system(unit.system))),
+                            ("code", string(&unit.code)),
+                        ]),
+                    ));
                 }
+                if version == TypeEnvVersion::V2
+                    && let Some(source) = currency_source
+                {
+                    fields.push((
+                        "currencySource",
+                        object([
+                            (
+                                "links",
+                                JsonValue::Array(
+                                    source
+                                        .links
+                                        .iter()
+                                        .map(|link| string(link.as_str()))
+                                        .collect(),
+                                ),
+                            ),
+                            ("property", string(source.property.as_str())),
+                        ]),
+                    ));
+                }
+                if version == TypeEnvVersion::V2
+                    && let Some(unit) = per_unit
+                {
+                    fields.push((
+                        "perUnit",
+                        object([
+                            ("system", string(unit_system(unit.system))),
+                            ("code", string(&unit.code)),
+                        ]),
+                    ));
+                }
+                if let Some(mode) = rounding.canonical_field() {
+                    fields.push(("rounding", string(mode)));
+                }
+                kind("decimal", fields)
             }
             Self::Number => kind("number", []),
             Self::Timestamp { timezone } => {
@@ -206,13 +250,13 @@ impl Type {
             ),
             Self::Json => kind("json", []),
             Self::Record(name) => kind("record", [("name", string(name))]),
-            Self::List(item) => kind("list", [("item", item.to_canonical_value())]),
-            Self::Optional(item) => kind("optional", [("item", item.to_canonical_value())]),
+            Self::List(item) => kind("list", [("item", item.to_canonical_value(version))]),
+            Self::Optional(item) => kind("optional", [("item", item.to_canonical_value(version))]),
         }
     }
 
     /// Record names this type refers to.
-    fn records(&self, out: &mut Vec<String>) {
+    pub(crate) fn records(&self, out: &mut Vec<String>) {
         match self {
             Self::Record(name) => out.push(name.clone()),
             Self::List(item) | Self::Optional(item) => item.records(out),
@@ -426,6 +470,75 @@ pub struct ZenTypeEnv {
 }
 
 impl ZenTypeEnv {
+    /// VAL-ENV: pin exact schema refinements using the existing env/2 records.
+    /// Legacy bare-number schemas add no bytes to historical environments.
+    ///
+    /// # Errors
+    /// Refuses malformed schemas or colliding schema record identities.
+    pub fn bind_exact_schema(self, name: &str, value: &norn_ir::JsonValue) -> Result<Self, String> {
+        if !crate::schema::contains_exact_annotation(value) {
+            return Ok(self);
+        }
+        let schema = crate::schema::Schema::parse(value, name).map_err(|e| e.reason)?;
+        self.bind_parsed_exact_schema(name, &schema)
+    }
+
+    /// VAL-ENV: retain the `ActionIR` input dialect when pinning exact refinements.
+    ///
+    /// # Errors
+    /// Refuses malformed action inputs or colliding schema record identities.
+    pub fn bind_exact_action_schema(
+        self,
+        name: &str,
+        value: &norn_ir::JsonValue,
+    ) -> Result<Self, String> {
+        if !crate::schema::contains_exact_annotation(value) {
+            return Ok(self);
+        }
+        let schema = crate::schema::Schema::parse_action(value, name).map_err(|e| e.reason)?;
+        self.bind_parsed_exact_schema(name, &schema)
+    }
+
+    fn bind_parsed_exact_schema(
+        mut self,
+        name: &str,
+        schema: &crate::schema::Schema,
+    ) -> Result<Self, String> {
+        if !schema.has_exact() {
+            return Ok(self);
+        }
+        let mut records = BTreeMap::new();
+        let root_type = schema.expression_type(name, &mut records);
+        records.insert(
+            format!("{name}/root"),
+            BTreeMap::from([("value".to_owned(), root_type)]),
+        );
+        for (name, fields) in records {
+            if self.records.contains_key(&name) {
+                return Err("duplicate exact schema record".into());
+            }
+            self.records.insert(
+                name,
+                RecordType {
+                    kind: RecordKind::Builtin,
+                    fields: fields
+                        .into_iter()
+                        .map(|(name, ty)| {
+                            (
+                                name,
+                                Field {
+                                    ty,
+                                    source: FieldSource::Builtin,
+                                },
+                            )
+                        })
+                        .collect(),
+                },
+            );
+        }
+        Ok(self)
+    }
+
     /// Derives the environment of an `EntityIR` v2 artifact set. Only `actor` is
     /// bound; bind `self` and `input` per expression site.
     ///
@@ -794,19 +907,23 @@ impl ZenTypeEnv {
     /// The environment as a Norn1 canonical JSON value.
     #[must_use]
     pub fn to_canonical_value(&self) -> JsonValue {
+        self.canonical_value_at_version(TypeEnvVersion::V2)
+    }
+
+    fn canonical_value_at_version(&self, version: TypeEnvVersion) -> JsonValue {
         let records = self
             .records
             .iter()
-            .map(|(name, record)| (name.clone(), record_value(record)))
+            .map(|(name, record)| (name.clone(), record_value(record, version)))
             .collect();
         let variables = self
             .variables
             .iter()
-            .map(|(name, ty)| (name.clone(), ty.to_canonical_value()))
+            .map(|(name, ty)| (name.clone(), ty.to_canonical_value(version)))
             .collect();
         object([
             ("id", string(TYPE_ENV_ID)),
-            ("version", number(u64::from(TYPE_ENV_VERSION))),
+            ("version", number(u64::from(version.number()))),
             (
                 "maxLinkDepth",
                 number(u64::from(self.options.max_link_depth)),
@@ -823,7 +940,42 @@ impl ZenTypeEnv {
     /// [`CanonicalJsonError`] if `norn-canonical` rejects the value (not
     /// expected: the value is strings, integers, and booleans).
     pub fn canonical_json(&self) -> Result<Vec<u8>, CanonicalJsonError> {
-        norn_ir::canonical::serialize(&self.to_canonical_value())
+        self.canonical_json_at_version(TypeEnvVersion::V2)
+    }
+
+    /// VAL-ENV: recompute the selected historical format without upgrading its bytes.
+    ///
+    /// # Errors
+    /// As [`Self::canonical_json`].
+    pub fn canonical_json_at_version(
+        &self,
+        version: TypeEnvVersion,
+    ) -> Result<Vec<u8>, CanonicalJsonError> {
+        let is_rate = |mut ty: &Type| {
+            while let Type::List(inner) | Type::Optional(inner) = ty {
+                ty = inner;
+            }
+            matches!(
+                ty,
+                Type::Decimal {
+                    per_unit: Some(_),
+                    ..
+                }
+            )
+        };
+        if version == TypeEnvVersion::V1
+            && (self.variables.values().any(is_rate)
+                || self
+                    .records
+                    .values()
+                    .flat_map(|record| record.fields.values())
+                    .any(|field| is_rate(&field.ty)))
+        {
+            return Err(CanonicalJsonError::Serialize {
+                message: "Rate requires norn.expr.env/2".to_owned(),
+            });
+        }
+        norn_ir::canonical::serialize(&self.canonical_value_at_version(version))
     }
 
     /// Lower-case hex content hash under [`TYPE_ENV_HASH_PROFILE`].
@@ -841,10 +993,22 @@ impl ZenTypeEnv {
     ///
     /// As [`ZenTypeEnv::canonical_json`].
     pub fn reference(&self) -> Result<TypeEnvRef, CanonicalJsonError> {
+        self.reference_at_version(TypeEnvVersion::V2)
+    }
+
+    /// A receipt reference using its explicitly selected environment format.
+    ///
+    /// # Errors
+    /// As [`Self::canonical_json`].
+    pub fn reference_at_version(
+        &self,
+        version: TypeEnvVersion,
+    ) -> Result<TypeEnvRef, CanonicalJsonError> {
         Ok(TypeEnvRef {
             id: TYPE_ENV_ID.to_owned(),
-            version: TYPE_ENV_VERSION,
-            sha256: self.content_sha256()?,
+            version: version.number(),
+            sha256: TYPE_ENV_HASH_PROFILE
+                .hash_canonical_bytes(&self.canonical_json_at_version(version)?),
         })
     }
 }
@@ -855,7 +1019,7 @@ fn first_unknown_record(ty: &Type, records: &BTreeSet<String>) -> Option<String>
     names.into_iter().find(|name| !records.contains(name))
 }
 
-fn record_value(record: &RecordType) -> JsonValue {
+fn record_value(record: &RecordType, version: TypeEnvVersion) -> JsonValue {
     let kind_name = match record.kind {
         RecordKind::Object => "object",
         RecordKind::Interface => "interface",
@@ -877,7 +1041,10 @@ fn record_value(record: &RecordType) -> JsonValue {
             };
             (
                 name.clone(),
-                object([("type", field.ty.to_canonical_value()), ("source", source)]),
+                object([
+                    ("type", field.ty.to_canonical_value(version)),
+                    ("source", source),
+                ]),
             )
         })
         .collect();
@@ -1531,9 +1698,18 @@ impl<'d, 'e> Derivation<'d, 'e> {
             let ty = match current {
                 PropertyType::Text { format } => Type::Text { format: *format },
                 PropertyType::Integer {} => Type::Integer,
-                PropertyType::Decimal { scale, unit, .. } => Type::Decimal {
+                PropertyType::Decimal {
+                    scale,
+                    unit,
+                    rounding,
+                    currency_source,
+                    per_unit,
+                } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
+                    rounding: Rounding::effective(*rounding),
+                    currency_source: currency_source.clone(),
+                    per_unit: per_unit.clone(),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {
@@ -1679,7 +1855,7 @@ fn object<const N: usize>(entries: [(&str, JsonValue); N]) -> JsonValue {
     )
 }
 
-fn kind<const N: usize>(name: &str, entries: [(&str, JsonValue); N]) -> JsonValue {
+fn kind<'a>(name: &str, entries: impl IntoIterator<Item = (&'a str, JsonValue)>) -> JsonValue {
     let mut map: BTreeMap<String, JsonValue> = entries
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value))

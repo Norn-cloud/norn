@@ -10,6 +10,7 @@ description = "sans-IO decider + CellHost trait/effects (ring 0; see AGENTS.md)"
 path = "src/lib.rs"
 
 [dependencies]
+norn-decisions = { path = "../norn-decisions" }
 norn-authz = { path = "../norn-authz" }
 # #3083: shared commit admission invokes the existing pure exact posting validator.
 norn-checker = { path = "../norn-checker" }
@@ -23,10 +24,6 @@ thiserror = "2.0.20"
 # The dev-dependency cycle (norn-testkit depends on this crate) is fine for
 # integration tests and never reaches a normal or wasm32 build.
 norn-testkit = { path = "../norn-testkit" }
-# T7-EFX-3 (#2786): the reconciliation test evaluates the vertical flow's
-# decide rule, so only an accepted result is shown to advance a Run. Test
-# support only; SKELETON already admits norn-kernel <- norn-decisions.
-norn-decisions = { path = "../norn-decisions" }
 serde_json = "1.0.150"
 
 [lints]

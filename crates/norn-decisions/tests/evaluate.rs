@@ -1610,6 +1610,262 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
+    #[test]
+    fn derived_exact_operations_never_round(a in proptest::prelude::any::<i32>(), b in proptest::prelude::any::<i32>(), sa in 0_u32..=9, sb in 0_u32..=9) {
+        use zen_engine::scaled::ScaledArithmetic;
+        let text = |n: i32, scale: u32| {
+            let factor = 10_u64.pow(scale);
+            if scale == 0 { n.to_string() } else { format!("{}{}.{:0width$}", if n < 0 { "-" } else { "" }, u64::from(n.unsigned_abs()) / factor, u64::from(n.unsigned_abs()) % factor, width = usize::try_from(scale).unwrap()) }
+        };
+        let (left, right) = (text(a, sa).parse().unwrap(), text(b, sb).parse().unwrap());
+        let scale = sa.max(sb);
+        let aligned_a = i128::from(a) * 10_i128.pow(scale - sa);
+        let aligned_b = i128::from(b) * 10_i128.pow(scale - sb);
+        proptest::prop_assert_eq!(ScaledArithmetic::exact_compare(left, right).unwrap(), aligned_a.cmp(&aligned_b));
+        for op in ["Add", "Subtract", "Multiply"] {
+            let result = ScaledArithmetic::exact_binary(op, left, right).unwrap();
+            let expected = match op { "Add" => aligned_a + aligned_b, "Subtract" => aligned_a - aligned_b, _ => i128::from(a) * i128::from(b) };
+            proptest::prop_assert_eq!(result.mantissa(), expected);
+            proptest::prop_assert_eq!(result.scale(), if op == "Multiply" { sa + sb } else { scale });
+        }
+    }
+}
+
+#[test]
+fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
+    use norn_expr::Expression;
+    use norn_ir::{PropertyType, Rounding, WholeNumber};
+    let site = |rounding| PropertyType::Decimal {
+        scale: WholeNumber(2),
+        rounding,
+        unit: None,
+        currency_source: None,
+        per_unit: None,
+    };
+    let run = |source: &str, site: Option<&PropertyType>| {
+        Expression::compile(source)
+            .unwrap()
+            .evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), site)
+            .result
+            .map(|v| v.into_value())
+    };
+    assert_eq!(run("1.25 * 0.1 > 0", None).unwrap(), Value::Bool(true));
+    assert_eq!(run("1.25 == 1.20 + 0.05", None).unwrap(), Value::Bool(true));
+    assert_eq!(
+        run("(1.25 * 0.1) * 100", Some(&site(Some(Rounding::HalfEven)))).unwrap(),
+        Value::Number("12.5".parse().unwrap())
+    );
+    for (source, expected) in [("1.005 / 1", "1.01"), ("-1.005 / 1", "-1.01")] {
+        assert_eq!(
+            run(source, Some(&site(Some(Rounding::HalfAwayFromZero)))).unwrap(),
+            Value::Number(expected.parse().unwrap())
+        );
+    }
+    for source in [
+        "1 / 3",
+        "1 / 0",
+        "round(1.005, 2)",
+        "1e-18 * 0.1",
+        "79228162514264337593543950335 + 1",
+    ] {
+        assert!(run(source, None).is_err(), "{source}");
+    }
+    assert_eq!(
+        run("1 / 2", Some(&site(None))).unwrap(),
+        Value::Number("0.5".parse().unwrap())
+    );
+    assert!(run("1 / 3", Some(&site(None))).is_err());
+    assert!(run("1.005", Some(&site(None))).is_err());
+    assert!(run("(1 / 3) * 3", Some(&site(Some(Rounding::HalfEven)))).is_err());
+    assert_eq!(
+        run("'a' + 'b' == 'ab' and 1.25 * 0.1 > 0", None).unwrap(),
+        Value::Bool(true)
+    );
+    let expression = Expression::compile("1 / 3").unwrap();
+    assert!(
+        expression
+            .evaluate(&Value::Null, EvaluationBudget::default())
+            .is_ok()
+    );
+    let budget_probe = norn_expr::Expression::compile("1.25 * 0.1 > 0").unwrap();
+    let legacy = budget_probe
+        .evaluate(&Value::Null, EvaluationBudget::default())
+        .unwrap();
+    assert!(
+        budget_probe
+            .evaluate_exact_metered(
+                &Value::Null,
+                EvaluationBudget::new(legacy.units_used()),
+                None
+            )
+            .result
+            .is_ok()
+    );
+    let failed = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), None);
+    assert!(failed.result.is_err() && failed.units_used > 0);
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_exact_runtime_division_matches_signed_integer_reference(a in -10000_i32..10000, b in 1_i32..100, mode in 0..4_usize) {
+        use norn_ir::{PropertyType, Rounding, WholeNumber};
+        let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
+        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
+        let expression = norn_expr::Expression::compile(&format!("{a} / {b}")).unwrap();
+        let result = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), Some(&site)).result;
+        let numerator = a * 100;
+        if rounding == Rounding::Refuse && numerator % b != 0 { proptest::prop_assert!(result.is_err()); }
+        else {
+            let q = numerator / b; let r = (numerator % b).abs();
+            let increment = match rounding { Rounding::Refuse | Rounding::TowardZero => false, Rounding::HalfEven => 2*r > b || (2*r == b && q%2 != 0), Rounding::HalfAwayFromZero => 2*r >= b };
+            let expected = q + if increment { a.signum() } else { 0 };
+            let text = format!("{}{}.{:02}", if expected < 0 { "-" } else { "" }, expected.abs()/100, expected.abs()%100);
+            proptest::prop_assert_eq!(result.unwrap().into_value(), Value::Number(text.parse().unwrap()));
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_round_v1_canonical_modes_are_distinct(scale in 0_u64..=18, selected in 0_usize..4) {
+        use norn_ir::Rounding;
+        let mode = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][selected];
+        let environment = |rounding| norn_expr::ZenTypeEnv::input_only(
+            std::collections::BTreeMap::from([("amount".to_owned(), norn_expr::Type::Decimal { scale, unit: None, rounding, currency_source: None, per_unit: None, })]),
+            norn_expr::EnvOptions::default()).unwrap();
+        let omitted = environment(Rounding::effective(None));
+        let explicit = environment(Rounding::effective(Some(Rounding::Refuse)));
+        proptest::prop_assert_eq!(omitted.content_sha256().unwrap(), explicit.content_sha256().unwrap());
+        proptest::prop_assert_eq!(environment(mode).content_sha256().unwrap() == omitted.content_sha256().unwrap(), mode == Rounding::Refuse);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_exact_typed_products_preserve_integer_reference(a in -1000_i32..1000, b in -1000_i32..1000) {
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("x".to_owned(), norn_expr::Type::Decimal { scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse, currency_source: None, per_unit: None, })]), norn_expr::EnvOptions::default()).unwrap();
+        let context = Value::object([("input", Value::object([("x", Value::Number(format!("{}{}.{:02}", if a<0 {"-"} else {""}, a.abs()/100, a.abs()%100).parse().unwrap()))]))]);
+        let expression = norn_expr::Expression::compile(&format!("input.x * {b} > 0")).unwrap();
+        let value = expression.evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &norn_expr::Type::Bool).result.unwrap().into_value();
+        proptest::prop_assert_eq!(value, Value::Bool(a*b>0));
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_env_currency_source_changes_only_v2_pin(first in "[a-z]{1,12}", second in "[a-z]{1,12}") {
+        use norn_expr::env::TypeEnvVersion::V1;
+        let env = |property: &str| norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::from([("money".to_owned(), norn_expr::Type::Decimal {
+            scale: 2, unit: None, rounding: norn_ir::Rounding::Refuse,
+            currency_source: Some(norn_ir::metric::DimensionPath { links: Vec::new(), property: norn_ir::PropertyId(property.to_owned()) }), per_unit: None, })]), norn_expr::EnvOptions::default()).unwrap();
+        let (first_env, second_env) = (env(&first), env(&second));
+        proptest::prop_assert_eq!(first_env.reference_at_version(V1).unwrap(), second_env.reference_at_version(V1).unwrap());
+        proptest::prop_assert_eq!(first_env.reference().unwrap() == second_env.reference().unwrap(), first == second);
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_round_explicit_expression_matches_declared_rescale(a in -10000_i32..10000, selected in 0_usize..4, scale in 0_u32..=28) {
+        use norn_ir::Rounding;
+        let mode = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][selected];
+        let spelling = mode.canonical_field().unwrap_or("refuse");
+        let factor = 10_i128.pow(scale);
+        let coefficient = i128::from(a);
+        let text = if scale == 0 { a.to_string() } else { format!("{}{}.{:0width$}", if a<0 {"-"} else {""}, coefficient.abs()/factor, coefficient.abs()%factor, width=usize::try_from(scale).unwrap()) };
+        let number: norn_expr::Number = text.parse().unwrap();
+        let site = norn_ir::PropertyType::Decimal { scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None, per_unit:None };
+        let expected = norn_expr::rescale_decimal(&site, &number);
+        let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::new(), norn_expr::EnvOptions::default()).unwrap();
+        let source = norn_expr::Expression::compile(&format!("round({}, 2, '{spelling}')", number.as_str())).unwrap();
+        let result = source.evaluate_typed_metered(&Value::Null, EvaluationBudget::default(), &env, &norn_expr::Type::Number).result;
+        proptest::prop_assert_eq!(result.is_ok(), expected.is_ok());
+        if let (Ok(actual), Ok(expected)) = (result, expected) { proptest::prop_assert_eq!(actual.into_value(), Value::Number(expected)); }
+    }
+}
+
+fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
+    use norn_ir::{
+        PropertyId, PropertyType, Rounding, UnitRef, UnitSystem, WholeNumber, metric::DimensionPath,
+    };
+    let unit = |code: &str| UnitRef {
+        system: UnitSystem::Ucum,
+        code: code.into(),
+    };
+    let currency = Some(DimensionPath {
+        links: Vec::new(),
+        property: PropertyId("currency".into()),
+    });
+    let site = |scale, unit, currency_source, per_unit| json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()});
+    let slice = closed(
+        &json!({"currency":{"type":"string","enum":["USD"]},"rate":site(6,None,currency.clone(),Some(unit(denominator))),"grams":site(3,Some(unit("g")),None,None)}),
+    );
+    let mut root = commands_rule(
+        "demo.rate_pricing",
+        &slice,
+        "[{actionId:'quote',currency:'USD',value:slice.rate * slice.grams}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(
+        &json!({"actionId":{"type":"string"},"currency":{"type":"string","enum":[output_currency]},"value":site(2,None,currency,None)}),
+    );
+    root
+}
+
+#[test]
+fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
+    let decision = admit_inline(&bounded_rate_rule("g", "USD"));
+    let slice = Value::object([
+        ("currency", Value::String("USD".into())),
+        ("rate", num("15")),
+        ("grams", num("20")),
+    ]);
+    let evaluated = run(&decision, slice, event(), EvaluationBudget::default()).unwrap();
+    assert_eq!(
+        evaluated.output.commands[0].get("value"),
+        Some(&norn_ir::RuntimeValue::from_json_text("300").unwrap())
+    );
+    for (unit, currency) in [("mg", "USD"), ("g", "EUR")] {
+        assert!(
+            AdmittedDecision::admit(
+                &rule(&bounded_rate_rule(unit, currency)),
+                &BTreeMap::new(),
+                binding()
+            )
+            .is_err()
+        );
+    }
+    let inexact = Value::object([
+        ("currency", Value::String("USD".into())),
+        ("rate", num("1.005")),
+        ("grams", num("1")),
+    ]);
+    assert!(run(&decision, inexact, event(), EvaluationBudget::default()).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_rate_generated_exact_products_never_round(rate in -1000_i32..1000, grams in 0_i32..1000) {
+        let decision = admit_inline(&bounded_rate_rule("g","USD"));
+        let slice = Value::object([("currency",Value::String("USD".into())),("rate",num(&rate.to_string())),("grams",num(&grams.to_string()))]);
+        let evaluated = run(&decision,slice,event(),EvaluationBudget::default()).unwrap();
+        let expected = norn_ir::RuntimeValue::from_json_text((rate*grams).to_string()).unwrap();
+        proptest::prop_assert_eq!(evaluated.output.commands[0].get("value"),Some(&expected));
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_env_scalar_root_scale_and_shape_change_the_pin(first in 0_u8..=18, second in 0_u8..=18, first_array in proptest::bool::ANY, second_array in proptest::bool::ANY) {
+        let pin = |scale:u8,array:bool| {
+            let scalar = serde_json::json!({"type":"number","nornType":{"kind":"decimal","scale":scale}});
+            let schema = if array { serde_json::json!({"type":"array","items":scalar}) } else { scalar };
+            norn_expr::ZenTypeEnv::input_only(BTreeMap::new(),norn_expr::EnvOptions::default()).unwrap().bind_exact_schema("demo.root",&serde_json::from_value(schema).unwrap()).unwrap().reference().unwrap()
+        };
+        proptest::prop_assert_eq!(pin(first,first_array) == pin(second,second_array), first == second && first_array == second_array);
+    }
+}
+
+proptest::proptest! {
     /// FOLD-AUTHORING-LINEAGE: generated typed folds preserve nested array elements.
     #[test]
     fn typed_authoring_ordered_fold_executes_the_declared_helper(

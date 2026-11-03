@@ -30,6 +30,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         record: &ObjectRecord,
     ) -> Result<bool, CellError> {
+        if self.source_dispute_at(world, &record.object_type, &record.id)? {
+            return Ok(true);
+        }
         Ok(self
             .review_findings(world, &record.object_type, &record.id)?
             .iter()
@@ -49,6 +52,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Option<ObjectRecord>, CellError> {
+        if world != crate::MAIN_WORLD {
+            self.source_dispute_at(world, object_type, key)?;
+        }
         let Some(record) = self.object(world, object_type, key)? else {
             return Ok(None);
         };
@@ -97,11 +103,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        Ok(self
+        if world != crate::MAIN_WORLD {
+            self.source_dispute_at(world, object_type, key)?;
+        }
+        let mut findings: Vec<_> = self
             .review_findings(world, object_type, key)?
             .into_iter()
             .map(|(finding, _)| finding)
-            .collect())
+            .collect();
+        if world == crate::MAIN_WORLD {
+            findings.extend(self.source_conflict_findings(object_type, key)?);
+            findings.extend(self.identity_findings(object_type, key)?);
+        }
+        Ok(findings)
     }
 
     fn review_findings(
