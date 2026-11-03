@@ -6,8 +6,9 @@ It is never a runtime dependency.
 
 `cargo test --locked -p norn-skeleton-guard` runs the boundary and negative
 provenance regressions. `cargo xtask ci provenance --head <SHA> --repository Norn-cloud/norn` checks the candidate;
-`cargo xtask ci provenance --root PATH --distribution --base-root BASE` checks a
-fully expanded distribution against trusted source facts. The source binding is independent of the distribution being checked.
+`cargo xtask ci provenance --root PATH --distribution --base-root BASE
+--source-root SOURCE --head SHA --repository Norn-cloud/norn` checks an expanded
+archive against the immutable source commit and trusted source facts. The source binding is independent of the distribution being checked.
 
 The hosted CI runs `scripts/ci/core.sh`. Fork code runs only on GitHub-hosted
 runners without repository secrets. The trusted lane builds the base's checker,

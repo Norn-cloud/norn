@@ -23,12 +23,16 @@ enum Gate {
         #[arg(long)]
         distribution: bool,
         /// Immutable candidate commit. Required for bound mode.
-        #[arg(long)]
+        #[arg(long, required_unless_present = "legacy_distribution")]
         head: Option<String>,
         /// Git checkout supplying independently expected archive bytes.
         #[arg(long, requires = "head")]
         source_root: Option<PathBuf>,
-        #[arg(long, requires = "head")]
+        #[arg(
+            long,
+            requires = "head",
+            required_unless_present = "legacy_distribution"
+        )]
         repository: Option<String>,
         /// Explicit standalone legacy distribution, with strict stored hashes.
         #[arg(long, conflicts_with = "head", requires = "distribution")]

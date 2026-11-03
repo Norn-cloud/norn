@@ -1,5 +1,6 @@
 //! The git operations the gates need, with fixed arguments.
 
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::Command;
 
@@ -133,13 +134,22 @@ pub fn tree(
     root: &Path,
     commit: &str,
 ) -> Result<std::collections::BTreeMap<String, TreeEntry>, String> {
-    use sha2::{Digest, Sha256};
     if commit.len() != 40
         || !commit
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
         return Err("binding requires a full lowercase commit SHA".into());
+    }
+    let kind = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "-t", commit])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !kind.status.success() || kind.stdout != b"commit\n" {
+        return Err("binding is not an immutable commit".into());
     }
     let out = Command::new("git")
         .arg("--no-replace-objects")

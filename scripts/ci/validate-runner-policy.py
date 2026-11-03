@@ -38,6 +38,8 @@ def main() -> int:
     parser.add_argument("--head", help="exact event candidate commit")
     parser.add_argument("--repository", help="repository from trusted event context")
     args = parser.parse_args()
+    if args.root is None and any((args.maintainer_evidence, args.rights_evidence, args.head, args.repository)):
+        parser.error("binding and review inputs require trusted --root mode")
     if args.root and not all((args.rights_evidence, args.head, args.repository)):
         parser.error("trusted mode requires rights-evidence, head and repository")
     env = {**os.environ, "RUSTUP_TOOLCHAIN": TOOLCHAIN}

@@ -116,7 +116,15 @@ fn complete_lineage_includes_generated_release_and_embedded_copies() {
     f.derived("release/copy.json", "generated.json", "generated");
     f.derived("embedded/copy.rs", "release/copy.json", "generated");
     f.passes();
+    let head = bind_fixture(&f);
+    assert!(bound_report(&f, &head).errors().is_empty());
     f.write("input.json", b"tampered");
+    assert!(
+        bound_report(&f, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("bound byte drift"))
+    );
     let r = f.report();
     assert_eq!(r.rejected_paths.len(), 4);
     assert!(
@@ -159,7 +167,16 @@ fn per_file_records_refuse_wrong_hash_missing_and_unlisted() {
     let i = f.add("crates/a/src/lib.rs", b"// a", "code");
     f.passes();
     f.records[i]["sha256"] = json!("0".repeat(64));
-    f.rejects("content hash drift");
+    f.rejects("content hash drift"); // explicit legacy distribution still refuses
+    let head = bind_fixture(&f);
+    assert!(bound_report(&f, &head).errors().is_empty());
+    f.write("crates/a/src/lib.rs", b"// post-commit drift");
+    assert!(
+        bound_report(&f, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("bound byte drift"))
+    );
     let mut f = Fixture::new();
     f.add("crates/a/src/lib.rs", b"// a", "code");
     f.save();
@@ -1426,6 +1443,17 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
         norn_skeleton_guard::ci::rights_admission(doc, f.root(), &trusted, head)
     };
     assert!(admission(&doc, &head).is_ok());
+    let evidence = trusted_dir.path().join("group-evidence.json");
+    fs::write(&evidence, doc.to_string()).unwrap();
+    let report = norn_skeleton_guard::ci::check_with_rights(
+        f.root(),
+        &trusted,
+        &head,
+        "Norn-cloud/norn",
+        None,
+        &evidence,
+    );
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
     assert!(
         provenance::check_bound(
             f.root(),
@@ -1578,4 +1606,32 @@ fn legacy_digest_is_optional_but_present_values_keep_the_strict_shape() {
         let head = bind_fixture(&f);
         assert!(!bound_report(&f, &head).errors().is_empty());
     }
+}
+
+#[test]
+fn overlapping_rights_metadata_changes_require_resolution_even_if_source_merges_cleanly() {
+    let mut f = Fixture::new();
+    f.add("payload", b"authored payload", "code");
+    let base = bind_fixture(&f);
+    let path = format!("{RECORDS}payload.json");
+    let original: Value = serde_json::from_slice(&fs::read(f.root().join(&path)).unwrap()).unwrap();
+    let mut heads = Vec::new();
+    for (branch, field, value) in [
+        ("metadata-a", "category", json!("generic-proof")),
+        ("metadata-b", "notices", json!([f.reference("LICENSE")])),
+    ] {
+        git_in(&f, &["checkout", "--quiet", "-b", branch, &base]);
+        let mut record = original.clone();
+        record[field] = value;
+        f.write(
+            &path,
+            serde_json::to_string_pretty(&record).unwrap().as_bytes(),
+        );
+        heads.push(commit_fixture(&f));
+    }
+    assert!(
+        norn_skeleton_guard::ci::git::clean_merge(f.root(), &heads[0], &heads[1], &base)
+            .unwrap_err()
+            .contains("metadata disagreement")
+    );
 }
