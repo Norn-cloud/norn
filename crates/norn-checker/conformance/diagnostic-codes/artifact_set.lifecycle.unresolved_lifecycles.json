@@ -4,5 +4,5 @@
   "severity": "error",
   "since": "0.1.0",
   "tier": "T3",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
 }

@@ -4,5 +4,5 @@
   "severity": "error",
   "since": "0.2.0",
   "tier": "T3",
-  "fix": "Use a construct supported by the selected admission profile, or explicitly select a profile supporting that construct."
+  "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
 }

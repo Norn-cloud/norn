@@ -4,5 +4,5 @@
   "severity": "error",
   "since": "0.1.0",
   "tier": "T3",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
 }

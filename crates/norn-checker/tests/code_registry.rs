@@ -242,8 +242,8 @@ fn registry_generation_refuses_invalid_entries() {
         let path = temp.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
-            "no_fix" => { value.as_object_mut().unwrap().remove("fix"); value["no_fix"] = "No supported alternative exists".into(); },
-            "missing-guidance" => { value.as_object_mut().unwrap().remove("fix"); },
+            "no_fix" => { value.as_object_mut().expect("object").remove("fix"); value["no_fix"] = "No supported alternative exists".into(); },
+            "missing-guidance" => { value.as_object_mut().expect("object").remove("fix"); },
             "both-guidance" => value["no_fix"] = "Conflicting guidance".into(),
             "blank-guidance" => value["fix"] = " ".into(),
             "identity" => value["code"] = serde_json::json!("other.validation.invalid"),

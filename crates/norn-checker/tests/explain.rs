@@ -71,7 +71,7 @@ fn ambiguous_and_unknown_selectors_are_existing_diagnostics_with_guidance() {
 
 #[test]
 fn action_direct_effects_are_the_same_catalog_rows() {
-    let paths = ["../../../fixtures/ir/entity-v2/artifact-set/commerce-sales-order.entity.json", "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"];
+    let paths = ["../../../registry/core/artifacts/commerce.SalesOrder.entity.json", "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"];
     let pool: Vec<_> = paths.iter().map(|path| {
         let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
         serde_json::from_str(&text).unwrap()

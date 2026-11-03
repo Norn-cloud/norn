@@ -5,6 +5,18 @@ use norn_ir::definition_catalog::{ArtifactKey, DefinitionCatalog, DependencyVia,
 use norn_ir::explain::{ExplainFormat, ExplainKind, ExplainReport, ExplainUnknown, ExplainedLaw};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticSeverity, EntityArtifactSetContext, Span};
 
+/// Locale-map diagnostic identities, shared with structured-requirement rendering.
+pub mod wording_codes {
+    /// Select an available BCP 47 tag from the pinned wording map; no fallback is applied.
+    pub const UNKNOWN_LOCALE: &str = "law.wording.unknown_locale";
+    /// Use a well-formed BCP 47 tag and declare it in the reviewed wording map.
+    pub const INVALID_LOCALE: &str = "law.wording.invalid_locale";
+    /// Keep one locale entry per case-insensitive BCP 47 identity.
+    pub const DUPLICATE_LOCALE: &str = "law.wording.duplicate_locale";
+    /// Supply every required template, semantic label and phrase for the declared locale.
+    pub const INCOMPLETE_LOCALE: &str = "law.wording.incomplete_locale";
+}
+
 fn refusal(code: &str, message: impl Into<String>) -> Vec<Diagnostic> {
     vec![Diagnostic { code: DiagnosticCode::new(code), severity: DiagnosticSeverity::Error,
         message: message.into(), span: None, artifact_id: None, remediation: None }]
@@ -156,10 +168,13 @@ fn unknowns(goals: &[serde_json::Value], writers: &BTreeSet<crate::verification:
 /// Uses the locale-map diagnostics or refuses a stale/missing law binding.
 pub fn render_wording(report: &mut ExplainReport, options: &norn_ir::explain::ExplainOptions) -> Result<(), Vec<Diagnostic>> {
     let Some(locale) = &options.locale else { return Ok(()); };
+    if options.requirements.is_empty() || report.laws.is_empty() {
+        return Err(refusal(wording_codes::UNKNOWN_LOCALE, "no pinned wording map is available for the requested law and locale"));
+    }
     for law in &mut report.laws {
         let matches: Vec<_> = options.requirements.iter().filter(|requirement| requirement.norm.law == law.law).collect();
         let [requirement] = matches.as_slice() else {
-            return Err(refusal("law.wording.unknown_locale", format!("no unique pinned wording map for law {} and locale {locale}", law.law.id)));
+            return Err(refusal(wording_codes::UNKNOWN_LOCALE, format!("no unique pinned wording map for law {} and locale {locale}", law.law.id)));
         };
         let view = norn_ir::requirement_display::RequirementView { requirement: (*requirement).clone(), locale: locale.clone() };
         let slots = view.slots().map_err(|code| refusal(code, format!("cannot render law {} in locale {locale}", law.law.id)))?;

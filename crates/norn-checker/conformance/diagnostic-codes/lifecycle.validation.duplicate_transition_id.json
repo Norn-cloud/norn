@@ -4,5 +4,5 @@
   "severity": "error",
   "since": "0.1.0",
   "tier": "T2",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
 }
