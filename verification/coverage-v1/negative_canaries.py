@@ -1754,6 +1754,7 @@ async function collectGroup() {
  const groupEvidence = await collectGroup();
  assert.deepEqual(groupEvidence.pull_requests[0].revocations,evidence.revocations);
  admin=false; await record({comment:revoke}); assert.equal(history.length,6);
+ await record({comment:{...revoke,user:null}}); assert.equal(history.length,6);
  missing=true; await record({comment:revoke}); assert.equal(history.length,6);
  missing=false; unavailable=true; let failed=false;
  try {await record({comment:revoke});} catch(error) {failed=true;}
