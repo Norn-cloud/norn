@@ -62,6 +62,11 @@ fn exact_pins_source_locations_protected_authority_and_unknowns() {
     );
     assert!(diagnostic.message.contains("roster exactly"));
     assert!(diagnostic.message.contains("256"));
+    assert!(
+        diagnostic
+            .message
+            .contains("correction set: staffing/parameters/roster")
+    );
     attempt.source = b"attempted source\n";
     assert_ne!(report.digests, diagnose_attempt(&attempt).digests);
     attempt.source = b"attempted source";

@@ -93,6 +93,7 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
             None,
         ),
         Ok(result) => {
+            let correction = correction_message(result, attempt.members);
             for core in &result.cores {
                 let labels: Vec<_> = core
                     .iter()
@@ -121,7 +122,7 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
                     emit(
                         code,
                         format!(
-                            "These declarations cannot hold together: {}. {context}",
+                            "These declarations cannot hold together: {}. {correction} {context}",
                             labels.join("; ")
                         ),
                         attempt.members.get(*index).map(|(o, _)| o),
@@ -165,4 +166,22 @@ fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
         hash(attempt.base),
         hash(profile.as_bytes()),
     ]
+}
+
+fn correction_message(
+    result: &super::diagnosis::Diagnosis,
+    members: &[(super::RuleOrigin, String)],
+) -> String {
+    let Some(correction) = result.corrections.first() else {
+        return "No correction exists among the explicitly editable inputs.".into();
+    };
+    let locations: Vec<_> = correction
+        .iter()
+        .filter_map(|i| members.get(*i))
+        .map(|(o, _)| format!("{}{}", o.artifact_id.as_deref().unwrap_or(""), o.pointer))
+        .collect();
+    format!(
+        "One independently checked minimal editable correction set: {}.",
+        locations.join(", ")
+    )
 }
