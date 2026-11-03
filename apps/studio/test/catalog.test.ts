@@ -50,3 +50,12 @@ test("names read as plain words", () => {
   expect(systemName("synthetic-erpnext")).toBe("ERPNext")
   expect(systemName("acme")).toBe("acme")
 })
+
+test("a mapping target resolves through its entity artifact's declared name, whatever the artifact ID", () => {
+  const artifacts = [
+    { kind: "entity", artifactId: "demo.things.v2", name: "Things", payload: { entityVersion: "2.0", objectType: { name: "demo.Thing", properties: [] } } },
+    { kind: "source_schema", artifactId: "demo.source", payload: { source: { system: "synthetic-erpnext" } } },
+    { kind: "mapping", artifactId: "demo.mapping", payload: { source: { schemaId: "demo.source" }, maps: [{ source: { dataset: "Thing" }, target: { entity: "demo.things.v2" }, properties: [] }] } },
+  ] as unknown as readonly Artifact[]
+  expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds.map(({ system }) => system)).toEqual(["ERPNext"])
+})
