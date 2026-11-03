@@ -166,7 +166,7 @@ pub fn check_entity_artifacts(
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
     let complete: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
-    let path_findings = crate::consistency::lower_path_equations(&complete)
+    let path_findings = crate::consistency::lower_path_equations(&complete, context.registry)
         .err()
         .unwrap_or_default();
     dedupe_findings(

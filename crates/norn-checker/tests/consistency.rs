@@ -557,7 +557,8 @@ fn path_equation_valid_identity_lowers_and_retains_origin() {
         serde_json::json!([{"id":"identity","left":[],"right":["next"]}]),
         false,
     );
-    let theory = norn_checker::consistency::lower_path_equations(&[concept]).unwrap();
+    let theory =
+        norn_checker::consistency::lower_path_equations(&[concept], &Default::default()).unwrap();
     assert!(theory.validate().is_ok());
     let Dependency::Egd(equation) = &theory.dependencies[0] else {
         panic!("expected EGD")
@@ -606,9 +607,11 @@ fn path_equation_unknown_link_many_and_duplicate_id_refuse() {
             false,
         ),
     ] {
-        let findings =
-            norn_checker::consistency::lower_path_equations(&[path_concept(equations, many)])
-                .unwrap_err();
+        let findings = norn_checker::consistency::lower_path_equations(
+            &[path_concept(equations, many)],
+            &Default::default(),
+        )
+        .unwrap_err();
         assert_eq!(
             findings[0].code.as_str(),
             "consistency.path_equation.invalid"
@@ -621,7 +624,7 @@ proptest::proptest! {
     fn path_equation_functional_cycles_keep_the_shared_root(length in 0usize..32) {
         let path = vec!["next"; length];
         let concept = path_concept(serde_json::json!([{"id":"cycle","left":[],"right":path}]), false);
-        let theory = norn_checker::consistency::lower_path_equations(&[concept]).unwrap();
+        let theory = norn_checker::consistency::lower_path_equations(&[concept], &Default::default()).unwrap();
         let mut facts = vec![Fact { relation:"concept:paths.Node".into(), values:vec![Value::Const("0".into())] }];
         for index in 0..length {
             facts.push(Fact { relation:"link:paths.Node:next".into(), values:vec![

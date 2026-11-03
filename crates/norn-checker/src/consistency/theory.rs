@@ -236,6 +236,7 @@ pub(crate) fn variables(atoms: &[Atom]) -> BTreeSet<&str> {
 /// Malformed declarations or paths outside the functional concrete-type fragment.
 pub fn lower_path_equations(
     artifacts: &[norn_ir::ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Result<Theory, Vec<crate::Diagnostic>> {
     use crate::entity_artifacts::{Decoded, decode_v2};
     use norn_ir::entity::{PATH_EQUATIONS_SLOT, PathEquation};
@@ -256,7 +257,8 @@ pub fn lower_path_equations(
     if declarations.is_empty() {
         return Ok(theory);
     }
-    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(artifacts);
+    let catalog =
+        crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
     let mut findings = Vec::new();
     for (artifact, owner, value) in declarations {
         let origin = RuleOrigin {
@@ -264,6 +266,9 @@ pub fn lower_path_equations(
             pointer: "/payload/extensions/norn.path-equations~11.0.0".into(),
         };
         let result = (|| -> Result<(), String> {
+            if !matches!(catalog.object_type_named(owner.as_str()), Some(Ok(_))) {
+                return Err("equation owner is not an available concrete type".into());
+            }
             let equations: Vec<PathEquation> = serde_json::to_value(&value)
                 .and_then(serde_json::from_value)
                 .map_err(|e| e.to_string())?;
