@@ -53,8 +53,10 @@ conditionals or nonlinear algebra. Nullable/computed terms, explicit conflicting
 additivity, state-limited laws and other law roots supply no such contract.
 Generated definitions retain the canonical law-envelope digest; changes to a
 law change the generated ratio identity. Input order does not change identity.
-The original ontology remains undeclared. Only the checker-owned metric space
-contains this refinement, and every selection lowers through `compute::admit`.
+The original ontology and every property contract carried by the compute plan
+remain unchanged. Only the checker-owned catalog contains the law admission
+evidence, and every selection lowers through `compute::admit`. In particular,
+law evidence cannot make the plan fail the native cell's model-contract guard.
 
 Named scenarios: **METRIC-CONSERVATION** (no metric declarations yield recovered
 and loss ratios), **METRIC-LAW-SCOPE** (conditional/advisory/other-scope laws
@@ -64,6 +66,8 @@ produce the same contributions as the existing compute path, with showcase
 totals 294/300 and ratio 0.980000), and **METRIC-NONLINEAR-UNKNOWN** (unsupported
 equalities create no conservation candidate). Unsupported calendar grains,
 link execution and snapshot evaluation keep their existing refusals.
+**METRIC-MODEL-PARITY** requires every law-derived plan property to retain the
+same native model contract as the original, undeclared ontology.
 
 ## Evaluation and obligation semantics
 

@@ -44,7 +44,7 @@ pub struct MetricCandidate {
     pub conservation: Vec<ConservationSource>,
 }
 
-/// Generated candidates and the checker-owned, law-refined catalog.
+/// Generated candidates and checker-owned law admission evidence.
 /// Callers cannot supply a refinement or replace a generated definition.
 #[derive(Debug, Clone)]
 pub struct MetricSpace {
@@ -135,7 +135,7 @@ pub fn derive_metric_space(
             .flat_map(|source| std::iter::once(&source.input).chain(&source.outputs))
             .cloned()
             .collect();
-        catalog.refine_conserved_metric_terms(name, &terms);
+        catalog.record_conserved_metric_terms(name, &terms);
     }
     let mut candidates = Vec::new();
     for name in catalog.object_type_names() {
@@ -238,7 +238,7 @@ fn candidates_at_time(
         let EffectiveKind::Base(kind) = &property.kind else {
             continue;
         };
-        if !super::is_numeric(property) || kind.additivity() != &PropertyAdditivity::Additive {
+        if !super::is_numeric(property) {
             continue;
         }
         let proof: Vec<_> = sources
@@ -246,6 +246,11 @@ fn candidates_at_time(
             .filter(|source| source.input == property.id || source.outputs.contains(&property.id))
             .cloned()
             .collect();
+        if kind.additivity() != &PropertyAdditivity::Additive
+            && !(kind.additivity() == &PropertyAdditivity::Undeclared && !proof.is_empty())
+        {
+            continue;
+        }
         let definition = sum(object, &property.id, time_path, &proof);
         sums.insert(property.id.clone(), definition.name.clone());
         candidates.push(candidate(definition, dimensions, proof));

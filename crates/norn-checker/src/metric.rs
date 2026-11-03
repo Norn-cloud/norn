@@ -633,6 +633,7 @@ impl<'a> Checker<'a> {
 
     fn numeric_additivity(
         &mut self,
+        root: &str,
         property: &EffectiveProperty,
         metric: &BoundMetric,
         aggregate: MeasureAggregate,
@@ -642,6 +643,8 @@ impl<'a> Checker<'a> {
             return;
         };
         let refusal = match kind.additivity() {
+            norn_ir::PropertyAdditivity::Undeclared
+                if self.catalog.is_conserved_metric_term(root, &property.id) => None,
             norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
             norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
             norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
@@ -677,7 +680,7 @@ impl<'a> Checker<'a> {
         };
         let resolved = property.and_then(|id| object.property(id));
         if let Some(property) = resolved.filter(|property| is_numeric(property)) {
-            self.numeric_additivity(property, metric, aggregate, at);
+            self.numeric_additivity(root, property, metric, aggregate, at);
         }
         if resolved.is_some_and(|property| {
             matches!(
