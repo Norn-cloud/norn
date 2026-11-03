@@ -180,6 +180,33 @@ pub trait CommitView {
     /// Host failure.
     type Error;
 
+    /// Ownership of a fact and its complete outgoing membership partition.
+    /// Local-only stores resolve every key within their one bound cell. A host
+    /// with external or unresolved dependencies must override this method;
+    /// applicability labels and caller hints are not ownership evidence.
+    ///
+    /// # Errors
+    /// The host cannot resolve ownership under the commit's read snapshot.
+    fn atomic_ownership(
+        &self,
+        _key: &FactKey,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
+    /// Ownership of the complete consumed timer, result or observation identity.
+    /// Bound local-only stores own their delivery queues. Hosts that can resolve
+    /// external or unknown queues must override this using snapshot evidence.
+    ///
+    /// # Errors
+    /// Ownership cannot be resolved under the commit's read snapshot.
+    fn consumed_ownership(
+        &self,
+        _consumed: &Consumed,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
     /// Whether the consumed delivery is pending.
     ///
     /// # Errors
@@ -422,6 +449,20 @@ pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
 }
 
 fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+    trusted_owned_rows: bool,
+) -> Result<CommitVersions, CommitError<V::Error>> {
+    let profile = crate::execution_profile::ProfileView::new(view);
+    profile.validate_consumed(commit.consumes.as_ref())?;
+    let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
+    profile.validate(commit, model)?;
+    result
+}
+
+fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,

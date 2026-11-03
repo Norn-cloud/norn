@@ -140,6 +140,7 @@
     { "symbol": "@norn/authoring#Norn.flow", "probe": "norn.Norn.flow", "row": "flow", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.perform", "probe": "norn.Norn.perform", "row": "perform", "use": "call", "context": "flow" },
     { "symbol": "@norn/authoring#Norn.fn", "probe": "norn.Norn.fn", "row": "perform", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.question", "probe": "norn.Norn.question", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.type", "probe": "norn.Norn.type", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.interfaceType", "probe": "norn.Norn.interfaceType", "row": "ontology", "use": "call", "context": "definition", "note": "`interface` is a reserved word" },
     { "symbol": "@norn/authoring#Norn.action", "probe": "norn.Norn.action", "row": "ontology", "use": "call", "context": "definition" },

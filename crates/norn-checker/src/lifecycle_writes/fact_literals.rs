@@ -201,7 +201,7 @@ pub(super) fn literal_findings(
                         })
                         .collect::<Vec<_>>();
                     findings.extend(stored_property_findings(
-                        artifact, schema, &types, &record, &pointer, &ops,
+                        artifact, schema, resolved, &types, &record, &pointer, &ops,
                     ));
                 }
             }
@@ -350,14 +350,17 @@ fn record_findings(
         }
     }
     out.extend(stored_property_findings(
-        artifact, schema, &types, record, pointer, &ops,
+        artifact, schema, resolved, &types, record, pointer, &ops,
     ));
     out
 }
 
+/// RULE-PATCH-SHAPE-1: actual members check their literal target; schema-only
+/// members range over the complete declared target set.
 fn stored_property_findings(
     artifact: &ArtifactEnvelope,
     schema: &FactSchema<'_>,
+    resolved: &[Resolved<'_>],
     types: &[&Resolved<'_>],
     record: &Record,
     record_pointer: &str,
@@ -385,6 +388,13 @@ fn stored_property_findings(
         }
         for target in types {
             for (property, literal) in &fields {
+                if record.has_closed_keys()
+                    && literal_patch.is_some_and(Record::has_closed_keys)
+                    && literal.is_none()
+                    && !schema_target(target, resolved, property)
+                {
+                    continue;
+                }
                 if target.effective_object_type.lifecycle(property).is_some() {
                     continue;
                 }
