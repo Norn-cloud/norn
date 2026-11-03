@@ -1,4 +1,4 @@
 {
-  "order": 143,
+  "order": 129,
   "value": "crates/norn-checker/tests/shared_lifecycle_semantics.rs"
 }

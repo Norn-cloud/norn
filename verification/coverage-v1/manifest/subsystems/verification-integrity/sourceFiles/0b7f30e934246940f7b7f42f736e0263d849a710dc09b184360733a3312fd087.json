@@ -1,4 +1,4 @@
 {
-  "order": 224,
+  "order": 210,
   "value": "crates/norn-projections/tests/sqlite_ddl.rs"
 }
