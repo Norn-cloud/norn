@@ -4,6 +4,15 @@ use super::{Coordinate, Delta, Failure, Rational, Writer, check, validate};
 use serde_json::{Value, json};
 
 const PROFILE: &str = "norn.linear-certificate/1";
+const WIRE_LIMIT: usize = 131_072;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Wire {
+    profile: String,
+    system_sha256: String,
+    weights: Vec<(String, (String, String))>,
+}
 
 /// Untrusted wire object; verification always recomputes identity and balance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,14 +34,18 @@ impl Certificate {
         weights: &[Rational],
     ) -> Result<Self, Failure> {
         check(coordinates, writers, weights)?;
-        Ok(Self {
+        let result = Self {
             digest: identity(coordinates, writers)?,
             weights: coordinates
                 .iter()
                 .zip(weights)
                 .map(|(c, q)| (c.id.clone(), *q))
                 .collect(),
-        })
+        };
+        if result.json().to_string().len() > WIRE_LIMIT {
+            return Err(Failure::Unknown("certificate wire limit".into()));
+        }
+        Ok(result)
     }
 
     /// Exact integers are decimal strings, never JSON floating-point numbers.
@@ -45,66 +58,37 @@ impl Certificate {
     /// # Errors
     /// Unknown/duplicate members, malformed identity/fraction or byte limit.
     pub fn parse(text: &str) -> Result<Self, Failure> {
-        if text.len() > 131_072 {
+        if text.len() > WIRE_LIMIT {
             return Err(Failure::Malformed);
         }
-        norn_canonical::parse_json_verbatim(text.as_bytes()).map_err(|_| Failure::Malformed)?;
-        let value: Value = serde_json::from_str(text).map_err(|_| Failure::Malformed)?;
-        let object = value.as_object().ok_or(Failure::Malformed)?;
-        if object.len() != 3 || value["profile"] != PROFILE {
-            return Err(Failure::Malformed);
-        }
-        let digest = value["systemSha256"].as_str().ok_or(Failure::Malformed)?;
-        if digest.len() != 64
+        let wire: Wire = serde_json::from_str(text).map_err(|_| Failure::Malformed)?;
+        let digest = wire.system_sha256;
+        if wire.profile != PROFILE
+            || digest.len() != 64
             || !digest
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || wire.weights.is_empty()
+            || wire.weights.len() > 256
         {
             return Err(Failure::Malformed);
         }
-        let entries = value["weights"].as_array().ok_or(Failure::Malformed)?;
-        if entries.is_empty() || entries.len() > 256 {
-            return Err(Failure::Malformed);
-        }
-        let mut weights = Vec::new();
-        for entry in entries {
-            let pair = entry.as_array().ok_or(Failure::Malformed)?;
-            if pair.len() != 2 {
-                return Err(Failure::Malformed);
-            }
-            let id = pair
-                .first()
-                .and_then(Value::as_str)
+        let weights = wire
+            .weights
+            .into_iter()
+            .map(|(id, (n, d))| {
+                let q = Rational::new(
+                    n.parse().map_err(|_| Failure::Malformed)?,
+                    d.parse().map_err(|_| Failure::Malformed)?,
+                )
                 .ok_or(Failure::Malformed)?;
-            let parts = pair
-                .get(1)
-                .and_then(Value::as_array)
-                .ok_or(Failure::Malformed)?;
-            if id.is_empty() || parts.len() != 2 {
-                return Err(Failure::Malformed);
-            }
-            let n = parts
-                .first()
-                .and_then(Value::as_str)
-                .ok_or(Failure::Malformed)?
-                .parse::<i64>()
-                .map_err(|_| Failure::Malformed)?;
-            let d = parts
-                .get(1)
-                .and_then(Value::as_str)
-                .ok_or(Failure::Malformed)?
-                .parse::<i64>()
-                .map_err(|_| Failure::Malformed)?;
-            let q = Rational::new(n, d).ok_or(Failure::Malformed)?;
-            if number(q) != *pair.get(1).ok_or(Failure::Malformed)? {
-                return Err(Failure::Malformed);
-            }
-            weights.push((id.to_owned(), q));
-        }
-        Ok(Self {
-            digest: digest.to_owned(),
-            weights,
-        })
+                if id.is_empty() || q.numerator.to_string() != n || q.denominator.to_string() != d {
+                    return Err(Failure::Malformed);
+                }
+                Ok((id, q))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { digest, weights })
     }
 
     /// Recheck identity, coordinate order and the declared functional. Stale
@@ -222,6 +206,18 @@ mod tests {
             Err(Failure::Unknown(_))
         ));
         assert!(Certificate::issue(&c, &w, &weights).is_err());
+    }
+
+    #[test]
+    fn cons_certificate_issuer_respects_wire_bound() {
+        let (mut c, w, weights) = system();
+        for c in &mut c {
+            c.id = "x".repeat(50_000) + &c.id;
+        }
+        assert!(matches!(
+            Certificate::issue(&c, &w, &weights),
+            Err(Failure::Unknown(_))
+        ));
     }
 
     #[test]
