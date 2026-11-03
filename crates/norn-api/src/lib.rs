@@ -23,3 +23,6 @@ pub mod routes;
 mod action_admission;
 /// Epoch-pinned governed action service.
 pub mod actions;
+
+/// Scoped PDP authority for complete refusal diagnostics.
+pub mod refusal_disclosure;
