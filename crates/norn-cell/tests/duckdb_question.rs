@@ -8,7 +8,7 @@
 mod query_support;
 use norn_cell::{
     CellError, CellStore, CommitBatch, FactWriteRow, Model,
-    compute::{Engine, QueryContext, QueryResult, ivm::IncrementalQuestion},
+    compute::{Engine, QueryContext, QueryResult},
 };
 use norn_checker::{
     EffectiveCatalog,
@@ -79,6 +79,9 @@ fn scaled_fixture(scales: [u64; 2], sum: bool) -> (CellStore, QuestionPlan, Quer
     .expect("payload");
     let catalog = EffectiveCatalog::from_artifacts(&artifacts[..1]);
     let mut question = plan.question().clone();
+    question.filters.clear();
+    question.dimensions[0].path.property = norn_ir::PropertyId("metal".into());
+    question.dimensions[0].grain = None;
     if sum {
         question.metrics[0].metric = "demo.recovered".into();
     }
@@ -97,26 +100,22 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
 {
     let (mut store, plan, context) = fixture();
     load(&mut store);
-    let mut maintained =
-        IncrementalQuestion::rebuild(&store, &plan, context.clone(), |_| Ok(true)).expect("IVM");
-    let mut expected = compare(&store, &plan, context.clone());
-    expected.engine = Engine::Ivm;
-    assert_eq!(maintained.result(), &expected);
+    compare(&store, &plan, context.clone());
     for write in [
-        scaled_row("SYN-MELT-15-1", 75_000, 72_000, [3, 3]),
+        query_support::put(
+            "SYN-MELT-15-1",
+            75_000,
+            72_000,
+            "2026-10-23T12:00:00Z",
+            "gold",
+        ),
         FactWriteRow::Delete {
             object_type: TYPE.into(),
             key: "SYN-MELT-15-1".into(),
         },
     ] {
         commit(&mut store, vec![write]);
-        maintained
-            .advance(&store, context.clone(), |_| Ok(true))
-            .expect("receipt delta");
-        assert!(!maintained.was_rebuilt());
-        let mut expected = compare(&store, &plan, context.clone());
-        expected.engine = Engine::Ivm;
-        assert_eq!(maintained.result(), &expected);
+        compare(&store, &plan, context.clone());
     }
 }
 

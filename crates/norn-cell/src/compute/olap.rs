@@ -1,7 +1,7 @@
 //! QUERY-ENGINE-1: lower admitted keyed aggregates over an exact contribution table.
 use super::{
-    BTreeMap, CellError, CellStore, Contributions, Decimal, Engine, Member, ObjectRecord,
-    QueryContext, QueryResult, QueryRow, QuestionPlan, SqlEngine, UNSUPPORTED_ENGINE, bucket_key,
+    BTreeMap, CellError, CellStore, Decimal, Engine, Member, ObjectRecord, QueryContext,
+    QueryResult, QueryRow, QuestionPlan, Snapshot, SqlEngine, UNSUPPORTED_ENGINE, bucket_key,
     decimal, refused,
 };
 use duckdb::{Connection, params};
@@ -24,13 +24,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<QueryResult, CellError> {
         let (schema, aggregate) = lower(plan)?;
         let snapshot = self.question_snapshot(plan, context, &mut visible)?;
-        let rows = execute(
-            plan,
-            &snapshot.contributions,
-            &snapshot.result.rows,
-            &schema,
-            &aggregate,
-        )?;
+        let rows = execute(plan, &snapshot, &schema, &aggregate)?;
         let mut result = snapshot.result;
         result.rows = rows;
         result.engine = Engine::Duckdb;
@@ -85,8 +79,7 @@ fn operand(value: Option<i64>) -> Result<Option<String>, CellError> {
 
 fn execute(
     plan: &QuestionPlan,
-    contributions: &Contributions,
-    representatives: &BTreeMap<String, QueryRow>,
+    snapshot: &Snapshot,
     schema: &str,
     aggregate: &str,
 ) -> Result<BTreeMap<String, QueryRow>, CellError> {
@@ -94,7 +87,7 @@ fn execute(
     db(conn.execute_batch("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;"))?;
     db(conn.execute_batch(schema))?;
     let mut insert = db(conn.prepare("INSERT INTO input VALUES (?,?,?,?,?)"))?;
-    for (id, (version, contribution)) in contributions {
+    for (id, (version, contribution)) in &snapshot.contributions {
         let (a, b) = match contribution.amounts.as_slice() {
             [a] => (*a, None),
             [a, b] => (*a, *b),
@@ -108,7 +101,7 @@ fn execute(
             operand(b)?
         ]))?;
     }
-    let mut rows = aggregate_rows(&conn, aggregate, plan.sums().len(), representatives)?;
+    let mut rows = aggregate_rows(&conn, aggregate, plan.sums().len(), &snapshot.result.rows)?;
     let mut members = db(conn.prepare("SELECT bucket,id,version,CAST(a AS VARCHAR),CAST(b AS VARCHAR) FROM input ORDER BY bucket,id"))?;
     let captured = db(members.query_map([], |row| {
         Ok((
