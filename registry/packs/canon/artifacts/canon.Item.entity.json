@@ -1,0 +1,52 @@
+{
+  "artifactId": "canon.Item.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Item",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "canon.Catalog"
+      ],
+      "name": "canon.Item",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.Item.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

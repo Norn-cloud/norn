@@ -1,0 +1,677 @@
+{
+  "artifactId": "shopify.three.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic shopify snapshot and incremental profile",
+  "namespace": "shopify",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-record-replay",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "InventoryLevel",
+        "field": "unit",
+        "id": "holding_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "OrderLine",
+        "field": "unit",
+        "id": "order_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "field": "unit",
+        "id": "delivery_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Transaction",
+        "field": "kind",
+        "id": "settlement_kind",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "payment"
+          },
+          {
+            "value": "refund"
+          }
+        ]
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "field": "posting_state",
+        "id": "delivery_posting_state",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "posted"
+          }
+        ]
+      },
+      {
+        "dataset": "Transaction",
+        "field": "currency",
+        "id": "settlement_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "ProductVariant",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_0",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "InventoryLevel",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_1",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Customer",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_2",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "OrderLine",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_3",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_4",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Transaction",
+        "fields": [
+          "id"
+        ],
+        "id": "source_id_6",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "ProductVariant",
+        "kind": "document",
+        "nativeName": "Synthetic ProductVariant"
+      },
+      {
+        "id": "InventoryLevel",
+        "kind": "document",
+        "nativeName": "Synthetic InventoryLevel"
+      },
+      {
+        "id": "Customer",
+        "kind": "document",
+        "nativeName": "Synthetic Customer"
+      },
+      {
+        "id": "OrderLine",
+        "kind": "document",
+        "nativeName": "Synthetic OrderLine"
+      },
+      {
+        "id": "FulfillmentLine",
+        "kind": "document",
+        "nativeName": "Synthetic FulfillmentLine"
+      },
+      {
+        "id": "Transaction",
+        "kind": "document",
+        "nativeName": "Synthetic Transaction"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "ProductVariant",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "sku",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "ProductVariant",
+        "name": "price",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "resource_code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "location",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "item_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "owner_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "InventoryLevel",
+        "name": "custodian_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Customer",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Customer",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Customer",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Customer",
+        "name": "role",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "due_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "OrderLine",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "occurred_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "order_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "id",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "metafield_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "amount",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "kind",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "payer_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Transaction",
+        "name": "payee_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "FulfillmentLine",
+        "name": "posting_state",
+        "nativeType": "SyntheticText",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-02T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "d4be1ecbf98bc011894cb0fd51cfda8a015275dd26af659d01dafa5d6e14f0a6",
+      "uri": "registry/packs/shopify/synthetic.json"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-shopify",
+      "version": "shopify-three/1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/shopify/artifacts/shopify.three.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
