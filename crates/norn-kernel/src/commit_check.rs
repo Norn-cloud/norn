@@ -931,11 +931,15 @@ fn evaluate_typed_properties(
     }
     *remaining = (*remaining).saturating_sub(units);
 
-    Ok(properties
+    properties
         .into_iter()
         .filter_map(|property| {
             let value = values.get(property.id.as_str())?;
-            property.check_runtime_value(value).err().map(|_| {
+            let error = property.check_runtime_value(value).err()?;
+            if let norn_checker::entity_instance::InstanceError::Unsupported(reason) = error {
+                return Some(Err(InvariantEvaluationError::InvalidEffectiveValues(reason)));
+            }
+            Some(Ok({
                 let (kind, reason) = match &property.kind {
                     EffectiveKind::Base(PropertyType::Decimal { .. }) => (
                         "decimal",
@@ -975,9 +979,9 @@ fn evaluate_typed_properties(
                         reason: reason.to_owned(),
                     }),
                 }
-            })
+            }))
         })
-        .collect())
+        .collect()
 }
 
 /// The existing per-commit invariant evaluation fuel ceiling.

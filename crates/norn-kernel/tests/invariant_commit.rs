@@ -3102,7 +3102,7 @@ norn_testkit::proptest::proptest! {
         let catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&property_types);
         let rule = catalog.property_domain_rule_ref(&definition.name,&norn_ir::PropertyId("reading".into())).unwrap().unwrap();
         norn_testkit::proptest::prop_assert_eq!(catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Builtin);
-        let (_,_,changed_types) = property_domain_fixture(changed,"1");
+        let (_,_,changed_types) = property_domain_fixture(changed,"0");
         let changed_catalog = TypeCatalog::new([&definition]).with_interfaces([&interface]).with_property_types(&changed_types);
         norn_testkit::proptest::prop_assert_eq!(changed_catalog.classify_data_quality_rule(&rule).unwrap(), norn_kernel::DataQualityRuleClassification::Unverified);
         let (_,_,changed_bounds) = property_domain_fixture(scale,"1");
@@ -3379,4 +3379,29 @@ fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
     assert!(
         matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics")
     );
+}
+
+#[test]
+fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
+    let definition: ObjectTypeDef = serde_json::from_value(json!({
+        "name":"test.UnsupportedRecord",
+        "properties":[{"id":"reading","type":{"kind":"record","members":[
+            {"id":"elapsed","type":{"kind":"duration"}}
+        ]}}]
+    })).unwrap();
+    let key = FactKey::new("test.UnsupportedRecord", "unsupported");
+    let mut native = CommandCell::new(|command| command.payload.clone())
+        .with_types(vec![definition]);
+    let refusal = native.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: object(json!({"reading":{"elapsed":"PT1S"}})) },
+        }],
+        ..CellCommit::empty()
+    }).expect_err("unsupported members cannot become validity findings");
+    assert!(matches!(refusal, CommitError::EffectiveValues { reason, .. } if reason.contains("duration")));
+    assert!(native.load(&key).unwrap().values.is_none());
+    assert!(native.ledger().is_empty());
+    assert!(native.outbox().is_empty());
 }
