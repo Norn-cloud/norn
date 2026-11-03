@@ -207,8 +207,15 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   OBS-EVIDENCE-1. No source occurrence or contradictory claim is silently discarded.
   Native proposals violating those laws still refuse without writes.
 
-Unit 1 declares the claim concept and pins the MappingIR output correspondence;
-resolution, convergence and conflict handling require the subsequent runtime units.
+Unit 1 declares the claim concept and pins the MappingIR output correspondence.
+Unit 2 admits claims and resolves equal endpoints through the existing observed
+commit path. The consumed mapping-bundle journal retains pending claims and
+recomputable multi-source provenance; a transaction guard rechecks the planned
+links against that journal before admission. Each source record/role/mapping
+contribution retains its latest consumed claim for planning, while historical
+claims remain evidence. Scans refuse above 1,000 bundles, 4 MiB of bundle evidence
+or 20,000 claims; budget exhaustion cannot silently omit a claim.
+Contradiction and horizon findings require the subsequent runtime unit.
 The claim's registry `evidence` scalar contains its canonical serialized typed
 preimage; endpoint columns permit lookup without treating serialized claims as authority.
 
