@@ -1,11 +1,19 @@
 {
   "sha256": "3055ca57ed4ddff7f78a940de7732297444973954f5912d99c042e470010e7cb",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "tools/norn-ts/fixtures/jewelry/cp1-inventory.source.ts",
+    "tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts",
+    "tools/norn-ts/src/builder/action.ts",
+    "tools/norn-ts/src/builder/entity.ts",
+    "tools/norn-ts/src/builder/rule.ts",
+    "tools/norn-ts/src/compiler/definitions.ts",
+    "tools/norn-ts/src/compiler/index.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",

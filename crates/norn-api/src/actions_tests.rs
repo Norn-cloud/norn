@@ -36,9 +36,10 @@ fn stock_host() -> DevHost<NativeEngine> {
         if let Some(t) = payload.get("interface") { interfaces.push(serde_json::from_value(t.clone()).unwrap()); }
         if let Some(ts) = payload.get("propertyTypes").and_then(Value::as_array) { for t in ts { properties.push(serde_json::from_value(t.clone()).unwrap()); } }
     }
-    types.push(action_call_type());
+
     let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(Value::Array(documents.clone())).unwrap();
     let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces).unwrap().with_governing_laws(&artifacts).unwrap();
+    let model = prepare_action_model(&model).unwrap();
     let sources: Vec<_> = documents.iter().cloned().map(RuntimeValue::from_json).collect::<Result<_, _>>().unwrap();
     let checked = norn_checker::check_artifact_set_with_receipt(&norn_checker::ReceiptSources::new(&sources, &[]).unwrap(), &norn_checker::EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None }, &norn_ir::ResourceLimitProfile::norn_limits_v1()).unwrap();
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
@@ -53,37 +54,6 @@ fn stock_host() -> DevHost<NativeEngine> {
     host.cell().unwrap().commit(seed).unwrap();
     host
 }
-fn action_call_type() -> ObjectTypeDef {
-    let required = ["actionId", "actor", "turn", "transition", "from", "to"];
-    let text = [
-        "actionArtifactId",
-        "actionVersion",
-        "effectKind",
-        "ruleBinding",
-    ];
-    let mut fields: Vec<Value> = required
-        .iter()
-        .map(|id| json!({"id": id, "type": {"kind":"text"}}))
-        .collect();
-    fields.extend(
-        text.iter()
-            .map(|id| json!({"id":id,"type":{"kind":"text"},"constraints":{"nullable":true}})),
-    );
-    fields.extend(
-        [
-            "object",
-            "input",
-            "effectiveInput",
-            "derivedValues",
-            "preconditionOutcomes",
-            "rowOperations",
-        ]
-        .iter()
-        .map(|id| json!({"id":id,"type":{"kind":"json-ext"},"constraints":{"nullable":true}})),
-    );
-    serde_json::from_value(json!({"name":"norn.ActionCall","properties":fields})).unwrap()
-}
-
 fn query() -> DefinitionsQuery { DefinitionsQuery { org_id: Some("org_demo".into()), environment_id: Some("dev".into()), version: None } }
 fn call(host: &DevHost<NativeEngine>, action: &str, key: &str, input: Value, actor: Option<&str>, version: u64) -> Result<ActionResponse, Refusal> {
     let installed = host.cell().unwrap().store().read().installed_definitions(None).unwrap().unwrap();
@@ -111,4 +81,11 @@ fn stock_receive_commits_replays_and_refuses_before_partial_effects() {
     let mut conflicting = input; conflicting["quantity"] = json!(3);
     assert!(call(&host, "receive", "receive", conflicting, actor, 1).is_err());
     assert_eq!(host.cell().unwrap().store().read().dump().unwrap(), after);
+}
+
+#[test]
+fn admission_refuses_sqlite_equivalent_internal_type_names() {
+    let object: ObjectTypeDef = serde_json::from_value(json!({"name":"norn.Actioncall"})).unwrap();
+    let model = Model::from_definitions(&[object], &[]).unwrap();
+    assert_eq!(prepare_action_model(&model).err().unwrap().status, 400);
 }
