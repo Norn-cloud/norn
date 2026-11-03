@@ -6026,7 +6026,8 @@ mod reference_lineage_tests {
             let wire = serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).unwrap();
             let schema = norn_expr::schema::Schema::parse_action(&wire, "amount").unwrap();
             let decoded = schema.decode_action_input(RuntimeValue::String(text.clone()), "amount").unwrap();
-            norn_testkit::proptest::prop_assert_eq!(decoded, RuntimeValue::Number(Decimal::parse(&text).unwrap()));
+            let expected = if fraction == 0 { coefficient.to_string() } else { text.trim_end_matches('0').to_owned() };
+            norn_testkit::proptest::prop_assert_eq!(decoded.as_decimal().unwrap().canonical(), expected);
         }
     }
 
