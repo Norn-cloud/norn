@@ -6,9 +6,8 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    io::Write as _,
+    io::{Read as _, Write as _},
     path::Path,
-    process::Command,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn digest(path: &Path) -> Result<String> {
@@ -55,8 +54,10 @@ fn scenario(trace: &Value, bounds: &Value) -> Result<Value> {
 )]
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let [original, mutant, base, profile, work, tools] = args.as_slice() else {
-        return Err("usage: quint ORIGINAL MUTANT BASE BOUNDS OUTPUT_DIR TOOL_ROOT".into());
+    let [mode, original, mutant, base, profile, work, _tools] = args.as_slice() else {
+        return Err(
+            "usage: quint prepare|bind ORIGINAL MUTANT BASE BOUNDS OUTPUT_DIR TOOL_ROOT".into(),
+        );
     };
     let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile)?)?;
     let bounds = Bounds {
@@ -79,21 +80,14 @@ fn main() -> Result<()> {
         json!({"level":"exhaustive-finite/bounded"}),
     )?;
     std::fs::create_dir_all(work)?;
-    let tools = Path::new(tools);
-    let quint = tools.join("bin/quint");
-    let jar = tools.join("quint-home/apalache-dist-0.56.1/apalache/lib/apalache.jar");
-    if Command::new(&quint).arg("--version").output()?.stdout != b"0.32.0\n"
-        || Command::new("bun").arg("--version").output()?.stdout != b"1.3.14\n"
-    {
-        return Err("backend version mismatch".into());
+    if mode != "prepare" && mode != "bind" {
+        return Err("invalid driver mode".into());
     }
-    let bun_path = String::from_utf8(
-        Command::new("bun")
-            .args(["-e", "process.stdout.write(process.execPath)"])
-            .output()?
-            .stdout,
-    )?;
-    let implementation = json!({"driver":digest(&std::env::current_exe()?)?,"quint":digest(&quint)?,"apalache":digest(&jar)?,"bun":digest(Path::new(bun_path.trim()))?,"java":digest(&tools.join("bin/java"))?,"harness":digest(Path::new("scripts/quint_apalache.py"))?,"dispatch":digest(Path::new("scripts/check-generated-quint.py"))?,"primary":digest(Path::new("tools/norn-proofs/node_modules/tla-ts/dist/index.js"))?,"wrapper":digest(Path::new("tools/norn-proofs/check.ts"))?,"lock":digest(Path::new("tools/norn-proofs/bun.lock"))?});
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    let control: Value = serde_json::from_str(&input)?;
+    let implementation = json!({"driver":digest(&std::env::current_exe()?)?,"toolchain":control.get("toolchain").ok_or("trusted toolchain")?});
+    let mut jobs = Vec::new();
     let tool = EvidenceTool {
         id: "norn.generated-quint".into(),
         version: "quint-0.32.0/tla-ts-0.0.7/apalache-0.56.1".into(),
@@ -138,7 +132,7 @@ fn main() -> Result<()> {
             };
             let path = Path::new(work).join(format!("{label}-{index}.qnt"));
             let result = Path::new(work).join(format!("{label}-{index}.json"));
-            std::fs::write(&path, model)?;
+            let key = format!("{label}-{index}");
             let invariant = if kind == "non_vacuity" {
                 "unreachable"
             } else {
@@ -149,30 +143,21 @@ fn main() -> Result<()> {
             } else {
                 "step"
             };
-            let run = Command::new("python3")
-                .args(["scripts/check-generated-quint.py", "--model"])
-                .arg(&path)
-                .args(["--invariant", invariant, "--step", step, "--seed"])
-                .arg(bounds.seed.to_string())
-                .arg("--expected-states")
-                .arg(
-                    profile
-                        .get("expectedStates")
-                        .and_then(Value::as_u64)
-                        .ok_or("expected state cardinality")?
-                        .to_string(),
-                )
-                .arg("--tools")
-                .arg(tools)
-                .arg("--out")
-                .arg(&result)
-                .output()?;
-            if !run.status.success() {
-                return Err(format!(
-                    "backend dispatch failed: {}",
-                    String::from_utf8_lossy(&run.stderr)
-                )
-                .into());
+            let model_sha = format!("{:x}", Sha256::digest(model.as_bytes()));
+            if mode == "prepare" {
+                std::fs::write(&path, model)?;
+                jobs.push(json!({"key":key,"model":path,"result":result,"modelSha":model_sha,"challenge":batch.challenge.sha256(),"invariant":invariant,"step":step,"seed":bounds.seed,"expectedStates":profile.get("expectedStates").ok_or("expected states")?}));
+                continue;
+            }
+            let checked = control
+                .get("results")
+                .and_then(|r| r.get(&key))
+                .ok_or("trusted result pins")?;
+            if field(checked, "modelSha")? != model_sha
+                || field(checked, "challenge")? != batch.challenge.sha256()
+                || digest(&path)? != model_sha
+            {
+                return Err("stale checked model or challenge".into());
             }
             let bytes = std::fs::read_to_string(&result)?;
             let output: Value = serde_json::from_str(&bytes)?;
@@ -192,19 +177,21 @@ fn main() -> Result<()> {
                 bounds.seed,
             )?;
             let record = batch.challenge.record_evidence(&pins, &bytes)?;
-            let trusted = digest(&result)?;
+            let trusted = field(checked, "resultSha")?.to_owned();
+            if digest(&result)? != trusted {
+                return Err("checked result bytes changed".into());
+            }
             if batch.challenge.evidence_identity(&pins, &trusted, &record)
                 != EvidenceIdentity::Current
             {
                 return Err("fresh evidence identity mismatch".into());
             }
-            if label == "mutant" {
-                if let Some((old, trusted)) = &prior {
-                    if record.pins.goal_index == old.pins.goal_index {
-                        stale_rejected = batch.challenge.evidence_identity(&pins, trusted, old)
-                            == EvidenceIdentity::Unknown;
-                    }
-                }
+            if label == "mutant"
+                && let Some((old, trusted)) = &prior
+                && record.pins.goal_index == old.pins.goal_index
+            {
+                stale_rejected = batch.challenge.evidence_identity(&pins, trusted, old)
+                    == EvidenceIdentity::Unknown;
             }
             if prior.is_none() && label == "original" {
                 prior = Some((record.clone(), trusted));
@@ -221,6 +208,14 @@ fn main() -> Result<()> {
             });
         let expected = if label == "mutant" { 2 } else { 3 };
         cases.push(json!({"case":label,"challenge":batch.challenge.sha256(),"total":batch.goals.len(),"eligible":eligible,"discharged":discharged,"acceptancePassed":eligible==3 && batch.goals.len()==10 && discharged==expected && counterexample,"goals":goals}));
+    }
+    if mode == "prepare" {
+        writeln!(
+            std::io::stdout().lock(),
+            "{}",
+            serde_json::to_string(&json!({"jobs":jobs}))?
+        )?;
+        return Ok(());
     }
     let restored = cases.first().and_then(|c| c.get("challenge"))
         == cases.last().and_then(|c| c.get("challenge"));

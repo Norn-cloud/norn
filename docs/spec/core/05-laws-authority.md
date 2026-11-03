@@ -124,8 +124,9 @@ a pre-change checker receipt verifies against its original hash.
 a selected create-only writer, ordered derivations, preconditions, stored defaults
 and a pointwise predicate law. One empty store, singleton object identity and
 explicit finite decimal input intervals bound the claim. Unsupported constructs
-leave each affected goal unknown with a reason. Exact scales and units come from
-effective declarations; unlike interpretations and inexact literals refuse.
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
 
 Initialization is vacuous over the empty store. Writer preservation checks the
 proposal before law enforcement; non-vacuity needs a reachable law-satisfying
@@ -133,3 +134,19 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Qualification is restricted to integer/Boolean states, one worker, nonempty
+initialization, a drained queue and declared state cardinality on success. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
