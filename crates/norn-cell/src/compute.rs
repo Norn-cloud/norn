@@ -168,6 +168,8 @@ struct FindingEvidence<'a> {
 
 pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
 
+type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
+
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
 /// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
 /// instant; sub-millisecond declarations never match a millisecond clock.
@@ -241,13 +243,11 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused("core.compute.stale_input"));
                 }
             }
-            self.check_question_model(plan)?;
+            let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
             let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
             let mut budget = DecodeBudget::new(&limits);
-            let max = usize::try_from(plan.max_items())
-                .map_err(|_bound| refused("core.compute.bound_exceeded"))?;
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
@@ -336,7 +336,7 @@ impl<E: SqlEngine> CellStore<E> {
             })
         })
     }
-    fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {
+    fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
         let model = self.model().query_contract(plan.grain().as_str())?;
         if plan.properties().iter().any(|p| {
             model
@@ -345,7 +345,7 @@ impl<E: SqlEngine> CellStore<E> {
         }) {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
-        Ok(())
+        usize::try_from(plan.max_items()).map_err(|_bound| refused("core.compute.bound_exceeded"))
     }
     fn question_pins(
         &self,
@@ -436,7 +436,6 @@ pub(crate) fn finish(
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
-    type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
     let (context, exclusions) = population;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
