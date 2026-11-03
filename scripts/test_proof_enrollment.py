@@ -4,6 +4,7 @@
 import copy
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -82,7 +83,7 @@ class EnrollmentTests(unittest.TestCase):
         source = module.FORMAL_WORKFLOW.read_text()
         module.validate_workflow_integrity([])
         workflow = module.yaml.load(source, Loader=module.WorkflowLoader)
-        for job in ("core", "test", "phase"):
+        for job in ("core", "test"):
             for mutation in ("extra", "reordered", "missing", "changed", "unconditional", "event-only", "runner-only"):
                 with self.subTest(job=job, mutation=mutation), tempfile.TemporaryDirectory() as directory:
                     candidate = copy.deepcopy(workflow)
@@ -240,6 +241,74 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(plan["shard"], ["rest-1"])
         self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])
         self.assertEqual(plan["packages"], "norn-skeleton-guard")
+        self.assertLess(len(plan["bundle"]), len(self.full["bundle"]))
+        self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in plan["bundle"]))
+
+    def test_bundle_inventory_is_exact_and_deterministic(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        expected = ["test/" + value for value in self.full["shard"]]
+        expected += ["phase/" + value for value in self.full["phase"]]
+        self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
+        self.assertGreaterEqual(len(self.full["bundle"]), 4)
+        self.assertLessEqual(len(self.full["bundle"]), 6)
+        self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
+        reordered = copy.deepcopy(self.full)
+        reordered["shard"].reverse()
+        reordered["phase"].reverse()
+        packed = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(reordered)], text=True))
+        self.assertEqual(packed["bundle"], self.full["bundle"])
+        subprocess.run(command + ["bundle-check", json.dumps(packed)], check=True, timeout=10)
+        for mutate in (
+            lambda p: p.pop("bundle"),
+            lambda p: p["bundle"][0]["tasks"].pop(),
+            lambda p: p["bundle"][0]["tasks"].append(p["bundle"][0]["tasks"][0]),
+            lambda p: p["bundle"].append(copy.deepcopy(p["bundle"][0])),
+            lambda p: p["bundle"].reverse(),
+            lambda p: p["phase"].append("unknown-phase"),
+            lambda p: p.update(mode="unknown"),
+        ):
+            broken = copy.deepcopy(self.full)
+            mutate(broken)
+            for args in (["bundle-check", json.dumps(broken)], ["bundle", json.dumps(broken), "b0"]):
+                result = subprocess.run(command + args, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+        result = subprocess.run(command + ["bundle", json.dumps(self.full), "missing"], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        incomplete = copy.deepcopy(self.full)
+        incomplete["phase"].remove("guards")
+        result = subprocess.run(command + ["bundle-plan", json.dumps(incomplete)], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_bundle_executor_logs_success_and_propagates_failure(self):
+        command = ["bash", str(ROOT / "scripts/ci/core.sh")]
+        plan = {"mode": "affected", "shard": [], "phase": ["test-shards"]}
+        plan = json.loads(subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], text=True))
+        tools = self.root / "cargo-home" / "bin"
+        tools.mkdir(parents=True)
+        cargo = tools / "cargo"
+        cargo.write_text('''#!/usr/bin/env python3
+import json, os, sys
+if os.environ.get("BUNDLE_CANARY_FAIL") == "1":
+    sys.exit(23)
+args = sys.argv[1:]
+if args == ["nextest", "--version"]:
+    print("cargo-nextest 0.9.150 (synthetic)")
+elif "list" in args:
+    expression = args[args.index("-E") + 1] if "-E" in args else None
+    matches = expression is None or ("generated_accepted_expressions_are_total_and_typed" in expression and not expression.startswith("not ("))
+    print(json.dumps({"rust-suites": {"synthetic": {"testcases": {"only": {"filter-match": {"status": "matches" if matches else "mismatch"}}}}}}))
+else:
+    sys.exit("unexpected synthetic Cargo invocation")
+''')
+        cargo.chmod(0o755)
+        for fail in ("0", "1"):
+            environment = {**os.environ, "CARGO_HOME": str(tools.parent),
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3", "BUNDLE_CANARY_FAIL": fail}
+            result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 23 if fail == "1" else 0, result.stderr)
+            verdict = "failure" if fail == "1" else "success"
+            self.assertEqual(result.stdout.count(f"task=phase/test-shards result={verdict}"), 1)
 
 
 class CoverageLayoutTests(unittest.TestCase):

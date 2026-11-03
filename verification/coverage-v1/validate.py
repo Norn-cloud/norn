@@ -422,13 +422,14 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "run name must attribute READY to the triggering event and head")
     validate_rights_contract(source)
     jobs = workflow["jobs"]
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
+    require(all(jobs[name].get("name", name) == name for name in ("core", "plan", "full", "trusted-policy")),
+            "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        admitted = {"ubuntu-24.04"}
-        if name in {"core", "plan", "test", "phase", "full"}:
-            admitted.add(merge_runner)
-        require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
+        expected_runner = merge_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
+        require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
@@ -438,9 +439,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "plan": {},
         "test": {**cache_env,
                  "NORN_CI_PACKAGES": "${{ fromJSON(needs.plan.outputs.plan).packages }}",
-                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}"},
-        "phase": {**cache_env,
-                  "NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}"},
+                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}",
+                 "NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}",
+                 "PLAN": "${{ needs.plan.outputs.plan }}", "BUNDLE_ID": "${{ matrix.bundle.id }}"},
     }
 
     def has_execution_override(job: dict, step: dict) -> bool:
@@ -453,8 +454,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"''',
-        "test": "bash scripts/ci/core.sh test ${{ matrix.shard }}",
-        "phase": "bash scripts/ci/core.sh ${{ matrix.phase }}",
+        "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
     checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
@@ -494,18 +494,18 @@ df -h /
         job = jobs.get(name, {})
         admission = candidate_condition + " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)"
         condition = (candidate_condition if name == "core" else admission if name == "plan"
-                     else f"fromJSON(needs.plan.outputs.plan).{('shard' if name == 'test' else 'phase')}[0] != null")
+                     else "fromJSON(needs.plan.outputs.plan).bundle[0] != null")
         require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
+        require(job.get("timeout-minutes") == {"core": 110, "plan": 5, "test": 110}[name],
+                f"{name}: approved time budget changed")
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
         require(job.get("env", {}) == job_env[name],
                 f"{name}: environment must bind the gate plan")
         job_steps = job.get("steps", [])
         preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
-        if name in {"test", "phase"}:
+        if name == "test":
             preparation.append(nextest)
-        if name == "phase":
-            preparation[4]["with"]["shared-key"] = "cargo-${{ (matrix.phase == 'guards' || matrix.phase == 'integration') && matrix.phase || 'registry' }}"
         if name != "plan":
             preparation.insert(0, cleanup)
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
@@ -536,13 +536,14 @@ df -h /
                     "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
                     "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"},
                     "plan: affected selection must bind the event base and head")
-    for name, axis in (("test", "shard"), ("phase", "phase")):
-        job = jobs[name]
-        require(job.get("needs") == "plan" and job.get("strategy", {}).get("matrix") == {
-            axis: "${{ fromJSON(needs.plan.outputs.plan)." + axis + " }}"
-        }, f"{name}: matrix must execute the complete gate plan")
+    job = jobs["test"]
+    require(job.get("needs") == ["core", "plan"] and job.get("strategy") == {
+        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
+    }, "test: matrix must execute the complete bundle plan without queued surplus jobs")
+    require(job.get("name") == "bundle (${{ matrix.bundle.id }})" and job.get("timeout-minutes") == 110,
+            "test: bundle identity and time budget must be pinned")
     full = jobs.get("full", {})
-    require(full.get("needs") == ["core", "plan", "test", "phase"], "full: verdict must depend on every gate")
+    require(full.get("needs") == ["core", "plan", "test"], "full: verdict must depend on every gate")
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
@@ -555,7 +556,12 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   type == "object" and (.mode == "full" or .mode == "affected") and
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length))
+  (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
+  (.bundle | type == "array" and length <= 6 and all(.[];
+    type == "object" and (.id | type == "string" and length > 0) and
+    (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
+    (map(.id) | length) == (map(.id) | unique | length)) and
+  ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort)
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 # A job may be skipped only when the plan gave it nothing to run.
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
@@ -564,8 +570,7 @@ mode=$(jq -er .mode <<<"$PLAN")
 [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 # An affected merge-group plan must keep the always-run phases (core.sh plan).
 [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
-ran "$TEST" "$(jq -er '.shard | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
-ran "$PHASE" "$(jq -er '.phase | length' <<<"$PLAN")" || { echo "phase ended $PHASE"; exit 1; }
+ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
@@ -573,7 +578,7 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
         "CORE": "${{ needs.core.result }}", "PLANNED": "${{ needs.plan.result }}",
-        "TEST": "${{ needs.test.result }}", "PHASE": "${{ needs.phase.result }}",
+        "TEST": "${{ needs.test.result }}",
     }
     require(any(step.get("run", "").strip() == verdict and "if" not in step
                 and not step.get("continue-on-error")
