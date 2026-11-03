@@ -16,9 +16,9 @@ const MAX_ROWS: usize = 4096;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_STEPS: usize = 16;
 
-pub(crate) fn validate_model(
+pub(crate) fn validate_model<'a>(
     objects: &BTreeMap<String, EffectiveObjectType>,
-    definitions: &[norn_ir::ObjectTypeDef],
+    definitions: impl IntoIterator<Item = &'a norn_ir::ObjectTypeDef>,
 ) -> Result<(), CellError> {
     for definition in definitions {
         if definition.identity.iter().any(|key| {
@@ -86,6 +86,7 @@ pub(crate) fn preflight<E: SqlEngine>(
     previous: &crate::Model,
     candidate: &crate::Model,
 ) -> Result<(), CellError> {
+    candidate.validate_identity_profile()?;
     let reader = StoreReader::new(engine, candidate);
     let mut rows = MAX_ROWS;
     let mut bytes = MAX_BYTES;

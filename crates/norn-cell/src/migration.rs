@@ -159,6 +159,7 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
     candidate: &Model,
     previous_canonical_set: Option<&str>,
     candidate_canonical_set: &str,
+    retained: Option<&crate::export::ExportRecord>,
 ) -> Result<MigrationPlan, CellError> {
     check_removed_types(engine, previous, candidate)?;
     check_removed_links(engine, previous, candidate)?;
@@ -211,7 +212,9 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
         MigrationMode::Check,
     )?;
     check_added_unique_indexes(engine, previous, candidate, &candidate_catalog)?;
-    crate::identity::preflight(engine, previous, candidate)?;
+    if retained.is_none() {
+        crate::identity::preflight(engine, previous, candidate)?;
+    }
     validate_candidate_invariants(
         engine,
         previous,

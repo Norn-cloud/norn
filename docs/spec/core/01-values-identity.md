@@ -117,3 +117,6 @@ Raw-byte duplicates may refuse earlier through the existing physical unique inde
 **ID-NORMALIZED-REOPEN-BOUND:** every commit charges the same complete key/row/byte budget as reopen, including unrelated roots; a commit that would make reopening exceed the profile refuses atomically. Stored byte preflight uses `octet_length` before fetching values.
 
 **ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
+
+
+**ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
