@@ -74,9 +74,10 @@ class FrozenCorpus(unittest.TestCase):
                     bad['cases'][0]['checkpoints'][1][family][0][field] = changed
                     self.assertRaises(AssertionError, check, bad)
             for rows in ([], good['cases'][0]['checkpoints'][1][family] * 2):
-                bad = deepcopy(good)
-                bad['cases'][0]['checkpoints'][1][family] = rows
-                self.assertRaises(AssertionError, check, bad)
+                with self.subTest(family=family, rows=len(rows)):
+                    bad = deepcopy(good)
+                    bad['cases'][0]['checkpoints'][1][family] = rows
+                    self.assertRaises(AssertionError, check, bad)
         bad = deepcopy(good)
         bad['cases'][0]['checkpoints'][1]['step'] = 9
         self.assertRaises(AssertionError, check, bad)
