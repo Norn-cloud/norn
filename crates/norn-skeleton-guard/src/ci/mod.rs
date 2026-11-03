@@ -49,7 +49,20 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
 /// (see [`maintainer_approval`]). Every other check is unchanged.
 #[must_use]
 pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
-    let mut errors = provenance::check_against(root, base).errors();
+    policy_contract(
+        root,
+        base,
+        evidence,
+        provenance::check_against(root, base).errors(),
+    )
+}
+
+fn policy_contract(
+    root: &Path,
+    base: &Path,
+    evidence: Option<&Path>,
+    mut errors: Vec<String>,
+) -> Vec<String> {
     if !errors.is_empty() {
         return errors;
     }
@@ -737,4 +750,223 @@ mod tests {
             assert!(compare_artifact_variants(IR, &proof).is_err());
         }
     }
+}
+
+/// Base-owned admission: rights review and gate approval are independent authorities.
+#[must_use]
+pub fn run_with_rights(
+    root: &Path,
+    base: &Path,
+    head: &str,
+    repository: &str,
+    gate_evidence: Option<&Path>,
+    rights_evidence: &Path,
+) -> Vec<String> {
+    check_with_rights(root, base, head, repository, gate_evidence, rights_evidence).errors
+}
+
+/// Complete trusted gate result, retained outside tracked records.
+#[derive(serde::Serialize)]
+pub struct TrustedReport {
+    /// Exact bytes, rights record inventory and admission identity.
+    pub provenance: provenance::Report,
+    /// Policy and review refusals; an empty list is necessary for success.
+    pub errors: Vec<String>,
+}
+
+/// Check trusted review and contract policy, reporting the identity actually inspected.
+#[must_use]
+pub fn check_with_rights(
+    root: &Path,
+    base: &Path,
+    head: &str,
+    repository: &str,
+    gate_evidence: Option<&Path>,
+    rights_evidence: &Path,
+) -> TrustedReport {
+    let source = provenance::BoundSource {
+        source: root,
+        head,
+        base,
+        repository,
+    };
+    let provenance = provenance::check_bound(root, &source, false);
+    let mut errors = provenance.errors();
+    let rights = std::fs::read(rights_evidence)
+        .map_err(|e| e.to_string())
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        .and_then(|doc| rights_admission(&doc, root, base, head));
+    if let Err(e) = rights {
+        errors.push(format!("rights acknowledgment: {e}"));
+    }
+    let errors = policy_contract(root, base, gate_evidence, errors);
+    TrustedReport { provenance, errors }
+}
+
+/// Check live API evidence for an exact head. `/ack-rights <head>` covers every
+/// changed payload and metadata path, including deletions, relative to its base.
+/// An edited/deleted acknowledgment is invalid; a later admin revocation wins.
+///
+/// # Errors
+/// Refuses wrong identity, missing, stale, edited or revoked evidence.
+pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result<String, String> {
+    if evidence
+        .get("repository")
+        .and_then(serde_json::Value::as_str)
+        != Some(MAINTAINED_REPOSITORY)
+        || commit_sha(evidence, "head_sha").as_deref() != Some(head)
+        || evidence
+            .get("head_repository")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        || commit_sha(evidence, "base_sha").is_none()
+    {
+        return Err("wrong repository/base/head rights identity".into());
+    }
+    let comments = evidence
+        .get("comments")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing rights comments")?;
+    let mut latest = None;
+    let mut ids = BTreeSet::new();
+    for comment in comments {
+        let id = comment
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("missing rights comment ID")?;
+        if !ids.insert(id) {
+            return Err("duplicate rights comment ID".into());
+        }
+        if comment
+            .get("permission")
+            .and_then(serde_json::Value::as_str)
+            != Some("admin")
+        {
+            continue;
+        }
+        let body = comment
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing rights command")?
+            .trim();
+        let ack = body == format!("/ack-rights {head}");
+        let revoke = body == format!("/revoke-rights {head}");
+        if !ack && !revoke {
+            continue;
+        }
+        let created = comment
+            .get("created_at")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing comment timestamp")?;
+        let updated = comment
+            .get("updated_at")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing comment timestamp")?;
+        let user = comment
+            .get("user")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing rights reviewer")?;
+        if latest.as_ref().is_none_or(|(prior, _, _)| id > *prior) {
+            latest = Some((
+                id,
+                ack && created == updated && !created.is_empty(),
+                user.to_owned(),
+            ));
+        }
+    }
+    match latest {
+        Some((_, true, user)) => Ok(user),
+        _ => Err(format!("missing, edited or revoked /ack-rights {head}")),
+    }
+}
+
+/// Verify constituent reviews and independently recompute each clean merge.
+///
+/// # Errors
+/// Refuses uncovered heads and any integration-only content or metadata.
+pub fn rights_admission(
+    evidence: &serde_json::Value,
+    root: &Path,
+    base_root: &Path,
+    head: &str,
+) -> Result<(), String> {
+    if git::head(root)? != head {
+        return Err("candidate differs from rights head".into());
+    }
+    let base = git::head(base_root)?;
+    if let Some(group) = evidence.get("merge_group") {
+        if evidence
+            .get("repository")
+            .and_then(serde_json::Value::as_str)
+            != Some(MAINTAINED_REPOSITORY)
+            || commit_sha(group, "head_sha").as_deref() != Some(head)
+            || commit_sha(group, "base_sha").as_deref() != Some(base.as_str())
+        {
+            return Err("wrong merge-group rights identity".into());
+        }
+        let pulls = evidence
+            .get("pull_requests")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("missing constituent rights evidence")?;
+        let mut current = head.to_owned();
+        let mut covered = BTreeSet::new();
+        for _ in 0..MAX_MERGE_GROUP {
+            if current == base {
+                break;
+            }
+            let [previous, pull] = <[String; 2]>::try_from(git::parents(root, &current)?)
+                .map_err(|_| "rights group requires two-parent merges")?;
+            let mut found = false;
+            for evidence in pulls
+                .iter()
+                .filter(|p| commit_sha(p, "head_sha").as_deref() == Some(pull.as_str()))
+            {
+                let mut doc = evidence.clone();
+                doc["repository"] = MAINTAINED_REPOSITORY.into();
+                if rights_acknowledgment(&doc, &pull).is_ok() {
+                    found = true;
+                }
+            }
+            if !found {
+                return Err(format!("unacknowledged constituent head {pull}"));
+            }
+            covered.insert(pull.clone());
+            git::clean_merge(root, &previous, &pull, &current)?;
+            current = previous;
+        }
+        if current != base
+            || pulls
+                .iter()
+                .any(|p| commit_sha(p, "head_sha").is_none_or(|h| !covered.contains(&h)))
+        {
+            return Err("unaccounted merge-group head or excessive group length".into());
+        }
+    } else {
+        if commit_sha(evidence, "base_sha").as_deref() != Some(base.as_str()) {
+            return Err("rights base differs from trusted base".into());
+        }
+        rights_acknowledgment(evidence, head)?;
+    }
+    Ok(())
+}
+
+/// Candidate diagnostic gate. The trusted lane separately requires live rights evidence.
+#[must_use]
+pub fn run_local(root: &Path) -> Vec<String> {
+    let head = match git::head(root) {
+        Ok(h) => h,
+        Err(e) => return vec![e],
+    };
+    let source = provenance::BoundSource {
+        source: root,
+        head: &head,
+        base: root,
+        repository: MAINTAINED_REPOSITORY,
+    };
+    policy_contract(
+        root,
+        root,
+        None,
+        provenance::check_bound(root, &source, false).errors(),
+    )
 }

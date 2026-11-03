@@ -13,6 +13,7 @@ use std::process::Command;
 )]
 pub fn tracked(root: &Path) -> Result<Vec<String>, String> {
     let out = Command::new("git")
+        .arg("--no-replace-objects")
         .arg("-C")
         .arg(root)
         .args(["ls-files", "-z"])
@@ -38,6 +39,7 @@ pub fn tracked(root: &Path) -> Result<Vec<String>, String> {
 )]
 pub fn head(root: &Path) -> Result<String, String> {
     let out = Command::new("git")
+        .arg("--no-replace-objects")
         .arg("-C")
         .arg(root)
         .args(["rev-parse", "--verify", "HEAD^{commit}"])
@@ -59,6 +61,7 @@ pub fn head(root: &Path) -> Result<String, String> {
 )]
 pub fn parents(root: &Path, commit: &str) -> Result<Vec<String>, String> {
     let out = Command::new("git")
+        .arg("--no-replace-objects")
         .arg("-C")
         .arg(root)
         .args(["rev-list", "--parents", "-n", "1", commit, "--"])
@@ -84,6 +87,7 @@ pub fn parents(root: &Path, commit: &str) -> Result<Vec<String>, String> {
 )]
 pub fn same_paths(root: &Path, a: &str, b: &str, paths: &[&str]) -> Result<bool, String> {
     let status = Command::new("git")
+        .arg("--no-replace-objects")
         .arg("-C")
         .arg(root)
         .args([
@@ -103,4 +107,208 @@ pub fn same_paths(root: &Path, a: &str, b: &str, paths: &[&str]) -> Result<bool,
         Some(1) => Ok(false),
         Some(_) | None => Err(format!("git diff failed between {a} and {b}")),
     }
+}
+
+/// An immutable tree entry, including executable mode and observed content digest.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct TreeEntry {
+    /// Git mode, restricted to regular files.
+    pub mode: String,
+    /// SHA256 computed from the blob, never from a provenance declaration.
+    pub sha256: String,
+    /// Bytes read from the immutable blob; excluded from the inventory encoding.
+    #[serde(skip)]
+    pub bytes: Vec<u8>,
+}
+
+/// Enumerate an exact commit's blobs without consulting the writable index.
+///
+/// # Errors
+/// Rejects symbolic revisions, non-regular members, invalid paths and Git failures.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fixed Git plumbing over immutable objects"
+)]
+pub fn tree(
+    root: &Path,
+    commit: &str,
+) -> Result<std::collections::BTreeMap<String, TreeEntry>, String> {
+    use sha2::{Digest, Sha256};
+    if commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("binding requires a full lowercase commit SHA".into());
+    }
+    let out = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-tree",
+            "-r",
+            "-z",
+            "--full-tree",
+            &format!("{commit}^{{tree}}"),
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err("cannot read bound Git tree".into());
+    }
+    let mut members = Vec::new();
+    for entry in out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+        let entry = std::str::from_utf8(entry).map_err(|e| e.to_string())?;
+        let (header, path) = entry.split_once('\t').ok_or("malformed Git tree entry")?;
+        let fields: Vec<_> = header.split(' ').collect();
+        let [mode, "blob", oid] = fields.as_slice() else {
+            return Err("non-blob tree member".into());
+        };
+        if !matches!(*mode, "100644" | "100755") || !super::provenance::safe_path(path) {
+            return Err(format!("unsafe tree member {path}"));
+        }
+        members.push(((*mode).to_owned(), path.to_owned(), (*oid).to_owned()));
+    }
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut child = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut input = child.stdin.take().ok_or("missing Git input")?;
+    let ids = members
+        .iter()
+        .map(|(_, _, oid)| format!("{oid}\n"))
+        .collect::<String>();
+    let writer = std::thread::spawn(move || input.write_all(ids.as_bytes()));
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    writer
+        .join()
+        .map_err(|_| "Git input writer failed")?
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("cannot read bound blobs".into());
+    }
+    let mut remainder = output.stdout.as_slice();
+    let mut entries = std::collections::BTreeMap::new();
+    for (mode, path, oid) in members {
+        let end = remainder
+            .iter()
+            .position(|b| *b == b'\n')
+            .ok_or("missing blob header")?;
+        let header = std::str::from_utf8(remainder.get(..end).ok_or("blob header")?)
+            .map_err(|e| e.to_string())?;
+        let size = header
+            .strip_prefix(&format!("{oid} blob "))
+            .ok_or("wrong blob identity")?
+            .parse::<usize>()
+            .map_err(|e| e.to_string())?;
+        if size > 32 * 1024 * 1024 {
+            return Err(format!("oversized bound blob {path}"));
+        }
+        remainder = remainder.get(end + 1..).ok_or("missing blob content")?;
+        let data = remainder.get(..size).ok_or("truncated blob")?;
+        entries.insert(
+            path,
+            TreeEntry {
+                mode,
+                sha256: hex::encode(Sha256::digest(data)),
+                bytes: data.to_vec(),
+            },
+        );
+        if remainder.get(size) != Some(&b'\n') {
+            return Err("bad blob terminator".into());
+        }
+        remainder = remainder.get(size + 1..).ok_or("truncated blob stream")?;
+    }
+    if !remainder.is_empty() {
+        return Err("extra bound blob data".into());
+    }
+    if entries.is_empty() {
+        return Err("empty bound tree".into());
+    }
+    Ok(entries)
+}
+
+/// Recompute a clean integration with Git's merge machinery, never a candidate driver.
+/// Git configuration belongs to the trusted checkout; no candidate commands run.
+///
+/// # Errors
+/// Refuses conflicts and any integration-only changes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fixed Git merge-tree with no working-tree or custom merge drivers"
+)]
+pub fn clean_merge(root: &Path, previous: &str, pull: &str, merged: &str) -> Result<(), String> {
+    let common = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args(["merge-base", previous, pull])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !common.status.success() {
+        return Err("no constituent merge base".into());
+    }
+    let common = std::str::from_utf8(&common.stdout)
+        .map_err(|e| e.to_string())?
+        .trim();
+    let ancestor = tree(root, common)?;
+    let before = tree(root, previous)?;
+    let incoming = tree(root, pull)?;
+    for path in ancestor
+        .keys()
+        .chain(before.keys())
+        .chain(incoming.keys())
+        .filter(|p| p.starts_with(super::provenance::CONTROL))
+    {
+        if before.get(path) != ancestor.get(path)
+            && incoming.get(path) != ancestor.get(path)
+            && before.get(path) != incoming.get(path)
+        {
+            return Err(format!(
+                "metadata disagreement requires renewed review: {path}"
+            ));
+        }
+    }
+    let out = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "core.attributesFile=/dev/null",
+            "-c",
+            "merge.renormalize=false",
+            "merge-tree",
+            "--write-tree",
+            previous,
+            pull,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err("integration requires renewed rights review: merge conflict".into());
+    }
+    let actual = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", &format!("{merged}^{{tree}}")])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !actual.status.success()
+        || out.stdout.split(|b| *b == b'\n').next() != actual.stdout.split(|b| *b == b'\n').next()
+    {
+        return Err(
+            "integration-only content or metadata change requires renewed rights review".into(),
+        );
+    }
+    Ok(())
 }

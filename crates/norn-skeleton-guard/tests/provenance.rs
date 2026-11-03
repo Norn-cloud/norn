@@ -1123,3 +1123,325 @@ fn merge_group_admits_a_shared_head_when_any_of_its_pull_requests_is_approved() 
         "only Norn-cloud/norn branches",
     );
 }
+
+fn bind_fixture(f: &Fixture) -> String {
+    f.save();
+    index_fixture(f);
+    commit_fixture(f)
+}
+
+fn bound_report(f: &Fixture, head: &str) -> provenance::Report {
+    provenance::check_bound(
+        f.root(),
+        &provenance::BoundSource {
+            source: f.root(),
+            head,
+            base: f.root(),
+            repository: "Norn-cloud/norn",
+        },
+        false,
+    )
+}
+
+fn rights_document(head: &str, base: &str) -> Value {
+    json!({"repository":"Norn-cloud/norn", "head_repository":"Norn-cloud/norn",
+        "head_sha":head, "base_sha":base, "comments":[{"id":1,"user":"owner","permission":"admin",
+        "body":format!("/ack-rights {head}"), "created_at":"2026-11-03T00:00:00Z", "updated_at":"2026-11-03T00:00:00Z"}]})
+}
+
+#[test]
+fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_rights() {
+    let f = policy_fixture();
+    let base = commit_fixture(&f);
+    f.write(
+        "crates/norn-ir/src/lib.rs",
+        b"pub enum ArtifactKind { Entity, Law }\n// ordinary authored edit\n",
+    );
+    let head = commit_fixture(&f); // no record refresh
+    assert!(bound_report(&f, &head).errors().is_empty());
+    let document = rights_document(&head, &base);
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&document, &head).is_ok());
+    for mutation in [
+        "missing",
+        "repository",
+        "stale",
+        "edited",
+        "nonadmin",
+        "revoked",
+        "duplicate",
+    ] {
+        let mut doc = document.clone();
+        match mutation {
+            "missing" => doc["comments"] = json!([]),
+            "repository" => doc["repository"] = json!("other/repo"),
+            "stale" => doc["head_sha"] = json!(base),
+            "edited" => doc["comments"][0]["updated_at"] = json!("2026-11-03T01:00:00Z"),
+            "nonadmin" => doc["comments"][0]["permission"] = json!("write"),
+            "revoked" => {
+                let mut revoke = doc["comments"][0].clone();
+                revoke["id"] = json!(2);
+                revoke["body"] = json!(format!("/revoke-rights {head}"));
+                doc["comments"].as_array_mut().unwrap().push(revoke);
+            }
+            "duplicate" => {
+                let duplicate = doc["comments"][0].clone();
+                doc["comments"].as_array_mut().unwrap().push(duplicate);
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err(),
+            "{mutation}"
+        );
+    }
+    // A gate approval cannot serve as a rights acknowledgment.
+    let mut gate_only = document;
+    gate_only["comments"][0]["body"] = json!(format!("/approve-gates {head}"));
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&gate_only, &head).is_err());
+}
+
+#[test]
+fn immutable_binding_refuses_post_commit_payload_record_and_staged_inventory_changes() {
+    for path in ["payload", &format!("{RECORDS}payload.json")] {
+        let mut f = Fixture::new();
+        f.add("payload", b"authored input", "code");
+        let head = bind_fixture(&f);
+        f.write(path, b"post-commit mutation");
+        git_in(&f, &["add", "."]);
+        assert!(
+            bound_report(&f, &head)
+                .errors()
+                .iter()
+                .any(|e| e.contains("bound byte drift"))
+        );
+    }
+    let mut f = Fixture::new();
+    f.add("payload", b"authored input", "code");
+    let head = bind_fixture(&f);
+    f.write("extra", b"staged addition");
+    git_in(&f, &["add", "."]);
+    assert!(!bound_report(&f, &head).errors().is_empty());
+}
+
+#[test]
+fn bound_distribution_requires_independent_members_bytes_and_control_files() {
+    let mut f = Fixture::new();
+    let i = f.add("payload", b"authored input", "code");
+    f.records[i]["sha256"] = json!("0".repeat(64));
+    let head = bind_fixture(&f);
+    let output = tempfile::tempdir().unwrap();
+    for (path, entry) in norn_skeleton_guard::ci::git::tree(f.root(), &head).unwrap() {
+        let target = output.path().join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, entry.bytes).unwrap();
+    }
+    let check = || {
+        provenance::check_bound(
+            output.path(),
+            &provenance::BoundSource {
+                source: f.root(),
+                head: &head,
+                base: f.root(),
+                repository: "Norn-cloud/norn",
+            },
+            true,
+        )
+    };
+    assert!(check().errors().is_empty());
+    assert!(
+        !provenance::check_distribution(output.path())
+            .errors()
+            .is_empty()
+    );
+    for path in ["payload", MANIFEST, &format!("{RECORDS}payload.json")] {
+        let target = output.path().join(path);
+        let before = fs::read(&target).unwrap();
+        fs::write(&target, b"mutation").unwrap();
+        assert!(!check().errors().is_empty(), "{path}");
+        fs::remove_file(&target).unwrap();
+        assert!(!check().errors().is_empty(), "missing {path}");
+        fs::write(&target, before).unwrap();
+    }
+    fs::write(output.path().join("forged-export-inventory.json"), b"{}").unwrap();
+    assert!(!check().errors().is_empty());
+    assert!(
+        !provenance::check_distribution(output.path())
+            .errors()
+            .is_empty()
+    );
+}
+
+#[test]
+fn actual_bytes_preserve_source_and_rejection_closure_despite_misleading_legacy_hashes() {
+    for legacy in [None, Some("0".repeat(64)), Some("f".repeat(64))] {
+        let mut f = Fixture::new();
+        let i = f.add("renamed.json", b"known source bytes", "code");
+        let actual = f.reference("renamed.json")["sha256"].clone();
+        f.add("registry/standards/sources.lock.json", &serde_json::to_vec(&json!([{
+            "sourceId":"source.toy", "releaseId":"1.0.0", "license":"GPL-3.0", "redistribution":"vendored",
+            "files":[{"path":"original.json", "sha256":actual}]
+        }])).unwrap(), "provenance-evidence");
+        if let Some(hash) = &legacy {
+            f.records[i]["sha256"] = json!(hash);
+        } else {
+            f.records[i].as_object_mut().unwrap().remove("sha256");
+        }
+        let head = bind_fixture(&f);
+        assert!(
+            bound_report(&f, &head)
+                .errors()
+                .iter()
+                .any(|e| e.contains("requires derivation from source.toy"))
+        );
+
+        let mut f = Fixture::new();
+        f.add("bad", b"rejected identical bytes", "extraction-database");
+        f.add("renamed", b"rejected identical bytes", "code");
+        f.derived("descendant", "renamed", "generated");
+        for (index, record) in f.records.iter_mut().enumerate() {
+            if legacy.is_none() {
+                record.as_object_mut().unwrap().remove("sha256");
+            } else {
+                record["sha256"] = json!(format!("{index:064x}"));
+            }
+        }
+        let head = bind_fixture(&f);
+        let report = bound_report(&f, &head);
+        assert!(
+            report.rejected_paths["renamed"]
+                .iter()
+                .any(|e| e.contains("content matches a rejected"))
+        );
+        assert!(
+            report.rejected_paths["descendant"]
+                .iter()
+                .any(|e| e.contains("rejected ancestor"))
+        );
+
+        let mut f = Fixture::new();
+        let i = f.add("payload", b"changed upstream bytes", "standards-data");
+        let pin = hex::encode(Sha256::digest(b"original upstream bytes"));
+        let path = "registry/standards/sources.lock.json";
+        f.add(path, &serde_json::to_vec(&json!([{"sourceId":"source.toy", "releaseId":"1.0.0", "license":"Apache-2.0", "redistribution":"vendored", "files":[{"path":"payload","sha256":pin}]}])).unwrap(), "provenance-evidence");
+        f.records[i]["origin"] = json!("upstream");
+        f.records[i]["sources"] =
+            json!([{"id":"source.toy","revision":"1.0.0","evidence":f.reference(path)}]);
+        if legacy.is_none() {
+            f.records[i].as_object_mut().unwrap().remove("sha256");
+        } else {
+            f.records[i]["sha256"] = json!(pin);
+        } // lie that bytes still match the catalog
+        let head = bind_fixture(&f);
+        assert!(
+            bound_report(&f, &head)
+                .errors()
+                .iter()
+                .any(|e| e.contains("differs from pinned source"))
+        );
+    }
+}
+
+#[test]
+fn bound_mode_preserves_missing_record_ancestry_and_nested_evidence_refusals() {
+    let mut f = Fixture::new();
+    f.add("input", b"authored input", "synthetic-fixture");
+    f.derived("generated", "input", "synthetic-golden");
+    f.derived("release", "generated", "generated");
+    let head = bind_fixture(&f);
+    f.write("input", b"uncommitted drift");
+    assert!(!bound_report(&f, &head).errors().is_empty());
+    // Once committed, a deterministic rights contradiction still taints ancestry.
+    f.records[1]["category"] = json!("extraction-database");
+    let head = bind_fixture(&f);
+    assert!(
+        bound_report(&f, &head)
+            .rejected_paths
+            .contains_key("release")
+    );
+    f.records[1]["category"] = json!("synthetic-fixture");
+    f.records[1]["rights_evidence"][0]["sha256"] = json!("0".repeat(64));
+    let head = bind_fixture(&f);
+    assert!(
+        bound_report(&f, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("tampered evidence"))
+    );
+    f.records.remove(1);
+    let head = bind_fixture(&f);
+    assert!(
+        bound_report(&f, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("missing shipped-artifact"))
+    );
+}
+
+#[test]
+fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integration() {
+    let mut f = policy_fixture();
+    f.add("notes", b"first\n2\n3\n4\n5\n6\n7\n8\n9\nlast\n", "code");
+    let base = bind_fixture(&f);
+    git_in(&f, &["branch", "-M", "queue"]);
+    let trusted_dir = tempfile::tempdir().unwrap();
+    let trusted = trusted_dir.path().join("base");
+    git_in(
+        &f,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            trusted.to_str().unwrap(),
+            &base,
+        ],
+    );
+    let mut heads = Vec::new();
+    for (branch, content) in [
+        ("pr-a", "FIRST\n2\n3\n4\n5\n6\n7\n8\n9\nlast\n"),
+        ("pr-b", "first\n2\n3\n4\n5\n6\n7\n8\n9\nLAST\n"),
+    ] {
+        git_in(&f, &["checkout", "--quiet", "-b", branch, &base]);
+        f.write("notes", content.as_bytes());
+        heads.push(commit_fixture(&f));
+        git_in(&f, &["checkout", "--quiet", "queue"]);
+        git_in(&f, &["merge", "--quiet", "--no-ff", "--no-edit", branch]);
+    }
+    let head = git_in(&f, &["rev-parse", "HEAD"]);
+    let doc = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":head},
+        "pull_requests":heads.iter().map(|h| rights_document(h, &base)).collect::<Vec<_>>()});
+    let admission = |doc: &Value, head: &str| {
+        norn_skeleton_guard::ci::rights_admission(doc, f.root(), &trusted, head)
+    };
+    assert!(admission(&doc, &head).is_ok());
+    assert!(
+        provenance::check_bound(
+            f.root(),
+            &provenance::BoundSource {
+                source: f.root(),
+                head: &head,
+                base: &trusted,
+                repository: "Norn-cloud/norn"
+            },
+            false
+        )
+        .errors()
+        .is_empty()
+    );
+    let mut missing = doc.clone();
+    missing["pull_requests"][1]["comments"] = json!([]);
+    assert!(admission(&missing, &head).is_err());
+    // Rewrite the merge result with a metadata-only addition: no new parent,
+    // but a tree that no acknowledged head or clean integration accounts for.
+    f.write(&format!("{RECORDS}notes.json"), b"{}");
+    git_in(&f, &["add", "."]);
+    git_in(&f, &["commit", "--quiet", "--amend", "--no-edit"]);
+    let tampered = git_in(&f, &["rev-parse", "HEAD"]);
+    let mut modified = doc;
+    modified["merge_group"]["head_sha"] = json!(tampered);
+    assert!(
+        admission(&modified, &tampered)
+            .unwrap_err()
+            .contains("integration-only")
+    );
+}

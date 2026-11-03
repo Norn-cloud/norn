@@ -1484,6 +1484,37 @@ def evidence_inventory_canaries() -> None:
     )
 
 
+def rights_workflow_canaries() -> None:
+    coverage_validator = load_module("norn_rights_workflow_canary", VALIDATOR)
+    source = (ROOT / ".github/workflows/ci-policy.yml").read_text()
+    merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    coverage_validator.validate_rights_contract(source, merge)
+    for label, before, after in [
+        ("missing rights evidence", '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"', ""),
+        ("stale PR binding", '--head "${{ steps.pr.outputs.head_sha }}"', '--head "old"'),
+        ("missing revocation", "'/revoke-rights'", "'/ignored-command'"),
+        ("missing rights collector", "'/ack-rights'", "'/ignored-command'"),
+        ("missing reviewer identity", "permission: await permission(comment.user.login)", "permission: 'admin'"),
+    ]:
+        if before not in source:
+            raise AssertionError(f"inactive rights canary: {label}")
+        try:
+            coverage_validator.validate_rights_contract(source.replace(before, after), merge)
+        except coverage_validator.InvalidCoverage:
+            pass
+        else:
+            raise AssertionError(f"accepted {label}")
+    for before in ['--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"',
+                   '--head "${{ github.event.workflow_run.head_sha }}"']:
+        try:
+            coverage_validator.validate_rights_contract(source, merge.replace(before, ""))
+        except coverage_validator.InvalidCoverage:
+            pass
+        else:
+            raise AssertionError("accepted uncovered merge-group rights")
+    print("rights workflow canaries: missing/stale evidence and group bindings refused")
+
+
 def main() -> int:
     if sys.argv[1:] == ["--workflow-contract"]:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
@@ -1491,10 +1522,12 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_cache_canaries()
+        rights_workflow_canaries()
         print("workflow contract: admission, verdict and context canaries passed")
         return 0
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
+    rights_workflow_canaries()
     manifest_canaries()
     coverage_layout_canaries()
     central_obligation_closure_canaries()

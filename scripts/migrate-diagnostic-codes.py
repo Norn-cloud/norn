@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """One-shot conversion of the shared diagnostic manifest and its provenance."""
-import hashlib
 import json
 from pathlib import Path
 
@@ -26,7 +25,7 @@ def main():
         path.write_bytes(content)
         record = RECORDS / (path.relative_to(ROOT).as_posix() + ".json")
         record.parent.mkdir(parents=True, exist_ok=True)
-        record.write_text(json.dumps({**template, "sha256": hashlib.sha256(content).hexdigest()}, indent=2) + "\n")
+        record.write_text(json.dumps({k: v for k, v in template.items() if k != "sha256"}, indent=2) + "\n")
     SOURCE.unlink()
     (RECORDS / (SOURCE.relative_to(ROOT).as_posix() + ".json")).unlink()
 

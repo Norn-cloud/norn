@@ -55,9 +55,22 @@ third-party code; keep its notices and provenance.
 ## Provenance
 
 Every tracked file `<path>` outside `.github/ci/provenance/` has one record,
-`.github/ci/provenance/artifacts/<path>.json`, with its SHA-256, origin,
-category and licence. A change updates that record's hash, a new file adds a
-record, and a deleted file deletes it. The path comes from the record's file
+`.github/ci/provenance/artifacts/<path>.json`, with its standing origin,
+category and licence declaration. Independently authored edits retain that
+metadata. New files add records; deletions remove records; renames move them.
+Origin, category, licence, sources, parents, notices, rights evidence and supported
+connector terms changes require corresponding metadata changes. Every changed
+payload and metadata path needs an admin `/ack-rights <exact head SHA>` comment,
+collected from the API by base-owned policy. This is separate from `/approve-gates`;
+new heads invalidate it, edits/deletions revoke it, and `/revoke-rights <SHA>`
+explicitly revokes it. Human source review remains necessary. The gate binds all
+inspected bytes and records to the immutable candidate tree. Expanded archives
+must match that source commit exactly; generated exports require an independently
+verified external binding and are refused without one. Nested evidence and
+package-member hashes remain enforced. Historical top-level hashes stay readable
+and shape-checked but are authoritative only in explicit legacy distributions.
+Until the enabling validator lands on base, changed files still need correct
+legacy hashes for the old base-owned checker. The path comes from the record's file
 name, so it is not a field. `.github/ci/provenance/manifest.json` holds the
 version and software sources; nothing else lives in that directory.
 `cargo xtask ci provenance` enforces this, and

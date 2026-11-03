@@ -420,6 +420,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     }, "workflow must cancel only superseded PR and main runs")
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
+    validate_rights_contract(source)
     jobs = workflow["jobs"]
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
@@ -430,7 +431,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         require(isinstance(job.get("runs-on"), str) and job["runs-on"] in admitted,
                 f"{name}: runner must preserve merge-only Boat opt-in and hosted fallback")
     cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
-                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
+                 "NORN_CI_HEAD": "${{ github.event.merge_group.head_sha || github.sha }}"}
     job_env = {
         "core": cache_env,
         "plan": {},
@@ -585,6 +587,41 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     require("cargo test --locked --workspace --doc" in runner, "workspace doctests must run")
     require("test-shards" in runner, "test shards must be proved to cover the full test set")
     require("cargo clippy --locked --workspace --all-targets -- -D warnings" in runner, "full workspace clippy must run")
+
+
+def validate_rights_contract(source: str, merge_source: str | None = None) -> None:
+    """The API collector and binary invocation remain base-owned and head-bound."""
+    if merge_source is None:
+        merge_source = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    for text, head in ((source, "${{ steps.pr.outputs.head_sha }}"),
+                       (merge_source, "${{ github.event.workflow_run.head_sha }}")):
+        workflow = yaml.load(text, Loader=WorkflowLoader)
+        job = workflow["jobs"]["trusted-policy"]
+        expected = ('python3 trusted/scripts/ci/validate-runner-policy.py --root candidate '
+                    '--maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" '
+                    '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json" '
+                    f'--head "{head}" --repository "${{{{ github.repository }}}}"')
+        steps = job["steps"]
+        checks = [step for step in steps if step.get("run", "").strip() == expected]
+        require(len(checks) == 1 and "if" not in checks[0] and not checks[0].get("continue-on-error"),
+                "trusted rights: missing or wrong exact-head evidence/binding command")
+        scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
+        for contract in ("'/ack-rights'", "'/revoke-rights'", "id: comment.id", "base_sha: pr.base.sha",
+                         "head_sha: pr.head.sha", "permission: await permission(comment.user.login)",
+                         "github.rest.issues.listComments", "github.rest.repos.getCollaboratorPermissionLevel"):
+            require(contract in scripts, f"trusted rights: missing live API contract {contract}")
+        require(job.get("concurrency", {}).get("cancel-in-progress") is True,
+                "trusted rights: revocation must supersede old evaluations")
+    condition = yaml.load(source, Loader=WorkflowLoader)["jobs"]["trusted-policy"]["if"]
+    for command in ("/ack-rights", "/revoke-rights"):
+        require(f"contains(github.event.comment.body, '{command}')" in condition
+                and f"contains(github.event.changes.body.from, '{command}')" in condition,
+                "trusted rights: edits/deletions must re-evaluate rights evidence")
+    runner = (ROOT / "scripts/ci/core.sh").read_text()
+    require('cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
+            "provenance must bind the event candidate")
+    require('--distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn' in runner,
+            "distribution must retain an independent immutable source binding")
 
 
 def validate_timeout_budgets(
