@@ -133,6 +133,7 @@ fn domain(schema: &Schema) -> Result<Domain, Unknown> {
         | Schema::String(None)
         | Schema::Integer
         | Schema::Number
+        | Schema::Decimal(_)
         | Schema::Json => {
             return Err(Unknown::UnboundedDomain);
         }

@@ -61,7 +61,8 @@ fn install(artifacts: &[ArtifactEnvelope]) -> DemoResult<CellStore> {
             }
         }
     }
-    let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)?;
+    let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)?
+        .with_governing_laws(artifacts)?;
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
             RuntimeValue::from_json(serde_json::to_value(artifacts)?)?.canonical_json()?,

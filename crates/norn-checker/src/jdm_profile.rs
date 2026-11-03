@@ -661,6 +661,17 @@ fn check_node(
                 sink,
             );
             if let Some(fold) = &body.ordered_fold {
+                if body
+                    .input_field
+                    .as_deref()
+                    .is_none_or(|field| field.trim().is_empty())
+                {
+                    sink.push(
+                        codes::ORDERED_FOLD_INVALID,
+                        "a fold requires an explicit collection selector",
+                        format!("{content}.orderedFold"),
+                    );
+                }
                 if body.execution_mode == Some(norn_ir::jdm::JdmExecutionMode::Loop) {
                     sink.push(
                         codes::ORDERED_FOLD_INVALID,
@@ -741,8 +752,6 @@ fn check_ordered_fold(fold: &norn_ir::jdm::OrderedFold, content: &str, sink: &mu
         );
     }
     check_standard(fold.initial.as_str(), format!("{path}.initial"), sink);
-    sink.push(codes::ORDERED_FOLD_UNSUPPORTED,
-        "ordered-fold execution is unavailable; refusing rather than evaluating a loop with different arithmetic", path);
 }
 
 fn check_standard(source: &str, path: String, sink: &mut Sink<'_>) {
@@ -1296,6 +1305,7 @@ pub fn check_sub_decision_closures(
 ) -> Vec<Diagnostic> {
     let pool = Pool::new(artifacts, base);
     let mut memo: BTreeMap<(&str, &str), Closure<'_>> = BTreeMap::new();
+    let mut fold_graphs = BTreeMap::new();
     let mut findings = Vec::new();
     for artifact in artifacts {
         let Some(graph) = decode_graph(artifact) else {
@@ -1308,6 +1318,19 @@ pub fn check_sub_decision_closures(
                 // Undeclared (T2) or unresolved (the resolver) elsewhere.
                 continue;
             };
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node)
+                && let Some(fold) = &content.ordered_fold
+                && !fold_helper_matches(fold, target)
+            {
+                findings.push(set_finding(
+                    codes::ORDERED_FOLD_INVALID,
+                    "fold helper schemas must equal {accumulator, item, index} -> accumulator"
+                        .to_owned(),
+                    artifact,
+                    &pointer,
+                    DiagnosticRemediation::FixDefinition,
+                ));
+            }
             let Some(nested) = closure_of(target, &pool, &mut memo, &mut BTreeSet::new()) else {
                 findings.push(set_finding(
                     codes::SUB_DECISION_TARGET,
@@ -1321,6 +1344,33 @@ pub fn check_sub_decision_closures(
                 ));
                 continue;
             };
+            if let Some(JdmNode::DecisionNode { content, .. }) = graph.nodes.get(reference.node)
+                && content.ordered_fold.is_some()
+                && !std::iter::once(target)
+                    .chain(
+                        nested
+                            .members
+                            .iter()
+                            .filter_map(|identity| pool.by_identity.get(identity).copied()),
+                    )
+                    .all(|helper| {
+                        *fold_graphs
+                            .entry((helper.artifact_id.as_str(), helper.version.as_str()))
+                            .or_insert_with(|| {
+                                decode_graph(helper).is_some_and(|graph| {
+                                    norn_expr::schema::fold_step_graph_supported(&graph)
+                                })
+                            })
+                    })
+            {
+                findings.push(set_finding(
+                    codes::ORDERED_FOLD_INVALID,
+                    "nested fold or loop helper is unsupported".to_owned(),
+                    artifact,
+                    &pointer,
+                    DiagnosticRemediation::FixDefinition,
+                ));
+            }
             let depth = nested.depth.saturating_add(1);
             if depth > MAX_SUB_DECISION_DEPTH {
                 findings.push(set_finding(
@@ -1408,6 +1458,20 @@ fn set_finding(
         artifact_id: Some(artifact.artifact_id.clone()),
         remediation: Some(remediation),
     }
+}
+
+fn fold_helper_matches(fold: &norn_ir::jdm::OrderedFold, target: &ArtifactEnvelope) -> bool {
+    let Ok((input, output)) = norn_expr::schema::fold_step_schemas(fold) else {
+        return false;
+    };
+    let payload = target.payload.to_json_value();
+    let parse = |name| {
+        payload
+            .as_object()
+            .and_then(|fields| fields.get(name))
+            .and_then(|value| norn_expr::schema::Schema::parse(value, name).ok())
+    };
+    parse("inputSchema") == Some(input) && parse("outputSchema") == Some(output)
 }
 
 #[cfg(test)]

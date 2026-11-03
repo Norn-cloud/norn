@@ -100,6 +100,7 @@ pub struct MemoryCell<E, C, I> {
     types: Vec<ObjectTypeDef>,
     interfaces: Vec<InterfaceDef>,
     property_types: Vec<PropertyTypeDef>,
+    law_artifacts: Vec<norn_kernel::cell_host::ArtifactEnvelope>,
     facts: BTreeMap<FactKey, FactState>,
     concrete: BTreeMap<FactKey, ObjectTypeName>,
     links: BTreeMap<LinkKey, LinkState>,
@@ -124,6 +125,7 @@ impl<E, C, I> MemoryCell<E, C, I> {
             types: Vec::new(),
             interfaces: Vec::new(),
             property_types: Vec::new(),
+            law_artifacts: Vec::new(),
             facts: BTreeMap::new(),
             concrete: BTreeMap::new(),
             links: BTreeMap::new(),
@@ -161,6 +163,16 @@ impl<E, C, I> MemoryCell<E, C, I> {
     #[must_use]
     pub fn with_property_types(mut self, property_types: Vec<PropertyTypeDef>) -> Self {
         self.property_types = property_types;
+        self
+    }
+
+    /// The same reference host with the retained laws of its definition snapshot.
+    #[must_use]
+    pub fn with_governing_laws(
+        mut self,
+        artifacts: Vec<norn_kernel::cell_host::ArtifactEnvelope>,
+    ) -> Self {
+        self.law_artifacts = artifacts;
         self
     }
 
@@ -398,6 +410,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
         let (CommitVersions { written, linked }, fact_keys, link_keys) = {
             let catalog = TypeCatalog::new(&self.types)
+                .with_governing_laws(&self.law_artifacts)
                 .with_interfaces(&self.interfaces)
                 .with_property_types(&self.property_types);
             for write in &mut commit.writes {
@@ -522,6 +535,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
 
     fn load(&self, key: &FactKey) -> Result<FactState, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let model = CommitModel::new(&catalog);
@@ -553,6 +567,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
             return Ok(None);
         }
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let concrete_type = if state.exists() {
@@ -569,6 +584,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let canonical = CommitModel::new(&catalog).canonical_link(key);
@@ -583,6 +599,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, 
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, Infallible> {
         let catalog = TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types);
         let model = CommitModel::new(&catalog);
@@ -1897,6 +1914,7 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(match error {
+        CommitError::Law { key, reason } => CommitError::Law { key, reason },
         CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
         CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
         CommitError::NotPending { consumed } => CommitError::NotPending { consumed },
