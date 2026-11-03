@@ -101,7 +101,6 @@ impl<B: Backend> Host<B> {
         if header("mcp-session-id").is_none() {
             let source = serde_json::from_str::<serde_json::Value>(&r.body)
                 .map_err(|e| Refusal::invalid(e.to_string()))?;
-
             if source.get("method").and_then(serde_json::Value::as_str) != Some("initialize") {
                 return reply(400, String::new(), None);
             }
@@ -119,7 +118,8 @@ impl<B: Backend> Host<B> {
                 return reply(202, String::new(), None);
             }
             let session = Session::new(self.tools.clone(), &binding)?;
-            self.sessions.insert(id.clone(), (session, now.saturating_add(300_000)));
+            self.sessions
+                .insert(id.clone(), (session, now.saturating_add(300_000)));
         }
         let Some((session, _)) = self.sessions.get_mut(&id) else {
             return reply(404, String::new(), None);
