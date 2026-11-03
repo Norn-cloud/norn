@@ -56,11 +56,15 @@ fn setup(path: &Path) -> Cell {
         }
     }
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    let (base, candidate): (Vec<_>, Vec<_>) = artifacts
+        .iter()
+        .cloned()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
     let diagnostics = norn_checker::check_artifact_set(
-        &artifacts,
+        &candidate,
         &norn_checker::EntityArtifactSetContext {
             registry: &BTreeSet::new(),
-            base: &[],
+            base: &base,
             tenant: None,
         },
     );
