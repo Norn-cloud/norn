@@ -27,6 +27,8 @@ use crate::{Diagnostic, Span};
 pub mod codes {
     /// Diagnostic selection must name a registered runtime error and retain inherited identity.
     pub const INVALID_GUARD_DIAGNOSTIC: &str = "lifecycle.validation.invalid_guard_diagnostic";
+    /// A subtype replaced an inherited runtime guard diagnostic.
+    pub const INHERITED_GUARD_DIAGNOSTIC: &str = "lifecycle.validation.inherited_guard_diagnostic";
     /// An analytical publication failed its declared policy.
     pub const PUBLICATION_GUARD: &str = "core.projection.publication_guard";
 

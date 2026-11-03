@@ -1226,7 +1226,7 @@ fn receipt_changes<H: CellHost + ?Sized>(
     if acceptance
         .destination
         .as_ref()
-        .is_some_and(|pin| &pin.key != target)
+        .is_none_or(|pin| &pin.key != target)
     {
         return Err(invalid());
     }

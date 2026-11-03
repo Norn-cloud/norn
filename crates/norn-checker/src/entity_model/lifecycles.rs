@@ -575,7 +575,7 @@ impl<'a> Checker<'a, '_> {
                 })
             {
                 self.out.push(error(
-                    codes::INVALID_GUARD_DIAGNOSTIC,
+                    codes::INHERITED_GUARD_DIAGNOSTIC,
                     "a subtype cannot replace an inherited guard diagnostic".to_owned(),
                     span_at(&at, &["guardRefusalCode"]),
                 ));

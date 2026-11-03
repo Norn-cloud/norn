@@ -538,6 +538,6 @@ fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
     assert!(
         run(&[base, subtype], &[], None)
             .iter()
-            .any(|(code, _)| code == codes::INVALID_GUARD_DIAGNOSTIC)
+            .any(|(code, _)| code == codes::INHERITED_GUARD_DIAGNOSTIC)
     );
 }

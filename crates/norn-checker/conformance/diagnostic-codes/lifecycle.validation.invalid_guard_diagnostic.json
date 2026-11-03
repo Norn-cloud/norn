@@ -1,6 +1,6 @@
 {
   "code": "lifecycle.validation.invalid_guard_diagnostic",
-  "message": "guardRefusalCode must retain an inherited registered runtime error",
+  "message": "guardRefusalCode must name a registered T6 runtime error",
   "severity": "error",
   "since": "0.2.0",
   "tier": "T2"
