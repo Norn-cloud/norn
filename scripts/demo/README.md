@@ -44,6 +44,12 @@ cargo nextest run --profile drop-02
 Nextest owns selection, setup commands, process execution and failures. Profile
 configuration pins sampled seeds/algorithms and disables golden regeneration.
 Missing tests or tools fail rather than producing a successful empty rehearsal.
+The required names are recorded in `.config/drop-scenarios.json`. The existing
+always-run CI guard phase checks every drop profile against those exact sets,
+rejecting missing, ignored or extra selections; run it locally with
+`python3 scripts/check_demo_scenarios.py`.
+Intentionally changed scenario names require an explicit data update in the
+same change; the checker never regenerates its expectations.
 With `CI` set, prepare `NORN_BIN` and the checker WASM package as documented in the
 [authoring SDK](../../tools/norn-ts/README.md); the existing import guard stays strict.
 The `ci` profile, its complete test selection and required gates are unchanged.
