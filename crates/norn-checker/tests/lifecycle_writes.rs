@@ -843,12 +843,23 @@ fn generated_series_key_cannot_be_written_by_input_derivation() {
     );
 }
 
-
 fn heterogeneous_patch_example(expression: &str) -> Vec<Value> {
     let targets = [
-        ("jewelry.CycleExchange", "eligible", json!({"kind":"boolean"})),
-        ("jewelry.CycleLedger", "account_code", json!({"kind":"text"})),
-        ("jewelry.CycleConversion", "output_gross", json!({"kind":"decimal","scale":3})),
+        (
+            "jewelry.CycleExchange",
+            "eligible",
+            json!({"kind":"boolean"}),
+        ),
+        (
+            "jewelry.CycleLedger",
+            "account_code",
+            json!({"kind":"text"}),
+        ),
+        (
+            "jewelry.CycleConversion",
+            "output_gross",
+            json!({"kind":"decimal","scale":3}),
+        ),
     ];
     let mut artifacts = Vec::new();
     for (kind, property, property_type) in &targets {
@@ -856,13 +867,17 @@ fn heterogeneous_patch_example(expression: &str) -> Vec<Value> {
         entity["artifactId"] = json!(format!("{kind}.entity"));
         entity["namespace"] = json!("jewelry");
         entity["payload"]["objectType"]["name"] = json!(kind);
-        entity["payload"]["objectType"]["properties"].as_array_mut().expect("properties")
+        entity["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties")
             .push(json!({"id":property,"type":property_type}));
         artifacts.push(entity);
     }
     let mut rule = stored_write_rule("patch", "eligible", json!({"type":"boolean"}), expression);
-    let properties = &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
-    properties["objectType"]["enum"] = json!(targets.iter().map(|(kind,_,_)| kind).collect::<Vec<_>>());
+    let properties =
+        &mut rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"];
+    properties["objectType"]["enum"] =
+        json!(targets.iter().map(|(kind, _, _)| kind).collect::<Vec<_>>());
     properties["patch"]["properties"]["account_code"] = json!({"type":"string"});
     properties["patch"]["properties"]["output_gross"] = json!({"type":"number"});
     artifacts.push(rule);
@@ -880,20 +895,49 @@ fn closed_exchange_patch_does_not_write_ledger_or_conversion_members() {
 #[test]
 fn closed_patch_still_refuses_an_undeclared_member_or_invalid_stored_value() {
     for patch in ["{account_code:'Sales'}", "{eligible:'invalid'}"] {
-        let expression = format!("[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]");
+        let expression = format!(
+            "[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]"
+        );
         let findings = set_diagnostics(heterogeneous_patch_example(&expression));
-        assert!(findings.iter().any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains("jewelry.CycleExchange")), "{patch}: {findings:?}");
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE
+                    && d.message.contains("jewelry.CycleExchange")),
+            "{patch}: {findings:?}"
+        );
     }
 }
 
 #[test]
 fn uncertain_patch_keys_keep_the_full_schema_refusal() {
-    let deep = format!("{{eligible:true,nested:{}0{}}}", "{nested:".repeat(34), "}".repeat(34));
-    for patch in [deep.as_str(), "event", "(event.patch)", "{eligible:true, [event.name]:true}", "{eligible:true, ...event}", "{eligible:true, eligible:false}", "{eligible:true"] {
-        let expression = format!("[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]");
+    let deep = format!(
+        "{{eligible:true,nested:{}0{}}}",
+        "{nested:".repeat(34),
+        "}".repeat(34)
+    );
+    for patch in [
+        deep.as_str(),
+        "event",
+        "(event.patch)",
+        "{eligible:true, [event.name]:true}",
+        "{eligible:true, ...event}",
+        "{eligible:true, eligible:false}",
+        "{eligible:true",
+    ] {
+        let expression = format!(
+            "[{{op:'patch',objectType:'jewelry.CycleExchange',key:'exchange',patch:{patch}}}]"
+        );
         let findings = set_diagnostics(heterogeneous_patch_example(&expression));
         for property in ["account_code", "output_gross"] {
-            assert!(findings.iter().any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE && d.message.contains("jewelry.CycleExchange") && d.message.contains(property)), "{patch}/{property}: {findings:?}");
+            assert!(
+                findings
+                    .iter()
+                    .any(|d| d.code == codes::INVALID_STORED_PROPERTY_WRITE
+                        && d.message.contains("jewelry.CycleExchange")
+                        && d.message.contains(property)),
+                "{patch}/{property}: {findings:?}"
+            );
         }
     }
 }

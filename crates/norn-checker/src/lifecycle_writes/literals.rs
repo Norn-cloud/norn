@@ -257,13 +257,16 @@ impl Parser<'_, '_> {
     /// The object literal at `{`; consumes through its `}`.
     fn object(&mut self, depth: usize) -> Record {
         self.advance();
-        let mut record = Record { members: Vec::new(), closed: true };
+        let mut record = Record {
+            members: Vec::new(),
+            closed: true,
+        };
         loop {
             match self.peek(0) {
                 None => {
                     record.closed = false;
                     return record;
-                },
+                }
                 Some(Token::Punct('}')) => {
                     self.advance();
                     return record;
@@ -288,7 +291,7 @@ impl Parser<'_, '_> {
                 Some(_) => {
                     record.closed = false;
                     self.skip_value(depth);
-                },
+                }
             }
         }
     }
@@ -380,7 +383,9 @@ pub(super) fn records(source: &str) -> Vec<Record> {
     };
     parser.scan();
     if !parser.complete {
-        for record in &mut parser.records { record.closed = false; }
+        for record in &mut parser.records {
+            record.closed = false;
+        }
     }
     parser.records
 }
@@ -420,7 +425,12 @@ mod tests {
             let found = records(source);
             assert!(found.last().expect("record").has_closed_keys(), "{source}");
         }
-        for source in ["{mode: 'open', mode: event.kind}", "{mode: 'open'", "{[event.kind]: 'open'}", "{...event}"] {
+        for source in [
+            "{mode: 'open', mode: event.kind}",
+            "{mode: 'open'",
+            "{[event.kind]: 'open'}",
+            "{...event}",
+        ] {
             let found = records(source);
             assert!(!found.last().expect("record").has_closed_keys(), "{source}");
         }
@@ -428,7 +438,11 @@ mod tests {
 
     #[test]
     fn depth_limited_scans_cannot_certify_closed_keys() {
-        let source = format!("{}0{}", "{nested:".repeat(super::MAX_DEPTH.saturating_add(2)), "}".repeat(super::MAX_DEPTH.saturating_add(2)));
+        let source = format!(
+            "{}0{}",
+            "{nested:".repeat(super::MAX_DEPTH.saturating_add(2)),
+            "}".repeat(super::MAX_DEPTH.saturating_add(2))
+        );
         let found = records(&source);
         assert!(!found.is_empty());
         assert!(found.iter().all(|record| !record.has_closed_keys()));
