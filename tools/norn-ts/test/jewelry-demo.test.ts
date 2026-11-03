@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
+import { canonicalJson } from "../src/canonical.ts"
 
 const root = join(TOOL_ROOT, "../..")
 const sourcePath = "scripts/demo/jewelry.source.ts"
@@ -18,5 +19,5 @@ test("authored jewelry golden matches the law and catalog native inputs", () => 
     writeFileSync(fixture, JSON.stringify(result.artifacts) + "\n")
   }
   const retained: unknown = JSON.parse(readFileSync(fixture, "utf8"))
-  expect(result.artifacts).toEqual(retained)
+  expect(canonicalJson(result.artifacts)).toBe(canonicalJson(retained))
 }, 60_000)
