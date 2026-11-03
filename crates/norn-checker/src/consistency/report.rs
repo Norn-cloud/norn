@@ -192,6 +192,10 @@ fn correction_message(
 }
 
 fn schema_pin(schema: &Schema) -> serde_json::Value {
+    serde_json::json!(["norn.diagnosis-schema/1", schema_node(schema)])
+}
+
+fn schema_node(schema: &Schema) -> serde_json::Value {
     use serde_json::json;
     match schema {
         Schema::Object {
@@ -201,11 +205,11 @@ fn schema_pin(schema: &Schema) -> serde_json::Value {
             "object",
             properties
                 .iter()
-                .map(|(k, v)| (k, schema_pin(v)))
+                .map(|(k, v)| (k, schema_node(v)))
                 .collect::<std::collections::BTreeMap<_, _>>(),
             required
         ]),
-        Schema::Array(item) => json!(["array", schema_pin(item)]),
+        Schema::Array(item) => json!(["array", schema_node(item)]),
         Schema::String(values) => json!(["string", values]),
         Schema::Integer => json!(["integer"]),
         Schema::Number => json!(["number"]),
@@ -216,7 +220,7 @@ fn schema_pin(schema: &Schema) -> serde_json::Value {
         Schema::Boolean => json!(["boolean"]),
         Schema::Null => json!(["null"]),
         Schema::Json => json!(["json"]),
-        Schema::Nullable(item) => json!(["nullable", schema_pin(item)]),
+        Schema::Nullable(item) => json!(["nullable", schema_node(item)]),
     }
 }
 
@@ -264,7 +268,7 @@ mod tests {
         };
         assert_eq!(
             super::schema_pin(&schema).to_string(),
-            r#"["object",{"a":["string",["a","b"]],"z":["nullable",["decimal",["object",{"kind":["string","decimal"],"rounding":["string","half_even"],"scale":["number","2"]}]]]},["a","z"]]"#
+            r#"["norn.diagnosis-schema/1",["object",{"a":["string",["a","b"]],"z":["nullable",["decimal",["object",{"kind":["string","decimal"],"rounding":["string","half_even"],"scale":["number","2"]}]]]},["a","z"]]]"#
         );
     }
 }
