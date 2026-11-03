@@ -118,7 +118,7 @@ pub fn derive_metric_space(
         .iter()
         .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Law(_)))
         .filter_map(|artifact| {
-            let law: LawIR = serde_json::from_value(artifact.payload.to_json_value()).ok()?;
+            let law: LawIR = serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value()).ok()?).ok()?;
             if &law.scope.root != scope
                 || law.condition.is_some()
                 || law.timing.is_some()
@@ -614,7 +614,7 @@ mod tests {
         .expect("fixture");
         let mut entity = entities.remove(0);
         let mut root: EntityRootV2 =
-            serde_json::from_value(entity.payload.to_json_value()).expect("typed entity");
+            serde_json::from_value(serde_json::to_value(entity.payload.to_json_value()).expect("payload JSON")).expect("typed entity");
         root.object_type.name = ObjectTypeName("demo.Conversion".to_owned());
         root.object_type.links.clear();
         root.object_type.identity.clear();
@@ -630,14 +630,16 @@ mod tests {
                             code: "g".to_owned(),
                         }),
                         currency_source: None,
+                        rounding: None,
+                        per_unit: None,
                         additivity: PropertyAdditivity::Undeclared,
                     },
                 )
             })
             .collect();
         root.object_type.properties.extend([
-            property("name", PropertyType::Text {}),
-            property("metal", PropertyType::Text {}),
+            property("name", PropertyType::Text { format: None }),
+            property("metal", PropertyType::Text { format: None }),
             property(
                 "effective_at",
                 PropertyType::Timestamp {
@@ -660,7 +662,7 @@ mod tests {
                 .expect("law fixture");
         let mut artifact = laws.remove(0);
         let mut law: LawIR =
-            serde_json::from_value(artifact.payload.to_json_value()).expect("typed law");
+            serde_json::from_value(serde_json::to_value(artifact.payload.to_json_value()).expect("payload JSON")).expect("typed law");
         law.id = "demo.mass_conservation".to_owned();
         law.subject = "demo.Conversion".to_owned();
         law.modality = LawModality::Always {};
@@ -775,7 +777,7 @@ mod tests {
         for variant in 0..4 {
             let mut artifacts = fixture();
             let mut law: LawIR =
-                serde_json::from_value(artifacts[1].payload.to_json_value()).expect("law");
+                serde_json::from_value(serde_json::to_value(artifacts[1].payload.to_json_value()).expect("payload JSON")).expect("law");
             match variant {
                 0 => law.condition = Some(ZenExpression("self.metal == 'gold'".to_owned())),
                 1 => law.severity = LawSeverity::Warning,
@@ -806,7 +808,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let mut law: LawIR =
-            serde_json::from_value(artifacts[0].payload.to_json_value()).expect("law");
+            serde_json::from_value(serde_json::to_value(artifacts[0].payload.to_json_value()).expect("payload JSON")).expect("law");
         law.rationale.push_str(" (reviewed)");
         artifacts[0].payload = payload(&ArtifactKind::Law, &law);
         assert_ne!(
@@ -822,7 +824,7 @@ mod tests {
         let question = yield_question(&generated);
         let plan = generated.admit(&question, 100).expect("derived plan");
         let mut root: EntityRootV2 =
-            serde_json::from_value(artifacts[0].payload.to_json_value()).expect("entity");
+            serde_json::from_value(serde_json::to_value(artifacts[0].payload.to_json_value()).expect("payload JSON")).expect("entity");
         for property in &mut root.object_type.properties {
             if let PropertyType::Decimal { additivity, .. } = &mut property.property_type {
                 *additivity = PropertyAdditivity::Additive;
@@ -849,7 +851,7 @@ mod tests {
                 let decimal: norn_ir::Decimal = format!("{}.{:03}", value / 1000, value % 1000)
                     .parse()
                     .expect("exact grams");
-                RuntimeValue::Decimal(decimal)
+                RuntimeValue::Number(decimal)
             };
             let row = RuntimeObject::from([
                 ("name".to_owned(), RuntimeValue::from(columns[2])),
