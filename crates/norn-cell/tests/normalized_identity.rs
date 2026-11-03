@@ -156,23 +156,20 @@ fn concurrent_normalized_creates_have_one_winner_and_reopen_keeps_it() {
     let path = directory.path().join("identity.sqlite");
     drop(CellStore::open(&path, model(), StoreOptions::default()).expect("initialize"));
     let barrier = Arc::new(Barrier::new(2));
-    let workers: Vec<_> = [("a", " abc "), ("b", "ABC")]
-        .into_iter()
-        .map(|(id, code)| {
-            let path = path.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                let mut store =
-                    CellStore::open(&path, model(), StoreOptions::default()).expect("open writer");
-                barrier.wait();
-                store.commit(&batch(
-                    "org_a",
-                    "main",
-                    vec![put("identity.Child", id, code)],
-                ))
-            })
+    let workers = [("a", " abc "), ("b", "ABC")].map(|(id, code)| {
+        let path = path.clone();
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            let mut store =
+                CellStore::open(&path, model(), StoreOptions::default()).expect("open writer");
+            barrier.wait();
+            store.commit(&batch(
+                "org_a",
+                "main",
+                vec![put("identity.Child", id, code)],
+            ))
         })
-        .collect();
+    });
     let outcomes: Vec<_> = workers
         .into_iter()
         .map(|worker| worker.join().expect("join"))
