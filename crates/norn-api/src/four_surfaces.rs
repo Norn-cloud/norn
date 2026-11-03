@@ -24,7 +24,7 @@ use tower::ServiceExt;
 struct Demo;
 impl Authorizer for Demo {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
-        if request.actor == Some("demo") {
+        if matches!(request.actor, Some("demo" | "peer")) {
             Ok(())
         } else {
             DenyAll.authorize(request)
@@ -135,18 +135,41 @@ async fn process(program: String, args: Vec<String>, input: Value) -> (Value, bo
     .expect("process worker")
 }
 
+#[derive(Clone, Copy)]
+struct Metadata<'a> {
+    org: &'a str,
+    environment: &'a str,
+    version: u64,
+}
+const METADATA: Metadata<'static> = Metadata {
+    org: "org_surfaces",
+    environment: "dev",
+    version: 1,
+};
+
 async fn invoke(surface: &str, url: &str, actor: &str, input: Value, key: &str) -> (Value, bool) {
+    invoke_with_metadata(surface, url, actor, input, key, METADATA).await
+}
+
+async fn invoke_with_metadata(
+    surface: &str,
+    url: &str,
+    actor: &str,
+    input: Value,
+    key: &str,
+    metadata: Metadata<'_>,
+) -> (Value, bool) {
     let request =
-        json!({"actionId":"demo.melt.record", "version":1, "input":input, "idempotencyKey":key});
+        json!({"actionId":"demo.melt.record", "version":metadata.version, "input":input, "idempotencyKey":key});
     if surface == "cli" {
         let args = [
             "remote",
             "--url",
             &format!("{url}/mcp"),
             "--org",
-            "org_surfaces",
+            metadata.org,
             "--env",
-            "dev",
+            metadata.environment,
             "--dev-actor",
             actor,
             "call",
@@ -164,7 +187,7 @@ async fn invoke(surface: &str, url: &str, actor: &str, input: Value, key: &str) 
         .join("../../packages/norn-surface-acceptance/transport.mjs");
     let (reply, failed) = process(
         std::env::var("NORN_NODE").expect("NORN_NODE"), vec![driver.display().to_string()],
-        json!({"surface":surface,"url":url,"actor":actor,"actionId":"demo.melt.record","input":input,"idempotencyKey":key}),
+        json!({"surface":surface,"url":url,"actor":actor,"actionId":"demo.melt.record","input":input,"idempotencyKey":key,"org":metadata.org,"environment":metadata.environment,"version":metadata.version}),
     ).await;
     assert!(!failed, "transport driver process failed");
     let failed = reply["status"].as_u64().expect("HTTP status") >= 400;
@@ -354,5 +377,84 @@ async fn equivalent_governed_surfaces() {
     }
     for pair in states.windows(2) {
         assert_eq!(pair[0], pair[1], "complete committed tenant state");
+    }
+}
+
+
+/// SURFACE-ACTION-2 / SURFACE-DENY-1/2: metadata and retry state remain server-owned.
+#[tokio::test]
+#[ignore = "explicit transport acceptance requires compiled CLI and authored definitions"]
+async fn transport_metadata_and_refusal_key_conformance() {
+    let source = std::fs::read_to_string(
+        std::env::var("NORN_SURFACE_DEFINITIONS").expect("authored definitions path"),
+    ).expect("authored fixture");
+    let mut results = Vec::new();
+    let mut states = Vec::new();
+    for surface in ["http", "mcp", "cli"] {
+        let host = Arc::new(DevHost::new(
+            NativeEngine::open_in_memory().expect("fresh engine"),
+            &source,
+            CellScope { org_id: "org_surfaces".into(), environment_id: "dev".into() },
+            LogicalTime::EPOCH,
+        ).expect("admitted fresh tenant").with_authorizer(Demo));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("loopback");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let app = router(Arc::clone(&host));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let input = json!({"id":"metadata-1","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.800"});
+        let initial = dump(&host);
+        let mut refusals = Vec::new();
+        // Every rejected attempt uses the key that must still commit below.
+        for (metadata, actor, code) in [
+            (Metadata { org: "other", ..METADATA }, "demo", "scope.denied"),
+            (Metadata { environment: "other", ..METADATA }, "demo", "scope.denied"),
+            (Metadata { version: 0, ..METADATA }, "demo", "defs.stale"),
+            (METADATA, "forbidden", "authz.denied"),
+        ] {
+            let (refusal, failed) = invoke_with_metadata(surface, &url, actor, input.clone(), "metadata", metadata).await;
+            assert!(failed, "{surface}: {refusal}");
+            assert_eq!(refusal["code"], code);
+            assert_eq!(dump(&host), initial, "{code} consumes no successful-call key or effects");
+            refusals.push(refusal);
+        }
+        let (accepted, failed) = invoke(surface, &url, "demo", input.clone(), "metadata").await;
+        assert!(!failed, "{surface}: {accepted}");
+        assert_eq!(accepted["replayed"], false);
+        assert_eq!(accepted["record"]["actor"], "demo");
+        assert_eq!(accepted["record"]["actionArtifactId"], "demo.melt.record.action");
+        assert_eq!(accepted["record"]["actionVersion"], "0.1.0");
+        assert_eq!(accepted["record"]["input"], input);
+        let committed = dump(&host);
+        let mut changed = input.clone();
+        changed["id"] = json!("different-intent");
+        for (metadata, actor, args, code) in [
+            (METADATA, "forbidden", input.clone(), "authz.denied"),
+            (METADATA, "peer", input.clone(), "action.idempotency_conflict"),
+            (Metadata { version: 0, ..METADATA }, "demo", input.clone(), "defs.stale"),
+            (METADATA, "demo", changed, "action.idempotency_conflict"),
+        ] {
+            let (refusal, failed) = invoke_with_metadata(surface, &url, actor, args, "metadata", metadata).await;
+            assert!(failed, "{surface}: {refusal}");
+            assert_eq!(refusal["code"], code);
+            assert!(refusal.get("record").is_none(), "refusal discloses no success receipt");
+            assert_eq!(dump(&host), committed, "{code} mutates no persisted table");
+            refusals.push(refusal);
+        }
+        for retry in ["http", "mcp", "cli"] {
+            let (replayed, failed) = invoke(retry, &url, "demo", input.clone(), "metadata").await;
+            assert!(!failed, "{retry}: {replayed}");
+            assert_eq!(replayed["replayed"], true);
+            assert_eq!(replayed["record"], accepted["record"]);
+            assert_eq!(dump(&host), committed, "authorized retry adds no consequence");
+        }
+        results.push((accepted, refusals));
+        states.push(committed);
+        server.abort();
+    }
+    for pair in results.windows(2) {
+        assert_eq!(pair[0], pair[1], "complete receipts and refusal envelopes agree");
+    }
+    for pair in states.windows(2) {
+        assert_eq!(pair[0], pair[1], "complete committed tenant state agrees");
     }
 }
