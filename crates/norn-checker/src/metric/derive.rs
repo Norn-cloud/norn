@@ -832,8 +832,16 @@ mod tests {
             ["recovered", "input"]
         );
         let raw = EffectiveCatalog::from_artifacts(&artifacts);
-        let model = raw.object_type_named("demo.Conversion").expect("model").expect("available");
-        assert!(plan.properties().iter().all(|property| model.property(property.id.as_str()).is_some_and(|actual| property.same_contract(actual))), "native model contracts must remain unchanged by conservation evidence");
+        let model = raw
+            .object_type_named("demo.Conversion")
+            .expect("model")
+            .expect("available");
+        assert!(
+            plan.properties().iter().all(|property| model
+                .property(property.id.as_str())
+                .is_some_and(|actual| property.same_contract(actual))),
+            "native model contracts must remain unchanged by conservation evidence"
+        );
         let findings = compute::admit(plan.definitions(), &question, &raw, 100)
             .expect_err("raw undeclared terms remain closed");
         assert!(
