@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
-#[cfg(feature = "duckdb")]
-mod olap;
 /// Exact result membership and native fact evidence.
 pub mod lineage;
+#[cfg(feature = "duckdb")]
+mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;

@@ -162,7 +162,7 @@ fn scaled_row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWri
 fn rounding_and_declared_scales_preserve_envelopes_through_correction_and_retraction() {
     let id = "quoted'); DROP TABLE input;--";
     for (scales, input, recovered) in [
-        ([3, 3], 128, 1),
+        ([3, 3], 128, 1i64),
         ([3, 3], 128, -1),
         ([3, 3], -128, 1),
         ([3, 3], -128, -1),
