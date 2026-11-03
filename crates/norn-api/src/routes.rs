@@ -147,7 +147,7 @@ fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Res
             return Err(Refusal::host("retained artifact outside cell scope"));
         }
     }
-    norn_checker::verify_admission_receipt_sources(
+    norn_checker::receipt::verify_admission_receipt_sources(
         receipt,
         &installed.receipt_sha256,
         &sources,
