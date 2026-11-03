@@ -1,22 +1,16 @@
 //! Deterministic views of one structured requirement; display is never proof input.
-use crate::deontic::{DeonticModality, RequirementText, RequirementTiming, StructuredRequirement};
+use crate::deontic::{DeonticModality, RequirementTiming, StructuredRequirement};
 use crate::{LawModality, LawResponse, LawRoot};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementLocale {
-    En,
-    Ar,
-}
 
 /// A read-only editor projection carries the original IR, not a parsed sentence.
 /// UI consumers must honor `direction()` and render text as text, never HTML.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequirementView {
     pub requirement: StructuredRequirement,
-    pub locale: RequirementLocale,
+    pub locale: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,31 +38,18 @@ fn isolate(text: &str) -> String {
 }
 
 impl RequirementView {
-    #[must_use]
-    pub const fn direction(&self) -> &'static str {
-        self.word("ltr", "rtl")
+    /// # Errors
+    /// Refuses invalid wording or an unknown requested locale.
+    pub fn direction(&self) -> Result<&'static str, &'static str> {
+        Ok(self
+            .requirement
+            .wording
+            .locale(&self.locale)?
+            .direction
+            .as_str())
     }
 
-    const fn word<'a>(&self, en: &'a str, ar: &'a str) -> &'a str {
-        match self.locale {
-            RequirementLocale::En => en,
-            RequirementLocale::Ar => ar,
-        }
-    }
-
-    fn template(&self, text: &RequirementText) -> String {
-        visible(self.word(&text.en, &text.ar))
-    }
-
-    fn slot(&self, pointer: &str, en: &str, ar: &str, text: String) -> RequirementSlot {
-        RequirementSlot {
-            id: format!("{}#{pointer}", self.requirement.norm.law.id),
-            label: self.word(en, ar).into(),
-            text,
-        }
-    }
-
-    /// Both languages expose identical semantic slots in identical order.
+    /// All locales expose identical semantic slots in identical order.
     /// LTR identifiers/expressions use Unicode isolates inside RTL sentences.
     ///
     /// # Errors
@@ -86,16 +67,16 @@ impl RequirementView {
         {
             return Err("law.validation.invalid_document");
         }
-        let w = &r.wording;
+        let w = r.wording.locale(&self.locale)?;
         let root = match &law.scope.root {
-            LawRoot::Company(id) => format!("{} {}", self.word("company", "شركة"), isolate(id)),
-            LawRoot::App(id) => format!("{} {}", self.word("application", "تطبيق"), isolate(id)),
-            LawRoot::Cell(id) => format!("{} {}", self.word("cell", "خلية"), isolate(id)),
-            LawRoot::Entity(id) => format!("{} {}", self.word("entity", "كيان"), isolate(id)),
+            LawRoot::Company(id) => format!("{} {}", visible(&w.terms.company), isolate(id)),
+            LawRoot::App(id) => format!("{} {}", visible(&w.terms.application), isolate(id)),
+            LawRoot::Cell(id) => format!("{} {}", visible(&w.terms.cell), isolate(id)),
+            LawRoot::Entity(id) => format!("{} {}", visible(&w.terms.entity), isolate(id)),
         };
         let mut scope = vec![format!(
             "{}; {root}; {}",
-            self.template(&w.scope),
+            visible(&w.scope),
             isolate(&law.scope.object_types.join(", "))
         )];
         for state in &law.scope.lifecycle_states {
@@ -108,13 +89,13 @@ impl RequirementView {
         if !law.scope.commitments.is_empty() {
             scope.push(format!(
                 "; {} {}",
-                self.word("commitments", "الالتزامات"),
+                visible(&w.terms.commitments),
                 isolate(&law.scope.commitments.join(", "))
             ));
         }
         let activation = format!(
             "{}; {}",
-            self.template(&w.activation),
+            visible(&w.activation),
             isolate(law.condition.as_ref().map_or("true", |c| c.0.as_str()))
         );
         let response = match &law.response {
@@ -128,15 +109,13 @@ impl RequirementView {
             }
         };
         let grade = match r.norm.modality {
-            DeonticModality::Obligation => self.word("must", "يجب"),
-            DeonticModality::Permission => {
-                self.word("may (no authorization grant)", "يجوز (لا يمنح صلاحية)")
-            }
-            DeonticModality::Prohibition => self.word("must not", "يُحظر"),
+            DeonticModality::Obligation => visible(&w.terms.obligation),
+            DeonticModality::Permission => visible(&w.terms.permission),
+            DeonticModality::Prohibition => visible(&w.terms.prohibition),
         };
         let timing = match r.timing {
-            RequirementTiming::SameCommit => self.word("same commit", "التثبيت نفسه"),
-            RequirementTiming::EveryCommittedState => self.word("every state", "كل حالة مثبتة"),
+            RequirementTiming::SameCommit => visible(&w.terms.same_commit),
+            RequirementTiming::EveryCommittedState => visible(&w.terms.every_committed_state),
         };
         let source = format!(
             "{}@{}; {}#{}",
@@ -146,35 +125,45 @@ impl RequirementView {
             r.norm.source.pointer
         );
         let source = isolate(&source);
-        let component = format!("{}; {}", self.template(&w.component), isolate(&law.subject));
-        let response = format!("{}; {}", self.template(&w.response), isolate(&response));
+        let component = format!("{}; {}", visible(&w.component), isolate(&law.subject));
+        let response = format!("{}; {}", visible(&w.response), isolate(&response));
         let preferred = format!(
             "{}; {}",
-            self.word("requires grounding", "يتطلب التأصيل"),
+            visible(&w.terms.grounding),
             isolate(&r.norm.defeated_by.join(", "))
         );
         let mut slots = vec![
-            self.slot("/norm/law/scope", "Scope", "النطاق", scope.join("")),
-            self.slot("/norm/law/condition", "Condition", "الشرط", activation),
-            self.slot("/norm/law/subject", "Component", "المكوّن", component),
-            self.slot("/norm/modality", "Grade", "الحكم", grade.into()),
-            self.slot("/timing", "Timing", "التوقيت", timing.into()),
-            self.slot("/norm/law/response", "Response", "الاستجابة", response),
-            self.slot("/norm/source", "Unverified source", "مصدر بلا تحقق", source),
-            self.slot("/norm/defeatedBy", "Preferences", "تفضيلات", preferred),
+            slot(&law.id, "/norm/law/scope", &w.labels.scope, scope.join("")),
+            slot(
+                &law.id,
+                "/norm/law/condition",
+                &w.labels.condition,
+                activation,
+            ),
+            slot(&law.id, "/norm/law/subject", &w.labels.component, component),
+            slot(&law.id, "/norm/modality", &w.labels.grade, grade),
+            slot(&law.id, "/timing", &w.labels.timing, timing),
+            slot(&law.id, "/norm/law/response", &w.labels.response, response),
+            slot(&law.id, "/norm/source", &w.labels.source, source),
+            slot(
+                &law.id,
+                "/norm/defeatedBy",
+                &w.labels.preferences,
+                preferred,
+            ),
         ];
         let mut exceptions = std::collections::BTreeSet::new();
         for e in &r.norm.exceptions {
             if !exceptions.insert(&e.id) {
                 return Err("law.validation.invalid_document");
             }
-            slots.push(self.slot(
+            slots.push(slot(
+                &law.id,
                 &format!(
                     "/norm/exceptions/by-id/{}",
                     e.id.replace('~', "~0").replace('/', "~1")
                 ),
-                "Exception",
-                "استثناء",
+                &w.labels.exception,
                 isolate(&format!(
                     "{}; {}#{}",
                     e.condition.0, e.source.artifact_id, e.source.pointer
@@ -183,4 +172,18 @@ impl RequirementView {
         }
         Ok(slots)
     }
+}
+
+fn slot(law_id: &str, pointer: &str, label: &str, text: String) -> RequirementSlot {
+    RequirementSlot {
+        id: format!("{law_id}#{pointer}"),
+        label: visible(label),
+        text,
+    }
+}
+
+/// Public requested-locale inspection contract.
+#[must_use]
+pub fn requirement_view_schema() -> schemars::Schema {
+    schemars::schema_for!(RequirementView)
 }

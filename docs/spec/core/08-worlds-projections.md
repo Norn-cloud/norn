@@ -68,3 +68,23 @@ Present: `crates/norn-kernel/src/observations.rs`, `crates/norn-cell/src/{histor
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
 Store format `norn.cell.store/8` requires these receipt commitments. Pre-change `/7` stores, like formats `/2` through `/6`, must be recreated; opening them refuses before history verification. Never derive commitments from mutable legacy rows.
+
+### READ-LOCAL-1 — local read evidence
+
+A `norn.cell.read/v1` envelope carries one `(cell, world, revision)` frontier,
+completeness, exact-versus-stale semantics, definition generation/model/admission
+pins, and the existing CommitBinding policy/resource/authorization epoch pins.
+It never claims a global snapshot. Stale evidence retains its own local frontier.
+Token reuse compares the entire trusted context; exact requests refuse stale or
+partial evidence. Tokens describe authorized results and grant no authority.
+
+The native point-read envelope captures its value, durable cell identity,
+revision and definition pins in one store transaction. The server supplies its
+current authorized CommitBinding; resource mismatch refuses. This native profile
+supports main only. Internal `load` stays local, and legacy unqualified stores
+cannot issue portable tokens. No multi-cell vector, migration, or new authority
+model is introduced.
+
+Named scenarios: **READ-CONTEXT** refuses reuse across cell, world, revision,
+definition and authority contexts; **READ-EXACT** refuses stale/partial evidence;
+**READ-SNAPSHOT** binds the existing native point-read result to its local cut.
