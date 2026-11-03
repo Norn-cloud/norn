@@ -50,8 +50,8 @@ export function RestatementCard() {
       </CardHeader>
       <CardContent className="space-y-8">
         {restated(published, after, then).map((change) => (
-          <div key={change.corrected.key} className="space-y-4">
-            <h3 className="font-medium">{change.corrected.label}</h3>
+          <div key={change.key} className="space-y-4">
+            <h3 className="font-medium">{change.label}</h3>
             <div className="grid gap-4 md:grid-cols-3">
               <Reading title="Published" when={read(answer.document)} bucket={change.published} />
               <Reading title="Corrected" when={read(corrected.document)} bucket={change.corrected} />
@@ -59,7 +59,7 @@ export function RestatementCard() {
                 title={`As known on ${day(asOf.document.knowledgeTimeMs)}`}
                 when={`Read again after the correction, at the earlier cutoff (${changes(asOf.document.result.knownAsOf)})`}
                 bucket={change.asOf}
-                note={change.asOf && (sameAnswer(change.asOf, change.published) ? "Exactly the published answer." : "Differs from the published answer.")}
+                note={change.asOf && change.published && (sameAnswer(change.asOf, change.published) ? "Exactly the published answer." : "Differs from the published answer.")}
               />
             </div>
             <Table>

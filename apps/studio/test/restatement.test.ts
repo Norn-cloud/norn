@@ -25,10 +25,10 @@ const then = buckets(declared, { answer: asOf.document.result, numbers: asOf.num
 
 test("only the corrected week is restated: 294 g / 300 g = 0.98 becomes 292.5 g / 300 g = 0.975", () => {
   const changes = restated(published, corrected, then)
-  expect(changes.map(({ corrected: { label } }) => label)).toEqual(["Week of 19 Oct 2026"])
+  expect(changes.map(({ label }) => label)).toEqual(["Week of 19 Oct 2026"])
   const [change] = changes
-  expect([change?.published.value, change?.published.totals]).toEqual(["0.98", ["294 g", "300 g"]])
-  expect([change?.corrected.value, change?.corrected.totals]).toEqual(["0.975", ["292.5 g", "300 g"]])
+  expect([change?.published?.value, change?.published?.totals]).toEqual(["0.98", ["294 g", "300 g"]])
+  expect([change?.corrected?.value, change?.corrected?.totals]).toEqual(["0.975", ["292.5 g", "300 g"]])
 })
 
 test("the corrected record is named with both versions it was counted at", () => {
@@ -42,10 +42,17 @@ test("the corrected record is named with both versions it was counted at", () =>
 
 test("read at the earlier cutoff, the published answer is still exactly 0.98", () => {
   const [change] = restated(published, corrected, then)
-  expect(change?.asOf && sameAnswer(change.asOf, change.published)).toBe(true)
+  expect(change?.asOf && change.published && sameAnswer(change.asOf, change.published)).toBe(true)
   expect(change?.asOf?.value).toBe("0.98")
 })
 
 test("identical reads restate nothing", () => {
   expect(restated(published, published, then)).toEqual([])
+})
+
+test("a period the correction empties is still restated, with nothing on the corrected side", () => {
+  const week = published.find(({ label }) => label === "Week of 19 Oct 2026")
+  const changes = restated(published, corrected.filter(({ key }) => key !== week?.key), then)
+  expect(changes.map(({ label, published: was, corrected: is }) => [label, was?.value, is])).toEqual([["Week of 19 Oct 2026", "0.98", undefined]])
+  expect(changes[0]?.records.map(({ id, corrected: is }) => [id, is])).toEqual(week?.members.map(({ id }) => [id, undefined]))
 })
