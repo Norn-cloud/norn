@@ -901,6 +901,32 @@
         },
         "additionalProperties": false
       },
+      "NornHistoricalQuestionResult": {
+        "type": "object",
+        "description": "An answer read at a knowledge cutoff, beside its historical world.",
+        "required": [
+          "world",
+          "knowledgeTimeMs",
+          "result"
+        ],
+        "properties": {
+          "knowledgeTimeMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Inclusive receipt clock of the knowledge cutoff, in milliseconds.",
+            "minimum": 0
+          },
+          "result": {
+            "$ref": "#/components/schemas/NornQueryResult",
+            "description": "The exact answer, including its effective cutoff and versioned members."
+          },
+          "world": {
+            "$ref": "#/components/schemas/NornWorld",
+            "description": "Historical commit authority; source world and scope remain in the result."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornInheritedLawOrigin": {
         "type": "object",
         "description": "Exact origin of a law inherited from an installed composition pack.",
@@ -1882,6 +1908,16 @@
         },
         "additionalProperties": false
       },
+      "NornIrAdditivityAxis": {
+        "type": "string",
+        "description": "The axis on which a metric is semi-additive.",
+        "enum": [
+          "time"
+        ],
+        "x-enumDescriptions": [
+          "The declared time dimension."
+        ]
+      },
       "NornIrApiKeyFormat": {
         "oneOf": [
           {
@@ -2190,6 +2226,16 @@
         "description": "An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone.",
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
       },
+      "NornIrCalendarPolicy": {
+        "type": "string",
+        "description": "Calendar semantics, independent of the query window. Future calendar\nsystems require new explicit variants; existing boundaries never change.",
+        "enum": [
+          "iso_utc"
+        ],
+        "x-enumDescriptions": [
+          "Gregorian UTC buckets; ISO weeks start Monday. Dates mean UTC midnight."
+        ]
+      },
       "NornIrCodeSet": {
         "type": "object",
         "description": "A closed set of values of one field.",
@@ -2266,6 +2312,25 @@
           "gt",
           "ge"
         ]
+      },
+      "NornIrComparisonMetricMapping": {
+        "type": "object",
+        "description": "One explicit actual-to-reference metric alignment. A mapping is complete\nand bijective; dimensions use identical paths and windows must agree.",
+        "required": [
+          "metric",
+          "referenceMetric"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "description": "Metric selected in the actual question."
+          },
+          "referenceMetric": {
+            "type": "string",
+            "description": "Compatible metric selected in the reference question."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrComponentNormalization": {
         "type": "object",
@@ -3755,6 +3820,25 @@
           "\t"
         ]
       },
+      "NornIrCurrencyConversion": {
+        "type": "object",
+        "description": "Explicit source-to-target conversion, before any aggregation.",
+        "required": [
+          "target",
+          "rate"
+        ],
+        "properties": {
+          "rate": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Dimensionless decimal rate (target units per source unit) at measure grain."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target ISO 4217 code."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrCustomizationApproval": {
         "type": "object",
         "description": "Approval state of a customization.",
@@ -4188,6 +4272,320 @@
           "policy"
         ]
       },
+      "NornIrDataQualityFinding": {
+        "type": "object",
+        "title": "DataQualityFinding",
+        "description": "One persisted, versioned finding about observed or projected data.",
+        "required": [
+          "schemaVersion",
+          "id",
+          "dedupeKey",
+          "ruleRef",
+          "subjects",
+          "severity",
+          "message",
+          "outcome",
+          "provenance",
+          "firstSeen",
+          "lastSeen",
+          "status"
+        ],
+        "properties": {
+          "dedupeKey": {
+            "type": "string",
+            "description": "Replay-stable identity of the rule failure and its evidence."
+          },
+          "evidenceDigest": {
+            "type": "string",
+            "description": "Optional digest of candidate values or other stable evidence context.\nIncluding this distinguishes changed invalid values for the same rule\nand subject while leaving volatile timestamps out of the key."
+          },
+          "firstSeen": {
+            "type": "string",
+            "description": "When this finding was first observed.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id derived from the dedupe key."
+          },
+          "lastSeen": {
+            "type": "string",
+            "description": "When this finding was most recently observed.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable summary of the finding."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NornIrDataQualityOutcome",
+            "description": "Typed result and evidence for the failed expectation."
+          },
+          "provenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrDataQualityLineage"
+            },
+            "description": "Source records and observations that contributed to the finding."
+          },
+          "ruleRef": {
+            "$ref": "#/components/schemas/NornIrDataQualityRuleRef",
+            "description": "The declared constraint or built-in rule, including its version."
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "format": "uint16",
+            "description": "The finding schema version ([`DATA_QUALITY_FINDING_VERSION`]).",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "severity": {
+            "type": "string",
+            "description": "The finding's severity.",
+            "enum": [
+              "info",
+              "warning",
+              "error",
+              "critical"
+            ],
+            "x-enumDescriptions": [
+              "Informational evidence that needs no immediate action.",
+              "An expectation failed and should be reviewed.",
+              "The data blocks a normal workflow or projection.",
+              "The data presents an urgent integrity or authorization concern."
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "Current state of the finding.",
+            "enum": [
+              "open",
+              "acknowledged",
+              "resolved",
+              "superseded"
+            ],
+            "x-enumDescriptions": [
+              "The finding has not been reviewed or resolved.",
+              "A person or process accepted responsibility for the finding.",
+              "The latest data no longer exhibits the finding.",
+              "A newer finding or rule version replaced this finding."
+            ]
+          },
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrDataQualitySubject"
+            },
+            "description": "Objects affected by the finding, sorted by type and key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDataQualityFindingStatus": {
+        "type": "string",
+        "description": "The lifecycle state of a data quality finding.",
+        "enum": [
+          "open",
+          "acknowledged",
+          "resolved",
+          "superseded"
+        ],
+        "x-enumDescriptions": [
+          "The finding has not been reviewed or resolved.",
+          "A person or process accepted responsibility for the finding.",
+          "The latest data no longer exhibits the finding.",
+          "A newer finding or rule version replaced this finding."
+        ]
+      },
+      "NornIrDataQualityLineage": {
+        "type": "object",
+        "description": "One source and observation lineage contributing evidence to a finding.",
+        "required": [
+          "provenance"
+        ],
+        "properties": {
+          "observationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stable ids of observations that contributed to this evidence."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/NornIrInstanceProvenance",
+            "description": "The provenance-bearing source fact."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrDataQualityOutcome": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "An invariant expression evaluated to `false`.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not_satisfied"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The expression produced a non-boolean value.",
+            "required": [
+              "kind",
+              "actual"
+            ],
+            "properties": {
+              "actual": {
+                "type": "string",
+                "description": "The expression value's stable debug form."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "non_boolean"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The expression could not be evaluated under the admitted runtime.",
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "evaluation_failed"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "The bounded evaluator's explanation."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An observed lifecycle state was outside the declared transition graph.",
+            "required": [
+              "kind",
+              "property",
+              "state",
+              "reason"
+            ],
+            "properties": {
+              "from": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The current lifecycle state, or `None` when starting from initial."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "observed_out_of_band"
+                ]
+              },
+              "property": {
+                "type": "string",
+                "description": "The lifecycle property.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why no unique shortest path reached the observed state.",
+                "enum": [
+                  "no_declared_path",
+                  "ambiguous_shortest_path"
+                ],
+                "x-enumDescriptions": [
+                  "No declared transition path reaches the observed target.",
+                  "More than one shortest declared transition path reaches the target."
+                ]
+              },
+              "state": {
+                "type": "string",
+                "description": "The state reported by the source."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "An external observation contained a value that violates temporal rules.",
+            "required": [
+              "kind",
+              "property",
+              "value",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invalid_temporal_observation"
+                ]
+              },
+              "property": {
+                "type": "string",
+                "description": "The temporal property.",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "reason": {
+                "type": "string",
+                "description": "The stable temporal validation reason."
+              },
+              "value": {
+                "type": "string",
+                "description": "The exact invalid value reported by the source."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A row was excluded from the trusted identity projection.",
+            "required": [
+              "kind",
+              "code",
+              "detail"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable code for the identity projection defect."
+              },
+              "detail": {
+                "type": "string",
+                "description": "Concise reason that omits property values."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "identity_projection_isolation"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "The result of evaluating a rule or constraint against data."
+      },
       "NornIrDataQualityRuleRef": {
         "oneOf": [
           {
@@ -4281,6 +4679,42 @@
           }
         ],
         "description": "A stable reference to the constraint or rule that produced a finding."
+      },
+      "NornIrDataQualitySeverity": {
+        "type": "string",
+        "description": "How serious a data quality finding is.",
+        "enum": [
+          "info",
+          "warning",
+          "error",
+          "critical"
+        ],
+        "x-enumDescriptions": [
+          "Informational evidence that needs no immediate action.",
+          "An expectation failed and should be reviewed.",
+          "The data blocks a normal workflow or projection.",
+          "The data presents an urgent integrity or authorization concern."
+        ]
+      },
+      "NornIrDataQualitySubject": {
+        "type": "object",
+        "description": "An object affected by a finding.",
+        "required": [
+          "objectType",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The object's identity key."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrDatasetKind": {
         "type": "string",
@@ -5694,6 +6128,53 @@
         "description": "The namespace a tenant (or a package) adds members under (`acme`).\nAllocated by the registry (T8-REG-4); unique per tenant.",
         "pattern": "^[a-z][a-z0-9]*$"
       },
+      "NornIrFactRef": {
+        "type": "object",
+        "description": "One committed version of one object: the unit lineage cites.\n\nVersions start at `1` and bump with every committed write to the object\n(the cell's owner version), so `(objectType, key, version)` names one\nimmutable fact.",
+        "required": [
+          "objectType",
+          "key",
+          "version"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The object's identity key value."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The object version this fact is.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrFilterOperator": {
+        "type": "string",
+        "description": "Comparison operators for exact typed literals.",
+        "enum": [
+          "eq",
+          "ne",
+          "lt",
+          "le",
+          "gt",
+          "ge"
+        ],
+        "x-enumDescriptions": [
+          "Equality.",
+          "Inequality.",
+          "Less than.",
+          "Less than or equal.",
+          "Greater than.",
+          "Greater than or equal."
+        ]
+      },
       "NornIrFlowSourceMap": {
         "type": "object",
         "title": "FlowSourceMap",
@@ -6048,6 +6529,81 @@
           "integer"
         ]
       },
+      "NornIrFreshnessPolicy": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Live series with a bounded age in milliseconds.",
+            "required": [
+              "kind",
+              "maxAgeMs"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "live"
+                ]
+              },
+              "maxAgeMs": {
+                "type": "integer",
+                "format": "uint64",
+                "description": "Positive age bound.",
+                "maximum": 9007199254740992,
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Delayed series with a bounded age in milliseconds.",
+            "required": [
+              "kind",
+              "maxAgeMs"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "delayed"
+                ]
+              },
+              "maxAgeMs": {
+                "type": "integer",
+                "format": "uint64",
+                "description": "Positive age bound.",
+                "maximum": 9007199254740992,
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Reproducible historical view.",
+            "required": [
+              "kind",
+              "at"
+            ],
+            "properties": {
+              "at": {
+                "type": "string",
+                "description": "UTC instant.",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "as_of"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Declarative freshness requirement; it chooses no runtime in this slice."
+      },
       "NornIrGapReason": {
         "type": "string",
         "description": "Why a target member is not mapped.",
@@ -6259,6 +6815,123 @@
           "reason": {
             "type": "string",
             "description": "Why it is not read."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrIncrementalHint": {
+        "type": "string",
+        "description": "Declarative incremental hint.",
+        "enum": [
+          "recompute",
+          "ledger_delta"
+        ],
+        "x-enumDescriptions": [
+          "Recompute from the authorized object population.",
+          "Request maintenance from cell-ledger changes."
+        ]
+      },
+      "NornIrInlineAggregation": {
+        "type": "object",
+        "description": "Inline aggregate; lowered through the same definition checker as named metrics.",
+        "required": [
+          "name",
+          "agg",
+          "aggTimeDimension",
+          "x-norn"
+        ],
+        "properties": {
+          "agg": {
+            "type": "string",
+            "description": "Aggregate operator.",
+            "enum": [
+              "sum",
+              "count",
+              "min",
+              "max",
+              "average",
+              "count_distinct"
+            ],
+            "x-enumDescriptions": [
+              "Exact total.",
+              "Count objects or non-null property values.",
+              "Minimum value.",
+              "Maximum value.",
+              "Arithmetic mean.",
+              "Count distinct property values."
+            ]
+          },
+          "aggTimeDimension": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Time dimension at the terminal population."
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique selection name, usable by aggregate/compare."
+          },
+          "property": {
+            "type": "string",
+            "description": "Stored property, omitted only for object count.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "x-norn": {
+            "$ref": "#/components/schemas/NornIrMetricNorn",
+            "description": "Conservative governance; the same rules apply as named metrics."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrInstanceProvenance": {
+        "type": "object",
+        "description": "Where one instance (or one version of it) came from: one record per\ncontributing source record. See the module docs.",
+        "required": [
+          "source",
+          "mappingVersion",
+          "recordedAt"
+        ],
+        "properties": {
+          "mappingVersion": {
+            "type": "string",
+            "description": "The mapping version that produced it."
+          },
+          "markings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMarkingId"
+            },
+            "description": "Effective classifications propagated from the value-producing and\nidentity-source fields, guards, and parent collections. Omitted when\nempty for older or unmarked facts."
+          },
+          "observedAt": {
+            "type": "string",
+            "description": "When the source system reported the record, when it says so.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          },
+          "recordedAt": {
+            "type": "string",
+            "description": "When Norn recorded the fact.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrSourceRecordRef",
+            "description": "The source record the fact was produced from."
+          },
+          "sourceFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Source fields read by the value-producing expression, plus the map's\nsubject, source-record, and guard expressions, in mapping source order.\nNested property reads include the parent collection and qualified child\npredicate/value fields (`collection.field`).\nOmitted when unavailable or empty."
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform within that mapping (a mapping rule id such as\n`sales_order.header`); omitted when the mapping has one."
+          },
+          "upstream": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrFactRef"
+            },
+            "description": "The upstream facts the transform read, in mapping order. Omitted when\nempty (the fact came from the source record alone)."
           }
         },
         "additionalProperties": false
@@ -8654,6 +9327,10 @@
           "related_match"
         ]
       },
+      "NornIrMappingVersion": {
+        "type": "string",
+        "description": "The version of the mapping that produced a fact\n(`erpnext.sales_order@3`): the `Mapping` technical-view object it names."
+      },
       "NornIrMarkingCatalogRootV2": {
         "type": "object",
         "description": "EntityIR v2 payload of an `entity` artifact that carries data marking\ndefinitions.",
@@ -8843,6 +9520,26 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrMeasureAggregate": {
+        "type": "string",
+        "description": "Base aggregate operators. Count without a property counts objects.",
+        "enum": [
+          "sum",
+          "count",
+          "min",
+          "max",
+          "average",
+          "count_distinct"
+        ],
+        "x-enumDescriptions": [
+          "Exact total.",
+          "Count objects or non-null property values.",
+          "Minimum value.",
+          "Maximum value.",
+          "Arithmetic mean.",
+          "Count distinct property values."
+        ]
       },
       "NornIrMember": {
         "oneOf": [
@@ -9116,6 +9813,306 @@
             "format": "uint64",
             "description": "Maximum incremental working allocation per admitted turn, in bytes.",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricAdditivity": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Sum across any dimension, including time.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "additive"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Sum across non-time axes; use the declared reduction along time.",
+            "required": [
+              "kind",
+              "over",
+              "aggregate"
+            ],
+            "properties": {
+              "aggregate": {
+                "type": "string",
+                "description": "One of first/last/min/max; sum is rejected by the checker.",
+                "enum": [
+                  "sum",
+                  "first",
+                  "last",
+                  "min",
+                  "max"
+                ],
+                "x-enumDescriptions": [
+                  "Total across admitted axes.",
+                  "First value in time order.",
+                  "Last value in time order.",
+                  "Minimum.",
+                  "Maximum."
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "semi_additive"
+                ]
+              },
+              "over": {
+                "type": "string",
+                "description": "Restricted axis.",
+                "enum": [
+                  "time"
+                ],
+                "x-enumDescriptions": [
+                  "The declared time dimension."
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Must be computed from underlying objects for each requested bucket.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "non_additive"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "Algebraic contract for re-aggregation."
+      },
+      "NornIrMetricAuthorization": {
+        "type": "object",
+        "description": "Authorization remains a runtime boundary; checker admission never grants access.",
+        "required": [
+          "action",
+          "minGroupSize"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Named authorization action evaluated for the object population."
+          },
+          "minGroupSize": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Minimum distinct objects allowed in disclosed buckets.",
+            "maximum": 9007199254740992,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricCurrency": {
+        "type": "object",
+        "description": "Currency binding; the amount itself remains an ontology decimal property.",
+        "required": [
+          "property"
+        ],
+        "properties": {
+          "conversion": {
+            "$ref": "#/components/schemas/NornIrCurrencyConversion",
+            "description": "Required when summing a source whose currency is not a singleton enum."
+          },
+          "property": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "ISO 4217 registry property or a closed currency-code enum."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricFilter": {
+        "type": "object",
+        "description": "A predicate over a resolved property; numeric values retain exact decimals.",
+        "required": [
+          "path",
+          "operator",
+          "value"
+        ],
+        "properties": {
+          "operator": {
+            "type": "string",
+            "description": "Operator compatible with the property's type.",
+            "enum": [
+              "eq",
+              "ne",
+              "lt",
+              "le",
+              "gt",
+              "ge"
+            ],
+            "x-enumDescriptions": [
+              "Equality.",
+              "Inequality.",
+              "Less than.",
+              "Less than or equal.",
+              "Greater than.",
+              "Greater than or equal."
+            ]
+          },
+          "path": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Relative property path. To-many filters are existential predicates."
+          },
+          "value": {
+            "$ref": "#/components/schemas/NornIrJsonValue",
+            "description": "Exact runtime literal checked against the effective property contract."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricNorn": {
+        "type": "object",
+        "description": "Norn policy extension. Units are derived from typed properties, never asserted here.",
+        "required": [
+          "irVersion",
+          "additivity",
+          "owner",
+          "certified"
+        ],
+        "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrMetricAdditivity",
+            "description": "Conservative scalar roll-up policy."
+          },
+          "authz": {
+            "$ref": "#/components/schemas/NornIrMetricAuthorization",
+            "description": "Explicit authorization and aggregate disclosure requirements."
+          },
+          "certified": {
+            "type": "boolean",
+            "description": "Certification does not grant access."
+          },
+          "currency": {
+            "$ref": "#/components/schemas/NornIrMetricCurrency",
+            "description": "Optional FX conversion; authoritative currency comes from the amount type."
+          },
+          "defaultFilters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMetricFilter"
+            },
+            "description": "Exact predicates applied before aggregation."
+          },
+          "derived": {
+            "$ref": "#/components/schemas/NornIrMetricPropertySemantics",
+            "description": "Generated inspection metadata, never an author assertion."
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/NornIrFreshnessPolicy",
+            "description": "Definition freshness requirement."
+          },
+          "incremental": {
+            "type": "string",
+            "description": "Maintenance hint only; no incremental engine is selected.",
+            "enum": [
+              "recompute",
+              "ledger_delta"
+            ],
+            "x-enumDescriptions": [
+              "Recompute from the authorized object population.",
+              "Request maintenance from cell-ledger changes."
+            ]
+          },
+          "irVersion": {
+            "type": "string",
+            "description": "Norn extension version.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "description": "Accountable owner."
+          },
+          "safeAggregation": {
+            "type": "string",
+            "description": "Identity deduplication within each bucket.",
+            "enum": [
+              "symmetric"
+            ],
+            "x-enumDescriptions": [
+              "Deduplicate measure object identities within each output bucket, including\ncombinations of multiple fan-out paths. Never deduplicate by measure value."
+            ]
+          },
+          "timeDimension": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Time binding for composite metrics; simple metrics use agg_time_dimension."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricPropertySemantics": {
+        "type": "object",
+        "description": "Generated type semantics for inspecting a standalone metric file.",
+        "properties": {
+          "currencySource": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Authoritative source attached to a monetary decimal type."
+          },
+          "unit": {
+            "$ref": "#/components/schemas/NornIrUnitRef",
+            "description": "Quantity unit of the underlying property; counts and ratios are dimensionless."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricRollup": {
+        "type": "object",
+        "description": "Explicit roll-up of previously aggregated results.",
+        "required": [
+          "aggregate",
+          "across",
+          "overTime"
+        ],
+        "properties": {
+          "across": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrDimensionPath"
+            },
+            "description": "Requested dimensions being collapsed."
+          },
+          "aggregate": {
+            "type": "string",
+            "description": "Reduction operator.",
+            "enum": [
+              "sum",
+              "first",
+              "last",
+              "min",
+              "max"
+            ],
+            "x-enumDescriptions": [
+              "Total across admitted axes.",
+              "First value in time order.",
+              "Last value in time order.",
+              "Minimum.",
+              "Maximum."
+            ]
+          },
+          "overTime": {
+            "type": "boolean",
+            "description": "Also collapse the metric's time axis (even if not in dimensions)."
           }
         },
         "additionalProperties": false
@@ -10963,6 +11960,259 @@
           "migration",
           "import",
           "system"
+        ]
+      },
+      "NornIrQuestion": {
+        "type": "object",
+        "title": "QuestionIR",
+        "description": "A serializable analytical question over checked metrics.",
+        "required": [
+          "irVersion",
+          "name",
+          "objectSet",
+          "aggregate",
+          "window",
+          "freshness"
+        ],
+        "properties": {
+          "aggregate": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrQuestionMetric"
+            },
+            "description": "Non-empty selected metrics."
+          },
+          "calendar": {
+            "type": "string",
+            "description": "Explicit bucket calendar; omitted means immutable ISO/Gregorian UTC.",
+            "default": "iso_utc",
+            "enum": [
+              "iso_utc"
+            ],
+            "x-enumDescriptions": [
+              "Gregorian UTC buckets; ISO weeks start Monday. Dates mean UTC midnight."
+            ]
+          },
+          "compare": {
+            "$ref": "#/components/schemas/NornIrQuestionComparison",
+            "description": "Optional comparison; every named question is resolved and cycle-checked."
+          },
+          "filter": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMetricFilter"
+            },
+            "description": "Additional predicates."
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/NornIrFreshnessPolicy",
+            "description": "Freshness requirement."
+          },
+          "groupBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrQuestionDimension"
+            },
+            "description": "Relative paths resolved for every underlying measure."
+          },
+          "irVersion": {
+            "type": "string",
+            "description": "Contract version.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique dotted lower-case name."
+          },
+          "objectSet": {
+            "type": "string",
+            "description": "Starting object population.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          },
+          "searchAround": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLinkId"
+            },
+            "description": "Link traversal producing a deduplicated terminal object population."
+          },
+          "window": {
+            "$ref": "#/components/schemas/NornIrQuestionTimeWindow",
+            "description": "Half-open UTC interval."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrQuestionComparison": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Immediately preceding window of the same duration.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "previous_period"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Another checked question providing planned values.",
+            "required": [
+              "kind",
+              "question"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "plan"
+                ]
+              },
+              "mapping": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NornIrComparisonMetricMapping"
+                },
+                "description": "Empty means identity mapping; otherwise map every selected metric."
+              },
+              "question": {
+                "type": "string",
+                "description": "Question name."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Another checked question providing forecast values.",
+            "required": [
+              "kind",
+              "question"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "forecast"
+                ]
+              },
+              "mapping": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NornIrComparisonMetricMapping"
+                },
+                "description": "Empty means identity mapping; otherwise map every selected metric."
+              },
+              "question": {
+                "type": "string",
+                "description": "Question name."
+              }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "description": "A comparison series, without routing to any execution engine."
+      },
+      "NornIrQuestionDimension": {
+        "type": "object",
+        "description": "One requested group-by dimension.",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "grain": {
+            "type": "string",
+            "description": "Calendar bucket; admitted only for date/timestamp properties.",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "x-enumDescriptions": [
+              "Day.",
+              "Week.",
+              "Month.",
+              "Quarter.",
+              "Year."
+            ]
+          },
+          "path": {
+            "$ref": "#/components/schemas/NornIrDimensionPath",
+            "description": "Link path ending in a scalar property."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrQuestionMetric": {
+        "type": "object",
+        "description": "A selected metric, optionally with an explicit re-aggregation request.",
+        "required": [
+          "metric"
+        ],
+        "properties": {
+          "inline": {
+            "$ref": "#/components/schemas/NornIrInlineAggregation",
+            "description": "Inline calculation at the terminal population; metric names its output."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Metric name."
+          },
+          "reaggregate": {
+            "$ref": "#/components/schemas/NornIrMetricRollup",
+            "description": "Omitted means aggregate underlying objects at requested grain. Snapshot\nmetrics are refused until series and ordered reduction semantics exist."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrQuestionTimeWindow": {
+        "type": "object",
+        "description": "Half-open UTC time window. Calendar bucketing is a separate concern.",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "string",
+            "description": "Exclusive UTC instant.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          },
+          "start": {
+            "type": "string",
+            "description": "Inclusive UTC instant.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrReaggregate": {
+        "type": "string",
+        "description": "Operators over already aggregated results.",
+        "enum": [
+          "sum",
+          "first",
+          "last",
+          "min",
+          "max"
+        ],
+        "x-enumDescriptions": [
+          "Total across admitted axes.",
+          "First value in time order.",
+          "Last value in time order.",
+          "Minimum.",
+          "Maximum."
         ]
       },
       "NornIrReceiptAcceptance": {
@@ -13122,6 +14372,16 @@
           "json"
         ]
       },
+      "NornIrSafeAggregation": {
+        "type": "string",
+        "description": "A safe strategy for a to-many dimension path.",
+        "enum": [
+          "symmetric"
+        ],
+        "x-enumDescriptions": [
+          "Deduplicate measure object identities within each output bucket, including\ncombinations of multiple fan-out paths. Never deduplicate by measure value."
+        ]
+      },
       "NornIrSamplePolicy": {
         "type": "object",
         "description": "The sample policy a [`SampleSet`] was taken under.",
@@ -13595,6 +14855,18 @@
         },
         "additionalProperties": false
       },
+      "NornIrSnapshotDeviationReason": {
+        "type": "string",
+        "description": "Why an observed lifecycle target cannot be reached by one unique shortest\npath from the current state (or the lifecycle's initial state).",
+        "enum": [
+          "no_declared_path",
+          "ambiguous_shortest_path"
+        ],
+        "x-enumDescriptions": [
+          "No declared transition path reaches the observed target.",
+          "More than one shortest declared transition path reaches the target."
+        ]
+      },
       "NornIrSourceAdapter": {
         "type": "object",
         "description": "The adapter that produced a document.",
@@ -14003,6 +15275,25 @@
         },
         "additionalProperties": false
       },
+      "NornIrSourceRecordRef": {
+        "type": "object",
+        "description": "The identity of one record in an external source system.",
+        "required": [
+          "system",
+          "record"
+        ],
+        "properties": {
+          "record": {
+            "type": "string",
+            "description": "The record's identity in that system (`Sales Order/SO-1001`)."
+          },
+          "system": {
+            "type": "string",
+            "description": "The source system (`ERPNext`); the key of its `Source` technical-view\nobject. Contains no `/`."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrSourceRedistribution": {
         "type": "string",
         "description": "Whether a source is only referenced or vendored into the repository.",
@@ -14216,6 +15507,24 @@
           "An RFC 5322 address (`addr-spec`).",
           "An RFC 3986 URI.",
           "An RFC 9562 UUID in its hyphenated text form."
+        ]
+      },
+      "NornIrTimeGrain": {
+        "type": "string",
+        "description": "Calendar bucket grain.",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "quarter",
+          "year"
+        ],
+        "x-enumDescriptions": [
+          "Day.",
+          "Week.",
+          "Month.",
+          "Quarter.",
+          "Year."
         ]
       },
       "NornIrTimezonePolicy": {
@@ -14457,6 +15766,11 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrUtcTimestamp": {
+        "type": "string",
+        "description": "An RFC 3339 instant in UTC (`2026-10-01T09:30:00Z`).",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
       },
       "NornIrViewInputKind": {
         "type": "string",
@@ -17112,6 +18426,357 @@
             "description": "Pack, artifact digest and stable law member identity."
           }
         }
+      },
+      "NornLedgerHead": {
+        "type": "object",
+        "description": "The verified ledger head an answer was read at.",
+        "required": [
+          "seq",
+          "hash",
+          "commits"
+        ],
+        "properties": {
+          "commits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many commits.",
+            "minimum": 0
+          },
+          "hash": {
+            "type": "string",
+            "description": "The last event hash."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The last event sequence number (`0` when empty).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornQueryEngine": {
+        "type": "string",
+        "description": "The evaluator that produced an answer.",
+        "enum": [
+          "ivm",
+          "cell"
+        ]
+      },
+      "NornQueryFreshness": {
+        "type": "string",
+        "description": "Snapshot freshness, independent of source cursor ordering.",
+        "enum": [
+          "fresh",
+          "exact",
+          "stale",
+          "incomplete"
+        ]
+      },
+      "NornQueryMember": {
+        "type": "object",
+        "description": "One object version's contribution to a bucket.",
+        "required": [
+          "version",
+          "amounts"
+        ],
+        "properties": {
+          "amounts": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
+            },
+            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Original cell object version.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornQueryResult": {
+        "type": "object",
+        "description": "One exact answer to an admitted typed question.",
+        "required": [
+          "queryPin",
+          "definitionPin",
+          "engine",
+          "revision",
+          "effectiveAsOf",
+          "knownAsOf",
+          "grain",
+          "lineageRef",
+          "rows",
+          "freshness",
+          "complete",
+          "world",
+          "scope",
+          "populationPin",
+          "authorizationEpoch",
+          "mappingPin",
+          "nowMs",
+          "sourceCursors",
+          "watermarks",
+          "exclusions"
+        ],
+        "properties": {
+          "authorizationEpoch": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Server authorization epoch.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "Known coverage with no quarantined exclusions."
+          },
+          "definitionPin": {
+            "type": "string",
+            "description": "Actual model/definition pin."
+          },
+          "effectiveAsOf": {
+            "$ref": "#/components/schemas/NornIrUtcTimestamp",
+            "description": "Exclusive effective cutoff of the admitted question window."
+          },
+          "engine": {
+            "$ref": "#/components/schemas/NornQueryEngine",
+            "description": "Physical evaluator."
+          },
+          "exclusions": {
+            "type": "object",
+            "description": "Quarantined identities excluded from the answer → their finding or evidence pin.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/NornQueryFreshness",
+            "description": "Source freshness and coverage label."
+          },
+          "grain": {
+            "type": "string",
+            "description": "Root contribution identity type."
+          },
+          "knownAsOf": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Actual knowledge revision (commit count), not a historical timestamp.",
+            "minimum": 0
+          },
+          "lineageRef": {
+            "type": "string",
+            "description": "Content-addressed membership and source lineage."
+          },
+          "mappingPin": {
+            "type": "string",
+            "description": "Admitted mapping version/digest."
+          },
+          "nowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Host-observed clock in milliseconds, not render time.",
+            "minimum": 0
+          },
+          "populationPin": {
+            "type": "string",
+            "description": "Authorized population identity and revocation epoch."
+          },
+          "queryPin": {
+            "type": "string",
+            "description": "Content identity of model, declarations, bounds and arithmetic profile."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/NornLedgerHead",
+            "description": "Actual verified ledger head."
+          },
+          "rows": {
+            "type": "object",
+            "description": "Output buckets, keyed by the canonical JSON of their grouping value.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornQueryRow"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string",
+            "description": "Cell-bound tenant scope."
+          },
+          "sourceCursors": {
+            "type": "object",
+            "description": "Required source frontier: source → partition → cursor.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "watermarks": {
+            "type": "object",
+            "description": "Watermarks for required dependencies: source → partition → watermark.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/NornQueryWatermark"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "world": {
+            "type": "string",
+            "description": "Selected execution world."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornQueryRow": {
+        "type": "object",
+        "description": "One output bucket, with its exact sums beside its value.",
+        "required": [
+          "bucket",
+          "totals",
+          "value",
+          "members"
+        ],
+        "properties": {
+          "bucket": {
+            "description": "Scalar grouping value."
+          },
+          "members": {
+            "type": "object",
+            "description": "Exact aggregate membership: contributing object identity → its contribution.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornQueryMember"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "totals": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
+            },
+            "description": "One sum, or numerator then denominator."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornQueryWatermark": {
+        "type": "object",
+        "description": "A source partition's observed watermark.",
+        "required": [
+          "observed",
+          "heartbeatMs",
+          "complete"
+        ],
+        "properties": {
+          "complete": {
+            "type": "boolean",
+            "description": "Source coverage is known through the consumed cursor."
+          },
+          "heartbeatMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Last authenticated heartbeat; null means unavailable coverage.",
+            "minimum": 0
+          },
+          "observed": {
+            "type": "string",
+            "description": "Connector's observed high-water cursor."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornWorld": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "The tenant's authoritative world.",
+            "enum": [
+              "main"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A scenario fork.",
+            "required": [
+              "fork"
+            ],
+            "properties": {
+              "fork": {
+                "type": "object",
+                "description": "A scenario fork.",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The fork's identity."
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A read-only view as of one commit.",
+            "required": [
+              "historical"
+            ],
+            "properties": {
+              "historical": {
+                "type": "object",
+                "description": "A read-only view as of one commit.",
+                "required": [
+                  "commit"
+                ],
+                "properties": {
+                  "commit": {
+                    "type": "string",
+                    "description": "The commit the view is pinned to."
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "description": "An execution world."
       },
       "Refusal": {
         "type": "object",
