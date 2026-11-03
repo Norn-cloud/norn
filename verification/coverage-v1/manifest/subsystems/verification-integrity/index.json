@@ -37,7 +37,7 @@
     }
   },
   "proof": {
-    "status": "partial",
+    "status": "missing",
     "artifacts": {
       "$entries": "proof.artifacts"
     },
