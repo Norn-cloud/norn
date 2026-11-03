@@ -224,13 +224,17 @@ fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
     ))
 }
 
-fn main() -> DemoResult<()> {
+fn challenge_output_requested() -> DemoResult<bool> {
     let mut arguments = std::env::args().skip(1);
-    let challenge_only = match (arguments.next().as_deref(), arguments.next()) {
-        (None, None) => false,
-        (Some("--challenge-json"), None) => true,
-        _ => return Err("usage: jewelry_demo [--challenge-json]".into()),
-    };
+    match (arguments.next().as_deref(), arguments.next()) {
+        (None, None) => Ok(false),
+        (Some("--challenge-json"), None) => Ok(true),
+        _ => Err("usage: jewelry_demo [--challenge-json]".into()),
+    }
+}
+
+fn main() -> DemoResult<()> {
+    let challenge_only = challenge_output_requested()?;
     let mut stdout = std::io::stdout().lock();
     let mut input = String::new();
     std::io::stdin()
