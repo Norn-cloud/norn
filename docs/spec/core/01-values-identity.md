@@ -53,6 +53,8 @@ Unit-bearing entity declarations pin the vocabulary with one required exact-vers
 | TIME-PIN-1 | Explicit effective/recorded time and pinned calendar; admission/commit | `core.values.time_ambiguous` |
 | BLOB-INTEGRITY-1 | Exact retained content or explicit unavailable result; evaluation | `core.values.content_unavailable` |
 
+ID-STABLE-1 distinguishes authored mutation from observation using the existing commit provenance. An authored Create of an identity with a committed deletion refuses `core.identity.reuse` atomically: "this identity was deleted; restore it explicitly or use a new identity". Observed CDC/source-bound reappearance preserves the same source-bound identity, lifts its tombstone and advances its version monotonically. Replay preserves both outcomes and their retained identity/version evidence. Explicit restoration requires a later governed action carrying retained identity evidence (#748); until that action exists, ordinary authoring cannot restore a deleted identity.
+
 Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/reference constraints; sampled transport/replay correspondence; generated arithmetic side conditions over the same exact-number semantics. Do not infer universal identity correctness from a hash function.
 
 The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Proptests cover arbitrary `i128` coefficients and `u8` scales. The standalone `verification/canonical-values-v1/decimal_kani.rs` harness imports those production functions directly: normalization uses signed 8-bit coefficients and scales 0–2; multiplier checks use exponents 0–6 plus the overflow boundary 39. These bounded implementation checks do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator. Run each harness on Boat with a 300-second bound; an absent verdict remains unknown.
@@ -65,6 +67,9 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 - **VAL-UNIT-PIN:** Given a decimal UnitRef, the exact visible vocabulary pin and code/system must resolve; missing/wrong/ambiguous pins and unknown/case-changed/system-mismatched units refuse, including inside a record.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
+- **ID-AUTHORED-RECREATE:** Given a committed deletion, authored creation of the same identity refuses `core.identity.reuse` with the actionable message above and leaves facts, events, effects and receipts unchanged.
+- **ID-OBSERVED-REAPPEAR:** Given a deleted source-bound identity, an authorized observed reappearance retains that identity, lifts the tombstone and advances its high-water version.
+- **ID-TOMBSTONE-REPLAY:** Replaying the retained prefix preserves the deleted/reappeared identities and monotonic versions; replaying a refused authored request does not publish a mutation.
 - **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice resolves to a retained UTC instant and replays that same instant even after timezone rules change. An already-resolved UTC construction needs no DST choice.
 - **BLOB-MISSING:** Given an archived receipt with unavailable bytes, when requested for recomputation, then expose unavailable evidence and do not synthesize a result.
 
