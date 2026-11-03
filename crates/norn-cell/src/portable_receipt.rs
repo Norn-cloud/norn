@@ -232,10 +232,7 @@ pub(crate) fn function_invocation(
     let payload = value.get("payload").unwrap_or(value);
     let declared =
         payload.get("type").and_then(norn_ir::RuntimeValue::as_str) == Some("norn.function/v1");
-    let invocation = value
-        .get("invocation")
-        .or_else(|| payload.get("invocation"))
-        .unwrap_or(payload);
+    let invocation = payload.get("invocation").unwrap_or(payload);
     match norn_ir::runtime::decode(invocation) {
         Ok(invocation) => Ok(Some(invocation)),
         Err(reason) if declared => Err(CellError::Encoding(format!(

@@ -508,3 +508,67 @@ fn qualified_function_without_portable_envelope_refuses_export_and_replay() {
         );
     }
 }
+
+#[test]
+fn top_level_invocation_decoy_cannot_override_the_executed_payload() {
+    let mut target = store(1);
+    let mut local: FunctionInvocation = serde_json::from_str(include_str!(
+        "../../../fixtures/function/invocation.wasm.json"
+    ))
+    .expect("invocation");
+    local.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1));
+    let mut foreign = local.clone();
+    foreign.provenance_commit =
+        CommitProvenance::Qualified(QualifiedCommit::new(id(2), "main".into(), 1));
+    let mut frame =
+        function_envelope(norn_ir::runtime::encode(&foreign).expect("foreign invocation"));
+    let RuntimeValue::Object(fields) = &mut frame else {
+        panic!("command object")
+    };
+    fields.insert(
+        "invocation".into(),
+        norn_ir::runtime::encode(&local).expect("local decoy"),
+    );
+    let batch = CommitBatch {
+        world: local.world.clone(),
+        effects: vec![command(frame)],
+        ..CommitBatch::default()
+    };
+    let before = target.read().dump().expect("before");
+    assert!(target.commit(&batch).is_err());
+    assert_eq!(target.read().dump().expect("after"), before);
+    target
+        .commit(&CommitBatch {
+            world: local.world,
+            ..CommitBatch::default()
+        })
+        .expect("seed");
+    let mut record = target.export_record(1).expect("record").expect("present");
+    record.batch = batch;
+    record.receipt.body.request_hash = local_hash(&record.batch);
+    record.receipt.hash = local_hash(&record.receipt.body);
+    record
+        .portable_receipt
+        .as_mut()
+        .expect("portable")
+        .receipt_hash = record.receipt.hash.clone();
+    assert!(matches!(
+        record.advance(&norn_cell::export::ExportManifest::default()),
+        Err(norn_cell::export::ExportError::IdentityMismatch)
+    ));
+    record.portable_receipt = None;
+    assert!(matches!(
+        record.advance(&norn_cell::export::ExportManifest::default()),
+        Err(norn_cell::export::ExportError::IdentityMismatch)
+    ));
+    let hash = record.hash().expect("fixture hash");
+    assert!(
+        CellStore::rebuild_export_history(
+            NativeEngine::open_in_memory().expect("engine"),
+            &[record],
+            &hash
+        )
+        .is_err()
+    );
+}
