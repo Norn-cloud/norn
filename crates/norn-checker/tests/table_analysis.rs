@@ -295,8 +295,12 @@ fn existing_analysis_outputs_are_byte_pinned() {
         }
     }
     outputs.push(analyze_table(&table("first", &[""]), &Schema::Integer));
+    let nullable = Schema::Nullable(Box::new(Schema::String(Some(
+        ["a".into(), "b".into()].into(),
+    ))));
+    outputs.push(analyze_table(&table("first", &[]), &nullable));
     assert_eq!(
-        format!("{outputs:?}"),
+        format!("{outputs:?}\n"),
         include_str!("../../../fixtures/rule-ir-v2/analysis/outputs.expected.txt")
     );
 }
