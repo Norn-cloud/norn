@@ -304,6 +304,10 @@
     "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
   },
   {
+    "code": "core.txn.atomic_boundary",
+    "fix": "Keep the transaction within the single owning cell; split cross-cell work into explicit durable commands before preparing the action."
+  },
+  {
     "code": "core.values.inexact",
     "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
   },
