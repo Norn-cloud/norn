@@ -2932,8 +2932,11 @@ fn readmission_is_atomic_preserves_the_definition_set_and_ledgers_receipt_eviden
     assert_eq!(install.installed, upgraded);
 }
 
+type BeforeTransaction = Box<dyn FnOnce() -> Result<(), CellError>>;
+
 #[derive(Clone, Default)]
 struct WriteCounter {
+    before_transaction: std::rc::Rc<std::cell::RefCell<Option<BeforeTransaction>>>,
     attempts: std::rc::Rc<std::cell::Cell<usize>>,
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
@@ -3019,6 +3022,9 @@ impl SqlEngine for CountedEngine {
 
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
         self.record_write();
+        if let Some(hook) = self.counter.before_transaction.borrow_mut().take() {
+            hook().map_err(X::from)?;
+        }
         self.inner.transaction(f)
     }
 }
@@ -7080,4 +7086,43 @@ fn assert_interface_dispute_fences(
         ),
         "clean interfaces reach ordinary link validation"
     );
+}
+
+
+#[test]
+fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
+    for identity in [false, true] {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("arrival.sqlite");
+        let mut store = mapping_bundle_store(&path);
+        let input = bundle_input();
+        let mut original = bundle_raw("MEAS-1", "0.90");
+        if identity {
+            original.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
+        }
+        let (id, _) = store.inject_mapping_bundle(&original, &input).expect("accepted");
+        let model = store.model().clone();
+        drop(store);
+        let mut external = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("external");
+        let counter = WriteCounter::default();
+        let engine = CountedEngine { inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"), counter: counter.clone() };
+        let store = CellStore::from_engine(engine, model).expect("store");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+        let mut conflicting = if identity { original } else { bundle_raw("MEAS-1", "1.20") };
+        if identity {
+            conflicting.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("e\u{301}"));
+        }
+        let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+        let signal = fired.clone();
+        *counter.before_transaction.borrow_mut() = Some(Box::new(move || {
+            external.inject_mapping_bundle(&conflicting, &input)?;
+            signal.set(true);
+            Ok(())
+        }));
+        let result = cell.process_mapping_bundle(&id);
+        assert!(fired.get(), "the dispute arrives after preparation, before BEGIN");
+        assert!(matches!(result, Err(CellError::ObservationCommit(error)) if matches!(error.as_ref(), norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile))));
+        assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw object").is_none());
+        assert!(cell.store().read().pending_observations().expect("inbox").iter().any(|row| row.observation_id == id));
+    }
 }
