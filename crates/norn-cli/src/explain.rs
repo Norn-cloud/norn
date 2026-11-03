@@ -302,7 +302,10 @@ mod tests {
             if format == "json" {
                 let response: serde_json::Value = serde_json::from_str(&text).unwrap();
                 assert_eq!(response["format"], "norn/explain@2");
-                assert_eq!(text.as_bytes(), norn_ir::canonical::canonical_json_of(&response).unwrap());
+                assert_eq!(
+                    text.as_bytes(),
+                    norn_ir::canonical::canonical_json_of(&response).unwrap()
+                );
                 assert_eq!(response["report"]["laws"][0]["proof"], "unknown");
             } else {
                 assert!(text.contains("proof unknown"));
