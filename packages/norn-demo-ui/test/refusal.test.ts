@@ -75,4 +75,14 @@ test("a source that is not the same response refuses to render", () => {
   expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: concealed.source })).toThrow()
   expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: omittedLoss.source.replace('"metal":"gold"', '"purity":"0.999"') })).toThrow()
   expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: '{"reason":{"values":{"input_fine_g":100.000' })).toThrow()
+  expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: omittedLoss.source.replace("99.200", "99.300") })).toThrow()
+  expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: omittedLoss.source.replace("sha256:4f2c", "sha256:0000") })).toThrow()
+  expect(() => renderRefusalDocument({ refusal: omittedLoss.refusal, source: `${omittedLoss.source} {"extra":1}` })).toThrow()
+  expect(() => renderRefusalDocument({ refusal: { ...concealed.refusal, message: "edited" }, source: concealed.source })).toThrow()
+})
+
+test("an equal response in another member order renders", () => {
+  const reordered = `{"reason":null,"retryable":false,"explanation":"The server has not proven authority to disclose this diagnostic.",
+    "message":"the action is not permitted","category":"permission","code":"authz.denied","format":"norn/refusal@2"}`
+  expect(renderRefusalDocument({ refusal: concealed.refusal, source: reordered })).toContain("authz.denied")
 })

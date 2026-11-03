@@ -81,6 +81,17 @@ function operandText(source: string): ReadonlyMap<string, string> {
   return new Map([...operands].map(([key, { text }]) => [key, text]))
 }
 
+/** Structural JSON equality, independent of member order. */
+function same(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) =>
+    Object.hasOwn(right, key) && same((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]))
+}
+
 function operand(text: string): string {
   if (text.startsWith('"')) return code(JSON.parse(text) as string)
   return `<code class="exact">${escape(text)}</code>`
@@ -97,12 +108,12 @@ function pin(value: Pin | null | undefined): string {
 
 /** The refused state of a submitted action, with exactly what the server disclosed. */
 function refusedPanel({ refusal, source }: RefusalResponse): string {
+  // The whole source (no trailing text) must be this refusal, field for field.
+  if (!same(JSON.parse(source), refusal)) throw new Error("Refusal source and parsed refusal differ")
   const reason = refusal.reason
   const disclosed = reason
     ? (() => {
       const exact = operandText(source)
-      const keys = Object.keys(reason.values)
-      if (keys.length !== exact.size || keys.some((key) => !exact.has(key))) throw new Error("Refusal source and parsed reason differ")
       const rows = [...exact].map(([name, text]) => `<tr><td>${code(name)}</td><td>${operand(text)}</td></tr>`).join("")
       return `<h4>Governing declaration</h4>${pin(reason.pin)}
 <dl><dt>Reason</dt><dd>${code(reason.law)}</dd><dt>Subject</dt><dd>${code(reason.subject)}</dd></dl>
