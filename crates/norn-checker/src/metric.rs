@@ -439,7 +439,10 @@ impl<'a> Checker<'a> {
             at.to_owned()
         };
         let mut finding = error(code, message.to_owned(), Span::pointer(at));
-        if matches!(code, codes::UNDECLARED_ADDITIVITY | codes::RATIO_AGGREGATION) {
+        if matches!(
+            code,
+            codes::UNDECLARED_ADDITIVITY | codes::RATIO_AGGREGATION
+        ) {
             finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
         }
         self.out.push(finding);

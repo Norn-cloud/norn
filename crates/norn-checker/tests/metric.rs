@@ -65,8 +65,12 @@ fn assert_code(findings: &[norn_checker::Diagnostic], code: &str) {
             finding.code
         );
         assert!(finding.is_error());
-        if [codes::UNDECLARED_ADDITIVITY, codes::RATIO_AGGREGATION].contains(&finding.code.as_str()) {
-            assert_eq!(finding.remediation, Some(norn_checker::DiagnosticRemediation::FixDefinition));
+        if [codes::UNDECLARED_ADDITIVITY, codes::RATIO_AGGREGATION].contains(&finding.code.as_str())
+        {
+            assert_eq!(
+                finding.remediation,
+                Some(norn_checker::DiagnosticRemediation::FixDefinition)
+            );
         }
 
         assert!(
