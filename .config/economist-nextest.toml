@@ -1,10 +1,12 @@
-# cargo nextest run --tool-config-file economist:.config/economist-nextest.toml --profile economist-rehearsal
+# cargo nextest run --config-file .config/economist-nextest.toml --profile economist-rehearsal
 # Requires Rust 1.98, nextest 0.9.150, Bun 1.3.14, frozen tools/norn-proofs
 # dependencies and NORN_VERIFICATION_TOOL_ROOT with the pinned backend tools.
 # Focused witnesses from published drops; no drop's complete selection is replaced.
 # Nextest runs setup phases in declaration order and stops on any failed phase.
 # Every test filter has one required name: an empty selection must fail.
 # All current phases are native runs; Studio replaces a phase only after landing.
+
+experimental = ["setup-scripts"]
 
 [scripts.setup."beat-1-native-run-three-systems"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_aliases_roles_and_one_economic_identity)"]
