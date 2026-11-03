@@ -22,9 +22,10 @@ export const Account = Norn.type({
 })
 const Input = Schema.Struct({holding: Schema.String, destination: Schema.String, movement: Schema.String})
 const Values = Schema.Struct({id: Schema.optionalKey(Schema.String), company: Schema.optionalKey(Schema.String), from: Schema.optionalKey(Schema.String), to: Schema.optionalKey(Schema.String), location: Schema.optionalKey(Schema.String), quantity: Schema.optionalKey(Schema.Int), value: Schema.optionalKey(Schema.Int)})
+const Slice = Schema.Struct({holding: Schema.Struct({id: Schema.String, company: Schema.String, location: Schema.String, quantity: Schema.Int, value: Schema.Int, status: Schema.String}), destination: Schema.Struct({id: Schema.String, company: Schema.String})})
 export const Writer = Norn.decision({
   id: "example.custody.writer", title: "Move custody without selling", version: "1.0.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
-  input: Schema.Struct({slice: Schema.Struct({holding: Schema.Struct({id: Schema.String, company: Schema.String, location: Schema.String, quantity: Schema.Int, value: Schema.Int, status: Schema.String}), destination: Schema.Struct({id: Schema.String, company: Schema.String})}), event: Schema.Struct({input: Input, actor: Schema.String, operationId: Schema.String})}),
+  input: Schema.Struct({slice: Slice, event: Schema.Struct({input: Input, actor: Schema.String, operationId: Schema.String})}),
   // The current closed-schema profile requires optional values/patch members.
   output: Schema.Struct({facts: Schema.Array(Schema.Struct({op: Schema.Literals(["create", "patch"]), objectType: Schema.Literals(["fixture.CustodyHolding", "fixture.CustodyMovement"]), key: Schema.String, values: Schema.optionalKey(Values), patch: Schema.optionalKey(Values)})), commands: Schema.Array(Schema.Struct({})), timers: Schema.Array(Schema.Struct({}))}),
 }, input => ({facts: [
@@ -35,7 +36,7 @@ export const Transfer = Norn.action({
   id: "example.custody.transfer", title: "Same-company custody transfer", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: Input, output: Schema.Struct({holding: Schema.String}), synchronousRule: Writer,
   slice: [{name: "holding", type: Holding, key: {property: {from: "input", property: "holding"}}}, {name: "destination", type: Location, key: {property: {from: "input", property: "destination"}}}],
-  preconditions: [Norn.unsafeZen<boolean>("slice.holding.company == slice.destination.company and slice.holding.location != input.destination")],
+  preconditions: [Norn.expression(Schema.Struct({slice: Slice, input: Input}), input => input.slice.holding.company === input.slice.destination.company && input.slice.holding.location !== input.input.destination)],
   writes: [{type: Holding, change: "created"}, {type: Holding, change: "modified"}, {type: Movement, change: "created"}, {type: Movement, change: "modified"}],
   createLinks: [{source: {objectType: Movement, idField: "movement"}, link: "holding", targetType: Holding, targetIdField: "holding"}, {source: {objectType: Movement, idField: "movement"}, link: "destination", targetType: Location, targetIdField: "destination"}],
   effect: {kind: "fire_transition", type: Holding, objectIdField: "holding", lifecycle: "status", transition: "transfer"},
