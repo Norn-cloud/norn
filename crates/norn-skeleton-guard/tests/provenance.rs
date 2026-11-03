@@ -1495,6 +1495,32 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
         .errors()
         .is_empty()
     );
+    assert_durable_group_revocation(&f, &trusted, &head, &doc, &evidence);
+    let mut missing = doc.clone();
+    missing["pull_requests"][1]["comments"] = json!([]);
+    assert!(admission(&missing, &head).is_err());
+    // Rewrite the merge result with a metadata-only addition: no new parent,
+    // but a tree that no acknowledged head or clean integration accounts for.
+    f.write(&format!("{RECORDS}notes.json"), b"{}");
+    git_in(&f, &["add", "."]);
+    git_in(&f, &["commit", "--quiet", "--amend", "--no-edit"]);
+    let tampered = git_in(&f, &["rev-parse", "HEAD"]);
+    let mut modified = doc;
+    modified["merge_group"]["head_sha"] = json!(tampered);
+    assert!(
+        admission(&modified, &tampered)
+            .unwrap_err()
+            .contains("integration-only")
+    );
+}
+
+fn assert_durable_group_revocation(
+    f: &Fixture,
+    trusted: &Path,
+    head: &str,
+    doc: &Value,
+    evidence: &Path,
+) {
     for edited in [false, true] {
         let mut revoked = doc.clone();
         revoked["pull_requests"][0]["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
@@ -1504,14 +1530,14 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
                 .unwrap()
                 .push(json!({"id":2,"user":"owner","permission":"admin","body":"ordinary text"}));
         }
-        fs::write(&evidence, revoked.to_string()).unwrap();
+        fs::write(evidence, revoked.to_string()).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
-            &trusted,
-            &head,
+            trusted,
+            head,
             "Norn-cloud/norn",
             None,
-            &evidence,
+            evidence,
         );
         assert!(
             report
@@ -1529,33 +1555,17 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
             .as_array_mut()
             .unwrap()
             .push(renewed);
-        fs::write(&evidence, revoked.to_string()).unwrap();
+        fs::write(evidence, revoked.to_string()).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
-            &trusted,
-            &head,
+            trusted,
+            head,
             "Norn-cloud/norn",
             None,
-            &evidence,
+            evidence,
         );
         assert!(report.errors.is_empty(), "{:?}", report.errors);
     }
-    let mut missing = doc.clone();
-    missing["pull_requests"][1]["comments"] = json!([]);
-    assert!(admission(&missing, &head).is_err());
-    // Rewrite the merge result with a metadata-only addition: no new parent,
-    // but a tree that no acknowledged head or clean integration accounts for.
-    f.write(&format!("{RECORDS}notes.json"), b"{}");
-    git_in(&f, &["add", "."]);
-    git_in(&f, &["commit", "--quiet", "--amend", "--no-edit"]);
-    let tampered = git_in(&f, &["rev-parse", "HEAD"]);
-    let mut modified = doc;
-    modified["merge_group"]["head_sha"] = json!(tampered);
-    assert!(
-        admission(&modified, &tampered)
-            .unwrap_err()
-            .contains("integration-only")
-    );
 }
 
 #[test]
