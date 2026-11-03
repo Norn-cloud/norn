@@ -6354,6 +6354,26 @@
         },
         "additionalProperties": false
       },
+      "NornIrInterpretationFormat": {
+        "type": "string",
+        "description": "Only the interpretation wire format decodes here.",
+        "enum": [
+          "norn.interpretation/1"
+        ],
+        "x-enumDescriptions": [
+          "First interpretation contract."
+        ]
+      },
+      "NornIrInterpretationRole": {
+        "type": "string",
+        "description": "A law interpretation is neither source evidence nor term correspondence.",
+        "enum": [
+          "law_interpretation"
+        ],
+        "x-enumDescriptions": [
+          "Subject to contract totality and preservation obligations."
+        ]
+      },
       "NornIrInvariant": {
         "type": "object",
         "description": "One declared invariant of an object type or interface.",
@@ -7262,6 +7282,55 @@
           "rule": {
             "$ref": "#/components/schemas/NornIrIdentityRule",
             "description": "How key values are normalized and matched. Omitted: components compare\nexactly as stored."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawInterpretationIr": {
+        "type": "object",
+        "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+        "required": [
+          "format",
+          "role",
+          "sourceLayer",
+          "targetLayer",
+          "members"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Closed format discriminator.",
+            "enum": [
+              "norn.interpretation/1"
+            ],
+            "x-enumDescriptions": [
+              "First interpretation contract."
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberInterpretation"
+            },
+            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
+          },
+          "role": {
+            "type": "string",
+            "description": "Explicit semantic role.",
+            "enum": [
+              "law_interpretation"
+            ],
+            "x-enumDescriptions": [
+              "Subject to contract totality and preservation obligations."
+            ]
+          },
+          "sourceLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer whose contract must be preserved."
+          },
+          "targetLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer interpreting that contract."
           }
         },
         "additionalProperties": false
@@ -8403,9 +8472,9 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayload": {
+      "NornIrMappingIr": {
         "type": "object",
-        "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+        "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
         "required": [
           "format",
           "source",
@@ -8421,7 +8490,7 @@
             "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset."
           },
           "extensions": {
-            "$ref": "#/components/schemas/NornIrMappingPayloadPropertyExtensions"
+            "$ref": "#/components/schemas/NornIrMappingIrPropertyExtensions"
           },
           "format": {
             "type": "string",
@@ -8461,12 +8530,25 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayloadPropertyExtensions": {
+      "NornIrMappingIrPropertyExtensions": {
         "type": "object",
         "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrMappingPayload": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMappingIr",
+            "description": "Source records produce ordinary entity facts, never inherited laws."
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawInterpretationIr",
+            "description": "A separately checked interpretation between exact ontology layers."
+          }
+        ],
+        "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`])."
       },
       "NornIrMappingRelation": {
         "type": "string",
@@ -8697,6 +8779,29 @@
           }
         ],
         "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberInterpretation": {
+        "type": "object",
+        "description": "One interpretation between exact catalog members, never a coverage claim.",
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Source type, property, link, lifecycle state or transition identity."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Corresponding target identity, resolved within the pinned target layer."
+          },
+          "transform": {
+            "type": "string",
+            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrMemberOneOf0": {
         "type": "object",
