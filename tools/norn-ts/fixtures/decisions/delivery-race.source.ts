@@ -33,7 +33,7 @@ export const Deliver = Norn.action({
   input: Input, output: Schema.Struct({id: Schema.String}), synchronousRule: Writer,
   slice: [{name: "holding", type: Holding, key: {property: {from: "input", property: "holding"}}}],
   preconditions: [Norn.unsafeZen<boolean>("input.quantity > 0 and slice.holding.quantity >= input.quantity and slice.holding.value >= input.quantity * 10")],
-  writes: [{type: Holding, change: "modified"}, {type: Delivery, change: "modified"}, {type: Leg, change: "created"}],
+  writes: [{type: Holding, change: "created"}, {type: Holding, change: "modified"}, {type: Delivery, change: "modified"}, {type: Leg, change: "created"}, {type: Leg, change: "modified"}],
   createLinks: [{link: "holding", targetType: Holding, targetIdField: "holding"}],
   effect: {kind: "fire_transition", type: Delivery, objectIdField: "id", lifecycle: "status", transition: "post"},
 })
