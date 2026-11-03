@@ -577,6 +577,48 @@ impl<'a> TypeCatalog<'a> {
             .collect())
     }
 
+    /// Owners of the invariants named `id` in the effective contract of the
+    /// object type or interface `name`.
+    ///
+    /// # Errors
+    /// Returns the name of an unknown type or of a missing interface.
+    pub(crate) fn contract_invariant_owners(
+        &self,
+        name: &str,
+        id: &str,
+    ) -> Result<Vec<InvariantOwner>, ObjectTypeName> {
+        if self.types.contains_key(name) {
+            return Ok(self
+                .invariants(&ObjectTypeName(name.to_owned()))?
+                .into_iter()
+                .filter(|item| item.id.as_str() == id)
+                .map(|item| item.owner)
+                .collect());
+        }
+        let interface = self
+            .interfaces
+            .get(name)
+            .copied()
+            .ok_or_else(|| ObjectTypeName(name.to_owned()))?;
+        let lineage = norn_expr::env::interface_lineage(interface, |parent| {
+            self.interfaces.get(parent.as_str()).copied()
+        })
+        .map_err(|missing| ObjectTypeName(missing.0))?;
+        Ok(lineage
+            .into_iter()
+            .filter(|owner| owner.invariants.iter().any(|item| item.id.as_str() == id))
+            .map(|owner| InvariantOwner::Interface(owner.name.clone()))
+            .collect())
+    }
+
+    /// Every retained object type name.
+    pub(crate) fn object_type_names(&self) -> Vec<ObjectTypeName> {
+        self.types
+            .keys()
+            .map(|name| ObjectTypeName((*name).to_owned()))
+            .collect()
+    }
+
     /// Pin an invariant owner to its canonical `EntityIR` declaration content.
     ///
     /// Artifact envelopes are not retained by this kernel catalog, so findings
@@ -974,6 +1016,60 @@ pub enum FactEvent {
         /// Stable identity of the attempted turn or action call.
         attempt_id: String,
     },
+}
+
+impl<X> CommitError<X> {
+    pub(crate) fn is_invariant_refusal(&self) -> bool {
+        if matches!(self, Self::InvariantViolation { .. }) {
+            return true;
+        }
+        if let Self::Law {
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = self
+        {
+            return failure.invariant.is_some();
+        }
+        false
+    }
+
+    pub(crate) fn invariant_refusal_event(&self, attempt_id: String) -> Option<FactEvent> {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            id,
+            message,
+            outcome,
+            ..
+        } = self
+        {
+            return Some(FactEvent::InvariantRefused {
+                key: key.as_ref().clone(),
+                owner: owner.clone(),
+                id: id.clone(),
+                message: message.clone(),
+                outcome: outcome.as_ref().clone(),
+                attempt_id,
+            });
+        }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            let bound = failure.invariant.as_ref()?;
+            let invariant = &bound.failure;
+            return Some(FactEvent::InvariantRefused {
+                key: key.clone(),
+                owner: invariant.owner.clone(),
+                id: invariant.id.clone(),
+                message: invariant.message.clone(),
+                outcome: invariant.outcome.clone(),
+                attempt_id,
+            });
+        }
+        None
+    }
 }
 
 // Like FactChange, decode exact runtime values through a plain record. Serde's
@@ -2305,35 +2401,14 @@ where
             }
             Ok(receipt)
         }
-        Err(CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        }) => {
-            let refusal = DecisionRefusal::InvariantViolation {
-                key: key.clone(),
-                owner: owner.clone(),
-                version,
-                id: id.clone(),
-                message: message.clone(),
-                outcome: outcome.clone(),
+        Err(error) if error.is_invariant_refusal() => {
+            let Some(event) = error.invariant_refusal_event(turn.id.clone()) else {
+                return Err(DecisionRefusal::from_commit(error));
             };
+            let refusal = DecisionRefusal::from_commit(error);
             let mut refusal_commit = CellCommit::empty();
             refusal_commit.consumes.clone_from(&turn.consumes);
-            refusal_commit.events.push(
-                FactEvent::InvariantRefused {
-                    key: *key,
-                    owner,
-                    id,
-                    message,
-                    outcome: *outcome,
-                    attempt_id: turn.id.clone(),
-                }
-                .into(),
-            );
+            refusal_commit.events.push(event.into());
             match host.commit(refusal_commit) {
                 Ok(_) => Err(refusal),
                 Err(error) => Err(DecisionRefusal::from_commit(error)),

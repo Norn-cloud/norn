@@ -1,0 +1,7 @@
+{
+  "code": "function.manifest.authored_host",
+  "message": "host Functions are engine built-ins and cannot be installed by authored or pack definitions; use a typed WASM component or external worker",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
