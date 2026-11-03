@@ -167,6 +167,10 @@ fn invalid_models_and_other_source_versions_never_silently_resolve() -> Result<(
     Ok(())
 }
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test helper asserts successful finite diagnosis"
+)]
 fn declared(
     norms: &[GroundedNorm],
     layers: &[norn_checker::norm_precedence::ConstitutionLayer],
@@ -217,7 +221,9 @@ fn declared_priority_deletion_refuses_and_layers_never_silently_defeat() {
             .is_empty()
     );
     let mut inactive = [norm(0, Prohibition), norm(1, Permission)];
-    inactive[1].excepted.insert(0);
+    if let Some(n) = inactive.get_mut(1) {
+        n.excepted.insert(0);
+    }
     assert!(
         !declared(&inactive, &[Religious, Company], &[(1, 0)])
             .diagnosis
@@ -272,7 +278,7 @@ proptest::proptest! {
         use norn_checker::norm_precedence::ConstitutionLayer::Company;
         let mut norms = [norm(0, Obligation), norm(1, Prohibition)];
         let mut edge = if reverse { (1, 0) } else { (0, 1) };
-        if swap { norms.swap(0, 1); edge = (1 - edge.0, 1 - edge.1); }
+        if swap { norms.swap(0, 1); edge = (1_usize.saturating_sub(edge.0), 1_usize.saturating_sub(edge.1)); }
         proptest::prop_assert!(declared(&norms, &[Company; 2], &[edge]).diagnosis.cores.is_empty());
         proptest::prop_assert_eq!(declared(&norms, &[Company; 2], &[]).diagnosis.cores.len(), 1);
     }
@@ -305,7 +311,10 @@ fn malformed_binding_and_budget_exhaustion_remain_unknown() {
     assert!(
         diagnose_declared_order(
             &norms,
-            &[origins[0].clone(), origins[0].clone()],
+            &[
+                origins.first().cloned().unwrap_or_default(),
+                origins.first().cloned().unwrap_or_default()
+            ],
             &[Company; 2],
             &[],
             2,
@@ -329,7 +338,9 @@ fn explicit_transitivity_and_nonoverlapping_conditions_are_supported() {
             .cores
             .is_empty()
     );
-    norms[2].applicable = BTreeSet::from([1]);
+    if let Some(n) = norms.get_mut(2) {
+        n.applicable = BTreeSet::from([1]);
+    }
     assert!(
         declared(&norms, &[Company; 3], &[])
             .diagnosis

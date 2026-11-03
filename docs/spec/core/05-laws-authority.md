@@ -168,8 +168,7 @@ Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown
 one common action/subject. LAW-RETAIN-1 / OVERLAY-MONOTONE-1 prohibit declared
 lower-to-higher overrides, including inactive or exception-masked overrides.
 Opposing rules whose effective masks overlap must be comparable by a declared
-strict order within a layer; cross-layer clashes always diagnose. The supplied
-layer mapping is trusted policy, not a ranking inferred from authority names.
+strict order within a layer; cross-layer clashes always diagnose. The layer mapping is trusted policy, not inferred from authority names.
 CD diagnosis returns irreducible rule-index cores with original source locations;
 all rules are protected and no relaxation is authorized. Limits or malformed
 bindings are unknown, without partial cores. Legacy superior/posterior/specificity
@@ -179,6 +178,4 @@ notes; existing admission behaviour stays unchanged pending #767's owner ruling.
 Named scenarios: declared-priority deletion refuses; same-grade cycle and
 self-cycle diagnose exact members; company override refuses even when excepted;
 three nonconflicting layers admit conditionally; transitivity, disjoint masks,
-permutation, malformed bindings and budget exhaustion are checked. This cut is
-not DeonticIR lowering, fulfilment, CTD, Datalog, proof or runtime admission.
-Those properties remain unknown until a supported lowering/analysis supplies them.
+permutation, malformed bindings and budget exhaustion are checked. DeonticIR lowering, fulfilment, CTD, Datalog, proof and runtime admission remain unknown.

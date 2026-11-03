@@ -252,7 +252,6 @@ pub enum DeclaredOrderUnknown {
 struct OrderOracle<'a> {
     edges: &'a [(usize, usize)],
     conflicts: Vec<BTreeSet<usize>>,
-    count: usize,
 }
 
 impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
@@ -262,8 +261,8 @@ impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
         active: &BTreeSet<usize>,
     ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
         use crate::consistency::diagnosis::Verdict;
-        let reach = order_closure(self.count, self.edges, active);
-        if active.iter().any(|i| reach[*i][*i])
+        let reach = order_closure(self.edges, active);
+        if active.iter().any(|i| reach.contains(&(*i, *i)))
             || self.conflicts.iter().any(|pair| pair.is_subset(active))
         {
             Verdict::Unsat
@@ -273,21 +272,18 @@ impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
     }
 }
 
-fn order_closure(
-    count: usize,
-    edges: &[(usize, usize)],
-    active: &BTreeSet<usize>,
-) -> Vec<Vec<bool>> {
-    let mut reach = vec![vec![false; count]; count];
-    for &(high, low) in edges {
-        if active.contains(&high) && active.contains(&low) {
-            reach[high][low] = true;
-        }
-    }
+fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet<(usize, usize)> {
+    let mut reach: BTreeSet<_> = edges
+        .iter()
+        .copied()
+        .filter(|(a, b)| active.contains(a) && active.contains(b))
+        .collect();
     for k in active {
         for i in active {
             for j in active {
-                reach[*i][*j] |= reach[*i][*k] && reach[*k][*j];
+                if reach.contains(&(*i, *k)) && reach.contains(&(*k, *j)) {
+                    reach.insert((*i, *j));
+                }
             }
         }
     }
@@ -339,11 +335,11 @@ pub fn diagnose_declared_order(
         return Err(DeclaredOrderUnknown::InvalidBinding);
     }
     let all: BTreeSet<_> = (0..norms.len()).collect();
-    let reach = order_closure(norms.len(), edges, &all);
+    let reach = order_closure(edges, &all);
     let mut conflicts = Vec::new();
     // Reject even inactive or exception-masked lower-to-higher override declarations.
     for &(high, low) in edges {
-        if layers[high] > layers[low] {
+        if layers.get(high) > layers.get(low) {
             conflicts.push(BTreeSet::from([high, low]));
         }
     }
@@ -356,23 +352,23 @@ pub fn diagnose_declared_order(
                         && !left.excepted.contains(&c)
                         && !right.excepted.contains(&c)
                 })
-                && (layers[i] != layers[j] || (!reach[i][j] && !reach[j][i]))
+                && (layers.get(i) != layers.get(j)
+                    || (!reach.contains(&(i, j)) && !reach.contains(&(j, i))))
             {
                 conflicts.push(BTreeSet::from([i, j]));
             }
         }
     }
-    let mut oracle = OrderOracle {
-        edges,
-        conflicts,
-        count: norms.len(),
-    };
+    let mut oracle = OrderOracle { edges, conflicts };
     let diagnosis = diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), max_calls)
         .map_err(DeclaredOrderUnknown::Diagnosis)?;
     let mut diagnostics = Vec::new();
     for core in &diagnosis.cores {
-        let ids: Vec<_> = core.iter().map(|i| norms[*i].id.as_str()).collect();
-        let located: Vec<_> = core.iter().map(|i| &origins[*i]).collect();
+        let ids: Vec<_> = core
+            .iter()
+            .map(|i| norms.get(*i).map_or("", |n| n.id.as_str()))
+            .collect();
+        let located: Vec<_> = core.iter().filter_map(|i| origins.get(*i)).collect();
         diagnostics.extend(core_findings("consistency.normative.conflict", crate::DiagnosticSeverity::Error,
             &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
     }
@@ -389,8 +385,8 @@ pub fn diagnose_declared_order(
                     && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
                 {
                     diagnostics.extend(core_findings("consistency.normative.legacy_resolution", crate::DiagnosticSeverity::Warning,
-                        &format!("Legacy norm_precedence resolves {} over {} by {:?}; declared-only/layer analysis diagnoses these rules. See #767; admission behaviour is unchanged.", norms[defeat.winner].id, norms[defeat.loser].id, defeat.reason),
-                        &[&origins[defeat.winner], &origins[defeat.loser]]));
+                        &format!("Legacy norm_precedence resolves {} over {} by {:?}; declared-only/layer analysis diagnoses these rules. See #767; admission behaviour is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
+                        &[origins.get(defeat.winner), origins.get(defeat.loser)].into_iter().flatten().collect::<Vec<_>>()));
                 }
             }
         }
