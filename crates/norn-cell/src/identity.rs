@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::{EffectiveKey, EffectiveKind, EffectiveObjectType};
 use norn_ir::PropertyType;
-use norn_projections::sqlite_ddl::{SCOPE_COLUMN, WORLD_COLUMN, quote_identifier};
+use norn_projections::sqlite_ddl::{SCOPE_COLUMN, ValueEncoding, WORLD_COLUMN, quote_identifier};
 
 use crate::codec::decode;
 use crate::engine::{SqlEngine, SqlValue, params};
+use crate::read::read_projection;
 use crate::{CellError, StoreReader};
 
 const MAX_ROWS: usize = 4096;
@@ -154,14 +155,14 @@ fn check_key<E: SqlEngine>(
         let physical = column.column.as_deref().ok_or_else(|| {
             CellError::Encoding("identity component is in overflow storage".into())
         })?;
-        columns.push((column, quote_identifier(physical)));
+        columns.push((column, physical));
     }
     let selected = [
         quote_identifier(WORLD_COLUMN),
         quote_identifier(SCOPE_COLUMN),
     ]
     .into_iter()
-    .chain(columns.iter().map(|(_, name)| name.clone()))
+    .chain(columns.iter().map(|(_, name)| quote_identifier(name)))
     .collect::<Vec<_>>();
     let size = selected
         .iter()
@@ -191,9 +192,19 @@ fn check_key<E: SqlEngine>(
     *bytes_left = bytes_left
         .checked_sub(bytes)
         .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
+    let projection = read_projection(
+        &[(WORLD_COLUMN, false), (SCOPE_COLUMN, false)]
+            .into_iter()
+            .chain(
+                columns
+                    .iter()
+                    .map(|(column, name)| (*name, column.encoding == ValueEncoding::Integer)),
+            )
+            .collect::<Vec<_>>(),
+    );
     let sql = format!(
         "SELECT {} FROM {table_name} LIMIT {count}",
-        selected.join(", ")
+        projection.join(", ")
     );
     let mut seen = BTreeSet::new();
     for raw in reader.conn.query(&sql, params![])? {
