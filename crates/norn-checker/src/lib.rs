@@ -214,7 +214,8 @@ pub use sealing::{
 pub use typed_roots::decode_artifact_json;
 
 /// Check one artifact envelope and return every finding in the checker
-/// [`Diagnostic`] model (empty when the artifact is valid).
+/// [`Diagnostic`] model. The artifact is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes may remain.
 ///
 /// Same checks, codes, and messages as [`validate_artifact`]; only the
 /// location is re-expressed as a JSON-pointer [`Span`], resolved against the
