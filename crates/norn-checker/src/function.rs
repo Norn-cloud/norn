@@ -256,6 +256,7 @@ fn require_digest(digest: &Digest, code: &str, what: &str, span: Span, out: &mut
 }
 
 /// Check a manifest. Empty when it is admissible. See the module docs.
+/// FUNCTION-HOST-1: authored and pack manifests cannot authorize Host code.
 #[must_use]
 pub fn check_function_manifest(manifest: &FunctionManifest) -> Vec<Diagnostic> {
     let mut out = Vec::new();
