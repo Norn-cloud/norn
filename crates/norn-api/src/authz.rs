@@ -80,15 +80,31 @@ impl Authorizer for DenyAll {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "authorization contract fixtures")]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "authorization contract fixtures"
+)]
 mod tests {
     use super::*;
     #[test]
     fn absent_host_policy_denies_authenticated_and_anonymous_operations() {
-        let scope = CellScope { org_id: "org_demo".into(), environment_id: "dev".into() };
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
         for actor in [None, Some("demo.viewer")] {
-            for operation in [Operation::ReadDefinitions, Operation::CallAction("demo.action".into())] {
-                let refusal = DenyAll.authorize(&AccessRequest { scope: &scope, actor, operation }).expect_err("explicit policy required");
+            for operation in [
+                Operation::ReadDefinitions,
+                Operation::CallAction("demo.action".into()),
+            ] {
+                let refusal = DenyAll
+                    .authorize(&AccessRequest {
+                        scope: &scope,
+                        actor,
+                        operation,
+                    })
+                    .expect_err("explicit policy required");
                 assert_eq!(refusal.code, codes::AUTHZ_DENIED);
             }
         }
@@ -97,18 +113,55 @@ mod tests {
     fn host_read_grant_does_not_supply_kernel_action_or_disclosure_grants() {
         struct ReadMetadata;
         impl Authorizer for ReadMetadata {
-            fn authorize(&self, _request: &AccessRequest<'_>) -> Result<(), Refusal> { Ok(()) }
+            fn authorize(&self, _request: &AccessRequest<'_>) -> Result<(), Refusal> {
+                Ok(())
+            }
         }
-        let envelope: serde_json::Value = serde_json::from_str(include_str!("../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json")).expect("fixture");
+        let envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+        ))
+        .expect("fixture");
         let action = serde_json::from_value(envelope["payload"].clone()).expect("action");
         let scope = std::collections::BTreeMap::new();
         let input = std::collections::BTreeMap::new();
         let target = norn_kernel::FactKey::new("demo.Order", "one");
-        let request = norn_kernel::ActionAuthzRequest { action: &action, scope: &scope, actor: "viewer", input: &input, target: &target, target_values: None };
-        assert_eq!(ReadMetadata.action(&request), Err(norn_kernel::ActionDenial::Forbidden { reason: "authz.denied".into() }));
-        let read = norn_kernel::ActionReadAuthzRequest { action: &action, scope: &scope, actor: "viewer", input: &input, declared_type: &target.object_type, target: &target, target_values: None };
-        assert_eq!(ReadMetadata.action_read(&read), Err(norn_kernel::ActionDenial::Invisible));
-        let read_type = norn_kernel::ActionReadTypeAuthzRequest { action: &action, scope: &scope, actor: "viewer", input: &input, object_type: &target.object_type };
-        assert_eq!(ReadMetadata.action_read_type(&read_type), Err(norn_kernel::ActionDenial::Invisible));
+        let request = norn_kernel::ActionAuthzRequest {
+            action: &action,
+            scope: &scope,
+            actor: "viewer",
+            input: &input,
+            target: &target,
+            target_values: None,
+        };
+        assert_eq!(
+            ReadMetadata.action(&request),
+            Err(norn_kernel::ActionDenial::Forbidden {
+                reason: "authz.denied".into()
+            })
+        );
+        let read = norn_kernel::ActionReadAuthzRequest {
+            action: &action,
+            scope: &scope,
+            actor: "viewer",
+            input: &input,
+            declared_type: &target.object_type,
+            target: &target,
+            target_values: None,
+        };
+        assert_eq!(
+            ReadMetadata.action_read(&read),
+            Err(norn_kernel::ActionDenial::Invisible)
+        );
+        let read_type = norn_kernel::ActionReadTypeAuthzRequest {
+            action: &action,
+            scope: &scope,
+            actor: "viewer",
+            input: &input,
+            object_type: &target.object_type,
+        };
+        assert_eq!(
+            ReadMetadata.action_read_type(&read_type),
+            Err(norn_kernel::ActionDenial::Invisible)
+        );
     }
 }
