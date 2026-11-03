@@ -29,6 +29,11 @@ impl Modify for ContractSchemas {
                 "NornIr",
             ))
             .chain(project_schemars_components(
+                norn_ir::requirement_display::requirement_view_schema(),
+                "NornIrRequirementView",
+                "NornIrRequirement",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",

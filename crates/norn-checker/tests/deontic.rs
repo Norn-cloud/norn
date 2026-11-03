@@ -1,5 +1,5 @@
 //! Regression checks for conservative normative lowering.
-use norn_checker::deontic::{LawLoweringRefusal, lower_deontic_law};
+use norn_checker::deontic::{LawLoweringRefusal, check_requirement, lower_deontic_law};
 use norn_ir::LawModality;
 use norn_ir::deontic::{DeonticModality, DeonticRule};
 use serde_json::json;
@@ -131,11 +131,7 @@ fn source_pointers_obey_rfc6901_escaping() {
 
 #[allow(clippy::expect_used, reason = "test-only typed requirement fixture")]
 fn requirement() -> norn_ir::deontic::StructuredRequirement {
-    use norn_ir::deontic::{RequirementText, RequirementTiming, RequirementWording};
-    let text = || RequirementText {
-        en: "declared predicate".into(),
-        ar: "المحمول المعلن".into(),
-    };
+    use norn_ir::deontic::{RequirementTiming, RequirementWording};
     let mut norm = obligation().expect("fixture");
     norm.law.modality = LawModality::Always {};
     norm.law.timing = None;
@@ -146,12 +142,10 @@ fn requirement() -> norn_ir::deontic::StructuredRequirement {
     norn_ir::deontic::StructuredRequirement {
         norm,
         timing: RequirementTiming::SameCommit,
-        wording: RequirementWording {
-            scope: text(),
-            activation: text(),
-            component: text(),
-            response: text(),
-        },
+        wording: serde_json::from_str::<RequirementWording>(include_str!(
+            "../../../fixtures/wording/locales.json"
+        ))
+        .expect("complete locale data"),
     }
 }
 
@@ -263,8 +257,11 @@ fn structured_fragment_refuses_progress_mismatches_and_untyped_predicates() {
         assert_eq!(check_requirement(&r, &env), Err(R::PredicateType));
     }
     r = requirement();
-    r.wording.response.ar.clear();
-    assert_eq!(check_requirement(&r, &env), Err(R::MissingTemplate));
+    r.wording.0.get_mut("ar").expect("Arabic").response.clear();
+    assert_eq!(
+        check_requirement(&r, &env),
+        Err(R::Wording("law.wording.incomplete_locale"))
+    );
     r = requirement();
     r.norm.law.response = norn_ir::LawResponse::Action {
         artifact_id: "future.action".into(),
@@ -320,7 +317,7 @@ fn structured_nested_bindings_must_identify_real_slots() {
         if pointer == "/norm/exceptions" {
             let view = norn_ir::requirement_display::RequirementView {
                 requirement: invalid,
-                locale: norn_ir::requirement_display::RequirementLocale::Ar,
+                locale: "ar".into(),
             };
             assert!(view.slots().is_err());
         }
@@ -329,11 +326,7 @@ fn structured_nested_bindings_must_identify_real_slots() {
 
 #[allow(clippy::expect_used, reason = "typed physics corpus fixture")]
 fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [&str; 4]) {
-    use norn_ir::deontic::{RequirementText, RequirementTiming};
-    let text = |en: &str, ar: &str| RequirementText {
-        en: en.into(),
-        ar: ar.into(),
-    };
+    use norn_ir::deontic::RequirementTiming;
     let columns: [&str; 12] = row
         .split('\t')
         .collect::<Vec<_>>()
@@ -375,17 +368,23 @@ fn physics_requirement(row: &str) -> (norn_ir::deontic::StructuredRequirement, [
     if prohibited || id == "commitment" {
         r.timing = RequirementTiming::EveryCommittedState;
     }
-    r.wording.scope = text(scope_en, scope_ar);
-    r.wording.component = text(component_en, component_ar);
-    r.wording.response = text(en, ar);
-    r.wording.activation = text(when_en, when_ar);
+    for (tag, scope, component, response, activation) in [
+        ("en", scope_en, component_en, en, when_en),
+        ("ar", scope_ar, component_ar, ar, when_ar),
+    ] {
+        let w = r.wording.0.get_mut(tag).expect("declared locale");
+        w.scope = scope.into();
+        w.component = component.into();
+        w.response = response.into();
+        w.activation = activation.into();
+    }
     (r, [expression, en, ar, condition])
 }
 
 #[test]
 fn core_physics_bilingual_views_round_trip_one_semantic_target() {
     use norn_expr::{EntityDefinitions, EnvOptions, Type, ZenTypeEnv};
-    use norn_ir::requirement_display::{RequirementLocale as L, RequirementView};
+    use norn_ir::requirement_display::RequirementView;
     use std::collections::BTreeMap;
     // Bounded, partitioned authoring inputs; not aggregate-law admission or preservation.
     let corpus = include_str!("../../../docs/platform/structured-physics.tsv");
@@ -414,10 +413,10 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         assert!(r.norm.law.id != "core.history" || condition == "true");
         norn_checker::deontic::check_requirement(&r, &env).expect("closed corpus");
         let mut ids = Vec::new();
-        for locale in [L::En, L::Ar] {
+        for locale in ["en", "ar"] {
             let view = RequirementView {
                 requirement: r.clone(),
-                locale,
+                locale: locale.into(),
             };
             let slots = view.slots().expect("safety display");
             assert!(slots.iter().any(|s| s.text.contains(expression)));
@@ -427,12 +426,12 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
                 .iter()
                 .find(|s| s.id.ends_with("/response"))
                 .expect("response slot");
-            let expected = if locale == L::Ar { ar } else { en };
+            let expected = if locale == "ar" { ar } else { en };
             assert!(response.text.contains(expected));
             assert!(slots.iter().all(|s| s.id.starts_with(&r.norm.law.id)));
             assert_eq!(
-                view.direction(),
-                if locale == L::Ar { "rtl" } else { "ltr" }
+                view.direction().expect("declared direction"),
+                if locale == "ar" { "rtl" } else { "ltr" }
             );
             ids.push(slots.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
             let encoded = serde_json::to_string(&view).expect("view wire");
@@ -446,7 +445,7 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         norn_checker::deontic::check_requirement(&r, &env).expect("typed bidi literal");
         let mut view = RequirementView {
             requirement: r,
-            locale: L::Ar,
+            locale: "ar".into(),
         };
         let slots = view.slots().expect("escaped controls");
         let activation = slots
@@ -457,5 +456,175 @@ fn core_physics_bilingual_views_round_trip_one_semantic_target() {
         assert_eq!(activation.text.matches('\u{2069}').count(), 1);
         view.requirement.norm.law.modality = LawModality::Eventually {};
         assert_eq!(view.slots(), Err("law.validation.unsupported_temporal"));
+    }
+}
+
+#[test]
+#[allow(clippy::expect_used, reason = "locale conformance fixtures")]
+fn wording_third_locale_is_data_only_and_unknown_locale_refuses() {
+    use norn_ir::{deontic::RequirementWording, requirement_display::RequirementView};
+    let mut r = requirement();
+    let french: RequirementWording =
+        serde_json::from_str(include_str!("../../../fixtures/wording/french.json"))
+            .expect("complete French vocabulary");
+    r.wording.0.extend(french.0);
+    check_requirement(&r, &requirement_env())
+        .expect("French admitted without language-specific code");
+    let mut view = RequirementView {
+        requirement: r.clone(),
+        locale: "fr".into(),
+    };
+    let slots = view.slots().expect("French rendered");
+    assert_eq!(slots.get(3).expect("grade").text, "doit");
+    assert_eq!(slots.first().expect("scope").label, "Portée");
+    assert_eq!(view.direction(), Ok("ltr"));
+    assert_eq!(view.requirement.norm, r.norm);
+    view.locale = "FR".into();
+    assert_eq!(
+        view.slots().expect("BCP 47 case-insensitive identity"),
+        slots
+    );
+    view.locale = "fr-CA".into();
+    assert_eq!(view.slots(), Err("law.wording.unknown_locale"));
+    assert_eq!(view.direction(), Err("law.wording.unknown_locale"));
+    // Direction is declared data, independently of the language tag.
+    view.locale = "fr".into();
+    view.requirement
+        .wording
+        .0
+        .get_mut("fr")
+        .expect("French")
+        .direction = norn_ir::deontic::TextDirection::Rtl;
+    assert_eq!(view.direction(), Ok("rtl"));
+}
+
+#[test]
+#[allow(clippy::expect_used, reason = "locale refusal fixtures")]
+fn wording_incomplete_locale_refuses_even_when_rendering_another_locale() {
+    use norn_ir::{deontic::RequirementWording, requirement_display::RequirementView};
+    let mut r = requirement();
+    r.wording.0.get_mut("ar").expect("Arabic").response.clear();
+    assert_eq!(
+        check_requirement(&r, &requirement_env())
+            .expect_err("incomplete Arabic")
+            .code(),
+        "law.wording.incomplete_locale"
+    );
+    let view = RequirementView {
+        requirement: r,
+        locale: "en".into(),
+    };
+    assert_eq!(view.slots(), Err("law.wording.incomplete_locale"));
+    let wire: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))
+            .expect("fixture");
+    for pointer in ["/ar", "/ar/labels", "/ar/terms"] {
+        let keys: Vec<_> = wire
+            .pointer(pointer)
+            .expect("record")
+            .as_object()
+            .expect("record")
+            .keys()
+            .cloned()
+            .collect();
+        for key in keys {
+            let mut missing = wire.clone();
+            missing
+                .pointer_mut(pointer)
+                .expect("record")
+                .as_object_mut()
+                .expect("record")
+                .remove(&key);
+            let error = serde_json::from_value::<RequirementWording>(missing)
+                .expect_err("missing required field");
+            assert!(
+                error.to_string().contains("law.wording.incomplete_locale"),
+                "{pointer}/{key}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::expect_used, reason = "locale boundary fixtures")]
+fn wording_tags_duplicates_and_nonblank_text_are_strict() {
+    use norn_ir::deontic::RequirementWording;
+    let wire: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/wording/french.json"))
+            .expect("fixture");
+    let entry = wire.get("fr").expect("French");
+    for tag in [
+        "en_US",
+        "",
+        "en--US",
+        "en-123456789",
+        "fr-CA-CA",
+        "de-CH-1901-1901",
+        "en-u-ca-gregory-u-nu-latn",
+        "en-x",
+    ] {
+        let text = serde_json::json!({tag: entry});
+        assert!(
+            serde_json::from_value::<RequirementWording>(text).is_err(),
+            "{tag}"
+        );
+    }
+    for tag in [
+        "fr",
+        "fr-CA",
+        "zh-Hant-TW",
+        "en-US-u-ca-gregory",
+        "x-demo",
+        "i-klingon",
+    ] {
+        assert!(
+            serde_json::from_value::<RequirementWording>(serde_json::json!({tag: entry})).is_ok(),
+            "{tag}"
+        );
+    }
+    for (a, b) in [("fr", "fr"), ("fr", "FR")] {
+        let text = format!("{{\"{a}\":{entry},\"{b}\":{entry}}}");
+        assert!(
+            serde_json::from_str::<RequirementWording>(&text)
+                .expect_err("duplicate locale")
+                .to_string()
+                .contains("law.wording.duplicate_locale")
+        );
+    }
+    for pointer in [
+        "/fr/scope",
+        "/fr/response",
+        "/fr/labels/source",
+        "/fr/terms/permission",
+    ] {
+        let mut blank = wire.clone();
+        *blank.pointer_mut(pointer).expect("text") = serde_json::json!(" \t\n");
+        assert!(
+            serde_json::from_value::<RequirementWording>(blank)
+                .expect_err("blank text")
+                .to_string()
+                .contains("law.wording.incomplete_locale")
+        );
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn wording_locale_round_trip_preserves_semantics_and_rendering(text in "[^\\p{C}]{1,80}") {
+        use norn_ir::requirement_display::RequirementView;
+        let mut r = requirement();
+        let original = r.norm.clone();
+        if let Some(w) = r.wording.0.get_mut("en") { w.response = format!("response {text}"); }
+        let view = RequirementView { requirement: r, locale: "en".into() };
+        let encoded = serde_json::to_string(&view);
+        proptest::prop_assert!(encoded.is_ok());
+        if let Ok(encoded) = encoded {
+            let decoded = serde_json::from_str::<RequirementView>(&encoded);
+            proptest::prop_assert!(decoded.is_ok());
+            if let Ok(decoded) = decoded {
+                proptest::prop_assert_eq!(&decoded.requirement.norm, &original);
+                proptest::prop_assert_eq!(view.slots(), decoded.slots());
+            }
+        }
     }
 }

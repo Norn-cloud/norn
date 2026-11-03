@@ -98,20 +98,337 @@ pub enum RequirementTiming {
     SameCommit,
 }
 
-/// Reviewed bilingual templates; identifiers and expressions remain in `norm`.
+/// LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.
+/// Wording is never executable and does not change the law's semantic identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct RequirementWording(
+    #[schemars(extend("minProperties" = 1))]
+    pub  std::collections::BTreeMap<String, LocalizedRequirement>,
+);
+
+/// One complete translation, including every phrase used by the renderer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RequirementWording {
-    pub scope: RequirementText,
-    pub activation: RequirementText,
-    pub component: RequirementText,
-    pub response: RequirementText,
+pub struct LocalizedRequirement {
+    pub direction: TextDirection,
+    #[schemars(pattern(r"\S"))]
+    pub scope: String,
+    #[schemars(pattern(r"\S"))]
+    pub activation: String,
+    #[schemars(pattern(r"\S"))]
+    pub component: String,
+    #[schemars(pattern(r"\S"))]
+    pub response: String,
+    pub labels: RequirementLabels,
+    pub terms: RequirementTerms,
 }
 
-/// Reviewed English and Arabic display, never executable free prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TextDirection {
+    Ltr,
+    Rtl,
+}
+
+impl TextDirection {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ltr => "ltr",
+            Self::Rtl => "rtl",
+        }
+    }
+}
+
+impl RequirementWording {
+    /// LAW-WORDING-LOCALE-1 also applies to programmatically constructed values.
+    ///
+    /// # Errors
+    /// Refuses malformed/duplicate tags and incomplete or blank translations.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        use std::collections::BTreeSet;
+        let mut tags = BTreeSet::new();
+        if self.0.is_empty() {
+            return Err("law.wording.incomplete_locale");
+        }
+        for (tag, entry) in &self.0 {
+            if !valid_locale_tag(tag) {
+                return Err("law.wording.invalid_locale");
+            }
+            if !tags.insert(tag.to_ascii_lowercase()) {
+                return Err("law.wording.duplicate_locale");
+            }
+            entry.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Select only the requested BCP 47 tag (case insensitive); never fall back.
+    ///
+    /// # Errors
+    /// Refuses invalid wording or an unavailable requested locale.
+    pub fn locale(&self, tag: &str) -> Result<&LocalizedRequirement, &'static str> {
+        self.validate()?;
+        if !valid_locale_tag(tag) {
+            return Err("law.wording.invalid_locale");
+        }
+        self.0
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(tag))
+            .map(|(_, entry)| entry)
+            .ok_or("law.wording.unknown_locale")
+    }
+}
+
+impl LocalizedRequirement {
+    fn validate(&self) -> Result<(), &'static str> {
+        if [
+            &self.scope,
+            &self.activation,
+            &self.component,
+            &self.response,
+            &self.labels.scope,
+            &self.labels.condition,
+            &self.labels.component,
+            &self.labels.grade,
+            &self.labels.timing,
+            &self.labels.response,
+            &self.labels.source,
+            &self.labels.preferences,
+            &self.labels.exception,
+            &self.terms.company,
+            &self.terms.application,
+            &self.terms.cell,
+            &self.terms.entity,
+            &self.terms.commitments,
+            &self.terms.obligation,
+            &self.terms.permission,
+            &self.terms.prohibition,
+            &self.terms.same_commit,
+            &self.terms.every_committed_state,
+            &self.terms.grounding,
+        ]
+        .iter()
+        .any(|s| s.trim().is_empty())
+            || self
+                .terms
+                .pack
+                .as_ref()
+                .is_some_and(|s| s.trim().is_empty())
+        {
+            return Err("law.wording.incomplete_locale");
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for RequirementWording {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct WordingVisitor;
+        impl<'de> serde::de::Visitor<'de> for WordingVisitor {
+            type Value = RequirementWording;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an ordered map of complete BCP 47 translations")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                use serde::de::Error as _;
+                let mut entries = std::collections::BTreeMap::new();
+                let mut tags = std::collections::BTreeSet::new();
+                while let Some(tag) = map.next_key::<String>()? {
+                    if !valid_locale_tag(&tag) {
+                        return Err(M::Error::custom("law.wording.invalid_locale"));
+                    }
+                    if !tags.insert(tag.to_ascii_lowercase()) {
+                        return Err(M::Error::custom("law.wording.duplicate_locale"));
+                    }
+                    let entry = map.next_value::<LocalizedRequirement>().map_err(|e| {
+                        M::Error::custom(format!("law.wording.incomplete_locale: {e}"))
+                    })?;
+                    entries.insert(tag, entry);
+                }
+                let wording = RequirementWording(entries);
+                wording.validate().map_err(M::Error::custom)?;
+                Ok(wording)
+            }
+        }
+        deserializer.deserialize_map(WordingVisitor)
+    }
+}
+
+/// Complete display vocabulary; missing fields refuse at decode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RequirementText {
-    pub en: String,
-    pub ar: String,
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RequirementLabels {
+    #[schemars(pattern(r"\S"))]
+    pub scope: String,
+    #[schemars(pattern(r"\S"))]
+    pub condition: String,
+    #[schemars(pattern(r"\S"))]
+    pub component: String,
+    #[schemars(pattern(r"\S"))]
+    pub grade: String,
+    #[schemars(pattern(r"\S"))]
+    pub timing: String,
+    #[schemars(pattern(r"\S"))]
+    pub response: String,
+    #[schemars(pattern(r"\S"))]
+    pub source: String,
+    #[schemars(pattern(r"\S"))]
+    pub preferences: String,
+    #[schemars(pattern(r"\S"))]
+    pub exception: String,
+}
+
+/// Complete display vocabulary; missing fields refuse at decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RequirementTerms {
+    #[schemars(pattern(r"\S"))]
+    pub company: String,
+    #[schemars(pattern(r"\S"))]
+    pub application: String,
+    #[schemars(pattern(r"\S"))]
+    pub cell: String,
+    #[schemars(pattern(r"\S"))]
+    pub entity: String,
+    #[schemars(pattern(r"\S"))]
+    pub commitments: String,
+    #[schemars(pattern(r"\S"))]
+    pub obligation: String,
+    #[schemars(pattern(r"\S"))]
+    pub permission: String,
+    #[schemars(pattern(r"\S"))]
+    pub prohibition: String,
+    #[schemars(pattern(r"\S"))]
+    pub same_commit: String,
+    #[schemars(pattern(r"\S"))]
+    pub every_committed_state: String,
+    #[schemars(pattern(r"\S"))]
+    pub grounding: String,
+    /// Required to render a pack-rooted law; other roots never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(r"\S"))]
+    pub pack: Option<String>,
+}
+
+/// Public structured-requirement schema, including complete locale vocabulary.
+#[must_use]
+pub fn structured_requirement_schema() -> schemars::Schema {
+    schemars::schema_for!(StructuredRequirement)
+}
+
+// RFC 5646 §§2.1, 2.2.9: syntactic well-formedness, not registry membership.
+fn valid_locale_tag(tag: &str) -> bool {
+    const IRREGULAR: &[&str] = &[
+        "en-gb-oed",
+        "i-ami",
+        "i-bnn",
+        "i-default",
+        "i-enochian",
+        "i-hak",
+        "i-klingon",
+        "i-lux",
+        "i-mingo",
+        "i-navajo",
+        "i-pwn",
+        "i-tao",
+        "i-tay",
+        "i-tsu",
+        "sgn-be-fr",
+        "sgn-be-nl",
+        "sgn-ch-de",
+    ];
+    let lower = tag.to_ascii_lowercase();
+    if IRREGULAR.contains(&lower.as_str()) {
+        return true;
+    }
+    let mut parts = lower.split('-').peekable();
+    let Some(language) = parts.next() else {
+        return false;
+    };
+    let alnum =
+        |s: &str| !s.is_empty() && s.len() <= 8 && s.bytes().all(|b| b.is_ascii_alphanumeric());
+    let alpha = |s: &str| s.bytes().all(|b| b.is_ascii_alphabetic());
+    if language == "x" {
+        return parts.peek().is_some() && parts.all(alnum);
+    }
+    if !(2..=8).contains(&language.len()) || !alpha(language) {
+        return false;
+    }
+    if language.len() <= 3 {
+        for _ in 0..3 {
+            if parts.peek().is_some_and(|s| s.len() == 3 && alpha(s)) {
+                parts.next();
+            } else {
+                break;
+            }
+        }
+    }
+    if parts.peek().is_some_and(|s| s.len() == 4 && alpha(s)) {
+        parts.next();
+    }
+    if parts.peek().is_some_and(|s| {
+        (s.len() == 2 && alpha(s)) || (s.len() == 3 && s.bytes().all(|b| b.is_ascii_digit()))
+    }) {
+        parts.next();
+    }
+    let mut variants = std::collections::BTreeSet::new();
+    while parts.peek().is_some_and(|s| {
+        alnum(s) && (s.len() >= 5 || (s.len() == 4 && s.starts_with(|c: char| c.is_ascii_digit())))
+    }) {
+        if !variants.insert(parts.next()) {
+            return false;
+        }
+    }
+    let mut extensions = std::collections::BTreeSet::new();
+    while let Some(singleton) = parts.next() {
+        if singleton == "x" {
+            return parts.peek().is_some() && parts.all(alnum);
+        }
+        if singleton.len() != 1 || !alnum(singleton) || !extensions.insert(singleton) {
+            return false;
+        }
+        let mut has_subtag = false;
+        while parts.peek().is_some_and(|s| s.len() >= 2 && alnum(s)) {
+            parts.next();
+            has_subtag = true;
+        }
+        if !has_subtag {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod locale_properties {
+    use super::valid_locale_tag;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn accepted_locale_tags_have_bcp47_syntax(tag in "[a-zA-Z0-9_-]{0,60}") {
+            if valid_locale_tag(&tag) {
+                prop_assert!(language_tags::LanguageTag::parse(&tag).is_ok());
+            }
+        }
+
+        #[test]
+        fn generated_language_tags_are_case_insensitive(language in "[a-z]{2,3}", extlang in "[a-z]{3}", script in "[A-Z][a-z]{3}", region in "[A-Z]{2}", variant in "[a-z]{5,8}", extension in "[a-z0-9]{2,8}", private in "[a-z0-9]{1,8}") {
+            let base = format!("{language}-{extlang}-{script}-{region}-{variant}");
+            let tag = format!("{base}-a-{extension}-x-{private}");
+            prop_assert!(valid_locale_tag(&tag));
+            prop_assert!(valid_locale_tag(&tag.to_ascii_uppercase()));
+            prop_assert!(language_tags::LanguageTag::parse(&tag).is_ok());
+            // The oracle's parse checks syntax; Norn additionally rejects duplicates.
+            for duplicate in [format!("{base}-{variant}"), format!("{base}-a-{extension}-a-{extension}")] {
+                prop_assert!(language_tags::LanguageTag::parse(&duplicate).is_ok());
+                prop_assert!(!valid_locale_tag(&duplicate));
+            }
+        }
+    }
 }
