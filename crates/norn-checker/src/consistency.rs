@@ -21,6 +21,7 @@
 //! Behavioural equivalence is a separate obligation, not checked here.
 
 mod chase;
+pub mod diagnosis;
 mod divergence;
 mod exchange;
 mod theory;
