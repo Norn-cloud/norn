@@ -107,7 +107,9 @@ pub fn explain(
         }
     }
     let reads = if kind == ExplainKind::Action {
-        serde_json::from_value::<ActionRoot>(payload(&pool, &target)?).map_err(document_error)?.slice
+        serde_json::from_value::<ActionRoot>(payload(&pool, &target)?)
+            .map_err(document_error)?
+            .slice
     } else {
         Vec::new()
     };
@@ -197,7 +199,8 @@ fn explain_laws(
                     "law index is unavailable",
                 )
             })?;
-        let owned: LawIR = serde_json::from_value(payload(pool, &law.at)?).map_err(document_error)?;
+        let owned: LawIR =
+            serde_json::from_value(payload(pool, &law.at)?).map_err(document_error)?;
         let obligations: Vec<_> = goals
             .iter()
             .filter(|goal| {
@@ -256,7 +259,10 @@ fn payload(
 }
 
 fn document_error(error: impl std::fmt::Display) -> Vec<Diagnostic> {
-    refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string())
+    refusal(
+        crate::verification::codes::INVALID_DOCUMENT,
+        error.to_string(),
+    )
 }
 
 fn target(
