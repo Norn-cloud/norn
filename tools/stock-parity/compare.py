@@ -56,11 +56,10 @@ def refusal_unchanged(before, after):
     if not after['attempts'] or not all(a['outcome'] == 'refused' for a in after['attempts']):
         return True
     if not available(before):
-        return False
-    return (view(before)['stock'] == view(after)['stock'] and
-            view(before)['gl'] == view(after)['gl'] and all(
-                {r['id'] for r in before[k]} == {r['id'] for r in after[k]}
-                for k in ('stock', 'gl')))
+        return None
+    return all(view(before)[k] == view(after)[k] and
+               {r['id'] for r in before[k]} == {r['id'] for r in after[k]}
+               for k in ('stock', 'gl'))
 
 
 def fingerprint(case, method, step, field, left, right):
@@ -78,9 +77,8 @@ def reviewed(d):
         return d.get('decision') in DECISIONS and bool(PUBLIC.fullmatch(d.get('decisionRecord', '')))
     if bucket in ('norn-bug', 'erpnext-bug'):
         fields = ['reproduction', 'receipt', 'issue']
-        if bucket == 'erpnext-bug':
-            if not re.fullmatch(r'[A-Z][A-Z0-9-]+', d.get('invariant', '')):
-                return False
+        if bucket == 'erpnext-bug' and not re.fullmatch(r'[A-Z][A-Z0-9-]+', d.get('invariant', '')):
+            return False
         return all(PUBLIC.fullmatch(d.get(k, '')) for k in fields)
     return False
 
@@ -148,6 +146,10 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
             entry['observations'] = [{k: sanitized(v) for k, v in view.items()} for view in views]
             for category in sorted(set(views[0]) | set(views[1])):
                 a, b = views[0].get(category), views[1].get(category)
+                if category == 'refusalPreserved' and (a is None or b is None):
+                    entry['status'] = row['status'] = 'unsupported'
+                    counts['unsupported'] += 1
+                    continue
                 def groups(rows):
                     result = defaultdict(list)
                     width = {'stock': 4, 'gl': 4, 'documents': 1, 'outcomes': 2}[category]
@@ -171,7 +173,7 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
                             'issue', 'reproduction', 'receipt', 'invariant') if k in d}
                     counts[{'norn-bug': 'openNornBugs', 'erpnext-bug': 'openErpnextBugs',
                             'intentional-difference': 'intentionallyDifferent', 'untriaged': 'untriaged'}[bucket]] += 1
-            entry['status'] = ('matched' if not entry['differences'] else
+            entry['status'] = entry.get('status') or ('matched' if not entry['differences'] else
                                'intentionally different' if all(d['bucket'] == 'intentional-difference'
                                for d in entry['differences']) else 'divergent')
             if entry['status'] == 'matched':

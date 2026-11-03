@@ -28,13 +28,9 @@ class Checkpoint(TypedDict, total=False):
     status: Literal['unsupported']
 
 
-class Case(TypedDict, total=False):
-    case: str
-    method: str
-    status: Literal['complete', 'unsupported']
-    reason: Optional[str]
-    initial: Checkpoint
-    checkpoints: List[Checkpoint]
+Case = TypedDict('Case', {'case': str, 'method': str,
+    'status': Literal['complete', 'unsupported'], 'reason': Optional[str],
+    'initial': Checkpoint, 'checkpoints': List[Checkpoint]}, total=False)
 
 
 class StockDump(TypedDict):
