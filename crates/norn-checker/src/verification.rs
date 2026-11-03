@@ -20,7 +20,7 @@ const RETAINED_SCOPE_BUDGET: Budget = Budget {
 
 /// Stable law diagnostic codes.
 pub mod codes {
-    /// Retained pack/app membership is unavailable in this cut.
+    /// A retained pack/app root or its complete membership is unavailable.
     pub const UNRESOLVED_SCOPE: &str = "core.laws.unresolved_scope";
     /// Malformed closed `LawIR` document.
     pub const INVALID_DOCUMENT: &str = "law.validation.invalid_document";
