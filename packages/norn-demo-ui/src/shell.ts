@@ -118,6 +118,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .callout p { margin: 0 0 .5rem; }
 .plain { list-style: none; margin: 0; padding: 0; }
 th.num, td.num { text-align: end; font-variant-numeric: tabular-nums; }
+.answer td, .drill td { white-space: nowrap; }
 .answer td.value a { font-weight: 650; }
 .drill { display: none; margin: .75rem 0; padding: 1rem 1.1rem; border: 1px solid var(--accent); border-radius: 12px; scroll-margin-top: 72px; }
 .drill:target { display: block; }
