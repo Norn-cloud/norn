@@ -31,16 +31,23 @@ def run(args):
         with zipfile.ZipFile(jar) as archive:
             for name in ["Apalache", "Variants"]:
                 (work / f"{name}.tla").write_bytes(archive.read(f"tla2sany/StandardModules/{name}.tla"))
-        server = ApalacheServer(root / "quint-home", environment, lambda _: None)
-        try:
-            server.start()
-            compiled = subprocess.run([
-                str(root / "bin/quint"), "compile", str(args.model), "--main", "generated",
-                "--target", "tlaplus", "--step", args.step, "--invariant", args.invariant,
-                "--out", str(work / "compile.json"), "--server-endpoint", f"127.0.0.1:{server.port}",
-            ], env=environment, capture_output=True, check=True, timeout=120)
-        finally:
-            server.stop()
+        compilation = []
+        for attempt in range(2):
+            server = ApalacheServer(root / "quint-home", environment, lambda _: None)
+            try:
+                server.start()
+                compiled = subprocess.run([
+                    str(root / "bin/quint"), "compile", str(args.model), "--main", "generated",
+                    "--target", "tlaplus", "--step", args.step, "--invariant", args.invariant,
+                    "--out", str(work / "compile.json"), "--server-endpoint", f"127.0.0.1:{server.port}",
+                ], env=environment, capture_output=True, timeout=120)
+            finally:
+                server.stop()
+            compilation.append({"exitCode": compiled.returncode, "stdout": compiled.stdout.decode(), "stderr": compiled.stderr.decode()})
+            if compiled.returncode == 0:
+                break
+            if attempt == 1:
+                return {"status": "unknown", "reason": "Quint compilation failed", "compilation": compilation}
         tla = work / "generated.tla"
         tla.write_bytes(compiled.stdout)
         primary_path = work / "primary.json"
@@ -63,7 +70,7 @@ def run(args):
         if primary.get("status") == "invariant-violation" and primary.get("violation", {}).get("trace") and clean and oracle.get("status") == "violation" and oracle.get("trace"):
             status = "violation"
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",
-                "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
+                "compilation": compilation, "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
                 "tlaSha256": hashlib.sha256(compiled.stdout).hexdigest(), "trace": primary.get("violation", {}).get("trace")}
 
 
