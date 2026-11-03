@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 #[cfg(feature = "native")]
 use std::path::Path;
-#[cfg(feature = "native")]
 use std::sync::Arc;
 
 use norn_ir::{FactChange, RuntimeValue as Value};
@@ -1732,6 +1731,7 @@ type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Resu
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
+    pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
     #[cfg(feature = "native")]
@@ -2081,6 +2081,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn unverified(conn: E, model: Model) -> Self {
         Self {
             conn,
+            instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
             #[cfg(feature = "native")]

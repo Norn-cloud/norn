@@ -617,7 +617,12 @@ def workflow_verdict_canaries(source: str) -> None:
 
 
 def workflow_cleanup_canaries(source: str) -> None:
-    command = yaml.safe_load(source)["jobs"]["core"]["steps"][0]["run"]
+    workflow = yaml.safe_load(source)
+    for job in ("core", "test"):
+        cleanup_command_canaries(workflow["jobs"][job]["steps"][0]["run"], unconditional=job == "test")
+
+
+def cleanup_command_canaries(command: str, *, unconditional: bool) -> None:
     # Substitute commands rather than touching any runner SDK directory.
     with tempfile.TemporaryDirectory() as directory:
         for initial, after, success, reclaimed in ((12582912, 12582912, True, False),
@@ -637,7 +642,7 @@ sudo() {{
 }}
 """
             result = subprocess.run(["bash", "-c", preamble + command], capture_output=True, timeout=10)
-            if (result.returncode == 0) != success or marker.exists() != reclaimed:
+            if (result.returncode == 0) != success or marker.exists() != (reclaimed or unconditional):
                 raise AssertionError(f"cleanup preflight drift: {initial}/{after}: {result.stderr!r}")
 
 
@@ -735,13 +740,20 @@ def workflow_context_canaries(source: str) -> None:
         rejected("missing READY activity", document)
         for name in ("core", "test"):
             for before, after in (("12 * 1024 * 1024", "1 * 1024 * 1024"),
-                                  ('if [ "$(available)" -lt "$minimum" ]; then', "if true; then"),
                                   ('[ "$(available)" -ge "$minimum" ]', "true"),
                                   ("df -h /", "sudo docker image prune -af")):
                 document = copy.deepcopy(workflow)
                 step = document["jobs"][name]["steps"][0]
                 step["run"] = step["run"].replace(before, after)
                 rejected(f"{name} cleanup mutation {before}", document)
+
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["steps"][0]["run"] = document["jobs"]["core"]["steps"][0]["run"].replace(
+            'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
+        rejected("unconditional core cleanup", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
+        rejected("threshold-only hosted bundle cleanup", document)
 
         def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
             return next(step for step in document["jobs"][job]["steps"]
@@ -766,16 +778,16 @@ def workflow_context_canaries(source: str) -> None:
                       runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
-            if name == "trusted-policy":
-                unsafe.append(runner)
-            else:
+            if name in ("core", "test"):
                 unsafe.append("ubuntu-24.04")
+            else:
+                unsafe.append(runner)
             for value in unsafe:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "plan", "test", "full"):
+        for name in ("core", "test"):
             document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)

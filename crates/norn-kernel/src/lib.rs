@@ -131,3 +131,8 @@ pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, Worl
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;
+
+/// Conservative ownership boundary for cell-local atomic execution.
+pub mod execution_profile;
+
+mod profile_ownership;
