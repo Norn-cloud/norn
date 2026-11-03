@@ -161,21 +161,29 @@ impl DefinitionDiff {
             "narrowingCount": self.narrowing.len(),
             "narrowing": narrowing,
         });
-        if !self.additivity_changes.is_empty() {
-            summary["additivityChangeCount"] = json!(self.additivity_changes.len());
-            summary["additivityChanges"] = json!(
-                self.additivity_changes
-                    .iter()
-                    .take(LEDGER_DIFF_NARROWING_LIMIT)
-                    .map(|change| json!({
-                        "artifactId": bounded(&change.artifact_id, 128),
-                        "objectType": bounded(&change.object_type, 128),
-                        "link": change.link.as_deref().map(|id| bounded(id, 128)),
-                        "property": bounded(&change.property, 128),
-                        "previous": bounded_additivity(&change.previous),
-                        "candidate": bounded_additivity(&change.candidate),
-                    }))
-                    .collect::<Vec<_>>()
+        if !self.additivity_changes.is_empty()
+            && let Value::Object(fields) = &mut summary
+        {
+            fields.insert(
+                "additivityChangeCount".to_owned(),
+                json!(self.additivity_changes.len()),
+            );
+            fields.insert(
+                "additivityChanges".to_owned(),
+                json!(
+                    self.additivity_changes
+                        .iter()
+                        .take(LEDGER_DIFF_NARROWING_LIMIT)
+                        .map(|change| json!({
+                            "artifactId": bounded(&change.artifact_id, 128),
+                            "objectType": bounded(&change.object_type, 128),
+                            "link": change.link.as_deref().map(|id| bounded(id, 128)),
+                            "property": bounded(&change.property, 128),
+                            "previous": bounded_additivity(&change.previous),
+                            "candidate": bounded_additivity(&change.candidate),
+                        }))
+                        .collect::<Vec<_>>()
+                ),
             );
         }
         summary

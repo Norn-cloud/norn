@@ -1250,7 +1250,8 @@ fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
             base_kind_narrows(left, right) == Some(true)
                 && base_kind_narrows(right, left) == Some(true)
         }
-        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. })
+        | (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
         (PropertyType::Record { members: left }, PropertyType::Record { members: right }) => {
             left.len() == right.len()
                 && left.iter().zip(right).all(|(left, right)| {
@@ -1262,7 +1263,6 @@ fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
         (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
             enum_values(left) == enum_values(right)
         }
-        (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
         _ => left == right,
     }
 }
