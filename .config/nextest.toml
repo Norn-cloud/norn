@@ -13,6 +13,9 @@ path = "junit.xml"
 [scripts.setup.authored-profile]
 command = ["bun", "tools/norn-ts/src/cli.ts", "profile", "scripts/demo/jewelry.source.ts"]
 
+[scripts.setup.jewelry-authoring]
+command = { command-line = ["bun", "test", "tools/norn-ts/test/jewelry-demo.test.ts"], env = { NORN_UPDATE_JEWELRY_GOLDEN = "" } }
+
 [scripts.setup.fold-authoring]
 command = ["bun", "test", "tools/norn-ts/test/authoring-sdk.test.ts", "--test-name-pattern", "CP3 allocation goldens come from core-aligned typed declarations"]
 
@@ -63,7 +66,7 @@ default-filter = '''binary(=jewelry_demo) & test(=authored_laws_admit_refuse_and
 
 [[profile.drop-02.scripts]]
 filter = "all()"
-setup = ["authored-profile"]
+setup = ["authored-profile", "jewelry-authoring"]
 run-wrapper = "sampled-evidence"
 
 [profile.drop-03]
@@ -71,7 +74,7 @@ default-filter = '''binary(=catalog_demo) & test(=authored_catalog_reads_and_ref
 
 [[profile.drop-03.scripts]]
 filter = "all()"
-setup = ["authored-profile"]
+setup = ["authored-profile", "jewelry-authoring"]
 run-wrapper = "sampled-evidence"
 
 [profile.drop-04]

@@ -249,20 +249,7 @@ fn main() -> DemoResult<()> {
 
 #[test]
 fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
-    let output = std::process::Command::new("bun")
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-        .args([
-            "tools/norn-ts/src/cli.ts",
-            "compile",
-            "scripts/demo/jewelry.source.ts",
-            "--org",
-            "org_demo",
-            "--env",
-            "dev",
-        ])
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    rehearse(std::str::from_utf8(&output.stdout)?)
+    rehearse(include_str!(
+        "../../norn-checker/tests/fixtures/jewelry_demo.json"
+    ))
 }

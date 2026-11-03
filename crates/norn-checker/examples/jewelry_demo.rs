@@ -192,23 +192,8 @@ fn main() -> DemoResult<()> {
 
 #[test]
 fn authored_laws_admit_refuse_and_render_en_ar() -> DemoResult<()> {
-    let output = std::process::Command::new("bun")
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-        .args([
-            "tools/norn-ts/src/cli.ts",
-            "compile",
-            "scripts/demo/jewelry.source.ts",
-            "--org",
-            "org_demo",
-            "--env",
-            "dev",
-        ])
-        .output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
     rehearse(
-        std::str::from_utf8(&output.stdout)?,
+        include_str!("../tests/fixtures/jewelry_demo.json"),
         std::io::stdout().lock(),
     )
 }

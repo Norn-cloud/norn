@@ -47,7 +47,8 @@ With `CI` set, prepare `NORN_BIN` and the checker WASM package as documented in 
 [authoring SDK](../../tools/norn-ts/README.md); the existing import guard stays strict.
 The `ci` profile, its complete test selection and required gates are unchanged.
 
-`jewelry.source.ts` is consumed by the native authored-law and catalog tests;
+`jewelry.source.ts` is compiled by `jewelry-demo.test.ts`; the native law and
+catalog tests consume its checked generated fixture.
 `constitution.source.ts` is consumed by the authoring mutation/golden test.
 The jewelry fragment pins `core.units`; its scope is admission and display,
 not the full sell → scrap → melt app. Its reviewed Arabic uses **مُرحَّلة** for
