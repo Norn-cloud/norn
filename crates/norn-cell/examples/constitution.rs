@@ -122,6 +122,8 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
         after.remove(table);
         unchanged.remove(table);
     }
+    let clock = after.remove("_norn_clock");
+    let initial_clock = unchanged.remove("_norn_clock");
     if after != unchanged {
         return Err("refusal changed business, outbox or other non-journal state".into());
     }
@@ -130,6 +132,14 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
         return Err("refusal must record exactly one audit receipt".into());
     };
     let body = &receipt.body;
+    if initial_clock != Some(vec![json!([1, 0, 0, ""]).to_string()])
+        || clock
+            != Some(vec![
+                json!([1, body.logical_time, body.commit_seq, receipt.hash]).to_string(),
+            ])
+    {
+        return Err("refusal clock must bind exactly its audit receipt".into());
+    }
     if !body.written.is_empty()
         || !body.linked.is_empty()
         || !body.enqueued.is_empty()
@@ -156,7 +166,10 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
     {
         return Err("refusal audit does not identify the retained conservation invariant".into());
     }
-    read.verify_ledger()?;
+    let head = read.verify_ledger()?;
+    if head.seq != 1 || head.commits != 1 || head.hash != body.ledger_head {
+        return Err("refusal audit must be the only committed history".into());
+    }
     Ok(())
 }
 
