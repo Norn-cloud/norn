@@ -214,6 +214,10 @@ jobs:
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
+    # Comment runs attach their job checks to the default branch. Keep the
+    # PR-target job check distinct from the head-bound commit status below,
+    # so cancelling it cannot leave a second required check cancelled (#127).
+    name: trusted-policy evaluation
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
@@ -270,8 +274,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       # Workflow and gate changes need a same-repository head and an unedited
-      # `/approve-gates <head sha>` comment from an admin; re-run this job after
-      # commenting. Without this evidence such changes fail closed; data-only PRs
+      # `/approve-gates <head sha>` comment from an admin; comment events re-evaluate it.
+      # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
         continue-on-error: true

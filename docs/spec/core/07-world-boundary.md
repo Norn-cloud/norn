@@ -121,6 +121,8 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 ## Named acceptance scenarios
 
+- **THESIS-BUILTIN-EXCEPTION:** The thesis retains typed WASM components or external workers as the authorable boundary and names only engine-distributed built-ins as the host exception, without sandbox or isolation claims.
+- **FUNCTION-HOST-1-BUILTINS-ONLY:** Core 07 reserves host for engine built-ins, denies authored/pack installation even with a copied built-in namespace, and retains exact pins, scoped capabilities, recorded receipts and proposal-only outputs. Runtime conformance is the separate #731 admission cut.
 - **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
@@ -148,7 +150,7 @@ Present: `crates/norn-ir/src/{connector,source_schema,mapping,mapping_evidence,f
 
 ## Host Function execution
 
-FUNCTION-HOST-1: `implementation.format: host` declares host-provided native code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The host must resolve its configured implementation by these exact pins or refuse.
+FUNCTION-HOST-1: engine built-ins only; never authorable. `implementation.format: host` is reserved for Norn-owned, versioned built-in Functions distributed in the engine and identified by the engine's own built-in namespace. Authored and pack definitions cannot install host Functions, including by imitating that namespace; admission refuses fail-closed with a stable diagnostic. Built-ins are reviewed and qualified like kernel code. `runtime.id` and `runtime.version` pin the implementing crate name and version; `implementation.digest` pins its source tree, with the dependency closure and runtime build/configuration digest retained separately. The locator is exactly `<crate>/<version>@<implementation digest>` and is informational, never permission to load arbitrary code. The engine must resolve its shipped built-in implementation by these exact pins or refuse.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 
