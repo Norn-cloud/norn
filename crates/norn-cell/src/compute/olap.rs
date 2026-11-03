@@ -14,7 +14,6 @@ fn db<T>(value: duckdb::Result<T>) -> Result<T, CellError> {
 
 impl<E: SqlEngine> CellStore<E> {
     /// QUERY-ENGINE-1: exact DECIMAL aggregation over the authorized contribution snapshot.
-    /// Results supply no commit authority or persistent OLAP storage.
     /// # Errors
     /// Returns snapshot/refusal errors, or a host SQL engine error on execution failure.
     pub fn evaluate_question_duckdb(
@@ -25,7 +24,13 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<QueryResult, CellError> {
         let (schema, aggregate) = lower(plan)?;
         let snapshot = self.question_snapshot(plan, context, &mut visible)?;
-        let rows = execute(plan, &snapshot.contributions, &schema, &aggregate)?;
+        let rows = execute(
+            plan,
+            &snapshot.contributions,
+            &snapshot.result.rows,
+            &schema,
+            &aggregate,
+        )?;
         let mut result = snapshot.result;
         result.rows = rows;
         result.engine = Engine::Duckdb;
@@ -81,6 +86,7 @@ fn operand(value: Option<i64>) -> Result<Option<String>, CellError> {
 fn execute(
     plan: &QuestionPlan,
     contributions: &Contributions,
+    representatives: &BTreeMap<String, QueryRow>,
     schema: &str,
     aggregate: &str,
 ) -> Result<BTreeMap<String, QueryRow>, CellError> {
@@ -102,7 +108,7 @@ fn execute(
             operand(b)?
         ]))?;
     }
-    let mut rows = aggregate_rows(&conn, aggregate, plan.sums().len())?;
+    let mut rows = aggregate_rows(&conn, aggregate, plan.sums().len(), representatives)?;
     let mut members = db(conn.prepare("SELECT bucket,id,version,CAST(a AS VARCHAR),CAST(b AS VARCHAR) FROM input ORDER BY bucket,id"))?;
     let captured = db(members.query_map([], |row| {
         Ok((
@@ -140,6 +146,7 @@ fn aggregate_rows(
     conn: &Connection,
     sql: &str,
     arity: usize,
+    representatives: &BTreeMap<String, QueryRow>,
 ) -> Result<BTreeMap<String, QueryRow>, CellError> {
     let mut stmt = db(conn.prepare(sql))?;
     let totals = db(stmt.query_map([], |row| {
@@ -153,7 +160,11 @@ fn aggregate_rows(
     let mut rows = BTreeMap::new();
     for total in totals {
         let (key, a, b, value) = db(total)?;
-        let bucket = serde_json::from_str(&key).map_err(|e| CellError::Encoding(e.to_string()))?;
+        let bucket = representatives
+            .get(&key)
+            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?
+            .bucket
+            .clone();
         let totals = [a, b]
             .into_iter()
             .take(arity)

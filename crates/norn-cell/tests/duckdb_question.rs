@@ -153,13 +153,13 @@ fn scaled_row(id: &str, input: i64, recovered: i64, scales: [u64; 2]) -> FactWri
         key: id.into(),
         values: norn_ir::runtime_object! {
             "input" => exact(input, scales[0]), "recovered" => exact(recovered, scales[1]),
-            "loss" => Decimal::from(0i64), "occurred_at" => "2026-10-23T12:00:00Z", "metal" => "gold",
+            "loss" => Decimal::from(0i64), "occurred_at" => "2026-10-23T12:00:00Z", "metal" => "e\u{301}",
         }.as_object().expect("object literal").clone(),
     }
 }
 
 #[test]
-fn rounding_and_declared_scales_preserve_envelopes_through_correction_and_retraction() {
+fn rounding_scales_and_non_nfc_buckets_preserve_envelopes_after_correction_and_retraction() {
     let id = "quoted'); DROP TABLE input;--";
     for (scales, input, recovered) in [
         ([3, 3], 128, 1i64),
