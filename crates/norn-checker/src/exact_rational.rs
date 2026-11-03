@@ -99,6 +99,10 @@ impl Rational {
 
     /// Exact ordering by checked cross-products; never compares rounded values.
     #[must_use]
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "the checked comparison API returns Option, unlike Ord::cmp"
+    )]
     pub fn cmp(self, rhs: Self) -> Option<std::cmp::Ordering> {
         Some(
             i128::from(self.numerator)
