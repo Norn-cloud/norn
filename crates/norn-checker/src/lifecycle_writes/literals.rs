@@ -382,7 +382,7 @@ pub(super) fn records(source: &str) -> Vec<Record> {
         complete: true,
     };
     parser.scan();
-    if !parser.complete {
+    if !parser.complete || norn_expr::Expression::compile(source).is_err() {
         for record in &mut parser.records {
             record.closed = false;
         }
@@ -430,6 +430,10 @@ mod tests {
             "{mode: 'open'",
             "{[event.kind]: 'open'}",
             "{...event}",
+            "{mode:}",
+            "{mode: 'open' other: 1}",
+            "{,mode: 'open'}",
+            "{mode: 'open',,other: 1}",
         ] {
             let found = records(source);
             assert!(!found.last().expect("record").has_closed_keys(), "{source}");
