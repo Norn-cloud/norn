@@ -40,8 +40,9 @@ with tempfile.TemporaryDirectory() as temporary:
     assert continued["isError"] is False, continued
     next_page = continued["structuredContent"]
     assert next_page["tools"] == tools[1:] and next_page["catalogDigest"] == digest
-    stale = request("tools/call", dict(name=discovery["name"], arguments={cursor_field: "obsolete"}))
+    stale = request("tools/call", dict(name=discovery["name"], arguments={cursor_field: "0" * 64 + ":" + first_cursor.rsplit(":", 1)[1]}))
     assert stale["isError"] is True and stale["structuredContent"]["code"] == "request.invalid", stale
+    assert "catalog or authority changed" in stale["structuredContent"]["explanation"].lower(), stale
     assert "restart" in stale["structuredContent"]["explanation"].lower(), stale
     tool = next(t for t in tools if "checking never installs" in t["description"].lower())
     properties = tool["inputSchema"]["properties"]
