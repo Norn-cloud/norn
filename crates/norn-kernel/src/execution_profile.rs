@@ -33,6 +33,24 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
         self.fact(&key.target);
     }
 
+    pub(crate) fn validate_consumed(
+        &self,
+        consumed: Option<&Consumed>,
+    ) -> Result<(), CommitError<V::Error>> {
+        if let Some(consumed) = consumed {
+            let ownership = self
+                .inner
+                .consumed_ownership(consumed)
+                .map_err(CommitError::Host)?;
+            if !supports_local(ownership) {
+                return Err(CommitError::AtomicDeliveryBoundary {
+                    consumed: consumed.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate<E, C, T>(
         &self,
         commit: &CellCommit<E, C, T>,

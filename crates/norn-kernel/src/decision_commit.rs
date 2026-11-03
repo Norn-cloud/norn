@@ -1407,6 +1407,12 @@ pub enum DecisionRefusal<X> {
         /// Non-local or unresolved dependency.
         key: FactKey,
     },
+    /// A consumed delivery has foreign or unresolved ownership.
+    #[error("core.txn.atomic_boundary: consumed delivery {consumed} is outside the local profile")]
+    AtomicDeliveryBoundary {
+        /// Complete local delivery identity, including generation or incarnation.
+        consumed: Consumed,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1667,7 +1673,9 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::AtomicBoundary { .. } => norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE,
+            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
+                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
+            }
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
@@ -1728,7 +1736,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::ReadOnlyWorld
+            Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -1745,6 +1754,9 @@ impl<X> DecisionRefusal<X> {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
+            CommitError::AtomicDeliveryBoundary { consumed } => {
+                Self::AtomicDeliveryBoundary { consumed }
+            }
             CommitError::Law { key, reason } => Self::Law { key, reason },
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),

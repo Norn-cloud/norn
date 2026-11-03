@@ -78,6 +78,8 @@ discovered during graph traversal. Ownership is host evidence under the commit
 snapshot, never a law applicability label or request hint. Foreign or unknown
 ownership refuses `core.txn.atomic_boundary` before the host applies any effect.
 Outbound commands are local outbox enqueues, not remote atomic writes.
+Consumed timer incarnations, command generations and observations also require
+local ownership before any pending-delivery read or effect.
 
 The current supported immediate laws are pointwise; inherited/effective or
 otherwise unresolved dependencies retain their existing unsupported refusal.
@@ -88,6 +90,8 @@ complete membership partitions; unknown is not local.
 Named scenarios: **TXN-CELL-CROSS** refuses a foreign immediate-law read with
 unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
 inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
+**TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
+consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
 
 ## Bounded synchronous action profile
 

@@ -172,6 +172,7 @@ impl<X> CommitError<X> {
         match self {
             Self::Law { reason, .. } => law_category(reason),
             Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
             | Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
@@ -365,6 +366,7 @@ impl<X> DecisionRefusal<X> {
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
             Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
@@ -542,6 +544,7 @@ impl<X> DecisionRefusal<X> {
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
             Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }

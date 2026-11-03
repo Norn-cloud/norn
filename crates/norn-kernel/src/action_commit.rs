@@ -4184,6 +4184,7 @@ fn precondition_read_refusal<X>(
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
         CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4218,6 +4219,7 @@ fn precondition_read_refusal<X>(
             Some((source_key.clone(), link.clone()))
         }
         CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4337,6 +4339,7 @@ where
             outcome,
         } => (key, owner, version, id, message, outcome),
         error @ (CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }

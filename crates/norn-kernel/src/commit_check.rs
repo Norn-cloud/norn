@@ -194,6 +194,19 @@ pub trait CommitView {
         Ok(crate::execution_profile::AtomicOwnership::Local)
     }
 
+    /// Ownership of the complete consumed timer, result or observation identity.
+    /// Bound local-only stores own their delivery queues. Hosts that can resolve
+    /// external or unknown queues must override this using snapshot evidence.
+    ///
+    /// # Errors
+    /// Ownership cannot be resolved under the commit's read snapshot.
+    fn consumed_ownership(
+        &self,
+        _consumed: &Consumed,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
     /// Whether the consumed delivery is pending.
     ///
     /// # Errors
@@ -443,6 +456,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     trusted_owned_rows: bool,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     let profile = crate::execution_profile::ProfileView::new(view);
+    profile.validate_consumed(commit.consumes.as_ref())?;
     let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
     profile.validate(commit, model)?;
     result
