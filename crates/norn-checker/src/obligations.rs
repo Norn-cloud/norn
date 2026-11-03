@@ -18,6 +18,8 @@ pub mod evidence;
 pub mod finite;
 mod induction;
 pub mod quint;
+/// Exact symbolic projections of the shared declaration relation.
+pub mod transition;
 #[cfg(test)]
 mod quint_tests;
 

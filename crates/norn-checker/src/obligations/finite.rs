@@ -1,6 +1,8 @@
 //! PROOF-TRANSITION-1: checker-owned, backend-neutral finite declaration relation.
 use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
-use norn_ir::verification::finite::{CreateRelation, FiniteInput, ScalarState};
+use norn_ir::verification::finite::{
+    AssignmentOrigin, CreateRelation, Derivation, FiniteInput, ScalarState,
+};
 use norn_ir::{ActionRoot, ArtifactKind, LawIR, ZenExpression};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -232,6 +234,9 @@ fn lower(
     let mut assignments = BTreeMap::new();
     let mut choices = Vec::new();
     let mut state = Vec::new();
+    let mut origins = BTreeMap::new();
+    let mut absent_inputs = Vec::new();
+    let mut derivations = Vec::new();
     let mut numeric = None;
     let schema = at(at(&action_json, "inputSchema"), "properties");
     demand(
@@ -316,6 +321,9 @@ fn lower(
                 upper: hi,
             });
             fields.insert(id.to_owned(), format!("i{index}"));
+            origins.insert(variable.clone(), AssignmentOrigin::Input);
+        } else {
+            absent_inputs.push(property.id.clone());
         }
         assignments.insert(id.to_owned(), variable);
     }
@@ -328,7 +336,7 @@ fn lower(
         .and_then(|n| at(n, "scale").as_u64())
         .and_then(|n| u32::try_from(n).ok())
         .ok_or("no numeric properties")?;
-    for derivation in &action.derive {
+    for (index, derivation) in action.derive.iter().enumerate() {
         demand(
             !derivation.input_required || fields.contains_key(&derivation.field),
             "required derivation input absent",
@@ -338,6 +346,15 @@ fn lower(
             "unsupported derivation target",
         )?;
         let value = expression(derivation.expression.as_str(), &fields, scale)?;
+        derivations.push(Derivation {
+            property: norn_ir::PropertyId(derivation.field.clone()),
+            expression: ZenExpression(value.clone()),
+            input_required: derivation.input_required,
+        });
+        origins.insert(
+            assignments.get(&derivation.field).ok_or("derivation target")?.clone(),
+            AssignmentOrigin::Derivation(index),
+        );
         fields.insert(derivation.field.clone(), format!("({value})"));
     }
     for required in at(at(&action_json, "inputSchema"), "required")
@@ -359,6 +376,10 @@ fn lower(
         if id != identity && !fields.contains_key(id) {
             let default = serde_json::to_value(&property.default).map_err(|_error| "default")?;
             fields.insert(id.to_owned(), scaled(text(&default)?, scale)?.to_string());
+            origins.insert(
+                assignments.get(id).ok_or("default target")?.clone(),
+                AssignmentOrigin::DefaultAbsentInput,
+            );
         }
     }
     let laws: Vec<_> = pool
@@ -417,6 +438,9 @@ fn lower(
         identity: bounds.identity.clone(),
         state,
         inputs: choices,
+        absent_inputs,
+        derivations,
+        origins,
         updates,
         guards: guards.into_iter().map(ZenExpression).collect(),
         condition: ZenExpression(condition),

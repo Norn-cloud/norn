@@ -164,6 +164,23 @@ the original/omitted-derivation update correspondence. Original/mutant model
 bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
+`norn_checker::obligations::transition` exposes the same relation and exact
+integer affine projections for each creation delta, ordered derivation and
+single equality residual. Arithmetic overflow, nonlinear/opaque expressions
+and non-equality predicates retain individual Unknown reasons. No Boolean
+conjunct, precondition or law applicability condition is discharged by this view.
+The relation records omitted caller fields and distinguishes finite inputs,
+ordered derivation assignments and stored defaults used for absent inputs.
+Finite intervals, absence, singleton identity and the empty pre-state remain
+coverage assumptions; an affine identity alone cannot establish an unbounded
+whole-writer or complete writer-closure claim. CC consumes this shared view for
+certificates and must check its own scope, coverage and evidence requirements.
+
+Named scenarios: affine coefficients agree with native expression evaluation;
+ordered derivations retain substitutions and input requirements; omitted loss
+changes its assignment origin to an absent-input default; unsupported arithmetic,
+non-equality and overflow yield explicit Unknown reasons.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
