@@ -22,7 +22,8 @@ Unsupported/incomplete execution never passes. No Norn parity is claimed.
 - **CP1-books:** receipt debits stock-a 20 / credits SRBNB 20; delivery debits
   COGS 6 / credits stock-a 6. Every checkpoint balances; both documents submit.
 - **CP1-evidence:** `check_smoke.py` corresponds to number-exact, stock-fold and
-  books using live REST output. Evidence is sampled behaviour on the pinned
+  books using live REST output. Every serial checkpoint requires exactly one
+  accepted attempt whose request identity matches its command. Evidence is sampled behaviour on the pinned
   runtime, not a proof of equivalence. Incomplete execution is unsupported.
 
 ## Discovered setup and boundary scenarios

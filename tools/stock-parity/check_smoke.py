@@ -5,6 +5,12 @@ from decimal import Decimal
 from pathlib import Path
 
 
+def accepted_attempt(cp, request):
+    assert len(cp['attempts']) == 1, cp['attempts']
+    attempt = cp['attempts'][0]
+    assert (attempt['requestId'], attempt['outcome']) == (request, 'accepted'), attempt
+
+
 def check(dump):
     from rest import encode
     boundary = {'qty': Decimal('999999999999.999999'), 'items': [Decimal('0.000001')]}
@@ -16,8 +22,9 @@ def check(dump):
     case = dump['cases'][0]
     assert case['case'] == 'receipt-delivery' and case['status'] == 'complete', case
     assert len(case['checkpoints']) == 2
-    for cp, qty, value, leg_count in zip(case['checkpoints'], ('10', '7'), ('20', '14'), (2, 4)):
-        assert cp['attempts'][0]['outcome'] == 'accepted', cp['attempts']
+    for cp, request, qty, value, leg_count in zip(
+            case['checkpoints'], ('receive', 'deliver'), ('10', '7'), ('20', '14'), (2, 4)):
+        accepted_attempt(cp, request)
         assert all(d['status'] == 1 for d in cp['documents'])
         assert len(cp['gl']) == leg_count
         assert sum(Decimal(r['debit']) - Decimal(r['credit']) for r in cp['gl']) == 0
@@ -54,7 +61,8 @@ def check_fifo(dump):
         ('deliver', 'cogs', 'USD', '60', '0', False), ('deliver', 'stock-a', 'USD', '0', '60', False),
     ]
     for index, cp in enumerate(case['checkpoints']):
-        assert cp['step'] == index and cp['attempts'][0]['outcome'] == 'accepted'
+        assert cp['step'] == index
+        accepted_attempt(cp, stock[index][0])
         assert [(r['requestId'], r['status']) for r in cp['documents']] == [(r[0], 1) for r in stock[:index+1]]
         assert [tuple(r[k] for k in fields) for r in cp['stock']] == stock[:index+1]
         assert len(cp['gl']) == 2 * (index + 1)

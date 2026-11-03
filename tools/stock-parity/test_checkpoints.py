@@ -3,7 +3,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import unittest
-from check_smoke import check_fifo
+from check_smoke import check, check_fifo
 
 
 class FrozenCorpus(unittest.TestCase):
@@ -12,6 +12,25 @@ class FrozenCorpus(unittest.TestCase):
 
     def test_recorded_seven_checkpoint_oracle(self):
         check_fifo(self.dump)
+
+    def test_serial_attempt_identity_and_count_refuse(self):
+        for checker in (check, check_fifo):
+            good = deepcopy(self.dump)
+            if checker == check:
+                good['cases'] = [c for c in good['cases'] if c['case'] == 'receipt-delivery']
+            checker(good)
+            for case_index, case in enumerate(good['cases']):
+                for step in range(len(case['checkpoints'])):
+                    for mutation in ('request', 'extra'):
+                        with self.subTest(mode=checker.__name__, case=case['case'], step=step, mutation=mutation):
+                            bad = deepcopy(good)
+                            attempts = bad['cases'][case_index]['checkpoints'][step]['attempts']
+                            if mutation == 'request':
+                                attempts[0]['requestId'] = 'different-command'
+                            else:
+                                attempts.append(deepcopy(attempts[0]))
+                            with self.assertRaises(AssertionError):
+                                checker(bad)
 
     def test_missing_case_or_initial_and_cross_layer_drift_refuse(self):
         bad = deepcopy(self.dump)
