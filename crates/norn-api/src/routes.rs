@@ -298,10 +298,11 @@ mod tests {
             let mut receipt =
                 norn_ir::RuntimeValue::from_json_text(set.admission_receipt.as_deref().unwrap())
                     .unwrap();
-            receipt.as_object_mut().unwrap().insert(
-                key.into(),
-                norn_ir::RuntimeValue::from_json_text(value.to_string()).unwrap(),
-            );
+            let replacement = RuntimeValue::from_json_text(value.to_string()).unwrap();
+            receipt
+                .as_object_mut()
+                .unwrap()
+                .insert(key.into(), replacement);
             set.admission_receipt =
                 Some(String::from_utf8(receipt.canonical_json().unwrap()).unwrap());
             set.receipt_sha256 =
@@ -318,6 +319,7 @@ mod tests {
         let external_base = serde_json::json!({"artifacts":[],"base":[{}],"sha256":"0".repeat(64)});
         let future_limits =
             serde_json::json!({"id":"future.limits","version":99,"sha256":"0".repeat(64)});
+        let future_checker = serde_json::json!({"name":"norn-checker","version":"999.0.0"});
         let unavailable = "defs.receipt_context_unavailable";
         for (key, value, expected) in [
             ("admitted", serde_json::json!(false), "host.error"),
@@ -325,6 +327,7 @@ mod tests {
             ("typeEnv", wrong_env, "host.error"),
             ("artifactSet", external_base, unavailable),
             ("limitProfile", future_limits, unavailable),
+            ("checker", future_checker, unavailable),
         ] {
             let mut bad = installed.clone();
             rewrite(&mut bad, key, value);
