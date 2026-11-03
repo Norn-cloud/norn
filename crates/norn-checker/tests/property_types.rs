@@ -324,3 +324,73 @@ fn record_members_are_closed_typed_and_acyclic() {
         assert!(result.iter().any(|(found, _)| found == code), "{result:?}");
     }
 }
+
+#[test]
+fn val_round_declarations_activate_the_shared_exact_site_binding() {
+    for mode in [
+        None,
+        Some("refuse"),
+        Some("toward_zero"),
+        Some("half_even"),
+        Some("half_away_from_zero"),
+    ] {
+        let mut ty = serde_json::json!({"kind":"decimal","scale":2});
+        if let Some(mode) = mode {
+            ty["rounding"] = mode.into();
+        }
+        let result = findings(&serde_json::json!([{"name":"a.amount","type":ty}]));
+        assert!(result.is_empty(), "{result:?}");
+    }
+}
+
+#[test]
+fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
+    use norn_ir::{PropertyType, Rounding, WholeNumber};
+    let site = |scale, rounding| PropertyType::Decimal {
+        scale: WholeNumber(scale),
+        rounding,
+        unit: None,
+        currency_source: None,
+        per_unit: None,
+    };
+    for (text, rounding, expected) in [
+        ("1.005", None, None),
+        ("1.0100", None, Some("1.01")),
+        ("1.005", Some(Rounding::HalfAwayFromZero), Some("1.01")),
+        ("-1.005", Some(Rounding::HalfAwayFromZero), Some("-1.01")),
+    ] {
+        let result = norn_expr::rescale_decimal(&site(2, rounding), &text.parse().expect("number"));
+        assert_eq!(
+            result.as_ref().ok().map(norn_expr::Number::as_str),
+            expected
+        );
+    }
+    for scale in [19, 28, u64::MAX] {
+        let unsupported = site(scale, None);
+        assert!(norn_expr::rescale_decimal(&unsupported, &"0".parse().expect("number")).is_err());
+    }
+    assert!(
+        norn_expr::rescale_decimal(&PropertyType::Integer {}, &"1".parse().expect("number"))
+            .is_err()
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn val_round_adapter_matches_signed_integer_reference(coefficient in -1_000_000_i32..1_000_000, mode in 0..4_usize) {
+        use norn_ir::{PropertyType, Rounding, WholeNumber};
+        let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
+        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
+        let text = format!("{}{}.{:03}", if coefficient < 0 { "-" } else { "" }, coefficient.abs()/1000, coefficient.abs()%1000);
+        let result = norn_expr::rescale_decimal(&site, &text.parse().expect("number"));
+        if rounding == Rounding::Refuse && coefficient % 10 != 0 { proptest::prop_assert!(result.is_err()); }
+        else {
+            let base = coefficient / 10;
+            let remainder = coefficient.abs() % 10;
+            let increment = match rounding { Rounding::Refuse | Rounding::TowardZero => false, Rounding::HalfEven => remainder > 5 || (remainder == 5 && base % 2 != 0), Rounding::HalfAwayFromZero => remainder >= 5 };
+            let expected = base.checked_add(if increment { coefficient.signum() } else { 0 }).expect("bounded integer reference");
+            let text = format!("{}{}.{:02}", if expected < 0 { "-" } else { "" }, expected.abs()/100, expected.abs()%100);
+            proptest::prop_assert_eq!(result.expect("representable"), text.parse::<norn_expr::Number>().expect("number"));
+        }
+    }
+}
