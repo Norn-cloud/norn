@@ -1,4 +1,4 @@
 {
-  "order": 245,
+  "order": 240,
   "value": "scripts/ci/validate-runner-policy.py"
 }
