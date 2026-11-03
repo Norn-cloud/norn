@@ -40,3 +40,14 @@ fn zero_divisor_always_refuses() {
 fn ratio_never_panics_for_full_width_inputs() {
     let _result = arithmetic::ratio(kani::any(), kani::any());
 }
+
+#[kani::proof]
+fn retracting_an_admitted_add_restores_the_original_total() {
+    let before: i128 = kani::any();
+    let value: i64 = kani::any();
+    kani::assume(before >= -arithmetic::MAX_SUM && before <= arithmetic::MAX_SUM);
+    if let Some(after) = arithmetic::add(before, value) {
+        let inverse = value.checked_neg().expect("admitted coefficients exclude MIN");
+        assert_eq!(arithmetic::add(after, inverse), Some(before));
+    }
+}
