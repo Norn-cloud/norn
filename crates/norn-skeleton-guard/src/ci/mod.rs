@@ -915,14 +915,16 @@ pub fn rights_admission(
                 break;
             }
             let [previous, pull] = <[String; 2]>::try_from(git::parents(root, &current)?)
-                .map_err(|_| "rights group requires two-parent merges")?;
+                .map_err(|_parents| "rights group requires two-parent merges")?;
             let mut found = false;
             for evidence in pulls
                 .iter()
                 .filter(|p| commit_sha(p, "head_sha").as_deref() == Some(pull.as_str()))
             {
                 let mut doc = evidence.clone();
-                doc["repository"] = MAINTAINED_REPOSITORY.into();
+                doc.as_object_mut()
+                    .ok_or("malformed constituent rights evidence")?
+                    .insert("repository".into(), MAINTAINED_REPOSITORY.into());
                 if rights_acknowledgment(&doc, &pull).is_ok() {
                     found = true;
                 }

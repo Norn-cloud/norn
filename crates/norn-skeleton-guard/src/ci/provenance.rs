@@ -1188,12 +1188,16 @@ pub fn check_bound(root: &Path, binding: &BoundSource<'_>, distribution: bool) -
 struct Snapshot(std::path::PathBuf);
 impl Snapshot {
     fn new(entries: &BTreeMap<String, super::git::TreeEntry>) -> Result<Self, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let parent = std::env::var_os("RUNNER_TEMP")
             .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_nanos();
+        let nonce = NEXT
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |id| id.checked_add(1),
+            )
+            .map_err(|_current| "snapshot identity exhausted")?;
         let path = parent.join(format!("norn-bound-{}-{nonce}", std::process::id()));
         std::fs::create_dir(&path).map_err(|e| e.to_string())?;
         let snapshot = Self(path);

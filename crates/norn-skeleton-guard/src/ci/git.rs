@@ -1,8 +1,9 @@
 //! The git operations the gates need, with fixed arguments.
 
 use sha2::{Digest, Sha256};
+use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Tracked files of a checkout.
 ///
@@ -184,8 +185,6 @@ pub fn tree(
         }
         members.push(((*mode).to_owned(), path.to_owned(), (*oid).to_owned()));
     }
-    use std::io::Write as _;
-    use std::process::Stdio;
     let mut child = Command::new("git")
         .arg("--no-replace-objects")
         .arg("-C")
@@ -205,7 +204,7 @@ pub fn tree(
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
     writer
         .join()
-        .map_err(|_| "Git input writer failed")?
+        .map_err(|_panic| "Git input writer failed")?
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err("cannot read bound blobs".into());

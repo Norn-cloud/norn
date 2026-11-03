@@ -116,21 +116,23 @@ fn complete_lineage_includes_generated_release_and_embedded_copies() {
     f.derived("release/copy.json", "generated.json", "generated");
     f.derived("embedded/copy.rs", "release/copy.json", "generated");
     f.passes();
-    let head = bind_fixture(&f);
-    assert!(bound_report(&f, &head).errors().is_empty());
     f.write("input.json", b"tampered");
-    assert!(
-        bound_report(&f, &head)
-            .errors()
-            .iter()
-            .any(|e| e.contains("bound byte drift"))
-    );
     let r = f.report();
     assert_eq!(r.rejected_paths.len(), 4);
     assert!(
         r.rejected_paths["embedded/copy.rs"]
             .iter()
             .any(|r| r.contains("rejected ancestor"))
+    );
+    f.write("input.json", b"independently authored toy");
+    let head = bind_fixture(&f);
+    assert!(bound_report(&f, &head).errors().is_empty());
+    f.write("input.json", b"tampered after immutable binding");
+    assert!(
+        bound_report(&f, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("bound byte drift"))
     );
 }
 
