@@ -197,9 +197,13 @@ mod integer_text {
             for (index, digit) in digits.bytes().enumerate() {
                 let lower = if index == 0 { b'1' } else { b'0' };
                 if digit > lower {
-                    alternatives.push(format!("{}[{}-{}][0-9]{{{}}}",
-                        &digits[..index], char::from(lower), char::from(digit - 1),
-                        digits.len() - index - 1));
+                    alternatives.push(format!(
+                        "{}[{}-{}][0-9]{{{}}}",
+                        &digits[..index],
+                        char::from(lower),
+                        char::from(digit - 1),
+                        digits.len() - index - 1
+                    ));
                 }
             }
             format!("({})", alternatives.join("|"))
@@ -276,9 +280,18 @@ mod tests {
             assert!(serde_json::from_value::<GuaranteeLevel>(value).is_err());
         }
         for coefficient in [i64::MIN, i64::MAX] {
-            let value = GuaranteeScalar { coefficient, scale: 0, unit: None };
-            assert_eq!(serde_json::from_slice::<GuaranteeScalar>(
-                &serde_json::to_vec(&value).expect("encode")).expect("decode"), value);
+            let value = GuaranteeScalar {
+                coefficient,
+                scale: 0,
+                unit: None,
+            };
+            assert_eq!(
+                serde_json::from_slice::<GuaranteeScalar>(
+                    &serde_json::to_vec(&value).expect("encode")
+                )
+                .expect("decode"),
+                value
+            );
         }
     }
 
