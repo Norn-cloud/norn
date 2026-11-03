@@ -63,6 +63,9 @@ pub enum CellError {
         /// Retained law whose complete scope cannot yet be resolved.
         law_id: String,
     },
+    /// Deterministic query semantics or snapshot preconditions refused.
+    #[error("{0}")]
+    ComputeRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

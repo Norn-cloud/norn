@@ -55,6 +55,7 @@ pub mod entity_model;
     clippy::large_futures
 )]
 pub mod envelope;
+mod finite;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
@@ -267,3 +268,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .collect(),
     }
 }
+
+/// Single-cell execution diagnostic shared with runtime admission.
+pub mod execution_profile;

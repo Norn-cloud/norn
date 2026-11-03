@@ -142,3 +142,22 @@ Discovery is untrusted and never refutes a law. Every candidate must separately
 pass CONS-LINEAR-1 against the declared functional. Named scenarios: fractional
 exchange, conflicting/zero anchors, free coordinates, unit/book separation,
 opaque writer, duplicate identity and generated scaled exchanges.
+
+### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
+
+The chase-backed diagnosis profile enumerates irreducible declaration conflicts
+and correction proposals relative to fixed open-world facts. Every core is
+unsatisfiable and each one-member deletion is satisfiable. Every correction
+relaxes only explicitly editable declarations and is independently checked on
+the complete remaining input; restoring any member makes it unsatisfiable.
+These proposals grant no authority: concrete edits require ordinary admission.
+Protected laws are never repair candidates. Whole-search and per-chase ceilings
+are disclosed; an exhausted or refused subset query makes the diagnosis unknown.
+
+The `norn.finite-conjunction/1` diagnostic fragment uses the shared closed finite
+schema enumerator and expression evaluator. The universe and roster snapshot
+are explicit closed-world assumptions, never inferred from the open-world chase.
+Ceilings are 256 contexts, 65536 encoded domain bytes, 8192 predicate evaluations
+and 1000 expression fuel. A diagnosis discloses these plus its query ceiling.
+Unsupported/unbounded domains or exhausted enumeration return unknown, not a
+conflict. This fragment grants no admission or proof authority.
