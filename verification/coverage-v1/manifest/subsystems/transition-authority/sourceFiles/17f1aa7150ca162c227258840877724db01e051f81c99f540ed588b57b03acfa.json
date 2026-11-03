@@ -1,4 +1,4 @@
 {
-  "order": 102,
+  "order": 104,
   "value": "crates/norn-cell/examples/workers-sql/worker.mjs"
 }

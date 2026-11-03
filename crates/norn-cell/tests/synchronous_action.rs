@@ -268,3 +268,83 @@ fn late_link_failure_and_secondary_denial_persist_no_partial_proposal() {
         assert!(!cell.load(&FactKey::new(QUOTE, "SO-1")).unwrap().exists());
     }
 }
+
+// INV-TRANSFER / TXN-ATOMIC-1 / TXN-IDEMPOTENT-1, independent of T1's pack.
+#[test]
+fn same_company_custody_transfer_preserves_quantity_value_and_books() {
+    let documents: Vec<Value> = serde_json::from_str(include_str!(
+        "fixtures/custody-transfer.json"
+    )).unwrap();
+    let mut definitions: Vec<ObjectTypeDef> = documents.iter()
+        .filter_map(|d| d["payload"].get("objectType"))
+        .map(|d| serde_json::from_value(d.clone()).unwrap()).collect();
+    definitions.push(types().pop().unwrap()); // The ordinary action receipt schema.
+    let action: ActionRoot = serde_json::from_value(documents.iter()
+        .find(|d| d["kind"] == "action").unwrap()["payload"].clone()).unwrap();
+    let rule = SynchronousRule::admit(action.synchronous_rule.clone().unwrap(),
+        &serde_json::from_value(documents.iter().find(|d| d["kind"] == "rule").unwrap()["payload"].clone()).unwrap(),
+        &BTreeMap::new(), norn_kernel::DecisionBinding {
+            profile_id: "norn-zen/6".into(), environment_hash: "custody-transfer".into(),
+        }).unwrap();
+    let rules = [rule];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("custody.sqlite");
+    let mut cell = open(&path, &definitions);
+    let holding = FactKey::new("fixture.CustodyHolding", "LOT");
+    let movement = FactKey::new("fixture.CustodyMovement", "MOVE");
+    let mut seed = CellCommit::empty();
+    let seed_rows = [
+        (holding.clone(), json!({"id":"LOT","company":"COMPANY","location":"A","quantity":5,"value":80,"status":"ready"})),
+        (FactKey::new("fixture.CustodyLocation", "A"), json!({"id":"A","company":"COMPANY"})),
+        (FactKey::new("fixture.CustodyLocation", "B"), json!({"id":"B","company":"COMPANY"})),
+        (FactKey::new("fixture.CustodyLocation", "OTHER"), json!({"id":"OTHER","company":"ANOTHER"})),
+        (FactKey::new("fixture.CustodyAccount", "Inventory"), json!({"id":"Inventory","company":"COMPANY","currency":"USD","amount":80})),
+        (FactKey::new("fixture.CustodyAccount", "Opening"), json!({"id":"Opening","company":"COMPANY","currency":"USD","amount":-80})),
+        (FactKey::new("fixture.CustodyAccount", "Sales"), json!({"id":"Sales","company":"COMPANY","currency":"USD","amount":0})),
+        (FactKey::new("fixture.CustodyAccount", "Receivable"), json!({"id":"Receivable","company":"COMPANY","currency":"USD","amount":0})),
+        (FactKey::new("fixture.CustodyAccount", "COGS"), json!({"id":"COGS","company":"COMPANY","currency":"USD","amount":0})),
+    ];
+    for (key, values) in seed_rows {
+        seed.writes.push(FactWrite {key, expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {values: serde_json::from_value(values).unwrap()}});
+    }
+    cell.commit(seed).unwrap();
+    let books = cell.store().read().root_rows("main", "fixture.CustodyAccount", 16).unwrap();
+    let book_states: Vec<_> = books.0.iter().map(|(id, _)| cell.load(&FactKey::new("fixture.CustodyAccount", id)).unwrap()).collect();
+    assert!(books.1);
+    let mut request = call(&action);
+    request.action_artifact_id = "example.custody.transfer.action";
+    request.actor = "warehouse-operator".into();
+    request.input = serde_json::from_value(json!({"holding":"LOT","destination":"B","movement":"MOVE"})).unwrap();
+    // Wrong company, no-op and absent destination refuse before any consequences.
+    let before = cell.store().read().dump().unwrap();
+    for destination in ["OTHER", "A", "MISSING"] {
+        request.input.insert("destination".into(), destination.into());
+        let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
+        assert_eq!(refusal.code(), if destination == "MISSING" { "action.slice_object_missing" } else { "action.precondition_failed" });
+        assert_eq!(cell.store().read().dump().unwrap(), before);
+    }
+    request.input.insert("destination".into(), "B".into());
+    commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+    let state = cell.load(&holding).unwrap().values.unwrap();
+    assert_eq!(serde_json::to_value(state).unwrap(), json!({"id":"LOT","company":"COMPANY","location":"B","quantity":5,"value":80,"status":"moved"}));
+    assert_eq!(serde_json::to_value(cell.load(&movement).unwrap().values.unwrap()).unwrap(),
+        json!({"id":"MOVE","company":"COMPANY","from":"A","to":"B","quantity":5,"value":80}));
+    for (link, target) in [("holding", holding), ("destination", FactKey::new("fixture.CustodyLocation", "B"))] {
+        assert!(cell.load_link(&LinkKey::new(movement.clone(), link, target)).unwrap().exists());
+    }
+    // Complete account population, including versions, must be byte-identical.
+    assert_eq!(cell.store().read().root_rows("main", "fixture.CustodyAccount", 16).unwrap(), books);
+    assert_eq!(books.0.iter().map(|(id, _)| cell.load(&FactKey::new("fixture.CustodyAccount", id)).unwrap()).collect::<Vec<_>>(), book_states);
+    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    let committed = cell.store().read().dump().unwrap();
+    drop(cell);
+    let mut cell = open(&path, &definitions);
+    assert_eq!(cell.store().read().dump().unwrap(), committed);
+    assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+    assert_eq!(cell.store().read().dump().unwrap(), committed);
+    request.input.insert("destination".into(), "A".into());
+    assert_eq!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err().code(), "action.idempotency_conflict");
+    assert_eq!(cell.store().read().dump().unwrap(), committed);
+}
