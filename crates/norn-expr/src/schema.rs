@@ -298,7 +298,7 @@ impl Schema {
         }
     }
 
-    /// Decode action wire decimals without a floating-point intermediate.
+    /// VAL-EXACT-1: decode action wire decimals without a floating-point intermediate.
     /// Other fields retain their values; the closed schema checks them afterward.
     ///
     /// # Errors

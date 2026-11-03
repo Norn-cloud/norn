@@ -2635,8 +2635,7 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed || lifecycle_properties.contains(&property.id)
-                {
+                if property.computed || lifecycle_properties.contains(&property.id) {
                     None
                 } else {
                     current_values
@@ -6016,6 +6015,18 @@ mod reference_lineage_tests {
                     .get("amount"),
                 Some(&RuntimeValue::Number(Decimal::ZERO))
             );
+        }
+    }
+
+    norn_testkit::proptest::proptest! {
+        #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn exact_action_decimal_wire_matches_the_integer_reference(coefficient in norn_testkit::proptest::prelude::any::<i64>(), fraction in 0_u8..100) {
+            let text = format!("{coefficient}.{fraction:02}");
+            let wire = serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).unwrap();
+            let schema = norn_expr::schema::Schema::parse_action(&wire, "amount").unwrap();
+            let decoded = schema.decode_action_input(RuntimeValue::String(text.clone()), "amount").unwrap();
+            norn_testkit::proptest::prop_assert_eq!(decoded, RuntimeValue::Number(Decimal::parse(&text).unwrap()));
         }
     }
 

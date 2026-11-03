@@ -22,6 +22,93 @@ export interface components {
              */
             layoutVersion: "0.1";
         };
+        /** @description One field produced by an ordered action input derivation. */
+        NornActionActionDerivedValue: {
+            /** @description The derived field. */
+            field: string;
+            /** @description The exact runtime value written to the effective input. */
+            value: components["schemas"]["NornActionJsonValue"];
+        };
+        /** @description The successful outcome of one action precondition. */
+        NornActionActionPreconditionOutcome: {
+            /** @description The expression evaluated. */
+            expression: string;
+            /** @description Whether it held (successful records contain only `true`). */
+            satisfied: boolean;
+        };
+        /**
+         * ActionCallRecord
+         * @description The idempotency record of a committed call (the values of its
+         *     [`ACTION_CALL_TYPE`] object).
+         */
+        NornActionCallRecord: {
+            /**
+             * @description The action artifact that was admitted when the call committed. Missing
+             *     only on records written before action attribution was recorded.
+             */
+            actionArtifactId?: string | null;
+            /** @description The action. */
+            actionId: string;
+            /**
+             * @description The action artifact version that was admitted when the call committed.
+             *     Missing only on records written before action attribution was recorded.
+             */
+            actionVersion?: string | null;
+            /** @description The actor. */
+            actor: string;
+            /** @description The values produced by each derivation, in declaration order. */
+            derivedValues?: components["schemas"]["NornActionActionDerivedValue"][];
+            /**
+             * @description The effect program that committed this call. Missing in legacy records
+             *     written before effect attribution and interpreted as `fire_transition`.
+             */
+            effectKind?: string | null;
+            /** @description The final input after ordered derivations. Legacy records use `input`. */
+            effectiveInput?: {
+                [key: string]: components["schemas"]["NornActionJsonValue"];
+            } | null;
+            /** @description The state it left. */
+            from: string;
+            /** @description The call's input. */
+            input: {
+                [key: string]: components["schemas"]["NornActionJsonValue"];
+            };
+            /** @description The target object. */
+            object: components["schemas"]["NornActionFactKey"];
+            /** @description Successful precondition results, in declaration order. */
+            preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
+            /** @description Normalized row operations committed by a parent-and-rows action. */
+            rowOperations?: components["schemas"]["NornActionJsonValue"][];
+            /** @description TXN-RULE-1: exact writer closure, action, scope and world identity. */
+            ruleBinding?: string | null;
+            /** @description The state it entered. */
+            to: string;
+            /** @description The fired transition. */
+            transition: string;
+            /** @description The turn the call committed in. */
+            turn: string;
+        };
+        /** @description Identity of one ontology object in a cell: its type and identity key. */
+        NornActionFactKey: {
+            /** @description The object's identity key value. */
+            key: string;
+            /** @description The object type. */
+            objectType: string;
+        };
+        /** Map_of_RuntimeValue */
+        NornActionInput: {
+            [key: string]: components["schemas"]["NornActionJsonValue"];
+        };
+        NornActionJsonValue: null | boolean | number | string | unknown[] | {
+            [key: string]: unknown;
+        };
+        /**
+         * @description Qualified name of an object type: dotted lower-case namespace segments and
+         *     a PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1
+         *     `objectKind` already uses. The namespace segments are the type's domain
+         *     namespace ([`Self::domain`]).
+         */
+        NornActionObjectTypeName: string;
         /**
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
