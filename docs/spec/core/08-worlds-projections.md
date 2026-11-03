@@ -115,5 +115,9 @@ ceiling, an injected preparation refusal, reopen/resume and exact correspondence
 Preparation itself writes no slot or candidate. Its refusal leaves the ledger
 and old complete answer unchanged; the separately committed building slot stays
 stale and resumable across restart, as required for interrupted rebuilds.
+Private slot writes choose a time no earlier than the observed cell commit-clock
+floor, preserving the candidate's independently pinned knowledge coordinates.
+Earlier source commits do not invalidate the captured staging time; transactional
+version and clock guards still refuse actual concurrent conflicts.
 
 RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.

@@ -246,9 +246,25 @@ fn finish_resumed_clock_build(
         .prepare_restatement(build, requests(plan, query_context, point), |_| Ok(true))
         .expect("clock-ahead correspondence");
     assert_eq!(store.verified_head().expect("read-only preparation"), head);
+    let later = build_context
+        .now_ms
+        .checked_add(2)
+        .expect("later source clock");
+    clock_test_correction(&mut store, later, 69_000);
     store
         .stage_restatement(prepared)
-        .expect("complete candidate");
+        .expect("stage over concurrent source commits");
+    let staged = store.verified_head().expect("staged receipt").commits;
+    assert_eq!(
+        store
+            .read()
+            .receipt_at(staged)
+            .expect("receipt")
+            .expect("staged")
+            .body
+            .logical_time,
+        later
+    );
     drop(store);
     activate(path, model, "clock/K2");
     open(path, model)
@@ -312,7 +328,11 @@ fn clock_ahead_restatement_sequence(receipt_offset: u64, query_lead: u64) {
         )
         .expect("begin");
     // This later version is below the clock ceiling but outside the pinned frontier.
-    clock_test_correction(&mut store, receipt_time, 70_000);
+    clock_test_correction(
+        &mut store,
+        receipt_time.checked_add(1).expect("later source clock"),
+        70_000,
+    );
     let head = store.verified_head().expect("before refusal");
     let before = serde_json::to_vec(&view(&store, &context)).expect("old complete view");
     assert!(matches!(
@@ -339,7 +359,7 @@ fn clock_ahead_restatement_sequence(receipt_offset: u64, query_lead: u64) {
             .read()
             .version(MAIN_WORLD, TYPE, "SYN-MELT-15-1")
             .expect("later version"),
-        3
+        4
     );
     assert_eq!(
         current.outputs["week"].knowledge_time_ms,
