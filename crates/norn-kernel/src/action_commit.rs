@@ -3180,7 +3180,7 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => {
@@ -3833,7 +3833,7 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => action_commit_conflict(
@@ -4329,67 +4329,14 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, version, id, message, outcome) = match error {
-        CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => (key, owner, version, id, message, outcome),
-        error @ (CommitError::AtomicBoundary { .. }
-        | CommitError::AtomicDeliveryBoundary { .. }
-        | CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::Conflict { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
-    };
-    let refusal = DecisionRefusal::InvariantViolation {
-        key: key.clone(),
-        owner: owner.clone(),
-        version,
-        id: id.clone(),
-        message: message.clone(),
-        outcome: outcome.clone(),
-    };
     let attempt_id = format!("{}/{}", call.action.action_id, call.idempotency_key);
+    let Some(event) = error.invariant_refusal_event(attempt_id) else {
+        return DecisionRefusal::from_commit(error);
+    };
+    let refusal = DecisionRefusal::from_commit(error);
     let mut refusal_commit = CellCommit::empty();
     refusal_commit.consumes.clone_from(&call.turn.consumes);
-    refusal_commit.events.push(
-        FactEvent::InvariantRefused {
-            key: *key,
-            owner,
-            id,
-            message,
-            outcome: *outcome,
-            attempt_id,
-        }
-        .into(),
-    );
+    refusal_commit.events.push(event.into());
     match host.commit(refusal_commit) {
         Ok(_) => refusal,
         Err(error) => DecisionRefusal::from_commit(error),
