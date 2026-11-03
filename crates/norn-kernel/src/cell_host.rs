@@ -599,6 +599,28 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// ID-UNIQUE-1: a normalized business key is occupied in this root/scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no object IDs or key values are exposed.
+        owner: String,
+        /// Declared business-key name.
+        key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: Box<[FactKey; 2]>,
+    },
+    /// Atomic closure includes another cell or unknown ownership.
+    #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
+    AtomicBoundary {
+        /// The first non-local or unresolved dependency.
+        key: FactKey,
+    },
+    /// A consumed delivery has foreign or unresolved ownership.
+    #[error("core.txn.atomic_boundary: consumed delivery {consumed} is outside the local profile")]
+    AtomicDeliveryBoundary {
+        /// Complete local delivery identity, including generation or incarnation.
+        consumed: Consumed,
+    },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.
     #[error("{key} is protected by an owned child collection transaction")]
@@ -837,6 +859,10 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
+            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
+                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
+            }
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
             Self::Conflict { .. } => "commit.conflict",
