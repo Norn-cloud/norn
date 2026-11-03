@@ -347,7 +347,7 @@ fn val_round_declarations_activate_the_shared_exact_site_binding() {
 fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
     use norn_ir::{PropertyType, Rounding, WholeNumber};
     let site = |scale, rounding| PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
 
         scale: WholeNumber(scale),
         rounding,
@@ -374,7 +374,7 @@ fn val_round_declared_adapter_covers_midpoints_refusal_and_scale_boundary() {
     assert!(
         norn_expr::rescale_decimal(
             &PropertyType::Integer {
-                additivity: Default::default()
+                additivity: norn_ir::PropertyAdditivity::Undeclared
             },
             &"1".parse().expect("number")
         )
@@ -388,7 +388,7 @@ proptest::proptest! {
         use norn_ir::{PropertyType, Rounding, WholeNumber};
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
         let site = PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
  scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
         let text = format!("{}{}.{:03}", if coefficient < 0 { "-" } else { "" }, coefficient.abs()/1000, coefficient.abs()%1000);
         let result = norn_expr::rescale_decimal(&site, &text.parse().expect("number"));

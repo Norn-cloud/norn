@@ -6831,12 +6831,12 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
         EffectiveKind::Base(PropertyType::Integer { .. }) => Type::Integer,
         EffectiveKind::Base(PropertyType::Decimal {
-            additivity: _,
             scale,
             unit,
             rounding,
             currency_source,
             per_unit,
+            ..
         }) => Type::Decimal {
             scale: scale.0,
             unit: unit.clone(),

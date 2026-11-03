@@ -439,12 +439,12 @@ fn check_rate_site(
 
 fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut Vec<Diagnostic>) {
     let PropertyType::Decimal {
-        additivity: _,
         scale,
         unit,
         rounding,
         per_unit,
         currency_source,
+        ..
     } = property_type
     else {
         return;

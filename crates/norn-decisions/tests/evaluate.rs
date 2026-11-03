@@ -1636,7 +1636,7 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
     use norn_expr::Expression;
     use norn_ir::{PropertyType, Rounding, WholeNumber};
     let site = |rounding| PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
 
         scale: WholeNumber(2),
         rounding,
@@ -1713,7 +1713,7 @@ proptest::proptest! {
         use norn_ir::{PropertyType, Rounding, WholeNumber};
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
         let site = PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
  scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
         let expression = norn_expr::Expression::compile(&format!("{a} / {b}")).unwrap();
         let result = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), Some(&site)).result;
@@ -1779,7 +1779,7 @@ proptest::proptest! {
         let text = if scale == 0 { a.to_string() } else { format!("{}{}.{:0width$}", if a<0 {"-"} else {""}, coefficient.abs()/factor, coefficient.abs()%factor, width=usize::try_from(scale).unwrap()) };
         let number: norn_expr::Number = text.parse().unwrap();
         let site = norn_ir::PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
  scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None, per_unit:None };
         let expected = norn_expr::rescale_decimal(&site, &number);
         let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::new(), norn_expr::EnvOptions::default()).unwrap();
@@ -1804,7 +1804,7 @@ fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
     });
     let site = |scale, unit, currency_source, per_unit| {
         json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {
-        additivity: Default::default(),
+        additivity: norn_ir::PropertyAdditivity::Undeclared,
 scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()})
     };
     let slice = closed(

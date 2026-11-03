@@ -2334,7 +2334,7 @@ mod tests {
         assert!(!base_narrows(&values(&["a", "c"]), &values(&["a", "b"])));
         assert!(!base_narrows(
             &PropertyType::Integer {
-                additivity: Default::default()
+                additivity: norn_ir::PropertyAdditivity::Undeclared
             },
             &text
         ));

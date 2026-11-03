@@ -1699,12 +1699,12 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 PropertyType::Text { format } => Type::Text { format: *format },
                 PropertyType::Integer { .. } => Type::Integer,
                 PropertyType::Decimal {
-                    additivity: _,
                     scale,
                     unit,
                     rounding,
                     currency_source,
                     per_unit,
+                    ..
                 } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),
