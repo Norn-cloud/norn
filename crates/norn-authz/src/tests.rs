@@ -406,8 +406,7 @@ mod pdp {
         }
     }
 
-    #[test]
-    fn delegation_chain_requires_attenuation_and_current_parent() {
+    fn delegation_fixture() -> (crate::DelegationSnapshot, AccessRequest) {
         use crate::{DelegationGrant, DelegationSnapshot, GrantPin};
         use std::collections::BTreeSet;
         let mut request = approve(&["approver"], true);
@@ -450,6 +449,22 @@ mod pdp {
             now: 10,
             cost: 1,
         };
+        (snapshot, request)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn delegation_budget_and_expiry_are_exact(cost in 0u64..16, now in 0u64..120) {
+            let (mut snapshot, request) = delegation_fixture();
+            snapshot.cost = cost;
+            snapshot.now = now;
+            proptest::prop_assert_eq!(pdp().with_delegation_snapshot(snapshot).decide(&request).is_allow(), cost > 0 && cost <= 5 && now < 90);
+        }
+    }
+
+    #[test]
+    fn delegation_chain_requires_attenuation_and_current_parent() {
+        let (snapshot, mut request) = delegation_fixture();
         let allowed = pdp().with_delegation_snapshot(snapshot.clone());
         assert_eq!(allowed.decide(&request), PdpDecision::Allow);
         assert_eq!(allowed.accountable_person(&request), Some("person-1"));
@@ -467,7 +482,7 @@ mod pdp {
         }
         for case in 0..20 {
             let mut bad = snapshot.clone();
-            let leaf = bad.grants.get_mut("leaf").unwrap();
+            let leaf = bad.grants.get_mut("leaf").expect("leaf");
             match case {
                 0 => {
                     bad.generations.insert("root".into(), 2);
@@ -475,7 +490,7 @@ mod pdp {
                 1 => {
                     bad.grants.remove("root");
                 }
-                2 => leaf.parent.as_mut().unwrap().generation = 2,
+                2 => leaf.parent.as_mut().expect("fixture pin").generation = 2,
                 3 => leaf.parent = None,
                 4 => leaf.issuer.subject_id = "forged".into(),
                 5 => leaf.recipient.agent_session_id = Some("other-session".into()),
@@ -498,7 +513,7 @@ mod pdp {
                 16 => leaf.recipient = leaf.issuer.clone(),
                 17 => {
                     let pin = leaf.pin.clone();
-                    bad.grants.get_mut("root").unwrap().parent = Some(pin);
+                    bad.grants.get_mut("root").expect("fixture pin").parent = Some(pin);
                 }
                 18 => leaf.pin.generation = 2,
                 _ => {

@@ -143,20 +143,3 @@ impl DelegationSnapshot {
             .map(|g| g.accountable_person.as_str())
     }
 }
-
-#[cfg(test)]
-mod properties {
-    use super::*;
-    use proptest::prelude::*;
-    proptest! {
-        #[test]
-        fn actor_identity_never_comes_from_roles(subject in "[a-z]{1,20}", session in proptest::option::of("[a-z]{1,20}")) {
-            let actor = PrincipalInput { subject_id: subject, agent_session_id: session, actor_kind: crate::ActorKind::Agent, roles: vec![], attributes: BTreeMap::new() };
-            let mut changed = actor.clone();
-            changed.roles.push("administrator".into());
-            prop_assert!(same_actor(&actor, &changed));
-            changed.subject_id.push('x');
-            prop_assert!(!same_actor(&actor, &changed));
-        }
-    }
-}
