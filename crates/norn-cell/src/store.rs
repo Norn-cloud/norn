@@ -2671,7 +2671,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), _ => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(_) => None },
                 )?;
                 crate::migration::apply_model_migration(
                     &self.conn,
@@ -3090,14 +3090,14 @@ mod identity_history_tests {
                 name: ObjectTypeName("identity.Legacy".into()),
                 role: None,
                 description: None,
-                status: Default::default(),
+                status: norn_ir::ResourceStatus::default(),
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },
-                    constraints: Default::default(),
+                    constraints: norn_ir::PropertyConstraints::default(),
                     default: None,
                     markings: vec![],
                     computed: None,
@@ -3147,7 +3147,7 @@ mod identity_history_tests {
 
     fn definition_input(model: &Model) -> InstalledDefinitionInput {
         let root = norn_ir::entity::EntityRootV2 {
-            entity_version: Default::default(),
+            entity_version: norn_ir::EntityIrVersion::default(),
             object_type: model.object_types().next().expect("type").clone(),
             mutation_authority: None,
             extensions: None,
@@ -3184,7 +3184,7 @@ mod identity_history_tests {
             )
             .expect("UTF-8"),
             registry: vec![],
-            receipt_sha256: "identity-fixture".into(),
+            receipt_sha256: "a".repeat(64),
             admission_receipt: None,
             readmission: None,
             diff: serde_json::Value::Null,
