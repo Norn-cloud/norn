@@ -3645,6 +3645,8 @@ export interface components {
              *     declare a business key.
              */
             identity?: components["schemas"]["NornIrKeySpec"][];
+            /** @description FA-IMM-1: existing instances are append-only; subtypes inherit this flag. */
+            immutable?: boolean;
             /**
              * @description Interfaces the type implements, in addition to those its supertypes
              *     implement. Omitted when empty.

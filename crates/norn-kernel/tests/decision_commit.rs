@@ -2440,18 +2440,31 @@ fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
     definitions[0].immutable = true;
     let mut host = cell().with_types(definitions);
     let key = FactKey::new(BIG, "append-only");
-    let values = record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
+    let values =
+        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
     host.commit(CellCommit {
-        writes: vec![FactWrite { key: key.clone(), expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put { values: values.clone() } }],
+        writes: vec![FactWrite {
+            key: key.clone(),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: values.clone(),
+            },
+        }],
         ..CellCommit::empty()
-    }).unwrap();
+    })
+    .unwrap();
     let before = visible(&host, std::slice::from_ref(&key));
     for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
-        let error = host.commit(CellCommit {
-            writes: vec![FactWrite { key: key.clone(), expected: before.0[0].version, mutation }],
-            ..CellCommit::empty()
-        }).unwrap_err();
+        let error = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: before.0[0].version,
+                    mutation,
+                }],
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
         assert_eq!(error.code(), "commit.immutable_object");
         assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
     }
