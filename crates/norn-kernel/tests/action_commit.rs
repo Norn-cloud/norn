@@ -4041,7 +4041,7 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]
-    fn receipt_effect_declaration_never_commits_without_atomic_consumption(reference in norn_testkit::proptest::prop_oneof![norn_testkit::proptest::strategy::Just(format!("sha256:{}", "a".repeat(64))), "[a-zA-Z0-9:{}]{0,80}"]) {
+    fn receipt_effect_declaration_never_commits_without_atomic_consumption(reference in norn_testkit::proptest::prop_oneof![norn_testkit::proptest::strategy::Just(format!("sha256:{}", "a".repeat(64))), "[a-zA-Z0-9:{}]{0,80}"], with_rule in norn_testkit::proptest::prelude::any::<bool>()) {
         let mut payload = serde_json::to_value(approve()).unwrap();
         payload["inputSchema"]["properties"]["receipt"] = json!({"type":"string"});
         payload["inputSchema"]["required"].as_array_mut().unwrap().push(json!("receipt"));
@@ -4049,10 +4049,15 @@ norn_testkit::proptest::proptest! {
             "referenceField":"receipt", "manifestDigest":format!("sha256:{}", "a".repeat(64)),
             "digestProperty":"receipt_digest", "resultBindings":{"customer":"customer"}
         });
-        let action: ActionRoot = serde_json::from_value(payload).unwrap();
+        let mut action: ActionRoot = serde_json::from_value(payload).unwrap();
+        if with_rule {
+            action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+            action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        }
         let mut types = order_types();
         for id in ["receipt_digest", "customer"] { types[0].properties.push(serde_json::from_value(json!({"id":id,"type":{"kind":"text"},"default":""})).unwrap()); }
-        let catalog = TypeCatalog::new(&types);
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
         let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
         seed(&mut cell, ORDER, "SO-1", "draft");
         let before = cell.ledger().len();

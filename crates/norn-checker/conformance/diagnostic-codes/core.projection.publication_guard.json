@@ -2,6 +2,6 @@
   "code": "core.projection.publication_guard",
   "message": "analytical publication refused by declared policy: {detail}",
   "severity": "error",
-  "since": "0.1.0",
+  "since": "0.2.0",
   "tier": "T6"
 }

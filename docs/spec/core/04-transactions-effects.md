@@ -155,5 +155,3 @@ host-side cardinality failure and denied secondary authority, with complete
 SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
-
-
