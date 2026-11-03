@@ -114,6 +114,52 @@ fn interfaces(base: &[ArtifactEnvelope]) -> Result<Vec<InterfaceDef>> {
         .map_err(Into::into)
 }
 
+fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) -> Result<()> {
+    let read = cell.store().read();
+    let mut after = read.dump()?;
+    let mut unchanged = before.clone();
+    for table in ["_norn_ledger", "_norn_receipt"] {
+        after.remove(table);
+        unchanged.remove(table);
+    }
+    if after != unchanged {
+        return Err("refusal changed business, outbox or other non-journal state".into());
+    }
+    let receipts = read.receipts()?;
+    let [receipt] = receipts.as_slice() else {
+        return Err("refusal must record exactly one audit receipt".into());
+    };
+    let body = &receipt.body;
+    if !body.written.is_empty()
+        || !body.linked.is_empty()
+        || !body.enqueued.is_empty()
+        || !body.scheduled.is_empty()
+        || body.consumed.is_some()
+        || body.quantity.is_some()
+        || body.quantity_result.is_some()
+        || body.quantity_intent.is_some()
+        || body.event_count != 1
+    {
+        return Err("refusal receipt contains effects beyond its audit event".into());
+    }
+    let ledger = read.ledger(0)?;
+    let [entry] = ledger.as_slice() else {
+        return Err("refusal must record exactly one audit event".into());
+    };
+    let event: FactEvent = serde_json::from_value(entry.event.clone())?;
+    if !matches!(event, FactEvent::InvariantRefused { key, owner, id, outcome, attempt_id, .. }
+        if key == FactKey::new(MELT, "melt")
+            && owner == norn_ir::InvariantOwner::Interface(norn_ir::InterfaceName("core.Conversion".into()))
+            && id.as_str() == "conversion_conservation"
+            && outcome == norn_ir::DataQualityOutcome::NotSatisfied
+            && attempt_id == "constitution.melt.convert/convert")
+    {
+        return Err("refusal audit does not identify the retained conservation invariant".into());
+    }
+    read.verify_ledger()?;
+    Ok(())
+}
+
 fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result<Value> {
     let (object, action) = authored(artifacts)?;
     let interfaces = interfaces(base)?;
@@ -185,11 +231,9 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     if error.code() != "core.laws.violated" {
                         return Err(format!("unexpected refusal: {error:?}").into());
                     }
-                    if before != cell.store().read().dump()? {
-                        return Err("refusal changed the complete SQLite state".into());
-                    }
+                    check_refusal_journal(&cell, &before)?;
                     counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":required_loss,
-                        "code":error.code(),"explanation":error.to_string(),"atomicUnchanged":true}));
+                        "code":error.code(),"explanation":error.to_string(),"businessAndOutboxUnchanged":true,"refusalJournal":"one retained invariant refusal"}));
                 }
             }
         }
