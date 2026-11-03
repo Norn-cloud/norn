@@ -120,6 +120,6 @@ mod tests {
         rows[0][1] = q(3);
         let witness = render(&c, &w).unwrap().unwrap();
         assert_eq!(witness["parameters"], json!([["0", "1"], ["0", "1"]]));
-        assert_ne!(witness["weightedChange"], json!(["0", "1"]));
+        assert_eq!(witness["weightedChange"], json!(["3", "1"]));
     }
 }

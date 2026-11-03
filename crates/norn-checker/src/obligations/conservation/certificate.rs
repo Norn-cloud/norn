@@ -243,9 +243,11 @@ mod tests {
             Certificate::parse(&wire.to_string()),
             Err(Failure::Malformed)
         );
-        assert_eq!(
-            Certificate::parse("{\"profile\":1,\"profile\":2}"),
-            Err(Failure::Malformed)
+        let duplicate = certificate.json().to_string().replacen(
+            '{',
+            &format!("{{\"profile\":\"{PROFILE}\","),
+            1,
         );
+        assert_eq!(Certificate::parse(&duplicate), Err(Failure::Malformed));
     }
 }
