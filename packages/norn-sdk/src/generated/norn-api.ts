@@ -7044,6 +7044,7 @@ export interface components {
         NornQueryFreshness: "fresh" | "exact" | "stale" | "incomplete";
         /** @description One object version's contribution to a bucket. */
         NornQueryMember: {
+            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
             amounts: (number | null)[];
             /**
              * Format: int64
@@ -7062,6 +7063,7 @@ export interface components {
             complete: boolean;
             /** @description Actual model/definition pin. */
             definitionPin: string;
+            /** @description Exclusive effective cutoff of the admitted question window. */
             effectiveAsOf: components["schemas"]["NornIrUtcTimestamp"];
             /** @description Physical evaluator. */
             engine: components["schemas"]["NornQueryEngine"];
@@ -7116,13 +7118,15 @@ export interface components {
         };
         /** @description One output bucket, with its exact sums beside its value. */
         NornQueryRow: {
+            /** @description Scalar grouping value. */
             bucket: unknown;
             /** @description Exact aggregate membership: contributing object identity → its contribution. */
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
+            /** @description One sum, or numerator then denominator. */
             totals: number[];
-            /** @description An exact decimal as a raw JSON number token; read its text, not a binary float. */
+            /** @description The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float. */
             value: number | null;
         };
         /** @description A source partition's observed watermark. */

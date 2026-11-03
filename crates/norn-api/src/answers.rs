@@ -21,7 +21,7 @@ pub struct NornQueryResult {
     /// Actual verified ledger head.
     pub revision: NornLedgerHead,
     /// Exclusive effective cutoff of the admitted question window.
-    #[schema(schema_with = utc_timestamp_schema)]
+    #[schema(schema_with = effective_as_of_schema)]
     pub effective_as_of: String,
     /// Actual knowledge revision (commit count), not a historical timestamp.
     pub known_as_of: u64,
@@ -109,13 +109,13 @@ pub struct NornQueryWatermark {
 #[serde(deny_unknown_fields)]
 pub struct NornQueryRow {
     /// Scalar grouping value.
-    #[schema(schema_with = any_value_schema)]
+    #[schema(schema_with = bucket_schema)]
     pub bucket: serde_json::Value,
     /// One sum, or numerator then denominator.
-    #[schema(schema_with = decimal_list_schema)]
+    #[schema(schema_with = totals_schema)]
     pub totals: Vec<String>,
     /// The bucket's value; null means a zero-denominator ratio is unavailable.
-    #[schema(required = true, schema_with = nullable_decimal_schema)]
+    #[schema(required = true, schema_with = value_schema)]
     pub value: Option<String>,
     /// Exact aggregate membership: contributing object identity → its contribution.
     pub members: BTreeMap<String, NornQueryMember>,
@@ -128,7 +128,7 @@ pub struct NornQueryMember {
     /// Original cell object version.
     pub version: u64,
     /// Operand contributions, in `totals` order; null means a predicate excluded the operand.
-    #[schema(schema_with = nullable_decimal_list_schema)]
+    #[schema(schema_with = amounts_schema)]
     pub amounts: Vec<Option<String>>,
 }
 
@@ -162,35 +162,55 @@ pub enum NornWorld {
     },
 }
 
-fn utc_timestamp_schema() -> Ref {
-    Ref::from_schema_name("NornIrUtcTimestamp")
+// `schema_with` replaces the field's schema, doc comment included, so each
+// helper restates its field's description.
+fn effective_as_of_schema() -> Ref {
+    Ref::builder()
+        .ref_location_from_schema_name("NornIrUtcTimestamp")
+        .description(Some(
+            "Exclusive effective cutoff of the admitted question window.",
+        ))
+        .build()
 }
 
-fn any_value_schema() -> Schema {
-    Schema::Object(Object::with_type(SchemaType::AnyValue))
+fn bucket_schema() -> Schema {
+    let mut schema = Object::with_type(SchemaType::AnyValue);
+    schema.description = Some("Scalar grouping value.".to_owned());
+    Schema::Object(schema)
 }
 
-fn decimal(nullable: bool) -> Object {
+fn decimal(nullable: bool, description: &str) -> Object {
     let mut schema = Object::with_type(if nullable {
         SchemaType::from_iter([Type::Number, Type::Null])
     } else {
         SchemaType::new(Type::Number)
     });
-    schema.description = Some(
-        "An exact decimal as a raw JSON number token; read its text, not a binary float."
-            .to_owned(),
-    );
+    schema.description = Some(format!(
+        "{description}An exact decimal as a raw JSON number token; read its text, not a binary float."
+    ));
     schema
 }
 
-fn nullable_decimal_schema() -> Schema {
-    Schema::Object(decimal(true))
+fn decimal_list(nullable: bool, description: &str) -> Schema {
+    let mut array = Array::new(decimal(nullable, ""));
+    array.description = Some(description.to_owned());
+    Schema::Array(array)
 }
 
-fn decimal_list_schema() -> Schema {
-    Schema::Array(Array::new(decimal(false)))
+fn value_schema() -> Schema {
+    Schema::Object(decimal(
+        true,
+        "The bucket's value; null means a zero-denominator ratio is unavailable. ",
+    ))
 }
 
-fn nullable_decimal_list_schema() -> Schema {
-    Schema::Array(Array::new(decimal(true)))
+fn totals_schema() -> Schema {
+    decimal_list(false, "One sum, or numerator then denominator.")
+}
+
+fn amounts_schema() -> Schema {
+    decimal_list(
+        true,
+        "Operand contributions, in `totals` order; null means a predicate excluded the operand.",
+    )
 }

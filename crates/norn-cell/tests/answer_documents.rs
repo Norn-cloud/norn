@@ -16,7 +16,7 @@ fn retained(name: &str, document: &impl serde::Serialize) {
     let path = format!("{DIRECTORY}/{name}");
     let mut text = serde_json::to_string_pretty(document).expect("exact JSON text");
     text.push('\n');
-    if std::env::var_os("NORN_BLESS").is_some() {
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
         std::fs::write(&path, &text).expect("bless retained document");
     }
     let retained = std::fs::read_to_string(&path).expect("retained document");

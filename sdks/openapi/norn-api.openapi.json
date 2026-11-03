@@ -18263,7 +18263,8 @@
                 "null"
               ],
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
-            }
+            },
+            "description": "Operand contributions, in `totals` order; null means a predicate excluded the operand."
           },
           "version": {
             "type": "integer",
@@ -18315,7 +18316,8 @@
             "description": "Actual model/definition pin."
           },
           "effectiveAsOf": {
-            "$ref": "#/components/schemas/NornIrUtcTimestamp"
+            "$ref": "#/components/schemas/NornIrUtcTimestamp",
+            "description": "Exclusive effective cutoff of the admitted question window."
           },
           "engine": {
             "$ref": "#/components/schemas/NornQueryEngine",
@@ -18434,7 +18436,9 @@
           "members"
         ],
         "properties": {
-          "bucket": {},
+          "bucket": {
+            "description": "Scalar grouping value."
+          },
           "members": {
             "type": "object",
             "description": "Exact aggregate membership: contributing object identity → its contribution.",
@@ -18450,14 +18454,15 @@
             "items": {
               "type": "number",
               "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
-            }
+            },
+            "description": "One sum, or numerator then denominator."
           },
           "value": {
             "type": [
               "number",
               "null"
             ],
-            "description": "An exact decimal as a raw JSON number token; read its text, not a binary float."
+            "description": "The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float."
           }
         },
         "additionalProperties": false
