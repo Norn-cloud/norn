@@ -79,7 +79,12 @@ pub fn check(operators: &[Operator], signed_changes: bool) -> Vec<Algebraic> {
                 Some(Homomorphism::MonoidSum) if signed_changes => {
                     Algebraic::Unknown("monoid law does not support deletions")
                 }
-                Some(_) => Algebraic::ProvedAlgebraic,
+                Some(
+                    Homomorphism::Select
+                    | Homomorphism::Project
+                    | Homomorphism::GroupSum
+                    | Homomorphism::MonoidSum,
+                ) => Algebraic::ProvedAlgebraic,
             },
             Operator::Join {
                 left,
@@ -93,7 +98,9 @@ pub fn check(operators: &[Operator], signed_changes: bool) -> Vec<Algebraic> {
                     term,
                 }),
             Operator::Unknown => Algebraic::Unknown("unsupported operator"),
-            _ => Algebraic::Unknown("uncertified or invalid dependency"),
+            Operator::Homomorphism { .. } | Operator::Join { .. } => {
+                Algebraic::Unknown("uncertified or invalid dependency")
+            }
         };
         results.push(result);
     }
@@ -118,16 +125,18 @@ pub struct QuestionCertificate<'a> {
 pub fn question(plan: &QuestionPlan) -> QuestionCertificate<'_> {
     let mut operators = vec![Operator::Input];
     for _ in plan.sums() {
+        let selected = operators.len();
         operators.push(Operator::Homomorphism {
             input: 0,
             law: Some(Homomorphism::Select),
         });
+        let projected = operators.len();
         operators.push(Operator::Homomorphism {
-            input: operators.len() - 1,
+            input: selected,
             law: Some(Homomorphism::Project),
         });
         operators.push(Operator::Homomorphism {
-            input: operators.len() - 1,
+            input: projected,
             law: Some(Homomorphism::GroupSum),
         });
     }
@@ -140,6 +149,11 @@ pub fn question(plan: &QuestionPlan) -> QuestionCertificate<'_> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "exhaustive fixed two-key reference relations"
+)]
 mod tests {
     use super::*;
 
@@ -205,6 +219,19 @@ mod tests {
             .iter()
             .all(|r| *r == Algebraic::ProvedAlgebraic)
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn generated_join_coefficients_match_independent_basis(coefficients in proptest::array::uniform3(-8i8..=8)) {
+            let samples = [(0i32, 1i32, 1i32, 0i32), (1, 0, 0, 1), (0, 0, 1, 1)];
+            let correct = samples.into_iter().all(|(l, r, dl, dr)| {
+                let [a, b, c] = coefficients.map(i32::from);
+                a * dl * r + b * l * dr + c * dl * dr == (l + dl) * (r + dr) - l * r
+            });
+            let result = check(&[Operator::Input, Operator::Join { left: 0, right: 0, coefficients }], true);
+            proptest::prop_assert_eq!(result.get(1) == Some(&Algebraic::ProvedAlgebraic), correct);
+        }
     }
 
     #[test]
