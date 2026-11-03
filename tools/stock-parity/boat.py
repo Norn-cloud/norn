@@ -11,6 +11,20 @@ def boat(*args):
     return subprocess.check_output(['boat', *args], text=True, timeout=900)
 
 
+def cleanup(vm):
+    try:
+        boat('delete', vm, '--yes')
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError('VM deletion was not verified') from error
+    if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
+                                       for t in ('404', 'not_found', 'not found')):
+        raise RuntimeError('VM deletion was not verified')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--snapshot', required=True, help='Prebuilt ERPNext v16 Boat snapshot')
@@ -63,11 +77,7 @@ python3 run.py /home/user/traces.json /home/user/results.json
         boat('scp', f'{vm}:/home/user/results.json', str(args.output))
     finally:
         if vm:
-            boat('delete', vm, '--yes')
-            check = subprocess.run(['boat', 'info', vm, '--json'], capture_output=True, text=True, timeout=60)
-            if check.returncode == 0 or not any(t in (check.stdout + check.stderr).lower()
-                                                 for t in ('404', 'not_found', 'not found')):
-                raise RuntimeError('VM deletion was not verified')
+            cleanup(vm)
 
 
 if __name__ == '__main__':
