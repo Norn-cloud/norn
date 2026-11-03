@@ -642,7 +642,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
         'Resolve the pull request': ('77ee31967cc3351930d8984f33b0f19caec0b59600236000a53094b4391e28eb', ['script', 'retries'], False, None),
-        'Persist the rights revocation boundary': ('b1d480d4e4763cf3673ba594d322c7ad875ed86836aafe5809bb571dfbf38a4e', ['script', 'retries'], False, None),
+        'Persist the rights revocation boundary': ('b50f6d14753547850e5f945b641ecc8ae00463b52b90fcb13e3fb1ecc11dce47', ['script', 'retries'], False, None),
         'Record admin approvals of the exact PR head': ('3a5d0cbb2e712e78486e67d3c41bd76d91e4201ea9b1be5c8ebf36c99ead33f8', ['script'], False, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
         'Record admin approvals of the queued heads': ('3051e6caa6077067d7ba6df0f65784329019427aae51cfa238f785caa0060f6b', ['script'], False, None),

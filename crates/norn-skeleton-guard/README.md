@@ -42,7 +42,9 @@ sequence back to PR creation and successful reconciliation of every revocation
 job. Failed, cancelled, skipped or unmaterialized recorders remain pending even
 if every status write failed and the comment disappeared. Re-run the original
 revocation workflow (retaining its event payload), then post a fresh review after
-its successful receipt. Rerunning only an admission job does not reconcile it.
+its successful receipt. Reconciliation requires the original reviewer to remain
+an admin; unavailable or lost authority cannot turn a failed event into an ignored
+event. Rerunning only an admission job does not reconcile it.
 Acknowledgments must also have a saved event under this protocol. Missing or
 expired event history fails closed; a new PR requires fresh rights review.
 The base-owned lane checks identity and current evidence; CI cannot infer all

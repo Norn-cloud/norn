@@ -232,10 +232,13 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const comment = context.payload.comment;
-            if (!comment.user) return;
+            const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error('Missing revocation attempt identity');
+            const ignore = () => { if (attempt > 1) throw new Error('Cannot reconcile without the original admin reviewer'); };
+            if (!comment.user) { ignore(); return; }
             const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login })
               .catch(error => { if (error.status === 404) return { data: { permission: 'none' } }; throw error; });
-            if (permission.permission !== 'admin') return;
+            if (permission.permission !== 'admin') { ignore(); return; }
             const bodies = [comment.body, context.payload.changes?.body?.from];
             const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));
             for (const sha of heads) {

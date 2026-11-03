@@ -1735,6 +1735,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str) -> dict:
         programs[key] = script
     harness = r"""const assert = require('assert'), fs = require('fs');
 const {head,base,groupHead,programs} = JSON.parse(process.env.RIGHTS_CASE);
+process.env.GITHUB_RUN_ATTEMPT='1';
 const execute = code => new (Object.getPrototypeOf(async function(){}).constructor)('github','context',code)(github,context);
 const context = {repo:{owner:'Norn-cloud',repo:'norn'},payload:{},runId:104,serverUrl:'https://github.com'};
 const pr = {number:7,created_at:'2026-11-03T00:00:00Z',head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:base}};
@@ -1785,6 +1786,9 @@ async function snapshot(name){evidence[name]={pr:await collect('pr'),group:await
   comments.push({...comments[0],id:2,created_at:'2026-11-03T00:01:30Z',updated_at:'2026-11-03T00:01:30Z'});
   runs.unshift(run(106,'issue_comment','2026-11-03T00:01:31Z'));jobs[106]=[job(1060,2,false,'skipped')];
   await snapshot(removal+'-premature');
+  process.env.GITHUB_RUN_ATTEMPT='2';
+  admin=false;await assert.rejects(()=>record({comment:revoke}));admin=true;
+  await assert.rejects(()=>record({comment:{...revoke,user:null}}));
   clock='2026-11-03T00:02:00Z';await record({comment:revoke});jobs[102].push(job(2020,9,true,'success'));
   await snapshot(removal+'-partial');assert.deepEqual(evidence[removal+'-partial'].pr.pending_revocations,[103]);
   clock='2026-11-03T00:02:01Z';await record(removed);jobs[103].push(job(2030,9,true,'success'));
@@ -1809,6 +1813,7 @@ async function snapshot(name){evidence[name]={pr:await collect('pr'),group:await
   for(const replacement of [[],[job(3030,9,true,'skipped')],[{...job(3031,9,true,null),status:'in_progress'}]]){
    const prior=jobs[103];jobs[103]=replacement;const result=await collect('pr');assert(result.pending_revocations.includes(103));jobs[103]=prior;
   }
+  process.env.GITHUB_RUN_ATTEMPT='1';
   const count=history.length;admin=false;await record({comment:revoke});assert.equal(history.length,count);
   await record({comment:{...revoke,user:null}});assert.equal(history.length,count);
   missing=true;await record({comment:revoke});assert.equal(history.length,count);missing=false;admin=true;lookupFailure=true;await assert.rejects(()=>record({comment:revoke}));lookupFailure=false;
