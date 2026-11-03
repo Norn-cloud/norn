@@ -51,3 +51,6 @@ No result in this checkpoint claims cross-engine parity or race correctness.
   include both initials. Rows come only from REST, never expected trace values.
 - **CP1-timeout-attempt:** accepted attempts survive an unavailable snapshot;
   its explicit unsupported status cannot masquerade as an empty observation.
+
+- **cold-bootstrap-budget:** cold image loading plus a fresh site can exceed
+  ten minutes. The batch is bounded to 1800 seconds, inside the two-hour TTL.
