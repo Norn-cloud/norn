@@ -68,6 +68,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !reveal_source(&instance)? {
             return Ok(None);
         }
+        if instance.object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
+            return Ok(None);
+        }
         let receipt = self
             .receipt_for_fact_version_with_budget(
                 world,

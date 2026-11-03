@@ -1,0 +1,389 @@
+#![cfg(feature = "native")]
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::print_stdout,
+    missing_docs,
+    reason = "synthetic mapped-link correspondence"
+)]
+use norn_cell::mapping_bundle::MappingInput;
+use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
+use norn_ir::{
+    ArtifactEnvelope, InterfaceDef, ObjectTypeDef, PropertyTypeDef, RuntimeObject, RuntimeValue,
+};
+use norn_kernel::{FactKey, LinkKey, ObservationEvent, ObservationId, Observed};
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
+
+type Cell = SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject>;
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+fn setup(path: &Path) -> Cell {
+    let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
+    for dir in [
+        "core",
+        "packs/canon",
+        "packs/erpnext",
+        "packs/shopify",
+        "packs/odoo",
+    ] {
+        for file in
+            fs::read_dir(root().join(format!("registry/{dir}/artifacts"))).expect("artifacts")
+        {
+            let artifact: ArtifactEnvelope = serde_json::from_str(
+                &fs::read_to_string(file.expect("file").path()).expect("read"),
+            )
+            .expect("artifact");
+            if ![
+                "commerce.SalesOrder.entity",
+                "core.Order.interface",
+                "core.Entitlement.entity",
+                "identity.BusinessUnit.entity",
+                "location.Region.entity",
+                "location.Space.entity",
+                "party.Brand.entity",
+            ]
+            .contains(&artifact.artifact_id.as_str())
+            {
+                artifacts.push(artifact);
+            }
+        }
+    }
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    let diagnostics = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.severity != norn_ir::DiagnosticSeverity::Error),
+        "{diagnostics:#?}"
+    );
+    let mut types: Vec<ObjectTypeDef> = vec![];
+    let mut interfaces: Vec<InterfaceDef> = vec![];
+    let mut properties: Vec<PropertyTypeDef> = vec![];
+    for artifact in &artifacts {
+        let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
+        if let Some(value) = payload.get("objectType") {
+            types.push(serde_json::from_value(value.clone()).expect("object"));
+        }
+        if let Some(value) = payload.get("interface") {
+            interfaces.push(serde_json::from_value(value.clone()).expect("interface"));
+        }
+        if let Some(value) = payload.get("propertyTypes") {
+            properties.extend(
+                serde_json::from_value::<Vec<PropertyTypeDef>>(value.clone()).expect("properties"),
+            );
+        }
+    }
+    let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
+        .expect("model")
+        .with_governing_laws(&artifacts)
+        .expect("laws");
+    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
+    store
+        .install_definitions(
+            model,
+            InstalledDefinitionInput {
+                canonical_set: String::from_utf8(
+                    norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
+                )
+                .expect("UTF8"),
+                registry: vec![],
+                receipt_sha256: "synthetic-mapped-links".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: json!({}),
+                installed_at: 1_793_702_400_000,
+                layout: None,
+            },
+            None,
+            "org_demo/dev",
+        )
+        .expect("install");
+    SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
+}
+fn fixture(system: &str) -> Value {
+    serde_json::from_str(
+        &fs::read_to_string(root().join(format!("registry/packs/{system}/synthetic.json")))
+            .expect("fixture"),
+    )
+    .expect("json")
+}
+fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
+    let record = &row["record"];
+    let alias = record
+        .get("name")
+        .or_else(|| record.get("id"))
+        .expect("source alias")
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| record["id"].to_string());
+    let payload = RuntimeValue::from_json(record.clone()).expect("payload");
+    let digest = norn_ir::canonical::HashProfile::Norn1
+        .hash_json(serde_json::to_string(&payload).expect("json"))
+        .expect("digest");
+    let source = format!("synthetic-{system}");
+    let delivery = cell
+        .store()
+        .export_commit_count()
+        .expect("delivery metadata");
+    let raw = Observed {
+        id: ObservationId(format!("delivery-{event}-{delivery}")),
+        provenance: norn_kernel::Provenance {
+            source: source.clone(),
+            source_id: alias.clone(),
+            mapping_version: "synthetic/1".into(),
+            observed_at: norn_kernel::LogicalTime::from_millis(1_793_702_400_000 + delivery),
+        },
+        input: norn_ir::runtime_object! {
+            "contract"=>"norn.raw_observation/v1", "source"=>source, "source_id"=>alias,
+            "event_id"=>event, "source_version"=>event, "pipeline_version"=>"synthetic/1", "kind"=>"upsert", "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
+        },
+    };
+    let input = MappingInput {
+        mapping: format!("{system}.three.mapping"),
+        dataset: row["dataset"].as_str().expect("dataset").into(),
+        connector_instance: "demo".into(),
+        partition: "snapshot".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+    };
+    let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+    cell.process_mapping_bundle(&id).expect("process");
+    id
+}
+fn graph(cell: &Cell) -> BTreeSet<(String, String, String, String, String)> {
+    let claims = cell.store().read().observed_link_claims().expect("claims");
+    let mut graph = BTreeSet::new();
+    for claim in claims {
+        for link in cell
+            .store()
+            .read()
+            .links_touching(MAIN_WORLD, claim.source_type.as_str(), &claim.source_key)
+            .expect("links")
+        {
+            graph.insert((
+                link.source_type,
+                link.source,
+                link.link,
+                link.target_type,
+                link.target,
+            ));
+        }
+    }
+    graph
+}
+fn count_snapshot(cell: &Cell) -> (usize, usize) {
+    let mut captured = 0;
+    let mut quarantined = 0;
+    for ty in [
+        "canon.Item",
+        "canon.Party",
+        "canon.PartyRole",
+        "canon.Holding",
+        "canon.OrderLine",
+    ] {
+        let page = cell
+            .store()
+            .read()
+            .authoritative_page(MAIN_WORLD, ty, None, 100)
+            .expect("page");
+        captured += page.records.len();
+        quarantined += page.quarantine_count;
+    }
+    (captured, quarantined)
+}
+#[test]
+fn obs_link_all_three_snapshots_capture_and_converge_with_source_provenance() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("three.sqlite"));
+    for system in ["erpnext", "shopify", "odoo"] {
+        let source = fixture(system);
+        let rows = source["snapshot"].as_array().expect("rows");
+        for row in rows {
+            capture(&mut cell, system, row, "snapshot");
+        }
+        assert_eq!(count_snapshot(&cell), (10, 0));
+        assert_eq!(graph(&cell).len(), 12);
+        println!(
+            "{system}: captured {}/{} snapshot source rows; 0 quarantined; 10 canonical objects; 12 links",
+            rows.len(),
+            rows.len()
+        );
+    }
+    let key = LinkKey::new(
+        FactKey::new("canon.OrderLine", "demo/order/1/line/1"),
+        "provider",
+        FactKey::new("canon.Party", "demo/party/owner"),
+    );
+    let claims = cell
+        .store()
+        .read()
+        .observed_link_provenance(&key)
+        .expect("provenance");
+    assert_eq!(claims.len(), 3);
+    assert_eq!(
+        claims
+            .iter()
+            .map(|c| c.provenance.source.system.as_str())
+            .collect::<BTreeSet<_>>()
+            .len(),
+        3
+    );
+    assert_eq!(
+        cell.store()
+            .read()
+            .observed_link_claims()
+            .expect("claims")
+            .len(),
+        36
+    );
+    assert_eq!(
+        cell.store()
+            .read()
+            .list_after(
+                MAIN_WORLD,
+                norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+                None,
+                100
+            )
+            .expect("materialized claims")
+            .len(),
+        36
+    );
+}
+#[test]
+fn obs_link_pending_targets_resolve_without_source_redelivery_and_reopen_is_identical() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("pending.sqlite");
+    let mut cell = setup(&path);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    capture(&mut cell, "erpnext", &rows[6], "snapshot");
+    assert!(graph(&cell).is_empty());
+    assert_eq!(
+        cell.store()
+            .read()
+            .observed_link_claims()
+            .expect("pending claims")
+            .len(),
+        3
+    );
+    for row in rows[..6].iter().rev() {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    assert_eq!(graph(&cell).len(), 12);
+    let graph_before = graph(&cell);
+    let claims_before = cell.store().read().observed_link_claims().expect("claims");
+    let dump = cell.store().read().dump().expect("dump");
+    let model = cell.store().model().clone();
+    drop(cell);
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    assert_eq!(store.read().dump().expect("dump"), dump);
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    assert_eq!(graph(&cell), graph_before);
+    assert_eq!(
+        cell.store().read().observed_link_claims().expect("claims"),
+        claims_before
+    );
+    let records: Vec<_> = (1..=cell.store().export_commit_count().expect("head"))
+        .map(|seq| {
+            cell.store()
+                .export_record(seq)
+                .expect("record")
+                .expect("present")
+        })
+        .collect();
+    let restored = CellStore::rebuild_export_history(
+        norn_cell::engine::NativeEngine::open_in_memory().expect("engine"),
+        &records,
+        &records.last().expect("last").hash().expect("hash"),
+    )
+    .expect("replay");
+    let replayed =
+        SqliteCell::new(restored, "org_demo/dev", |_| BTreeMap::new()).expect("replayed cell");
+    assert_eq!(replayed.store().read().dump().expect("replayed dump"), dump);
+    assert_eq!(graph(&replayed), graph_before);
+    assert_eq!(
+        replayed
+            .store()
+            .read()
+            .observed_link_claims()
+            .expect("replayed claims"),
+        claims_before
+    );
+    let before = cell.store().export_commit_count().expect("head");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    assert_eq!(cell.store().export_commit_count().expect("head"), before);
+    assert_eq!(graph(&cell), graph_before);
+}
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(12))]
+    #[test]
+    fn obs_link_pending_order_and_redelivery_independence(priorities in proptest::collection::vec(0u8..=255,7), repeat in 1usize..4) {
+        let directory = tempfile::tempdir().expect("directory"); let mut cell = setup(&directory.path().join("generated.sqlite"));
+        let source=fixture("erpnext"); let rows=source["snapshot"].as_array().expect("rows");
+        let mut order:Vec<_>=(0..7).collect();order.sort_by_key(|i|(priorities[*i],*i));
+        for i in order { for _ in 0..repeat { capture(&mut cell,"erpnext",&rows[i],"snapshot"); } }
+        proptest::prop_assert_eq!(count_snapshot(&cell),(10,0));
+        let expected:BTreeSet<_>=cell.store().read().observed_link_claims().expect("claims").into_iter().filter_map(|c| c.target.map(|t|(c.source_type.0,c.source_key,c.role.0,t.object_type.0,t.key))).collect();
+        proptest::prop_assert_eq!(graph(&cell),expected);
+        proptest::prop_assert_eq!(cell.store().read().observed_link_claims().expect("claims").len(),12);
+    }
+}
+
+#[test]
+fn obs_link_delivery_incremental_reports_converge_without_duplicate_contributions() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("deliveries.sqlite"));
+    for system in ["erpnext", "shopify", "odoo"] {
+        let source = fixture(system);
+        for row in source["snapshot"].as_array().expect("snapshot") {
+            capture(&mut cell, system, row, "snapshot");
+        }
+        for row in source["incremental"].as_array().expect("incremental") {
+            capture(&mut cell, system, row, &row["sequence"].to_string());
+        }
+    }
+    let key = LinkKey::new(
+        FactKey::new("canon.Delivery", "demo/delivery/1/line/1"),
+        "fulfils",
+        FactKey::new("canon.OrderLine", "demo/order/1/line/1"),
+    );
+    assert_eq!(
+        cell.store()
+            .read()
+            .observed_link_provenance(&key)
+            .expect("claims")
+            .len(),
+        3
+    );
+    let delivery = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.Delivery", "demo/delivery/1/line/1")
+        .expect("read")
+        .expect("delivery");
+    assert_eq!(delivery.version, 1);
+    assert_eq!(
+        cell.store()
+            .read()
+            .list_after(MAIN_WORLD, "canon.Delivery", None, 100)
+            .expect("deliveries")
+            .len(),
+        1
+    );
+}
