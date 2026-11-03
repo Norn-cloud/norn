@@ -18,7 +18,8 @@ def main():
     binary, *arguments = sys.argv[1:]
     tools = Path(arguments[-1])
     quint = tools / "bin/quint"
-    bun = shutil.which("bun")
+    located_bun = shutil.which("bun")
+    bun = str(Path(located_bun).resolve()) if located_bun else None
     if not bun or subprocess.check_output([quint, "--version"]).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"]).strip() != b"1.3.14":
         raise ValueError("backend version mismatch")
     package = Path("tools/norn-proofs")
@@ -34,7 +35,7 @@ def main():
         if sha(job["model"]) != job["modelSha"]:
             raise ValueError("generated model changed")
         subprocess.run([sys.executable, "scripts/check-generated-quint.py", "--model", job["model"], "--out", job["result"],
-                        "--tools", str(tools), "--step", job["step"], "--invariant", job["invariant"], "--seed", str(job["seed"]),
+                        "--tools", str(tools), "--bun", bun, "--step", job["step"], "--invariant", job["invariant"], "--seed", str(job["seed"]),
                         "--expected-states", str(job["expectedStates"])], check=True)
         control["results"][job["key"]] = {"resultSha": sha(job["result"]), "modelSha": job["modelSha"], "challenge": job["challenge"]}
     bound = subprocess.run([binary, "bind", *arguments], input=json.dumps(control).encode())

@@ -48,6 +48,22 @@ fn scenario(trace: &Value, bounds: &Value, law: &Value) -> Result<Value> {
         json!({"law":law,"writer":bounds.get("action"),"identity":bounds.get("identity"),"states":states,"interpretation":"writer proposal before runtime law enforcement"}),
     )
 }
+// PROOF-QUINT-RUN-1: absence of a witness retains Unknown assurance.
+fn assessment(kind: &str, status: &str) -> (&'static str, &'static str) {
+    let verdict = match (kind, status) {
+        ("non_vacuity", "violation") | ("initialization" | "preservation", "ok") => "bounded-pass",
+        ("initialization" | "preservation", "violation") => "refuted",
+        _ => "unknown",
+    };
+    (
+        verdict,
+        if verdict == "unknown" {
+            "unknown"
+        } else {
+            "exhaustive-finite/bounded"
+        },
+    )
+}
 #[allow(
     clippy::too_many_lines,
     reason = "bounded acceptance driver; all backend and binding steps remain explicit"
@@ -169,11 +185,8 @@ fn main() -> Result<()> {
             let bytes = std::fs::read_to_string(&result)?;
             let output: Value = serde_json::from_str(&bytes)?;
             let status = field(&output, "status")?;
-            let passed = if kind == "non_vacuity" {
-                status == "violation"
-            } else {
-                status == "ok"
-            };
+            let (verdict, level) = assessment(kind, status);
+            let passed = verdict == "bounded-pass";
             let evidence_bounds = serde_json::to_string(
                 &json!({"declaredBoundsProfile":profile,"profile":batch.bounds,"modelSha256":digest(&path)?,"invariant":invariant,"step":step,"toolchain":implementation,"expectedStates":profile.get("expectedStates"),"workers":1,"exclusions":profile.get("exclusions").ok_or("explicit exclusions required")?}),
             )?;
@@ -206,7 +219,7 @@ fn main() -> Result<()> {
             if passed {
                 discharged = discharged.saturating_add(1);
             }
-            goals.push(json!({"goal":index,"kind":kind,"status":if passed{"bounded-pass"}else if status=="violation"{"refuted"}else{"unknown"},"level":if status=="unknown"{"unknown"}else{"exhaustive-finite/bounded"},"reason":output.get("reason"),"scenario":output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,&batch.bounds,law)).transpose()?,"record":record}));
+            goals.push(json!({"goal":index,"kind":kind,"status":verdict,"level":level,"reason":output.get("reason"),"scenario":output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,&batch.bounds,law)).transpose()?,"record":record}));
         }
         let counterexample = label != "mutant"
             || goals.iter().any(|goal| {
@@ -242,4 +255,30 @@ fn main() -> Result<()> {
         return Err("bounded original/mutant/restored acceptance failed".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::assessment;
+    #[test]
+    fn missing_witness_and_unsupported_goals_keep_unknown_assurance() {
+        assert_eq!(assessment("non_vacuity", "ok"), ("unknown", "unknown"));
+        assert_eq!(assessment("law_semantics", "ok"), ("unknown", "unknown"));
+        assert_eq!(
+            assessment("preservation", "unknown"),
+            ("unknown", "unknown")
+        );
+        assert_eq!(
+            assessment("non_vacuity", "violation"),
+            ("bounded-pass", "exhaustive-finite/bounded")
+        );
+        assert_eq!(
+            assessment("preservation", "violation"),
+            ("refuted", "exhaustive-finite/bounded")
+        );
+        assert_eq!(
+            assessment("initialization", "ok"),
+            ("bounded-pass", "exhaustive-finite/bounded")
+        );
+    }
 }

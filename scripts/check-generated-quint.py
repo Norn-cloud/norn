@@ -91,7 +91,7 @@ def run(args):
         tla = work / "generated.tla"
         tla.write_bytes(compiled.stdout)
         primary_path = work / "primary.json"
-        subprocess.run(["bun", "run", "tools/norn-proofs/check.ts", str(tla), str(primary_path), str(work), str(args.seed)],
+        subprocess.run([str(args.bun), "run", "tools/norn-proofs/check.ts", str(tla), str(primary_path), str(work), str(args.seed)],
                        env=environment, capture_output=True, check=True, timeout=120)
         primary_raw = primary_path.read_text()
         primary = json.loads(primary_raw)
@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--tools", type=Path, required=True)
+    parser.add_argument("--bun", type=Path, required=True)
     parser.add_argument("--step", choices=["idle", "step"], required=True)
     parser.add_argument("--invariant", choices=["law", "unreachable"], required=True)
     parser.add_argument("--seed", type=int, required=True)
