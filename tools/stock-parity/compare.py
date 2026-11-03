@@ -167,10 +167,11 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
             entry['observations'] = [{k: sanitized(v) for k, v in view.items()} for view in views]
             for category in sorted(set(views[0]) | set(views[1])):
                 a, b = views[0].get(category), views[1].get(category)
-                if category == 'refusalPreserved' and None in (a, b) and all(v is None or v is True for v in (a, b)):
+                if category == 'refusalPreserved' and None in (a, b):
                     entry['status'] = row['status'] = 'unsupported'
                     counts['unsupported'] += 1
-                    continue
+                    if all(v is None or v is True for v in (a, b)):
+                        continue
                 def groups(rows):
                     result = defaultdict(list)
                     width = {'stock': 4, 'gl': 4, 'documents': 1, 'outcomes': 2}[category]

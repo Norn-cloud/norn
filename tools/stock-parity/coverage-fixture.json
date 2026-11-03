@@ -1434,7 +1434,7 @@
       ],
       "passed": false,
       "counts": {
-        "unsupported": 1,
+        "unsupported": 2,
         "untriaged": 1
       }
     },
@@ -3316,6 +3316,193 @@
       "passed": false,
       "counts": {
         "untriaged": 1
+      }
+    },
+    {
+      "name": "mixed-and-known-refusal-mutation",
+      "norn": {
+        "format": "norn.stock-dump/1",
+        "engine": "norn",
+        "versions": {},
+        "cases": [
+          {
+            "case": "synthetic",
+            "method": "fifo",
+            "status": "complete",
+            "initial": {
+              "step": -1,
+              "attempts": [],
+              "stock": [],
+              "gl": [],
+              "documents": []
+            },
+            "checkpoints": [
+              {
+                "step": 0,
+                "attempts": [
+                  {
+                    "attempt": 0,
+                    "requestId": "receive",
+                    "outcome": "refused",
+                    "reason": "insufficient-stock"
+                  },
+                  {
+                    "attempt": 1,
+                    "requestId": "contender",
+                    "outcome": "refused",
+                    "reason": "insufficient-stock"
+                  }
+                ],
+                "stock": [
+                  {
+                    "id": "native-stock",
+                    "requestId": "receive",
+                    "line": "receive:1",
+                    "warehouse": "a",
+                    "cancelled": false,
+                    "quantityDelta": "10",
+                    "valueDelta": "20",
+                    "quantity": "10",
+                    "value": "20"
+                  }
+                ],
+                "gl": [
+                  {
+                    "id": "native-gl",
+                    "requestId": "receive",
+                    "account": "stock-a",
+                    "currency": "USD",
+                    "debit": "20",
+                    "credit": "0",
+                    "cancelled": false
+                  }
+                ],
+                "documents": [
+                  {
+                    "requestId": "receive",
+                    "status": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "erpnext": {
+        "format": "norn.stock-dump/1",
+        "engine": "erpnext",
+        "versions": {},
+        "cases": [
+          {
+            "case": "synthetic",
+            "method": "fifo",
+            "status": "complete",
+            "initial": {
+              "step": -1,
+              "attempts": [],
+              "stock": [],
+              "gl": [],
+              "documents": []
+            },
+            "checkpoints": [
+              {
+                "step": 0,
+                "attempts": [
+                  {
+                    "attempt": 0,
+                    "requestId": "receive",
+                    "outcome": "accepted",
+                    "reason": null
+                  },
+                  {
+                    "attempt": 1,
+                    "requestId": "contender",
+                    "outcome": "refused",
+                    "reason": "insufficient-stock"
+                  }
+                ],
+                "stock": [
+                  {
+                    "id": "native-stock",
+                    "requestId": "receive",
+                    "line": "receive:1",
+                    "warehouse": "a",
+                    "cancelled": false,
+                    "quantityDelta": "10",
+                    "valueDelta": "20",
+                    "quantity": "10",
+                    "value": "20"
+                  }
+                ],
+                "gl": [
+                  {
+                    "id": "native-gl",
+                    "requestId": "receive",
+                    "account": "stock-a",
+                    "currency": "USD",
+                    "debit": "20",
+                    "credit": "0",
+                    "cancelled": false
+                  }
+                ],
+                "documents": [
+                  {
+                    "requestId": "receive",
+                    "status": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "traces": [
+        {
+          "format": "norn.stock-trace/1",
+          "id": "synthetic",
+          "company": "demo-company",
+          "currency": "USD",
+          "item": "demo-item",
+          "uom": "unit",
+          "method": "fifo",
+          "quantityScale": 6,
+          "valueScale": 6,
+          "glScale": 2,
+          "rounding": "half-up",
+          "steps": [
+            {
+              "kind": "concurrent",
+              "commands": [
+                {
+                  "requestId": "receive",
+                  "effectiveAt": "2026-01-02T12:00:00Z",
+                  "operation": {
+                    "kind": "receipt",
+                    "warehouse": "a",
+                    "quantity": "10",
+                    "rate": "2"
+                  }
+                },
+                {
+                  "requestId": "contender",
+                  "effectiveAt": "2026-01-02T12:00:00Z",
+                  "operation": {
+                    "kind": "receipt",
+                    "warehouse": "a",
+                    "quantity": "10",
+                    "rate": "2"
+                  }
+                }
+              ],
+              "expected": "one-winner"
+            }
+          ]
+        }
+      ],
+      "passed": false,
+      "counts": {
+        "unsupported": 1,
+        "untriaged": 2
       }
     }
   ]
