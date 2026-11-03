@@ -131,6 +131,7 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|rule| (rule.decision().rule_id(), rule)),
         );
+        self
     }
 
     /// Admitted, immutable synchronous writers available to governed actions.
