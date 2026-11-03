@@ -969,20 +969,28 @@ impl EffectiveProperty {
         self.check_runtime_value(value)
     }
 
-    /// Whether `self` and `previous` admit the same effective values. Exact
+    /// Whether `self` and `previous` have the same value and aggregation contracts. Exact
     /// comparison of conjunctive constraints is conservative when equivalent
     /// patterns have different spellings.
     #[must_use]
     pub fn same_contract(&self, previous: &Self) -> bool {
+        self.same_contract_by(previous, same_effective_kind)
+    }
+
+    fn same_contract_by(
+        &self,
+        previous: &Self,
+        same_kind: fn(&EffectiveKind, &EffectiveKind) -> bool,
+    ) -> bool {
         self.nullable == previous.nullable
-            && same_effective_kind(&self.kind, &previous.kind)
+            && same_kind(&self.kind, &previous.kind)
             && effective_constraints_equal(&self.constraints, &previous.constraints)
             && self.record_members.len() == previous.record_members.len()
             && self.record_members.iter().all(|member| {
                 previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_kind))
             })
     }
 
@@ -997,12 +1005,12 @@ impl EffectiveProperty {
                 !previous
                     .record_members
                     .iter()
-                    .any(|old| old.id == member.id && member.same_contract(old))
+                    .any(|old| old.id == member.id && member.same_contract_by(old, same_value_kind))
             })
         {
             reasons.push("record member contract changed".to_owned());
         }
-        if !same_effective_kind(&self.kind, &previous.kind)
+        if !same_value_kind(&self.kind, &previous.kind)
             && kind_narrows(&self.kind, &previous.kind) != Some(false)
         {
             reasons.push("property type became narrower or changed".to_owned());
@@ -1211,12 +1219,22 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
 
 /// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
+    if let (EffectiveKind::Base(left), EffectiveKind::Base(right)) = (left, right)
+        && left.additivity() != right.additivity()
+    {
+        return false;
+    }
+    same_value_kind(left, right)
+}
+
+fn same_value_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
         (
             EffectiveKind::Base(PropertyType::Decimal { .. }),
             EffectiveKind::Base(PropertyType::Decimal { .. }),
         ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
         (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
+            (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
             (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
                 enum_values(left) == enum_values(right)
             }
@@ -1229,12 +1247,14 @@ fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     }
 }
 
+// METRIC-ADDITIVITY-MIGRATION: aggregation semantics never narrow stored values.
 fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<bool> {
     let (EffectiveKind::Base(candidate), EffectiveKind::Base(previous)) = (candidate, previous)
     else {
         return None;
     };
     match (candidate, previous) {
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => Some(true),
         (PropertyType::Text { format: candidate }, PropertyType::Text { format: previous }) => {
             match (candidate, previous) {
                 (_, None) => Some(true),
@@ -1256,23 +1276,22 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
         }
         (
             PropertyType::Decimal {
-                additivity: candidate_additivity,
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
                 rounding: candidate_rounding,
                 per_unit: candidate_per_unit,
+                ..
             },
             PropertyType::Decimal {
-                additivity: previous_additivity,
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
                 rounding: previous_rounding,
                 per_unit: previous_per_unit,
+                ..
             },
-        ) if candidate_additivity == previous_additivity
-            && candidate_per_unit == previous_per_unit
+        ) if candidate_per_unit == previous_per_unit
             && candidate_unit == previous_unit
             && candidate_currency == previous_currency
             && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
@@ -1979,6 +1998,24 @@ mod tests {
                 assert!(a.same_contract(b));
                 assert!(a.narrowing_reasons_from(b).is_empty());
             }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn additivity_changes_preserve_values_but_change_the_plan_contract(integer in proptest::bool::ANY, scale in 0u64..=28) {
+            let kind = if integer { serde_json::json!({"kind":"integer"}) }
+                else { serde_json::json!({"kind":"decimal","scale":scale}) };
+            let previous = effective_property(serde_json::json!({"id":"amount","type":kind}));
+            let mut candidate = previous.clone();
+            if let EffectiveKind::Base(PropertyType::Integer { additivity }
+                | PropertyType::Decimal { additivity, .. }) = &mut candidate.kind {
+                *additivity = norn_ir::PropertyAdditivity::Additive {};
+            }
+            proptest::prop_assert!(!candidate.same_contract(&previous));
+            proptest::prop_assert!(candidate.narrowing_reasons_from(&previous).is_empty());
+            proptest::prop_assert!(candidate.check_runtime_value_from(&previous,
+                &RuntimeValue::from_json_text("1").expect("exact value")).is_ok());
         }
     }
 

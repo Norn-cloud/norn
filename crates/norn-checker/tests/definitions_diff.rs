@@ -669,3 +669,79 @@ fn adding_an_interface_parent_invariant_is_a_narrowing_for_transitive_implemente
                 && item.ids == vec!["required".to_owned()])
     );
 }
+
+#[test]
+fn additivity_change_is_declared_separately_from_value_narrowing() {
+    for kind in [
+        json!({"kind":"integer"}),
+        json!({"kind":"decimal","scale":3}),
+    ] {
+        let object = |kind| {
+            object_type_artifact(
+                "defs.item",
+                json!({
+                    "name":"defs.Item", "properties":[{"id":"amount","type":kind}]
+                }),
+            )
+        };
+        let previous = object(kind.clone());
+        let mut additive = kind;
+        additive["additivity"] = json!({"kind":"additive"});
+        let candidate = object(additive.clone());
+        let diff = diff_definition_sets(&[previous.clone()], &[candidate]);
+        assert_eq!(diff.changed.len(), 1);
+        assert!(diff.narrowing.is_empty());
+        assert_eq!(diff.additivity_changes.len(), 1);
+        let summary = diff.to_json();
+        assert_eq!(summary["additivityChangeCount"], 1);
+        assert_eq!(summary["additivityChanges"][0]["property"], "amount");
+        assert_eq!(
+            summary["additivityChanges"][0]["previous"]["kind"],
+            "undeclared"
+        );
+        assert_eq!(
+            summary["additivityChanges"][0]["candidate"]["kind"],
+            "additive"
+        );
+        if additive["kind"] == "decimal" {
+            additive["scale"] = json!(2);
+            let combined = diff_definition_sets(&[previous], &[object(additive)]);
+            assert_eq!(combined.additivity_changes.len(), 1);
+            assert!(
+                combined
+                    .narrowing
+                    .iter()
+                    .any(|change| change.kind == "property_contract_narrowed")
+            );
+        }
+    }
+}
+
+#[test]
+fn additivity_change_summary_bounds_its_rows_and_identifiers() {
+    let change = norn_checker::AdditivityChange {
+        artifact_id: "a".repeat(1000),
+        object_type: "o".repeat(1000),
+        link: Some("l".repeat(1000)),
+        property: "p".repeat(1000),
+        previous: norn_ir::PropertyAdditivity::Undeclared {},
+        candidate: norn_ir::PropertyAdditivity::Ratio {
+            numerator: norn_ir::PropertyId("n".repeat(1000)),
+            denominator: norn_ir::PropertyId("d".repeat(1000)),
+        },
+    };
+    let summary = DefinitionDiff {
+        additivity_changes: vec![change; 101],
+        ..DefinitionDiff::default()
+    }
+    .to_json();
+    assert_eq!(summary["additivityChangeCount"], 101);
+    assert_eq!(summary["additivityChanges"].as_array().unwrap().len(), 20);
+    let row = &summary["additivityChanges"][0];
+    for field in ["artifactId", "objectType", "link", "property"] {
+        assert!(row[field].as_str().unwrap().len() <= 128);
+    }
+    for field in ["numerator", "denominator"] {
+        assert!(row["candidate"][field].as_str().unwrap().len() <= 128);
+    }
+}
