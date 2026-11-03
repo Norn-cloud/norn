@@ -31,6 +31,12 @@ impl ActionAuthorizer for Allow {
     fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         Ok(())
     }
+    fn authorize_read(&self, _: &norn_kernel::ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(&self, _: &norn_kernel::ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        Ok(())
+    }
 }
 struct DenyQuote;
 impl ActionAuthorizer for DenyQuote {
