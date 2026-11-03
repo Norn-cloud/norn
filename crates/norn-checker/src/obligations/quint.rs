@@ -201,7 +201,9 @@ fn lower(
         .ok_or("effective object missing")?;
     demand(
         object.properties.len() <= 16
-            && object.unsupported().is_none()
+            && !object.has_links
+            && !object.has_invariants
+            && object.keys.iter().all(|key| key.match_policy.is_none())
             && object.lifecycles.is_empty()
             && object.owned_collections.is_empty(),
         "unsupported effective object contract",
