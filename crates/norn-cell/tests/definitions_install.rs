@@ -5175,23 +5175,33 @@ fn obs_evidence_install_refuses_missing_or_substituted_governing_laws() {
 }
 
 #[test]
-fn law_complete_inherited_and_effective_scopes_refuse_until_b2() {
+fn law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2() {
     let (model, _) = governing_law_input("self.name != 'bad'", 1);
     let mut snapshot = model.definitions_snapshot();
     snapshot.object_types.push(
         serde_json::from_value(json!({"name":"defs.Child", "extends":"defs.Item"})).expect("child"),
     );
     let inherited = Model::from_snapshot(&snapshot).expect("snapshot");
-    let refusal = inherited
+    assert_eq!(
+        inherited
+            .governing_laws("defs.Child")
+            .expect("LAW-INTERFACE-1: the supertype law governs its subtype"),
+        inherited.governing_laws("defs.Item").expect("direct scope")
+    );
+    let mut mixed = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
+    mixed["payload"]["scope"]["objectTypes"] = json!(["defs.Item", "defs.Child"]);
+    let mut mixed_snapshot = snapshot.clone();
+    mixed_snapshot.law_artifacts[0] = serde_json::from_value(mixed).expect("mixed scope");
+    let refusal = Model::from_snapshot(&mixed_snapshot)
+        .expect("model")
         .governing_laws("defs.Child")
-        .expect_err("inherited scope");
+        .expect_err("mixed scope");
     assert!(matches!(refusal, CellError::UnsupportedLawScope { .. }));
     assert!(
         refusal
             .to_string()
             .contains("core.laws.unsupported_semantics")
     );
-    assert!(refusal.to_string().contains("unsupported until B2"));
     let mut artifact = serde_json::to_value(&snapshot.law_artifacts[0]).expect("law");
     artifact["payload"]["scope"]["root"] = json!({"kind":"app", "id":"defs"});
     snapshot.law_artifacts[0] = serde_json::from_value(artifact).expect("effective scope");
