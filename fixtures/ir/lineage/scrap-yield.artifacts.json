@@ -33,7 +33,14 @@
   },
   {
     "artifactId": "demo.Conversion.entity",
-    "dependencies": [],
+    "dependencies": [
+      {
+        "artifactId": "core.units",
+        "kind": "entity",
+        "required": true,
+        "version": "1.0.0"
+      }
+    ],
     "irVersion": "0.1",
     "kind": "entity",
     "lifecycle": "draft",
