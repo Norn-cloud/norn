@@ -4,7 +4,7 @@ import { Setting, Registry } from "./binding.source.ts"
 const RateValue = Schema.Struct({ value: Norn.decimal(4) })
 export const TaxRateContract = Norn.interfaceType({ name: "demo.TaxRateContract", title: "Tax rate contract", version: "1.0.0", properties: Schema.Struct({ value: Norn.decimal(4) }), invariants: [{ id: "tax_rate_range", expression: Norn.expression(RateValue, input => input.value >= 0 && input.value <= 1), message: "Tax rate is between zero and one." }] })
 export const TaxRate = Norn.type({ name: "demo.TaxRate", title: "Tax rate", version: "1.0.0", extends: Setting, implements: [TaxRateContract], properties: Schema.Struct({}) })
-const RateInput = Schema.Struct({ id: Schema.String, setting_key: Schema.String, value: Norn.decimal(4), effective_from: Schema.String, effective_to: Schema.String, review_state: Schema.String, org_id: Schema.String, environment_id: Schema.String, tenant_id: Schema.Null, workspace_id: Schema.Null, business_unit_id: Schema.Null })
+const RateInput = Schema.Struct({ id: Schema.String, setting_key: Schema.String, value: Norn.decimal(4), effective_from: Schema.String, effective_to: Schema.String, review_state: Schema.String, org_id: Schema.NullOr(Schema.String), environment_id: Schema.NullOr(Schema.String), tenant_id: Schema.Null, workspace_id: Schema.Null, business_unit_id: Schema.Null })
 export const SetRate = Norn.action({
   id: "demo.tax.set", title: "Set tax rate", version: "1.0.0", scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: RateInput, output: Schema.Struct({ id: Schema.String }),

@@ -742,12 +742,13 @@ proptest::proptest! {
 fn parameter_slice_contract_refuses_missing_source() {
     let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
     let mut action = read_json(&fixtures().join("ir/retail-reorder.action.json"));
-    action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"effectiveAt","precedence":[{}]}}}]);
+    action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"requestId","precedence":[{}]}}}]);
     case["artifacts"][4] =
         json!({"fixture":"ir/retail-reorder.action.json","patch":{"payload":action["payload"]}});
     assert!(
         run(&case)
             .iter()
-            .any(|finding| finding[1] == "action.validation.invalid_payload")
+            .any(|finding| finding[1] == "action.validation.invalid_payload"
+                && finding[2].contains("slice") && finding[2].contains("key"))
     );
 }
