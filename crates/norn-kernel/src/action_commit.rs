@@ -465,18 +465,15 @@ impl ActionCallRecord {
 
     fn to_values(&self) -> JsonObject {
         let string = |value: &str| JsonValue::String(value.to_owned());
+        let key_value = |key: &FactKey| {
+            JsonValue::Object(JsonObject::from([
+                ("objectType".to_owned(), string(key.object_type.as_str())),
+                ("key".to_owned(), string(&key.key)),
+            ]))
+        };
         let mut values = JsonObject::from([
             ("actionId".to_owned(), string(&self.action_id)),
-            (
-                "object".to_owned(),
-                JsonValue::Object(JsonObject::from([
-                    (
-                        "objectType".to_owned(),
-                        string(self.object.object_type.as_str()),
-                    ),
-                    ("key".to_owned(), string(&self.object.key)),
-                ])),
-            ),
+            ("object".to_owned(), key_value(&self.object)),
             ("input".to_owned(), JsonValue::Object(self.input.clone())),
             ("actor".to_owned(), string(&self.actor)),
             ("turn".to_owned(), string(&self.turn)),
@@ -533,16 +530,7 @@ impl ActionCallRecord {
                         .iter()
                         .map(|read| {
                             JsonValue::Object(JsonObject::from([
-                                (
-                                    "key".into(),
-                                    JsonValue::Object(JsonObject::from([
-                                        (
-                                            "objectType".into(),
-                                            string(read.key.object_type.as_str()),
-                                        ),
-                                        ("key".into(), string(&read.key.key)),
-                                    ])),
-                                ),
+                                ("key".into(), key_value(&read.key)),
                                 (
                                     "expected".into(),
                                     JsonValue::Number(Decimal::from(read.expected.0)),
