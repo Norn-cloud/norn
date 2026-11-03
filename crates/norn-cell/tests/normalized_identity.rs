@@ -291,6 +291,15 @@ fn post_identity_reference(cell: &mut IdentityCell) -> norn_cell::export::Export
 
 fn assert_original_identity_reference(store: &CellStore, posted: &norn_cell::export::ExportRecord) {
     use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
+    let retained = store
+        .export_record(2)
+        .expect("retained export")
+        .expect("posted record");
+    assert_eq!(
+        retained.hash().expect("retained hash"),
+        posted.hash().expect("original hash")
+    );
+    let posted = &retained;
     assert_eq!(
         posted.bindings.get("scope").map(String::as_str),
         Some("org_a")
