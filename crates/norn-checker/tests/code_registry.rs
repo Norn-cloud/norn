@@ -212,11 +212,20 @@ fn conformance_directory_matches_the_public_manifest() {
             serde_json::from_str(&fs::read_to_string(path).expect("code bytes")).expect("code JSON")
         })
         .collect();
-    let guidance: Vec<serde_json::Value> = serde_json::from_str(include_str!("../conformance/diagnostic-guidance.json")).expect("guidance");
+    let guidance: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../conformance/diagnostic-guidance.json"))
+            .expect("guidance");
     for code in &mut codes {
-        let guide = guidance.iter().find(|guide| guide.get("code") == code.get("code")).expect("registered guidance");
+        let guide = guidance
+            .iter()
+            .find(|guide| guide.get("code") == code.get("code"))
+            .expect("registered guidance");
         let fields = code.as_object_mut().expect("code object");
-        for key in ["fix", "no_fix"] { if let Some(value) = guide.get(key) { fields.insert(key.to_owned(), value.clone()); } }
+        for key in ["fix", "no_fix"] {
+            if let Some(value) = guide.get(key) {
+                fields.insert(key.to_owned(), value.clone());
+            }
+        }
     }
     assert_eq!(
         codes::conformance_manifest()["codes"],
@@ -248,7 +257,8 @@ fn registry_generation_refuses_invalid_entries() {
         let temp =
             std::env::temp_dir().join(format!("norn-registry-{}-{change}", std::process::id()));
         fs::create_dir(&temp).expect("fixture directory");
-        let directory = temp.join("codes"); fs::create_dir(&directory).expect("code directory");
+        let directory = temp.join("codes");
+        fs::create_dir(&directory).expect("code directory");
         let path = directory.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
@@ -273,13 +283,20 @@ fn registry_generation_refuses_invalid_entries() {
         }
         let mut guide = serde_json::json!({"code":"toy.validation.invalid"});
         for key in ["fix", "no_fix"] {
-            if let Some(v) = value.as_object_mut().expect("object").remove(key) { guide.as_object_mut().expect("guide object").insert(key.to_owned(), v); }
+            if let Some(v) = value.as_object_mut().expect("object").remove(key) {
+                guide
+                    .as_object_mut()
+                    .expect("guide object")
+                    .insert(key.to_owned(), v);
+            }
         }
         let guidance = temp.join("guidance.json");
         let guides = match change {
             "empty-guidance" => serde_json::json!([]),
             "duplicate-guidance" => serde_json::json!([guide, guide]),
-            "orphan-guidance" => serde_json::json!([guide, {"code":"toy.other.missing", "no_fix":"No matching declaration"}]),
+            "orphan-guidance" => {
+                serde_json::json!([guide, {"code":"toy.other.missing", "no_fix":"No matching declaration"}])
+            }
             _ => serde_json::json!([guide]),
         };
         fs::write(&guidance, guides.to_string()).expect("guidance fixture");
