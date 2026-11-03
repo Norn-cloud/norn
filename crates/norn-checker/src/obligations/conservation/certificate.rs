@@ -1,5 +1,5 @@
 //! CONS-LINEAR-CERT-1: exact, closed wire format bound to a mathematical system.
-//! This identity is not a DefinitionSource/Challenge pin or application evidence.
+//! This identity is not a `DefinitionSource`/`Challenge` pin or application evidence.
 use super::{Coordinate, Delta, Failure, Rational, Writer, check, validate};
 use serde_json::{Value, json};
 
