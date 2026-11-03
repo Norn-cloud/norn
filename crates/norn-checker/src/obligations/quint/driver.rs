@@ -260,6 +260,7 @@ pub fn run(args: &[String]) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "bounded binder fixtures")]
 mod tests {
     use super::{assessment, scenario};
     use serde_json::json;
@@ -275,11 +276,19 @@ mod tests {
         ]);
         let result = scenario(&trace, &bounds, &json!("test.law")).expect("scenario");
         assert_eq!(result["states"][0], json!({"exists":false,"values":{}}));
-        assert_eq!(result["states"][1]["values"]["mass"],
-            json!({"coefficient":"125","scale":2,"unit":{"kind":"ucum","code":"g"}}));
+        assert_eq!(
+            result["states"][1]["values"]["mass"],
+            json!({"coefficient":"125","scale":2,"unit":{"kind":"ucum","code":"g"}})
+        );
         for bad in [json!(1.25), json!("125"), json!(null)] {
-            assert!(scenario(&json!([{"state":{"present":true,"v0":bad}}]),
-                &bounds, &json!("test.law")).is_err());
+            assert!(
+                scenario(
+                    &json!([{"state":{"present":true,"v0":bad}}]),
+                    &bounds,
+                    &json!("test.law")
+                )
+                .is_err()
+            );
         }
     }
     #[test]
