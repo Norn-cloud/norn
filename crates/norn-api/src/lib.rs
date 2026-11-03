@@ -8,3 +8,6 @@ pub mod refusal;
 pub mod scope;
 
 pub use clock::{Clock, ManualClock};
+
+/// Generic MCP catalog and dispatch boundary.
+pub mod mcp;
