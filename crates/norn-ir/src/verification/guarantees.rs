@@ -196,17 +196,36 @@ mod tests {
 
     #[test]
     fn unknown_requires_reason_and_levels_never_accept_proved() {
-        for value in [json!({"kind":"unknown"}), json!({"kind":"proved"}),
-            json!({"kind":"bounded-pass","reason":"extra"})] {
+        for value in [
+            json!({"kind":"unknown"}),
+            json!({"kind":"proved"}),
+            json!({"kind":"bounded-pass","reason":"extra"}),
+        ] {
             assert!(serde_json::from_value::<GuaranteeVerdict>(value).is_err());
         }
         assert!(serde_json::from_value::<GuaranteeLevel>(json!({"kind":"proved"})).is_err());
-        assert_eq!(serde_json::from_value::<GuaranteeVerdict>(
-            json!({"kind":"unknown","reason":"compiler timeout"})).expect("explicit reason"),
-            GuaranteeVerdict::Unknown { reason: "compiler timeout".into() });
-        for coefficient in [json!(1), json!(1.25), json!("1.25"), json!("+1"), json!("01")] {
-            assert!(serde_json::from_value::<GuaranteeScalar>(
-                json!({"coefficient":coefficient,"scale":0,"unit":null})).is_err());
+        assert_eq!(
+            serde_json::from_value::<GuaranteeVerdict>(
+                json!({"kind":"unknown","reason":"compiler timeout"})
+            )
+            .expect("explicit reason"),
+            GuaranteeVerdict::Unknown {
+                reason: "compiler timeout".into()
+            }
+        );
+        for coefficient in [
+            json!(1),
+            json!(1.25),
+            json!("1.25"),
+            json!("+1"),
+            json!("01"),
+        ] {
+            assert!(
+                serde_json::from_value::<GuaranteeScalar>(
+                    json!({"coefficient":coefficient,"scale":0,"unit":null})
+                )
+                .is_err()
+            );
         }
     }
 
