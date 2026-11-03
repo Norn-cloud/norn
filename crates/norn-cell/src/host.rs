@@ -1285,7 +1285,7 @@ where
     pub(crate) fn commit_observed_evidence(
         &mut self,
         mut commit: CellCommit<E, C, I>,
-        authorization: ObservationAuthorization,
+        authorization: &ObservationAuthorization,
         mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
@@ -1298,7 +1298,7 @@ where
         authorization.append_findings(&mut commit);
         self.commit_with_authorization(
             commit,
-            Some(&authorization),
+            Some(authorization),
             None,
             None,
             &[],
@@ -1417,12 +1417,25 @@ where
         let guard = |reader: &StoreReader<'_, S>| {
             // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
             if let Some(bundle) = mapped_bundle {
-                reader.recheck_mapping_bundle(bundle).map_err(CommitError::Host)?;
-                if reader.installed_definitions(None).map_err(CommitError::Host)?.map(|d| d.version) != Some(bundle.definitions_version) {
+                reader
+                    .recheck_mapping_bundle(bundle)
+                    .map_err(CommitError::Host)?;
+                if reader
+                    .installed_definitions(None)
+                    .map_err(CommitError::Host)?
+                    .map(|d| d.version)
+                    != Some(bundle.definitions_version)
+                {
                     return Err(CommitError::Host(CellError::MappingBundleMismatch));
                 }
-                if reader.mapping_conflict(bundle).map_err(CommitError::Host)?.is_some()
-                    || reader.identity_is_disputed(bundle).map_err(CommitError::Host)? {
+                if reader
+                    .mapping_conflict(bundle)
+                    .map_err(CommitError::Host)?
+                    .is_some()
+                    || reader
+                        .identity_is_disputed(bundle)
+                        .map_err(CommitError::Host)?
+                {
                     return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
                 }
             }
@@ -1716,7 +1729,7 @@ where
     where
         E: From<ObservationEvent>,
     {
-        self.commit_observed_evidence(commit, authorization, None)
+        self.commit_observed_evidence(commit, &authorization, None)
     }
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {

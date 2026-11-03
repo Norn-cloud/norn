@@ -7088,7 +7088,6 @@ fn assert_interface_dispute_fences(
     );
 }
 
-
 #[test]
 fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
     for identity in [false, true] {
@@ -7098,19 +7097,38 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
         let input = bundle_input();
         let mut original = bundle_raw("MEAS-1", "0.90");
         if identity {
-            original.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("é"));
+            original
+                .input
+                .as_object_mut()
+                .expect("raw")
+                .insert("source_id".into(), Value::from("é"));
         }
-        let (id, _) = store.inject_mapping_bundle(&original, &input).expect("accepted");
+        let (id, _) = store
+            .inject_mapping_bundle(&original, &input)
+            .expect("accepted");
         let model = store.model().clone();
         drop(store);
-        let mut external = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("external");
+        let mut external =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("external");
         let counter = WriteCounter::default();
-        let engine = CountedEngine { inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"), counter: counter.clone() };
+        let engine = CountedEngine {
+            inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
+            counter: counter.clone(),
+        };
         let store = CellStore::from_engine(engine, model).expect("store");
-        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
-        let mut conflicting = if identity { original } else { bundle_raw("MEAS-1", "1.20") };
+        let mut cell =
+            norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+        let mut conflicting = if identity {
+            original
+        } else {
+            bundle_raw("MEAS-1", "1.20")
+        };
         if identity {
-            conflicting.input.as_object_mut().expect("raw").insert("source_id".into(), Value::from("e\u{301}"));
+            conflicting
+                .input
+                .as_object_mut()
+                .expect("raw")
+                .insert("source_id".into(), Value::from("e\u{301}"));
         }
         let fired = std::rc::Rc::new(std::cell::Cell::new(false));
         let signal = fired.clone();
@@ -7120,9 +7138,27 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
             Ok(())
         }));
         let result = cell.process_mapping_bundle(&id);
-        assert!(fired.get(), "the dispute arrives after preparation, before BEGIN");
-        assert!(matches!(result, Err(CellError::ObservationCommit(error)) if matches!(error.as_ref(), norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile))));
-        assert!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("raw object").is_none());
-        assert!(cell.store().read().pending_observations().expect("inbox").iter().any(|row| row.observation_id == id));
+        assert!(
+            fired.get(),
+            "the dispute arrives after preparation, before BEGIN"
+        );
+        assert!(
+            matches!(result, Err(CellError::ObservationCommit(error)) if matches!(error.as_ref(), norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile)))
+        );
+        assert!(
+            cell.store()
+                .read()
+                .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+                .expect("raw object")
+                .is_none()
+        );
+        assert!(
+            cell.store()
+                .read()
+                .pending_observations()
+                .expect("inbox")
+                .iter()
+                .any(|row| row.observation_id == id)
+        );
     }
 }

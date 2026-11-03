@@ -3,7 +3,7 @@ use crate::{CellError, SqliteCell, StoreReader, engine::SqlEngine, mapping_bundl
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
-    CellCommit, CellHost, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
+    CellCommit, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
     Observed, TypeCatalog, World,
 };
 
@@ -83,7 +83,8 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 .invocations
                 .first()
                 .ok_or(CellError::MappingBundleMismatch)?
-                .input.clone();
+                .input
+                .clone();
             values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
             let prepared = prepare_observed_snapshot(
                 &catalog,
@@ -109,7 +110,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, authorization, Some(&bundle))
+        self.commit_observed_evidence(commit, &authorization, Some(&bundle))
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
     }
