@@ -106,4 +106,14 @@ ratio deltas, multi-slice selection, denied/premature approval and activation,
 interrupted staging, stale tokens, current authorization and reproducible old
 answers. Generated change sequences include source redelivery and restart.
 
+RESTATE-HISTORY-1 replay retains at least the prior selected knowledge clock
+while advancing each authenticated receipt frontier. A query clock ahead of
+commit clocks cannot move backward during maintenance; retaining that already
+selected ceiling never admits a version beyond the pinned frontier. Named and
+generated clock-lead scenarios include a later excluded version below the clock
+ceiling, an injected preparation refusal, reopen/resume and exact correspondence.
+Preparation itself writes no slot or candidate. Its refusal leaves the ledger
+and old complete answer unchanged; the separately committed building slot stays
+stale and resumable across restart, as required for interrupted rebuilds.
+
 RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.
