@@ -721,53 +721,74 @@ fn function_admission_requires_named_placements_and_bounded_fuel() {
     }
 }
 
-#[test]
-fn host_function_requires_exact_crate_version_and_source_pin() {
+fn pinned_host() -> FunctionManifest {
     let mut host = manifest("effectful");
     host.implementation.format = ImplementationFormat::Host;
     host.runtime.id = "fixture-host".into();
     host.runtime.version = "0.1.0".into();
     host.implementation.locator =
         Some(format!("fixture-host/0.1.0@{}", host.implementation.digest));
-    admit(&host);
-    for locator in [
-        None,
-        Some(format!("fixture-host/0.2.0@{}", host.implementation.digest)),
+    host
+}
+
+/// AUTHORED-HOST-REFUSED: even fully pinned Host code cannot be authored.
+#[test]
+fn authored_host_refused() {
+    let host = pinned_host();
+    assert_eq!(
+        found(&manifest_findings(&host)),
+        BTreeSet::from([(
+            codes::AUTHORED_HOST.to_owned(),
+            "/implementation/format".to_owned(),
+        )])
+    );
+    assert_eq!(
+        found_codes(&norn_checker::function::check_function_manifest(&host)),
+        only(codes::AUTHORED_HOST)
+    );
+}
+
+/// BUILTIN-NAMESPACE-NO-BYPASS: copied identities are data, never authority.
+#[test]
+fn builtin_namespace_no_bypass() {
+    for id in [
+        "norn.builtin.fixture",
+        "norn.engine.fixture",
+        "core.fixture",
     ] {
-        let mut invalid = host.clone();
-        invalid.implementation.locator = locator;
-        assert!(
-            manifest_findings(&invalid)
-                .iter()
-                .any(|finding| finding.code.as_str() == codes::MUTABLE_IDENTITY)
+        let mut host = pinned_host();
+        host.function_id = id.to_owned();
+        host.runtime.id = "norn-kernel".into();
+        host.implementation.locator = Some(format!(
+            "{}/{}@{}",
+            host.runtime.id, host.runtime.version, host.implementation.digest
+        ));
+        let decoded = decode_function_manifest(&serde_json::to_string(&host).expect("encode"))
+            .expect("typed manifest");
+        assert_eq!(
+            found_codes(&manifest_findings(&decoded)),
+            only(codes::AUTHORED_HOST),
+            "{id}"
         );
     }
     let mut qualified = manifest("wasm");
     qualified.implementation.format = ImplementationFormat::Host;
-    assert!(
-        manifest_findings(&qualified)
-            .iter()
-            .any(|finding| finding.code.as_str() == codes::PROFILE_MISMATCH)
-    );
-    host.cache = CachePolicy::ActionCache;
-    assert!(
-        manifest_findings(&host)
-            .iter()
-            .any(|finding| finding.code.as_str() == codes::UNCACHEABLE_PROFILE)
-    );
+    let findings = found_codes(&manifest_findings(&qualified));
+    assert!(findings.contains(codes::AUTHORED_HOST));
+    assert!(findings.contains(codes::PROFILE_MISMATCH));
 }
 
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(32))]
     #[test]
-    fn host_pin_roundtrip_and_version_change_refusal(name in "host_[a-z]{1,10}", version in 0u16..500) {
-        let mut host = manifest("effectful"); host.implementation.format = ImplementationFormat::Host;
+    fn authored_host_refusal_does_not_depend_on_caller_supplied_pins(name in "host_[a-z]{1,10}", version in 0u16..500) {
+        let mut host = pinned_host();
         host.runtime.id = name.clone(); host.runtime.version = format!("1.{version}.0");
         host.implementation.locator = Some(format!("{}/{}@{}",name,host.runtime.version,host.implementation.digest));
-        proptest::prop_assert!(manifest_findings(&host).is_empty());
         let encoded = serde_json::to_string(&host).expect("encode");
         proptest::prop_assert_eq!(decode_function_manifest(&encoded).expect("decode"),host.clone());
+        proptest::prop_assert_eq!(found_codes(&manifest_findings(&host)),only(codes::AUTHORED_HOST));
         host.runtime.version.push_str("-changed");
-        proptest::prop_assert!(!manifest_findings(&host).is_empty());
+        proptest::prop_assert_eq!(found_codes(&manifest_findings(&host)),only(codes::AUTHORED_HOST));
     }
 }

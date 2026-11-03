@@ -123,6 +123,8 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 - **THESIS-BUILTIN-EXCEPTION:** The thesis retains typed WASM components or external workers as the authorable boundary and names only engine-distributed built-ins as the host exception, without sandbox or isolation claims.
 - **FUNCTION-HOST-1-BUILTINS-ONLY:** Core 07 reserves host for engine built-ins, denies authored/pack installation even with a copied built-in namespace, and retains exact pins, scoped capabilities, recorded receipts and proposal-only outputs. Runtime conformance is the separate #731 admission cut.
+- **AUTHORED-HOST-REFUSED:** A fully pinned authored host manifest refuses `function.manifest.authored_host` at `implementation.format` through both shared manifest admission and its public ABI; supported WASM and external-worker manifests retain their admitted identities.
+- **BUILTIN-NAMESPACE-NO-BYPASS:** Copying an engine-shaped function ID, crate name, version or digest into authored data cannot authorize host code.
 - **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
