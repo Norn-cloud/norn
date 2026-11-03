@@ -255,7 +255,7 @@ fn mvp_map_gap_shopify_price_is_never_stock_cost_or_gl() {
     let mapped = apply(&mapping, &rows);
     for row in &mut rows {
         if row.dataset == "ProductVariant" {
-            row.record["price"] = json!(999999);
+            row.record["price"] = json!(999_999);
         }
     }
     assert_eq!(
