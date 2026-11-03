@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative, sep } from "node:path"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -22,7 +22,8 @@ test("MVP-CONSTITUTION compiles removal and restoration of the loss writer", () 
   const dir = mkdtempSync(join(tmpdir(), "norn-constitution-"))
   try {
     const mutant = join(dir, "omitted.source.ts")
-    writeFileSync(mutant, original.replace(line, "").replace('"../../registry/core/src/physics"', JSON.stringify(join(root, "registry/core/src/physics"))))
+    const coreImport = relative(dir, join(root, "registry/core/src/physics")).split(sep).join("/")
+    writeFileSync(mutant, original.replace(line, "").replace('"../../registry/core/src/physics"', JSON.stringify(coreImport)))
     const compile = (file: string) => {
       const result = compileDefinitions(file, options)
       if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))

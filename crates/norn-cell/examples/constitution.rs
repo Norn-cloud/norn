@@ -115,6 +115,8 @@ fn bind(challenge: &Challenge, result: &Value, tool: &EvidenceTool, bounds: &str
         let pins = challenge.evidence_pins(u32::try_from(index)?, tool.clone(), bounds, 0)?;
         let mut payload = result.clone();
         payload["evidenceLevel"] = json!("bounded-runtime-conformance");
+        payload["goalDischarged"] = json!(false);
+        payload["proofStatus"] = json!("unknown");
         payload["generatedBackend"] = json!("unknown: action relations are not lowered to executable solver jobs");
         if kind == "non_vacuity" { payload["status"] = result["nonVacuity"]["status"].clone(); }
         let record = challenge.record_evidence(&pins, &serde_json::to_string(&payload)?)?;
@@ -162,6 +164,6 @@ fn main() -> Result<()> {
     if bad.evidence_identity(&changed_pins, prior) != EvidenceIdentity::Unknown { return Err("stale pass accepted for changed writer".into()); }
     println!("{}", serde_json::to_string(&json!({"scenario":"MVP-CONSTITUTION/T4-C2","assurance":"bounded runtime only; generated solver/inductive proof unknown",
         "withLoss":original_records,"lossRemoved":bad_records,"restored":restored_records,"staleOriginalForMutation":"PROOF-STALE/unknown",
-        "openGoals":good.body()["obligations"].as_array().ok_or("goals")?.iter().filter(|g| !matches!(g["goal"]["kind"].as_str(),Some("initialization"|"preservation"|"non_vacuity"))).collect::<Vec<_>>()}))?);
+        "openProofGoals":good.body()["obligations"]}))?);
     Ok(())
 }
