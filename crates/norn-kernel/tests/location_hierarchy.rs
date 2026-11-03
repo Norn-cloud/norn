@@ -710,6 +710,12 @@ fn claim_fixture() -> (
     types.push(
         serde_json::from_value(declaration["payload"]["objectType"].clone()).expect("claim type"),
     );
+    types.push(
+        serde_json::from_value(
+            serde_json::json!({"name":"test.ClaimAlias", "extends":"norn.ObservedLinkClaim"}),
+        )
+        .expect("claim subtype"),
+    );
     let mut cell = ClaimCell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(types.clone());
     cell.commit(CellCommit {
@@ -832,6 +838,13 @@ fn obs_link_convergence_seals_exact_claims_without_mapping_namespace_ownership()
         cell.load(&key).expect("claim").values,
         Some(claim.values().expect("projection"))
     );
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    assert!(
+        commit.writes.is_empty(),
+        "retained claim supplies read-bound evidence"
+    );
+    cell.commit_observed(commit, authority)
+        .expect("retained immutable claim");
     let mut second = claim;
     second.provenance.source.system = "synthetic-b".into();
     second.observation_id = "bundle:second".into();
@@ -893,4 +906,23 @@ fn obs_link_missing_endpoint_refuses_claim_and_edge_atomically() {
         .values
         .is_none()
     );
+}
+
+#[test]
+fn obs_link_authored_subtype_claims_refuse_at_identity_root() {
+    let (_, mut cell, claim) = claim_fixture();
+    let forged = CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("test.ClaimAlias", "forged"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: claim.values().expect("claim fields"),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    assert!(matches!(
+        cell.commit(forged),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
 }
