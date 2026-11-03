@@ -56,6 +56,7 @@ pub(crate) fn explain_induction(
             exact_artifact_digest(artifact).map(|digest| (artifact.artifact_id.clone(), digest))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
+    preflight_goal_bytes(&laws, writers, boundaries)?;
     Ok(induction::build(pool, &laws, writers, boundaries, registry)?.goals)
 }
 
@@ -758,5 +759,22 @@ mod exact_identity_tests {
             digest(b"definition-source", &[b"[]", b"[ ]"]),
             digest(b"definition-source", &[b"[ ]", b"[]"])
         );
+    }
+}
+
+
+#[cfg(test)]
+mod explain_budget_tests {
+    use super::*;
+
+    #[test]
+    fn explain_goal_bytes_refuse_amplified_writer_before_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let pool: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json"))?;
+        let writers = BTreeSet::from([crate::verification::LawWriter::Artifact {
+            artifact_id: "w".repeat(1_500_000),
+        }]);
+        assert!(matches!(explain_induction(&pool, &writers, &BTreeSet::new(), &BTreeSet::new()), Err(ChallengeError::Limit)));
+        assert!(explain_induction(&pool, &BTreeSet::new(), &BTreeSet::new(), &BTreeSet::new()).is_ok());
+        Ok(())
     }
 }

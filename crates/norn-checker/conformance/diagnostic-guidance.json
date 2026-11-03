@@ -517,7 +517,7 @@
   },
   {
     "code": "identifier.validation.too_long",
-    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+    "fix": "Shorten the reported identifier to its declared byte limit and update its references consistently."
   },
   {
     "code": "interface.validation.duplicate_link_id",
@@ -573,7 +573,7 @@
   },
   {
     "code": "ir.validation.invalid_dependency",
-    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+    "fix": "Remove the self-dependency or correct the dependency identity and version to reference the intended different declaration."
   },
   {
     "code": "ir.validation.invalid_envelope",
@@ -609,7 +609,7 @@
   },
   {
     "code": "law.model.unknown_binding",
-    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+    "fix": "Correct the reported subject, scope, invariant or dependency binding to its admitted declaration. For wording, supply exactly one requirement bound to the current complete law, replacing stale pins and removing duplicate matches."
   },
   {
     "code": "law.model.weakens_inherited",
@@ -637,7 +637,7 @@
   },
   {
     "code": "law.wording.unknown_locale",
-    "fix": "Select an available BCP 47 tag from the pinned wording map; no fallback is applied."
+    "fix": "Supply the reviewed wording map for the applicable law and choose a locale present in that map; omit wording when no law applies."
   },
   {
     "code": "layout.validation.invalid_inline_field",
@@ -669,7 +669,7 @@
   },
   {
     "code": "ledger.amount.bound_overflow",
-    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+    "no_fix": "No automatic repair preserves the declared arithmetic bounds; review the amount expression and parameter bounds without weakening protected constraints."
   },
   {
     "code": "ledger.amount.constant_scale_exceeds_result",
@@ -681,7 +681,7 @@
   },
   {
     "code": "ledger.amount.normalization_overflow",
-    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+    "no_fix": "Exact coefficient normalization exceeds the arithmetic representation; an equivalent representable expression requires author review."
   },
   {
     "code": "ledger.amount.result_scale_exceeds_unit",
@@ -725,7 +725,7 @@
   },
   {
     "code": "ledger.commit.owner_version_overflow",
-    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+    "no_fix": "The owner version is exhausted; this profile defines no safe reset or automatic version migration."
   },
   {
     "code": "ledger.commit.partial_evidence",
@@ -849,7 +849,7 @@
   },
   {
     "code": "ledger.runtime.evaluation_overflow",
-    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+    "no_fix": "Exact coefficient multiplication or accumulation overflowed; changing the amounts or arithmetic contract requires author review."
   },
   {
     "code": "ledger.runtime.missing_parameter",
@@ -1133,7 +1133,7 @@
   },
   {
     "code": "mapping.validation.empty_scope",
-    "fix": "Bind the declarations to the same explicit organization and environment scope."
+    "fix": "Populate the reported interface scope or map list with the intended declared interfaces or mappings."
   },
   {
     "code": "mapping.validation.incomplete_entitlement_snapshot",
@@ -1857,7 +1857,7 @@
   },
   {
     "code": "rule.validation.jdm_unknown_node_type",
-    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+    "fix": "Replace the reported node with a node type supported by the admitted decision-table profile."
   },
   {
     "code": "rule.validation.jdm_unreachable_node",

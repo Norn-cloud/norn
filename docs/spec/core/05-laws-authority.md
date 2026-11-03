@@ -141,7 +141,8 @@ solver assumptions.
 **EXPLAIN-WORDING-1:** optional `--wording <path> --locale <BCP47>` binds reviewed
 structured wording to the complete law and a wording digest. Locale-map lookup
 refuses unavailable locales; there is no language fallback or EN/AR-only enum
-in the command interface. Without wording input, the report is metadata only.
+in the command interface. Without wording input, the report omits rendered
+wording and retains all other explanation fields.
 
 **DIAG-ADVICE-1:** every registered code supplies exactly one nonblank `fix` or
 `no_fix` reason. The build joins the code records with `conformance/diagnostic-guidance.json` into the existing registry. Registration rejects missing, conflicting, duplicate, orphaned and blank guidance.
@@ -152,7 +153,8 @@ Named scenarios: incomplete law names uncovered writer; inherited concept
 reaches authored law; containing packs retain pins; runtime enforcement remains
 separate from proof; Arabic and data-only French render through the locale map;
 missing locale refuses; reordering inputs preserves the explanation; historical
-receipt verification remains unchanged.
+receipt verification remains unchanged; oversized writer identities refuse
+before goal generation through the existing goal-byte preflight.
 
 ## Generated bounded creation profile (#565)
 
