@@ -1,4 +1,4 @@
 {
-  "order": 94,
+  "order": 99,
   "value": "crates/norn-checker/tests/diagnostic_snapshots.rs"
 }

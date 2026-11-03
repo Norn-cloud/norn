@@ -1,4 +1,4 @@
 {
-  "order": 350,
+  "order": 355,
   "value": "crates/norn-checker/src/obligations/induction.rs"
 }

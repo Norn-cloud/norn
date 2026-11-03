@@ -268,3 +268,113 @@ fn late_link_failure_and_secondary_denial_persist_no_partial_proposal() {
         assert!(!cell.load(&FactKey::new(QUOTE, "SO-1")).unwrap().exists());
     }
 }
+
+// The scheduler interposes only at the commit boundary; both proposals execute
+// their declared rules, CAS checks and writes through the production SQLite host.
+struct DeliveryRace<'a, F> {
+    loser: &'a mut Cell,
+    winner: Cell,
+    run_winner: Option<F>,
+    winner_only: Option<BTreeMap<String, Vec<String>>>,
+}
+impl<F: FnOnce(&mut Cell)> DeliveryRace<'_, F> {
+    fn compete(&mut self) {
+        let run = self.run_winner.take().unwrap();
+        run(&mut self.winner);
+        self.winner_only = Some(self.winner.store().read().dump().unwrap());
+    }
+}
+impl<F: FnOnce(&mut Cell)> CellHost for DeliveryRace<'_, F> {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = norn_cell::CellError;
+    fn load(&self, key: &FactKey) -> Result<norn_kernel::FactState, Self::Error> { self.loser.load(key) }
+    fn supports_reference_reads(&self) -> bool { self.loser.supports_reference_reads() }
+    fn load_reference(&self, key: &FactKey, max: u64) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> { self.loser.load_reference(key, max) }
+    fn load_bounded(&self, key: &FactKey, max: u64) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> { self.loser.load_bounded(key, max) }
+    fn load_link(&self, key: &LinkKey) -> Result<norn_kernel::LinkState, Self::Error> { self.loser.load_link(key) }
+    fn commit(&mut self, commit: CellCommit<FactEvent, JsonObject, JsonObject>) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        self.compete(); self.loser.commit(commit)
+    }
+    fn commit_action_references(&mut self, commit: CellCommit<FactEvent, JsonObject, JsonObject>, proof: norn_kernel::action_commit::ActionReferenceReads, quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        self.compete(); self.loser.commit_action_references(commit, proof, quantity)
+    }
+    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> { panic!("enqueue only") }
+    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> { panic!("no observation dispatch") }
+    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> { panic!("no timer dispatch") }
+    fn publish(&mut self, receipt: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> { self.loser.publish(receipt) }
+}
+
+/// INV-OVERDRAW, TXN-TWO, TXN-READSET-1, TXN-ATOMIC-1, TXN-IDEMPOTENT-1.
+#[test]
+fn two_deliveries_of_four_against_five_commit_exactly_one_stock_and_books() {
+    let documents: Vec<Value> = serde_json::from_str(include_str!("fixtures/delivery-race.json")).unwrap();
+    let mut definitions: Vec<ObjectTypeDef> = documents.iter().filter_map(|d| d["payload"].get("objectType"))
+        .map(|d| serde_json::from_value(d.clone()).unwrap()).collect();
+    definitions.push(types().pop().unwrap());
+    let action: ActionRoot = serde_json::from_value(documents.iter().find(|d| d["kind"] == "action").unwrap()["payload"].clone()).unwrap();
+    let rule = SynchronousRule::admit(action.synchronous_rule.clone().unwrap(),
+        &serde_json::from_value(documents.iter().find(|d| d["kind"] == "rule").unwrap()["payload"].clone()).unwrap(),
+        &BTreeMap::new(), norn_kernel::DecisionBinding {profile_id: "norn-zen/6".into(), environment_hash: "delivery-race".into()}).unwrap();
+    let rules = [rule];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let directory = tempfile::tempdir().unwrap();
+    // Exercise both operation orderings; no thread timing or sleeps decide a winner.
+    for (winning, losing) in [("ONE", "TWO"), ("TWO", "ONE")] {
+        let path = directory.path().join(format!("{winning}.sqlite"));
+        let mut cell = open(&path, &definitions);
+        let holding = FactKey::new("fixture.RaceHolding", "LOT");
+        let mut seed = CellCommit::empty();
+        for (key, values) in [
+            (holding.clone(), json!({"id":"LOT","quantity":5,"value":50})),
+            (FactKey::new("fixture.RaceDelivery", "ONE"), json!({"id":"ONE","status":"pending"})),
+            (FactKey::new("fixture.RaceDelivery", "TWO"), json!({"id":"TWO","status":"pending"})),
+        ] {
+            seed.writes.push(FactWrite {key, expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {values: serde_json::from_value(values).unwrap()}});
+        }
+        cell.commit(seed).unwrap();
+        let make_call = |id: &str| {
+            let mut request = call(&action);
+            request.action_artifact_id = "example.delivery.post.action";
+            request.actor = "warehouse-operator".into();
+            request.input = serde_json::from_value(json!({"id":id,"holding":"LOT","quantity":4})).unwrap();
+            request.idempotency_key = id.into();
+            request.turn.id = id.into();
+            request
+        };
+        let winner_call = make_call(winning);
+        let loser_call = make_call(losing);
+        let mut race = DeliveryRace {loser: &mut cell, winner: open(&path, &definitions),
+            run_winner: Some(|winner: &mut Cell| { commit_action(winner, &catalog, &winner_call, &Allow).unwrap(); }), winner_only: None};
+        let refusal = commit_action(&mut race, &catalog, &loser_call, &Allow).unwrap_err();
+        assert!(matches!(refusal.code(), "decision.stale_state" | "action.precondition_stale_read"), "{refusal}");
+        let winner_only = race.winner_only.take().unwrap();
+        assert!(race.run_winner.is_none());
+        drop(race);
+        // Every authoritative table, including receipts, links, ledger and pending
+        // effects, must equal the real winner-only state without any exclusions.
+        assert_eq!(cell.store().read().dump().unwrap(), winner_only);
+        assert_eq!(serde_json::to_value(cell.load(&holding).unwrap().values.unwrap()).unwrap(), json!({"id":"LOT","quantity":1,"value":10}));
+        for (id, status) in [(winning, "posted"), (losing, "pending")] {
+            let delivery = cell.load(&FactKey::new("fixture.RaceDelivery", id)).unwrap().values.unwrap();
+            assert_eq!(delivery.get("status"), Some(&status.into()));
+        }
+        let (legs, complete) = cell.store().read().root_rows("main", "fixture.RaceLeg", 4).unwrap();
+        assert!(complete);
+        assert_eq!(legs.len(), 2);
+        for (suffix, account, amount) in [("debit", "COGS", 40), ("credit", "Inventory", -40)] {
+            let id = format!("{winning}-{suffix}");
+            assert_eq!(serde_json::to_value(cell.load(&FactKey::new("fixture.RaceLeg", &id)).unwrap().values.unwrap()).unwrap(),
+                json!({"id":id,"delivery":winning,"account":account,"amount":amount,"currency":"USD"}));
+        }
+        assert!(cell.store().read().pending_commands().unwrap().is_empty());
+        drop(cell);
+        let mut cell = open(&path, &definitions);
+        assert_eq!(cell.store().read().dump().unwrap(), winner_only);
+        assert!(matches!(commit_action(&mut cell, &catalog, &winner_call, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        assert_eq!(commit_action(&mut cell, &catalog, &loser_call, &Allow).unwrap_err().code(), "action.precondition_failed");
+        assert_eq!(cell.store().read().dump().unwrap(), winner_only);
+    }
+}
