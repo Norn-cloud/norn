@@ -803,17 +803,17 @@ pub fn check_with_rights(
     TrustedReport { provenance, errors }
 }
 
-/// Check live API evidence for an exact head. `/ack-rights <head>` covers every
-/// changed payload and metadata path, including deletions, relative to its base.
-/// Exactly one acknowledgment after the last revocation is admissible. Repeated
-/// acknowledgments require revocation before renewal, so deleting a live review
-/// cannot expose an older acknowledgment. Append-only status history retains
-/// revocation boundaries after comment edits/deletions; renewal must postdate
-/// every recorded boundary. Edited acknowledgments are invalid.
+/// Validate one global rights ledger for an immutable head and tree.
+/// The latest recorded acknowledgment is never replaced by an older review
+/// when its source comment is removed. Every pending event blocks the target.
 ///
 /// # Errors
-/// Refuses wrong identity, missing, stale, edited or revoked evidence.
-pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result<String, String> {
+/// Refuses wrong identities, missing history, unreconciled or withdrawn reviews.
+pub fn rights_acknowledgment(
+    evidence: &serde_json::Value,
+    head: &str,
+    tree: &str,
+) -> Result<String, String> {
     if evidence
         .get("repository")
         .and_then(serde_json::Value::as_str)
@@ -827,125 +827,120 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
     {
         return Err("wrong repository/base/head rights identity".into());
     }
-    let comments = evidence
-        .get("comments")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing rights comments")?;
-    let pending = evidence
-        .get("pending_revocations")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing pending revocation history")?;
-    if !pending.is_empty() {
-        return Err("unreconciled rights revocation events".into());
-    }
-    let events = evidence
-        .get("acknowledgment_events")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing acknowledgment event history")?;
-    let boundary = rights_revocation_boundary(evidence)?;
-    let mut decisions = Vec::new();
+    let entries = rights_entries(evidence, head, tree)?;
     let mut ids = BTreeSet::new();
-    for comment in comments {
-        let id = comment
+    let mut boundary = None;
+    let mut latest: Option<(u64, bool, String, String)> = None;
+    for entry in entries {
+        let id = entry
             .get("id")
             .and_then(serde_json::Value::as_u64)
-            .ok_or("missing rights comment ID")?;
+            .ok_or("missing rights receipt ID")?;
         if !ids.insert(id) {
-            return Err("duplicate rights comment ID".into());
+            return Err("duplicate rights receipt ID".into());
         }
-        if comment
-            .get("permission")
+        let at = entry
+            .get("recorded_at")
             .and_then(serde_json::Value::as_str)
-            != Some("admin")
-        {
-            continue;
+            .filter(|at| rights_timestamp(at))
+            .ok_or("invalid rights receipt timestamp")?;
+        match entry.get("kind").and_then(serde_json::Value::as_str) {
+            Some("revoke" | "withdraw") => {
+                boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
+            }
+            Some("ack") => {
+                let review = rights_review(entry, head)?;
+                if latest.as_ref().is_none_or(|prior| review.0 > prior.0) {
+                    latest = Some(review);
+                }
+            }
+            Some("ignore") => {}
+            _ => return Err("invalid rights ledger decision".into()),
         }
-        let body = comment
-            .get("body")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("missing rights command")?
-            .trim();
-        let ack = body == format!("/ack-rights {head}");
-        let revoke = body == format!("/revoke-rights {head}");
-        if !ack && !revoke {
-            continue;
-        }
-        let created = comment
-            .get("created_at")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("missing comment timestamp")?;
-        let updated = comment
-            .get("updated_at")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("missing comment timestamp")?;
-        if !rights_timestamp(created) || !rights_timestamp(updated) {
-            return Err("invalid rights comment timestamp".into());
-        }
-        if ack
-            && (!events.iter().any(|event| event.as_u64() == Some(id))
-                || boundary.is_some_and(|at| created <= at))
-        {
-            continue;
-        }
-        let user = comment
-            .get("user")
-            .and_then(serde_json::Value::as_str)
-            .ok_or("missing rights reviewer")?;
-        decisions.push((
-            id,
-            ack,
-            ack && created == updated && !created.is_empty(),
-            user.to_owned(),
-        ));
     }
-    decisions.sort_by_key(|(id, ..)| *id);
-    let active: Vec<_> = decisions
-        .iter()
-        .rev()
-        .take_while(|(_, ack, ..)| *ack)
-        .collect();
-    match active.as_slice() {
-        [(_, _, true, user)] => Ok(user.clone()),
-        [_, _, ..] => Err(format!(
-            "ambiguous repeated /ack-rights {head}; revoke and re-acknowledge"
+    match latest {
+        Some((_, true, reviewer, created)) if boundary.is_none_or(|at| created.as_str() > at) => {
+            Ok(reviewer)
+        }
+        _ => Err(format!(
+            "missing, edited, deleted or revoked /ack-rights {head}"
         )),
-        _ => Err(format!("missing, edited or revoked /ack-rights {head}")),
     }
 }
 
-fn rights_revocation_boundary(evidence: &serde_json::Value) -> Result<Option<&str>, String> {
-    let revocations = evidence
-        .get("revocations")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing durable revocation history")?;
-    // GitHub caps statuses per SHA/context at 1000. A full ledger requires a new head.
-    if revocations.len() >= 1000 {
-        return Err("durable revocation history exhausted; use a new head".into());
+fn rights_entries<'a>(
+    evidence: &'a serde_json::Value,
+    head: &str,
+    tree: &str,
+) -> Result<&'a Vec<serde_json::Value>, String> {
+    let targets = evidence
+        .get("rights")
+        .and_then(|v| v.get(head))
+        .and_then(serde_json::Value::as_object)
+        .ok_or("missing target rights ledger")?;
+    let ledger = targets
+        .get(tree)
+        .filter(|_| targets.len() == 1)
+        .ok_or("wrong rights tree identity")?;
+    if commit_sha(ledger, "head_sha").as_deref() != Some(head)
+        || commit_sha(ledger, "tree_sha").as_deref() != Some(tree)
+    {
+        return Err("wrong rights ledger target".into());
     }
-    let mut boundary = None;
-    let mut status_ids = BTreeSet::new();
-    for status in revocations {
-        let id = status
-            .get("id")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("missing revocation status ID")?;
-        let at = status
+    let pending = ledger
+        .get("pending")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing pending rights history")?;
+    if !pending.is_empty() {
+        return Err("unreconciled target rights events".into());
+    }
+    ledger
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "missing rights ledger entries".into())
+}
+
+fn rights_review(
+    entry: &serde_json::Value,
+    head: &str,
+) -> Result<(u64, bool, String, String), String> {
+    let id = entry
+        .get("comment_id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing rights comment ID")?;
+    let created = entry
+        .get("created_at")
+        .and_then(serde_json::Value::as_str)
+        .filter(|at| rights_timestamp(at))
+        .ok_or("invalid rights review timestamp")?;
+    let comment = entry.get("comment").unwrap_or(&serde_json::Value::Null);
+    let valid = comment.get("id").and_then(serde_json::Value::as_u64) == Some(id)
+        && comment
+            .get("permission")
+            .and_then(serde_json::Value::as_str)
+            == Some("admin")
+        && comment
             .get("created_at")
             .and_then(serde_json::Value::as_str)
-            .filter(|at| rights_timestamp(at))
-            .ok_or("invalid revocation timestamp")?;
-        if !status_ids.insert(id)
-            || status
-                .get("context")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(|context| !context.eq_ignore_ascii_case("rights-revocation"))
-            || status.get("state").and_then(serde_json::Value::as_str) != Some("success")
-        {
-            return Err("invalid durable revocation status".into());
-        }
-        boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
-    }
-    Ok(boundary)
+            == Some(created)
+        && comment
+            .get("updated_at")
+            .and_then(serde_json::Value::as_str)
+            == Some(created)
+        && comment
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|body| body.trim() == format!("/ack-rights {head}"));
+    let user = comment
+        .get("user")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    Ok((
+        id,
+        valid && !user.is_empty(),
+        user.to_owned(),
+        created.to_owned(),
+    ))
 }
 
 // GitHub API timestamps use canonical UTC seconds, so lexical order is time order.
@@ -1005,7 +1000,16 @@ pub fn rights_admission(
                 doc.as_object_mut()
                     .ok_or("malformed constituent rights evidence")?
                     .insert("repository".into(), MAINTAINED_REPOSITORY.into());
-                if rights_acknowledgment(&doc, &pull).is_ok() {
+                doc.as_object_mut()
+                    .ok_or("malformed rights evidence")?
+                    .insert(
+                        "rights".into(),
+                        evidence
+                            .get("rights")
+                            .cloned()
+                            .ok_or("missing global rights ledger")?,
+                    );
+                if rights_acknowledgment(&doc, &pull, &git::tree_oid(root, &pull)?).is_ok() {
                     found = true;
                 }
             }
@@ -1027,7 +1031,7 @@ pub fn rights_admission(
         if commit_sha(evidence, "base_sha").as_deref() != Some(base.as_str()) {
             return Err("rights base differs from trusted base".into());
         }
-        rights_acknowledgment(evidence, head)?;
+        rights_acknowledgment(evidence, head, &git::tree_oid(root, head)?)?;
     }
     Ok(())
 }

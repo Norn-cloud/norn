@@ -28,25 +28,28 @@ notices, evidence and supported connector terms require metadata reconsideration
 Every changed payload and metadata path is covered by the admin's unedited
 `/ack-rights <head>` API comment; `/revoke-rights <head>` or removal/editing revokes
 it. Gate-change `/approve-gates` is separate. A new head needs a new acknowledgment.
-Repeated acknowledgments fail closed; revoke before renewing the acknowledgment.
-A base-owned job records revocations in append-only `rights-revocation` commit
-status history before policy evaluation. Later comment events do not cancel that
-writer. Deleting or editing a revocation cannot erase this boundary: PR and group
-checks read the complete history and require a new, unedited acknowledgment
-created strictly after the latest recorded revocation. Same-second review fails
-closed. Missing history or failed recording cannot admit a head. A saturated
-status ledger requires a new head rather than losing later revocations.
-The saved Actions job identifies each comment and whether it could revoke rights
-before the recorder calls any API. Both collectors require a complete run-number
-sequence back to PR creation and successful reconciliation of every revocation
-job. Failed, cancelled, skipped or unmaterialized recorders remain pending even
-if every status write failed and the comment disappeared. Re-run the original
-revocation workflow (retaining its event payload), then post a fresh review after
-its successful receipt. Reconciliation requires the original reviewer to remain
-an admin; unavailable or lost authority cannot turn a failed event into an ignored
-event. Rerunning only an admission job does not reconcile it.
-Acknowledgments must also have a saved event under this protocol. Missing or
-expired event history fails closed; a new PR requires fresh rights review.
+Rights state belongs to the immutable head SHA and tree SHA, never a PR number.
+An acknowledgment approves the standing declarations of that whole target tree,
+including every changed payload and metadata path. Different PRs with the same
+target read the same ledger. The latest recorded review remains the frontier
+even after its source comment is edited or removed; an older review cannot
+reappear. Gate-change approvals remain separate and PR-scoped.
+
+A pure capture job reads the original saved run payload before any API write.
+It records plain-issue versus pull-request attribution and derives the exact
+target heads from rights commands. The journal job's saved identity contains
+those heads and the source comment ID. A failed write therefore remains pending
+for every admission of that target, including admission through another PR.
+Unknown uncaptured events fail closed for all targets. Plain-issue captures are
+ignored even when their journal job is skipped under an unexpanded name.
+
+Both collectors read one repository-wide event history from protocol activation,
+deduplicate repeated run IDs before checking continuity, and read the append-only
+ledger for each exact head/tree. Real gaps, missing receipts and failed jobs
+refuse admission. Re-run the whole original event as an admin to reconcile it:
+retries conservatively record a revocation, then require a fresh review after
+the successful receipt. Same-second review fails closed. All reads and receipts
+remain base-owned; no candidate code executes in this lane.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits
@@ -55,7 +58,7 @@ changes also require renewed review, including metadata already on the queue
 base; a clean textual merge alone does not review their combined meaning.
 
 For `git archive`, add `--distribution --root <expanded> --source-root <git>
---base-root <trusted> --head <full lowercase source commit SHA> --repository Norn-cloud/norn`.
+--base-root <trusted> --head 69ffae65225a6784ebcb96696fc88c65d810fa4f --repository Norn-cloud/norn`.
 Member sets and bytes, including control files, must match that independent
 source. Inventories generated from the distribution itself are never accepted.
 Generated release members need a separately verified export binding (unsupported

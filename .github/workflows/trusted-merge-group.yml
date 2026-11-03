@@ -49,100 +49,112 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { owner, repo } = context.repo;
+            const {owner,repo}=context.repo;
             const evidencePath = `${process.env.RUNNER_TEMP}/maintainer-approval.json`;
-            require('fs').rmSync(evidencePath, { force: true });
-            const pages = new Map(), definitions = new Map();
-            const rightsEvents = async (number, created) => {
-              if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(created)) throw new Error('Missing PR creation boundary');
-              const pending = [], comments = new Set();
-              let expected, witnessed = false;
-              const admission = context.payload.workflow_run?.id || context.runId;
-              for (let page = 1; page <= 100; page++) {
-                if (!pages.has(page)) pages.set(page, (await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: 'ci-policy.yml', per_page: 100, page })).data.workflow_runs);
-                const runs = pages.get(page);
-                if (!Array.isArray(runs) || !runs.length) break;
-                for (const run of runs) {
-                  if (!Number.isSafeInteger(run.run_number) || run.run_number < 1 ||
-                      (expected !== undefined && run.run_number !== expected)) throw new Error('Incomplete rights event history');
-                  expected = run.run_number - 1;
-                  witnessed ||= run.id === admission;
-                  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(run.created_at)) throw new Error('Invalid rights event timestamp');
-                  if (run.created_at < created) {
-                    if (!witnessed) throw new Error('Admission event missing from rights history');
-                    return { pending, comments: [...comments] };
-                  }
-                  if (run.event === 'issue_comment') {
-                    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, { owner, repo, run_id: run.id, filter: 'all', per_page: 100 });
-                    const writers = jobs.filter(job => job.name.startsWith('Record durable rights revocations for PR '));
-                    if (!writers.length) {
-                      if (!definitions.has(run.head_sha)) {
-                        const { data } = await github.rest.repos.getContent({ owner, repo, path: '.github/workflows/ci-policy.yml', ref: run.head_sha });
-                        if (data.type !== 'file' || data.encoding !== 'base64') throw new Error('Unavailable rights event policy');
-                        definitions.set(run.head_sha, Buffer.from(data.content, 'base64').toString('utf8'));
-                      }
-                      if (definitions.get(run.head_sha).includes('name: Record durable rights revocations for PR ')) pending.push(run.id);
-                    } else {
-                      if (new Set(writers.map(job => job.name)).size !== 1 || writers.some(job => !Number.isSafeInteger(job.id))) throw new Error('Ambiguous rights recorder');
-                      const writer = writers.reduce((latest, job) => latest.id > job.id ? latest : job);
-                      const tag = writer.name.match(/^Record durable rights revocations for PR (\d+) comment (\d+) revoke (true|false)$/);
-                      if (!tag) throw new Error('Invalid rights event identity');
-                      if (Number(tag[1]) === number) {
-                        comments.add(Number(tag[2]));
-                        if (tag[3] === 'true' && (writer.status !== 'completed' || writer.conclusion !== 'success')) pending.push(run.id);
-                      }
+            require('fs').rmSync(evidencePath,{force:true});
+            const permissionCache = new Map();
+            const permission = async username => {
+              if (!permissionCache.has(username)) permissionCache.set(username,
+                (await github.rest.repos.getCollaboratorPermissionLevel({owner,repo,username})
+                  .catch(error => {if (error.status === 404) return {data:{permission:'none'}}; throw error;})).data.permission);
+              return permissionCache.get(username);
+            };
+            const ledgerIndex = async () => {
+              const nodes=[], unknown=[], seen=new Set(), definitions=new Map();
+              let expected, witnessed=false;
+              const admission=context.payload.workflow_run?.id || context.runId;
+              for (let page=1;page<=100;page++) {
+                const {data}=await github.rest.actions.listWorkflowRuns({owner,repo,workflow_id:'ci-policy.yml',per_page:100,page});
+                if (!Array.isArray(data.workflow_runs) || !data.workflow_runs.length) break;
+                for (const run of data.workflow_runs) {
+                  if (seen.has(run.id)) continue;
+                  seen.add(run.id);
+                  if (!Number.isSafeInteger(run.run_number) || run.run_number<1 ||
+                      (expected!==undefined && run.run_number!==expected)) throw new Error('Incomplete rights event history');
+                  expected=run.run_number-1; witnessed ||= run.id===admission;
+                  if (run.event==='issue_comment') {
+                    if (!definitions.has(run.head_sha)) {
+                      const {data:file}=await github.rest.repos.getContent({owner,repo,path:'.github/workflows/ci-policy.yml',ref:run.head_sha});
+                      if (file.type!=='file' || file.encoding!=='base64') throw new Error('Unavailable rights protocol');
+                      definitions.set(run.head_sha,Buffer.from(file.content,'base64').toString('utf8').includes('name: Capture immutable rights event '));
                     }
+                    if (!definitions.get(run.head_sha)) {
+                      if (!witnessed) throw new Error('Missing admission event');
+                      return {nodes,unknown};
+                    }
+                    const jobs=await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt,
+                      {owner,repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100});
+                    const captures=jobs.filter(job=>/^Capture immutable rights event (pull|issue)$/.test(job.name));
+                    if (captures.length===1 && captures[0].name.endsWith(' issue')) continue;
+                    const journals=jobs.filter(job=>job.name.startsWith('Rights ledger '));
+                    const parsed=journals.map(job=>({job,tag:job.name.match(/^Rights ledger (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/)}));
+                    if (captures.length!==1 || captures[0].status!=='completed' || captures[0].conclusion!=='success' ||
+                        parsed.length!==1 || !parsed[0].tag) unknown.push(run.id);
+                    else if (parsed[0].tag[1]!=='none') nodes.push({run:run.id,attempt:run.run_attempt,
+                      comment:Number(parsed[0].tag[2]),heads:parsed[0].tag[1].split(','),
+                      complete:parsed[0].job.status==='completed' && parsed[0].job.conclusion==='success'});
                   }
-                  if (run.run_number === 1) {
-                    if (!witnessed) throw new Error('Admission event missing from rights history');
-                    return { pending, comments: [...comments] };
+                  if (run.run_number===1) {
+                    if (!witnessed) throw new Error('Missing admission event');
+                    return {nodes,unknown};
                   }
                 }
               }
-              throw new Error('Rights event history unavailable; a new PR requires fresh review');
+              throw new Error('Rights protocol history unavailable');
             };
-            const base = '${{ steps.group.outputs.base_sha }}';
-            const head = '${{ github.event.workflow_run.head_sha }}';
-            // A commenter the API does not know as a user (a bot) has no
-            // permission; any other API failure fails closed.
-            const permissions = new Map();
-            const permission = async (username) => {
-              if (!permissions.has(username)) {
-                const level = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username })
-                  .then(({ data }) => data.permission, (error) => {
-                    if (error.status === 404) return 'none';
-                    throw error;
-                  });
-                permissions.set(username, level);
-              }
-              return permissions.get(username);
-            };
-            const pull_requests = [];
-            let sha = head;
-            for (let step = 0; sha !== base && step < 64; step++) {
-              const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: sha });
-              if (commit.parents.length !== 2) break;
-              const pullHead = commit.parents[1].sha;
-              const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: pullHead });
-              for (const pr of pulls.filter((pr) => pr.head.sha === pullHead)) {
-                const events = await rightsEvents(pr.number, pr.created_at);
-                const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
-                  .filter(status => status.context.toLowerCase() === 'rights-revocation')
-                  .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
-                const comments = [];
-                for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
-                  if (!comment.user || !['/approve-gates', '/ack-rights', '/revoke-rights'].some(command => (comment.body || '').trim().startsWith(command))) continue;
-                  comments.push({ id: comment.id, user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
+            const index=await ledgerIndex(), rights={}, commentsById=new Map();
+            const targetLedger=async head=>{
+              if (rights[head]) return;
+              const {data:commit}=await github.rest.repos.getCommit({owner,repo,ref:head}), tree=commit.commit.tree.sha;
+              if (!/^[0-9a-f]{40}$/.test(tree)) throw new Error('Invalid rights target tree');
+              const nodes=index.nodes.filter(node=>node.heads.includes(head)), pending=[...index.unknown], entries=[];
+              const statuses=await github.paginate(github.rest.repos.listCommitStatusesForRef,{owner,repo,ref:head,per_page:100});
+              const recorded=new Set();
+              for (const status of statuses) {
+                const contextKey=status.context.toLowerCase();
+                if (!contextKey.startsWith('rights-ledger/') || status.creator?.login!=='github-actions[bot]') continue;
+                const tag=contextKey.match(/^rights-ledger\/([0-9a-f]{40})\/(\d+)\/(\d+)$/);
+                if (!tag || tag[1]!==tree || status.state!=='success') throw new Error('Wrong rights receipt target');
+                const row=JSON.parse(status.description), node=nodes.find(node=>node.run===row.r && node.comment===row.c);
+                if (row.v!==1 || !node || row.r!==Number(tag[2]) || row.a!==Number(tag[3]) ||
+                    !['ack','revoke','withdraw','ignore'].includes(row.k)) throw new Error('Unbound rights receipt');
+                recorded.add(`${row.r}/${row.a}`);
+                let comment=null;
+                if (row.k==='ack') {
+                  if (!commentsById.has(row.c)) commentsById.set(row.c,await github.rest.issues.getComment({owner,repo,comment_id:row.c})
+                    .then(({data})=>data,error=>{if (error.status===404) return null; throw error;}));
+                  const live=commentsById.get(row.c);
+                  if (live?.user) comment={id:live.id,user:live.user.login,body:live.body,created_at:live.created_at,
+                    updated_at:live.updated_at,permission:await permission(live.user.login)};
                 }
-                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, base_sha: pr.base.sha, comments, revocations, pending_revocations: events.pending, acknowledgment_events: events.comments });
+                entries.push({id:status.id,run_id:row.r,attempt:row.a,comment_id:row.c,kind:row.k,
+                  created_at:row.t,recorded_at:status.created_at,comment});
               }
-              sha = commit.parents[0].sha;
+              for (const node of nodes) if (!node.complete || !recorded.has(`${node.run}/${node.attempt}`)) pending.push(node.run);
+              rights[head]={[tree]:{head_sha:head,tree_sha:tree,pending:[...new Set(pending)],entries}};
+            };
+            const base='${{ steps.group.outputs.base_sha }}',head='${{ github.event.workflow_run.head_sha }}',pull_requests=[];
+            let sha=head;
+            for (let step=0;sha!==base && step<64;step++) {
+              const {data:commit}=await github.rest.repos.getCommit({owner,repo,ref:sha});
+              if (commit.parents.length!==2) break;
+              const pullHead=commit.parents[1].sha;
+              const {data:pulls}=await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:pullHead});
+              for (const pr of pulls.filter(pr=>pr.head.sha===pullHead)) {
+                await targetLedger(pullHead);
+                const comments=[];
+                for (const comment of await github.paginate(github.rest.issues.listComments,{owner,repo,issue_number:pr.number,per_page:100})) {
+                  if (!comment.user || !(comment.body||'').trim().startsWith('/approve-gates')) continue;
+                  comments.push({user:comment.user.login,body:comment.body,created_at:comment.created_at,
+                    updated_at:comment.updated_at,permission:await permission(comment.user.login)});
+                }
+                pull_requests.push({number:pr.number,head_repository:pr.head.repo?pr.head.repo.full_name:null,
+                  head_sha:pr.head.sha,base_sha:pr.base.sha,comments});
+              }
+              sha=commit.parents[0].sha;
             }
-            require('fs').writeFileSync(`${process.env.RUNNER_TEMP}/maintainer-approval.json`, JSON.stringify({
-              repository: `${owner}/${repo}`,
-              merge_group: { base_sha: base, head_sha: head },
-              pull_requests
-            }));
+            require('fs').writeFileSync(evidencePath,JSON.stringify({repository:`${owner}/${repo}`,
+              merge_group:{base_sha:base,head_sha:head},pull_requests,rights}));
       - name: Validate the group head as data with base-owned policy
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ github.event.workflow_run.head_sha }}" --repository "${{ github.repository }}"
       - name: Report trusted policy on the group head

@@ -53,6 +53,44 @@ pub fn head(root: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+/// Return the immutable tree object named by a full commit SHA.
+///
+/// # Errors
+/// Refuses non-commit inputs and malformed Git responses.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fixed Git plumbing over immutable objects"
+)]
+pub fn tree_oid(root: &Path, commit: &str) -> Result<String, String> {
+    if commit.len() != 40
+        || !commit
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("rights target requires a full lowercase commit SHA".into());
+    }
+    let out = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args(["show", "--no-patch", "--format=%T", commit, "--"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let tree = String::from_utf8(out.stdout)
+        .map_err(|e| e.to_string())?
+        .trim()
+        .to_owned();
+    if !out.status.success()
+        || tree.len() != 40
+        || !tree
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("unable to resolve immutable rights tree".into());
+    }
+    Ok(tree)
+}
+
 /// The parents of `commit`, in order.
 ///
 /// # Errors

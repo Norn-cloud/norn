@@ -1162,10 +1162,54 @@ fn bound_report(f: &Fixture, head: &str) -> provenance::Report {
     )
 }
 
+fn ack_entry(id: u64, head: &str, created: &str) -> Value {
+    json!({"id":id,"comment_id":id,"kind":"ack","created_at":created,"recorded_at":created,
+        "comment":{"id":id,"user":"owner","permission":"admin","body":format!("/ack-rights {head}"),
+        "created_at":created,"updated_at":created}})
+}
+
 fn rights_document(head: &str, base: &str) -> Value {
-    json!({"repository":"Norn-cloud/norn", "head_repository":"Norn-cloud/norn",
-        "head_sha":head, "base_sha":base, "pending_revocations":[], "acknowledgment_events":[1,2,3], "revocations":[], "comments":[{"id":1,"user":"owner","permission":"admin",
-        "body":format!("/ack-rights {head}"), "created_at":"2026-11-03T00:00:00Z", "updated_at":"2026-11-03T00:00:00Z"}]})
+    let tree = "3".repeat(40);
+    let mut doc = json!({"repository":"Norn-cloud/norn","head_repository":"Norn-cloud/norn",
+        "head_sha":head,"base_sha":base,"comments":[],"rights":{}});
+    doc["rights"][head][&tree] = json!({"head_sha":head,"tree_sha":tree,"pending":[],
+        "entries":[ack_entry(1, head, "2026-11-03T00:00:00Z")]});
+    doc
+}
+
+fn rights_for(f: &Fixture, head: &str, base: &str) -> Value {
+    let mut doc = rights_document(head, base);
+    let tree = git_in(f, &["rev-parse", &format!("{head}^{{tree}}")]);
+    let mut ledger = doc["rights"][head]
+        .as_object_mut()
+        .unwrap()
+        .remove(&"3".repeat(40))
+        .unwrap();
+    ledger["tree_sha"] = json!(tree);
+    doc["rights"][head][&tree] = ledger;
+    doc
+}
+
+fn group_ledgers(f: &Fixture, heads: &[String], base: &str) -> Value {
+    let mut result = serde_json::Map::new();
+    for head in heads {
+        result.extend(
+            rights_for(f, head, base)["rights"]
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+    }
+    Value::Object(result)
+}
+
+fn target_ledger<'a>(doc: &'a mut Value, head: &str) -> &'a mut Value {
+    doc["rights"][head]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap()
 }
 
 #[test]
@@ -1174,12 +1218,13 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
     let base = commit_fixture(&f);
     f.write(
         "crates/norn-ir/src/lib.rs",
-        b"pub enum ArtifactKind { Entity, Law }\n// ordinary authored edit\n",
+        b"pub enum ArtifactKind { Entity, Law }\n// authored edit\n",
     );
-    let head = commit_fixture(&f); // no record refresh
+    let head = commit_fixture(&f);
     assert!(bound_report(&f, &head).errors().is_empty());
-    let document = rights_document(&head, &base);
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&document, &head).is_ok());
+    let document = rights_for(&f, &head, &base);
+    let tree = git_in(&f, &["rev-parse", &format!("{head}^{{tree}}")]);
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&document, &head, &tree).is_ok());
     for mutation in [
         "missing",
         "repository",
@@ -1190,66 +1235,75 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
         "duplicate",
         "unreconciled",
         "missing-events",
-        "legacy-ack",
+        "tree",
     ] {
         let mut doc = document.clone();
         match mutation {
-            "unreconciled" => doc["pending_revocations"] = json!([42]),
-            "missing-events" => {
-                doc.as_object_mut().unwrap().remove("pending_revocations");
-            }
-            "legacy-ack" => doc["acknowledgment_events"] = json!([]),
-            "missing" => doc["comments"] = json!([]),
             "repository" => doc["repository"] = json!("other/repo"),
             "stale" => doc["head_sha"] = json!(base),
-            "edited" => doc["comments"][0]["updated_at"] = json!("2026-11-03T01:00:00Z"),
-            "nonadmin" => doc["comments"][0]["permission"] = json!("write"),
-            "revoked" => {
-                let mut revoke = doc["comments"][0].clone();
-                revoke["id"] = json!(2);
-                revoke["body"] = json!(format!("/revoke-rights {head}"));
-                doc["comments"].as_array_mut().unwrap().push(revoke);
+            "missing" => target_ledger(&mut doc, &head)["entries"] = json!([]),
+            "edited" => {
+                target_ledger(&mut doc, &head)["entries"][0]["comment"]["updated_at"] =
+                    json!("2026-11-03T01:00:00Z")
             }
+            "nonadmin" => {
+                target_ledger(&mut doc, &head)["entries"][0]["comment"]["permission"] =
+                    json!("write")
+            }
+            "revoked" => target_ledger(&mut doc, &head)["entries"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"})),
             "duplicate" => {
-                let duplicate = doc["comments"][0].clone();
-                doc["comments"].as_array_mut().unwrap().push(duplicate);
+                let entry = target_ledger(&mut doc, &head)["entries"][0].clone();
+                target_ledger(&mut doc, &head)["entries"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(entry);
             }
+            "unreconciled" => target_ledger(&mut doc, &head)["pending"] = json!([42]),
+            "missing-events" => {
+                target_ledger(&mut doc, &head)
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("pending");
+            }
+            "tree" => target_ledger(&mut doc, &head)["tree_sha"] = json!("0".repeat(40)),
             _ => unreachable!(),
         }
         assert!(
-            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err(),
+            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_err(),
             "{mutation}"
         );
     }
-    // A gate approval cannot serve as a rights acknowledgment.
     let mut gate_only = document;
-    gate_only["comments"][0]["body"] = json!(format!("/approve-gates {head}"));
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&gate_only, &head).is_err());
+    target_ledger(&mut gate_only, &head)["entries"][0]["comment"]["body"] =
+        json!(format!("/approve-gates {head}"));
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&gate_only, &head, &tree).is_err());
 }
 
 #[test]
 fn deleting_a_live_rights_acknowledgment_cannot_revive_an_older_review() {
     let head = "1".repeat(40);
-    let mut document = rights_document(&head, &"2".repeat(40));
-    let acknowledgment = document["comments"][0].clone();
-    let check = |doc: &Value| norn_skeleton_guard::ci::rights_acknowledgment(doc, &head);
-    assert!(check(&document).is_ok());
-    let mut repeated = acknowledgment.clone();
-    repeated["id"] = json!(2);
-    document["comments"].as_array_mut().unwrap().push(repeated);
-    assert!(check(&document).is_err());
-    document["comments"][1]["body"] = json!(format!("/revoke-rights {head}"));
-    assert!(check(&document).is_err());
-    let mut renewed = acknowledgment;
-    renewed["id"] = json!(3);
-    document["comments"].as_array_mut().unwrap().push(renewed);
-    assert!(check(&document).is_ok());
-    document["comments"].as_array_mut().unwrap().reverse();
-    assert!(check(&document).is_ok()); // API order is not authority.
-    document["comments"].as_array_mut().unwrap().remove(0);
-    assert!(check(&document).is_err()); // Deleting the live renewal leaves revocation.
-    document["comments"] = json!([]);
-    assert!(check(&document).is_err());
+    let mut doc = rights_document(&head, &"2".repeat(40));
+    let check =
+        |doc: &Value| norn_skeleton_guard::ci::rights_acknowledgment(doc, &head, &"3".repeat(40));
+    assert!(check(&doc).is_ok());
+    target_ledger(&mut doc, &head)["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(ack_entry(2, &head, "2026-11-03T00:00:01Z"));
+    assert!(check(&doc).is_ok()); // One target, latest recorded review.
+    target_ledger(&mut doc, &head)["entries"][1]["comment"] = Value::Null;
+    assert!(check(&doc).is_err()); // The persistent frontier cannot fall back to review 1.
+    target_ledger(&mut doc, &head)["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(ack_entry(3, &head, "2026-11-03T00:02:00Z"));
+    assert!(check(&doc).is_ok());
+    target_ledger(&mut doc, &head)["entries"][2]["comment"]["updated_at"] =
+        json!("2026-11-03T00:03:00Z");
+    assert!(check(&doc).is_err());
 }
 
 #[test]
@@ -1473,7 +1527,7 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
     }
     let head = git_in(&f, &["rev-parse", "HEAD"]);
     let doc = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":head},
-        "pull_requests":heads.iter().map(|h| rights_document(h, &base)).collect::<Vec<_>>()});
+        "pull_requests":heads.iter().map(|h| rights_for(&f, h, &base)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &heads, &base)});
     let admission = |doc: &Value, head: &str| {
         norn_skeleton_guard::ci::rights_admission(doc, f.root(), &trusted, head)
     };
@@ -1505,7 +1559,7 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
     );
     assert_durable_group_revocation(&f, &trusted, &head, &doc, &evidence);
     let mut missing = doc.clone();
-    missing["pull_requests"][1]["comments"] = json!([]);
+    target_ledger(&mut missing, &heads[1])["entries"] = json!([]);
     assert!(admission(&missing, &head).is_err());
     // Rewrite the merge result with a metadata-only addition: no new parent,
     // but a tree that no acknowledged head or clean integration accounts for.
@@ -1529,14 +1583,16 @@ fn assert_durable_group_revocation(
     doc: &Value,
     evidence: &Path,
 ) {
+    let pull = doc["pull_requests"][0]["head_sha"].as_str().unwrap();
     for edited in [false, true] {
         let mut revoked = doc.clone();
-        revoked["pull_requests"][0]["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
+        target_ledger(&mut revoked, pull)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"}));
         if edited {
-            revoked["pull_requests"][0]["comments"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"id":2,"user":"owner","permission":"admin","body":"ordinary text"}));
+            target_ledger(&mut revoked, pull)["entries"][0]["comment"]["body"] =
+                json!("ordinary text");
         }
         fs::write(evidence, revoked.to_string()).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
@@ -1551,18 +1607,12 @@ fn assert_durable_group_revocation(
             report
                 .errors
                 .iter()
-                .any(|error| error.contains("unacknowledged constituent")),
-            "{:?}",
-            report.errors
+                .any(|e| e.contains("unacknowledged constituent"))
         );
-        let mut renewed = revoked["pull_requests"][0]["comments"][0].clone();
-        renewed["id"] = json!(3);
-        renewed["created_at"] = json!("2026-11-03T00:01:01Z");
-        renewed["updated_at"] = renewed["created_at"].clone();
-        revoked["pull_requests"][0]["comments"]
+        target_ledger(&mut revoked, pull)["entries"]
             .as_array_mut()
             .unwrap()
-            .push(renewed);
+            .push(ack_entry(3, pull, "2026-11-03T00:01:01Z"));
         fs::write(evidence, revoked.to_string()).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
@@ -1572,7 +1622,7 @@ fn assert_durable_group_revocation(
             None,
             evidence,
         );
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(report.errors.is_empty());
     }
 }
 
@@ -1603,7 +1653,7 @@ fn trusted_pr_event_and_cli_require_separate_rights_evidence_on_the_inspected_he
     );
     let head = commit_fixture(&f);
     let evidence = temporary.path().join("rights.json");
-    fs::write(&evidence, rights_document(&head, &base).to_string()).unwrap();
+    fs::write(&evidence, rights_for(&f, &head, &base).to_string()).unwrap();
     let report = norn_skeleton_guard::ci::check_with_rights(
         f.root(),
         &trusted,
@@ -1762,7 +1812,7 @@ fn trusted_groups_refuse_unreviewed_payload_rights_pairs_in_either_order_or_on_b
                 f.write("notes", b"changed authored notes\n");
             }
             let head = commit_fixture(&f);
-            fs::write(&evidence, rights_document(&head, &original).to_string()).unwrap();
+            fs::write(&evidence, rights_for(&f, &head, &original).to_string()).unwrap();
             let report = norn_skeleton_guard::ci::check_with_rights(
                 f.root(),
                 &trusted,
@@ -1808,7 +1858,7 @@ fn trusted_groups_refuse_unreviewed_payload_rights_pairs_in_either_order_or_on_b
         }
         let group = git_in(&f, &["rev-parse", "HEAD"]);
         let document = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":group},
-            "pull_requests":queued.iter().map(|head| rights_document(head, &original)).collect::<Vec<_>>()});
+            "pull_requests":queued.iter().map(|head| rights_for(&f, head, &original)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &queued, &original)});
         fs::write(&evidence, document.to_string()).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
@@ -1834,51 +1884,60 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
     let head = "1".repeat(40);
     for edited in [false, true] {
         let mut doc = rights_document(&head, &"2".repeat(40));
-        doc["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
+        target_ledger(&mut doc, &head)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":10,"kind":"revoke","recorded_at":"2026-11-03T00:01:00Z"}));
         if edited {
-            doc["comments"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"id":2,"user":"owner","permission":"admin","body":"ordinary text"}));
+            target_ledger(&mut doc, &head)["entries"][0]["comment"] = Value::Null;
         }
-        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
-        let mut renewed = doc["comments"][0].clone();
-        renewed["id"] = json!(3);
-        renewed["created_at"] = json!("2026-11-03T00:01:01Z");
-        renewed["updated_at"] = renewed["created_at"].clone();
-        doc["comments"].as_array_mut().unwrap().push(renewed);
-        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_ok());
-        // A newer status cannot erase the older boundary, and same-second review fails closed.
-        doc["revocations"].as_array_mut().unwrap().push(json!({"id":11,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:01Z"}));
-        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
-        doc.as_object_mut().unwrap().remove("revocations");
-        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
+        assert!(
+            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err()
+        );
+        target_ledger(&mut doc, &head)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(ack_entry(3, &head, "2026-11-03T00:01:01Z"));
+        assert!(
+            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok()
+        );
+        target_ledger(&mut doc, &head)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":11,"kind":"revoke","recorded_at":"2026-11-03T00:01:01Z"}));
+        assert!(
+            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err()
+        );
     }
 }
 
 #[test]
-fn durable_revocation_history_cannot_be_hidden_by_context_case_or_saturation() {
+fn rights_ledger_requires_an_independently_expected_head_and_tree() {
     let head = "1".repeat(40);
-    let mut doc = rights_document(&head, &"2".repeat(40));
-    doc["revocations"] = json!([{"id":10,"context":"RIGHTS-REVOCATION","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
-    doc["comments"][0]["created_at"] = json!("2026-11-03T00:01:01Z");
-    doc["comments"][0]["updated_at"] = doc["comments"][0]["created_at"].clone();
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_ok());
-    doc["revocations"] = json!((0..1000).map(|id| json!({"id":id,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"})).collect::<Vec<_>>());
+    let doc = rights_document(&head, &"2".repeat(40));
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"4".repeat(40)).is_err());
     assert!(
-        norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head)
-            .unwrap_err()
-            .contains("exhausted")
+        norn_skeleton_guard::ci::rights_acknowledgment(&doc, &"5".repeat(40), &"3".repeat(40))
+            .is_err()
     );
 }
 
 #[test]
+fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fresh_review() {
+    assert_global_rights_recovery("single");
+}
+
+#[test]
+fn same_sha_rights_ledger_blocks_every_pr_and_group_until_reconciled() {
+    assert_global_rights_recovery("shared");
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "execute real API programs over synthetic saved workflow events"
+    reason = "execute actual rights programs over saved event fixtures"
 )]
-fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fresh_review() {
+fn assert_global_rights_recovery(layout: &str) {
     let (candidate, base, heads, group_head) = merge_group(&[&|f| {
         f.write(
             "crates/norn-ir/src/lib.rs",
@@ -1907,6 +1966,10 @@ fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fre
             &heads[0],
             &base,
             &group_head,
+            &git_in(
+                &candidate,
+                &["rev-parse", &format!("{}^{{tree}}", heads[0])],
+            ),
         ])
         .output()
         .unwrap();
@@ -1917,13 +1980,28 @@ fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fre
     let documents: Value = serde_json::from_slice(&output.stdout).unwrap();
     let evidence = temporary.path().join("rights.json");
     for removal in ["edited", "deleted"] {
-        for stage in ["pending", "premature", "partial", "reconciled", "fresh"] {
-            for kind in ["pr", "group"] {
-                let head = if kind == "pr" { &heads[0] } else { &group_head };
+        for stage in [
+            "initial",
+            "pending",
+            "premature",
+            "partial",
+            "reconciled",
+            "fresh",
+            "plain",
+            "paging",
+            "withdrawn",
+            "case",
+        ] {
+            for kind in ["pr", "a", "group"] {
+                let head = if kind == "group" {
+                    &group_head
+                } else {
+                    &heads[0]
+                };
                 git_in(&candidate, &["checkout", "--quiet", "--detach", head]);
                 fs::write(
                     &evidence,
-                    documents[format!("{removal}-{stage}")][kind].to_string(),
+                    documents[format!("{layout}-{removal}-{stage}")][kind].to_string(),
                 )
                 .unwrap();
                 let report = norn_skeleton_guard::ci::check_with_rights(
@@ -1936,7 +2014,7 @@ fn failed_revocation_events_survive_comment_removal_until_reconciliation_and_fre
                 );
                 assert_eq!(
                     report.errors.is_empty(),
-                    stage == "fresh",
+                    matches!(stage, "initial" | "fresh" | "plain" | "paging" | "case"),
                     "{removal}/{stage}/{kind}"
                 );
             }

@@ -423,7 +423,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "run name must attribute READY to the triggering event and head")
     validate_rights_contract(source)
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-revocation"}, "workflow job inventory changed")
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-capture", "rights-revocation"}, "workflow job inventory changed")
     check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
@@ -641,19 +641,25 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # Pin complete base-owned API programs, including append-only history reads
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
-        'Resolve the pull request': ('77ee31967cc3351930d8984f33b0f19caec0b59600236000a53094b4391e28eb', ['script', 'retries'], False, None),
-        'Persist the rights revocation boundary': ('aee22d8468a156a4e6e6937a537178abe267925aada543d4c617c56d4465e1a5', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('3a5d0cbb2e712e78486e67d3c41bd76d91e4201ea9b1be5c8ebf36c99ead33f8', ['script'], False, None),
+        'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
+        'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
+        'Persist the target rights ledger': ('54f784ea5601a9facc857f03c248fae7ae502d860449f107acb233ba1ec5fe0c', ['script', 'retries'], False, None),
+        'Record admin approvals of the exact PR head': ('12cf19ffc6e5bac286c9807944a715f737a039f424990caf6b8d6fda2716ab95', ['script'], False, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('3051e6caa6077067d7ba6df0f65784329019427aae51cfa238f785caa0060f6b', ['script'], False, None),
+        'Record admin approvals of the queued heads': ('36e5460a130bf69db7a693eb7e065c41d62a519849bf771fa0eba5afce7178fb', ['script'], False, None),
         'Report trusted policy on the group head': ('006a4ebe5ab690da267c9b0665a11c68b979fd4f9d53b73aac2054642c53cb27', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
         digest, inputs, tolerated_failure, condition = programs[step["name"]]
         allowed = {"name", "uses", "with"} | ({"continue-on-error"} if tolerated_failure else set()) | ({"if"} if condition else set())
-        if step["name"] == "Resolve the pull request":
+        if step["name"] in {"Resolve the pull request", "Capture the saved rights payload"}:
             allowed.add("id")
-            require(step.get("id") == "pr", "policy resolution must bind failure publication and queue removal")
+            require(step.get("id") == ("pr" if step["name"] == "Resolve the pull request" else "payload"),
+                    "trusted event output identity changed")
+        if step["name"] == "Persist the target rights ledger":
+            allowed.add("env")
+            require(step.get("env") == {"RIGHTS_EVENT": "${{ needs.rights-capture.outputs.payload }}"},
+                    "ledger must consume the captured event as data")
         require(set(step) == allowed
                 and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
                 and step.get("continue-on-error", False) is tolerated_failure
@@ -663,16 +669,27 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                 and hashlib.sha256(step.get("with", {}).get("script", "").encode()).hexdigest() == digest,
                 f"trusted API program or execution changed: {step.get('name')}")
     public = yaml.load(source, Loader=WorkflowLoader)
+    capture = public["jobs"].get("rights-capture", {})
+    expected_capture = {
+        "name": "Capture immutable rights event ${{ github.event.issue.pull_request && 'pull' || 'issue' }}",
+        "if": "github.event_name == 'issue_comment'",
+        "permissions": {"contents": "read"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+        "outputs": {key: "${{ steps.payload.outputs." + key + " }}" for key in ("heads", "kind", "comment", "payload")},
+    }
+    require({k:v for k,v in capture.items() if k != "steps"} == expected_capture,
+            "saved run payload must be captured before API writes, including plain issues")
+    require(len(capture.get("steps", [])) == 1, "missing saved rights payload")
+    api_step(capture["steps"][0])
     ledger = public["jobs"].get("rights-revocation", {})
     expected_ledger = {
-        "name": "Record durable rights revocations for PR ${{ github.event.issue.number }} comment ${{ github.event.comment.id }} revoke ${{ contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')) }}",
-        "if": "github.event_name == 'issue_comment' && github.event.issue.pull_request",
-        "permissions": {"contents": "read", "statuses": "write"},
-        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+        "name": "Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}",
+        "needs": "rights-capture",
+        "if": "!cancelled() && needs.rights-capture.result == 'success' && needs.rights-capture.outputs.kind == 'pull'",
+        "permissions": {"contents": "read", "statuses": "write"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
     }
-    require({k: v for k, v in ledger.items() if k != "steps"} == expected_ledger,
-            "revocation recording must be base-owned and never superseded")
-    require(len(ledger.get("steps", [])) == 1, "missing durable revocation writer")
+    require({k:v for k,v in ledger.items() if k != "steps"} == expected_ledger,
+            "target ledger must be base-owned and never superseded")
+    require(len(ledger.get("steps", [])) == 1, "missing immutable rights writer")
     api_step(ledger["steps"][0])
     for text, head in ((source, "${{ steps.pr.outputs.head_sha }}"),
                        (merge_source, "${{ github.event.workflow_run.head_sha }}")):
@@ -710,11 +727,12 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                     "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
                     "failed/cancelled recording must fail policy before admission")
         scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
-        for contract in ("'/ack-rights'", "'/revoke-rights'", "id: comment.id", "base_sha: pr.base.sha",
-                         "head_sha: pr.head.sha", "pending_revocations: events.pending", "acknowledgment_events: events.comments",
-                         "permission: await permission(comment.user.login)",
-                         "github.rest.issues.listComments", "github.rest.repos.getCollaboratorPermissionLevel"):
-            require(contract in scripts, f"trusted rights: missing live API contract {contract}")
+        compact = re.sub(r"\s+", "", scripts)
+        for contract in ("base_sha:pr.base.sha", "head_sha:pr.head.sha", "targetLedger",
+                         "github.rest.issues.getComment", "github.rest.actions.listJobsForWorkflowRunAttempt",
+                         "github.rest.repos.listCommitStatusesForRef", "github.rest.repos.getCollaboratorPermissionLevel",
+                         "seen.has(run.id)", "rights[head]"):
+            require(contract in compact, f"trusted target ledger contract missing: {contract}")
         require(job.get("concurrency", {}).get("cancel-in-progress") is True,
                 "trusted rights: revocation must supersede old evaluations")
     condition = yaml.load(source, Loader=WorkflowLoader)["jobs"]["trusted-policy"]["if"]

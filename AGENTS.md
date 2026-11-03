@@ -61,15 +61,15 @@ metadata. New files add records; deletions remove records; renames move them.
 Origin, category, licence, sources, parents, notices, rights evidence and supported
 connector terms changes require corresponding metadata changes. Every changed
 payload and metadata path needs an admin `/ack-rights <exact head SHA>` comment,
-collected from the API by base-owned policy. This is separate from `/approve-gates`;
-new heads invalidate it, edits/deletions revoke it, and `/revoke-rights <SHA>`
-explicitly revokes it. Base-owned append-only commit status history retains the
-revocation boundary across comment edits/deletions; a fresh acknowledgment must
-postdate the recorded boundary. Merge groups also refuse unreviewed cross-side
-payload/rights-record combinations, including rights changes already on base.
-Failed revocation events remain pending in saved Actions jobs until the original
-event is successfully reconciled; later gate approvals cannot clear them. Missing
-or incomplete event history fails closed. Human source review remains necessary. The gate binds all
+collected from the API by base-owned policy. Rights authority belongs to the
+immutable head SHA and tree, shared by every PR and merge group for that target.
+The acknowledgment reviews the standing declarations of the entire target tree,
+including every changed file. The latest recorded acknowledgment cannot fall
+back to an older review after editing or deletion. Saved run payloads identify
+pending events independently of PR numbers; any failed or missing receipt blocks
+that target until an admin reconciles the event and posts a fresh review.
+`/revoke-rights <SHA>` revokes the target across all PRs. `/approve-gates` remains
+a separate PR-scoped approval. New heads invalidate rights acknowledgments. Human source review remains necessary. The gate binds all
 inspected bytes and records to the immutable candidate tree. Expanded archives
 must match that source commit exactly; generated exports require an independently
 verified external binding and are refused without one. Nested evidence and
