@@ -255,7 +255,7 @@ fn payload(
     serde_json::to_value(artifact.payload.to_json_value()).map_err(document_error)
 }
 
-fn document_error(error: serde_json::Error) -> Vec<Diagnostic> {
+fn document_error(error: impl std::fmt::Display) -> Vec<Diagnostic> {
     refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string())
 }
 
