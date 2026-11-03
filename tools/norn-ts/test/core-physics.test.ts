@@ -25,7 +25,7 @@ const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitme
 
 test("the core physics pack declares exactly its primitives", () => {
   const ids = fromModule(pack(), "physics.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
-  expect(ids).toEqual(PRIMITIVES.map((name) => `${name}.interface`))
+  expect(ids).toEqual([...PRIMITIVES.map((name) => `${name}.interface`), "core.law.conversion_conservation.law"].sort())
 })
 
 test("checked-in core physics artifacts are exactly the compiler's output", () => {

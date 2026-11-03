@@ -14,6 +14,55 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 
+const ConversionMeasurements = Schema.Struct({
+  input_quantity: Schema.Finite,
+  output_quantity: Schema.Finite,
+  loss_quantity: Schema.Finite,
+})
+
+export const Process = Norn.interfaceType({
+  name: "core.Process", title: "Process", version: "0.1.0", role: "happening",
+  properties: Schema.Struct({}),
+})
+
+/** LAW-CONVERSION-1: quantities bound to the implementor conserve exactly. */
+export const Conversion = Norn.interfaceType({
+  name: "core.Conversion",
+  role: "happening",
+  extends: [Process],
+  title: "Conversion",
+  version: "0.1.0",
+  description: "A measured conversion whose quantities share the implementor's explicit unit and scale. These are accepted measurements, not a certificate of associated stock or value effects.",
+  properties: Schema.Struct({
+    input_quantity: Norn.boundDecimal("conversion"),
+    output_quantity: Norn.boundDecimal("conversion"),
+    loss_quantity: Norn.boundDecimal("conversion"),
+  }),
+  invariants: [{
+    id: "conversion_conservation",
+    expression: Norn.expression(ConversionMeasurements, input => input.input_quantity >= 0 && input.output_quantity >= 0 && input.loss_quantity >= 0 && input.input_quantity === input.output_quantity + input.loss_quantity),
+    message: "Input quantity must equal output plus explicitly recorded loss in the same unit.",
+  }],
+})
+
+export const quantityConservation = Norn.law({
+  id: "core.law.conversion_conservation.law",
+  title: "Conversion quantity conservation",
+  version: "0.1.0",
+  law: {
+    lawVersion: "0.1", id: "core.law.conversion_conservation", owner: "norn.core",
+    severity: "error", rationale: "A conversion retains its input as output and explicit loss.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/physics.ts" },
+    scope: { root: { kind: "entity", id: "core.Conversion" }, objectTypes: ["core.Conversion"] },
+    subject: "core.Conversion", modality: { kind: "always" },
+    response: { kind: "invariant", objectType: "core.Conversion", invariantId: "conversion_conservation" },
+  },
+  dependencies: [
+    { artifactId: "core.Conversion.interface", kind: "entity", version: "0.1.0", required: true },
+    { artifactId: "core.Process.interface", kind: "entity", version: "0.1.0", required: true },
+  ],
+})
+
 export const Agent = Norn.interfaceType({
   name: "core.Agent",
   role: "thing",
@@ -157,14 +206,6 @@ export const Claim = Norn.interfaceType({
   ],
 })
 
-export const Process = Norn.interfaceType({
-  name: "core.Process", title: "Process", version: "0.1.0", role: "happening",
-  properties: Schema.Struct({}),
-})
-export const Conversion = Norn.interfaceType({
-  name: "core.Conversion", title: "Conversion", version: "0.1.0", role: "happening",
-  extends: [Process], properties: Schema.Struct({}),
-})
 export const Exchange = Norn.interfaceType({
   name: "core.Exchange", title: "Exchange", version: "0.1.0", role: "happening",
   extends: [Process], properties: Schema.Struct({}),

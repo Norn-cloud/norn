@@ -3,6 +3,7 @@ import { Norn } from "@norn/authoring"
 
 // CURRENT admission fragment; full REA composition is TARGET in README.md.
 export const Melt = Norn.type({
+  dependencies: [{ artifactId: "core.units", version: "1.0.0" }],
   name: "demo.Melt", title: "Melt measurement", version: "0.1.0",
   properties: Schema.Struct({
     id: Schema.String,
