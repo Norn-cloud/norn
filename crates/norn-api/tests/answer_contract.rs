@@ -13,6 +13,10 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
     let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers");
     for (file, root) in [
         ("scrap-yield.question.json", "NornIrQuestion"),
+        (
+            "scrap-yield.quarantine.finding.json",
+            "NornIrDataQualityFinding",
+        ),
         ("scrap-yield.k1.answer.json", "NornQueryResult"),
         ("scrap-yield.k1-quarantined.answer.json", "NornQueryResult"),
         ("scrap-yield.k2.answer.json", "NornQueryResult"),
