@@ -39,28 +39,28 @@ impl ApprovedContract {
     ) -> Result<Batch, ChallengeError> {
         let challenge = self.challenge(source, registry)?;
         let model = lower(source, registry, bounds);
-        let goals = challenge.body()["obligations"]
+        let goals = at(challenge.body(), "obligations")
             .as_array()
             .ok_or(ChallengeError::Closure)?
             .iter()
             .map(|goal| {
-                let kind = goal["goal"]["kind"].as_str().unwrap_or("");
-                let law = goal["law"]
+                let kind = at(at(goal, "goal"), "kind").as_str().unwrap_or("");
+                let law = at(goal, "law")
                     .as_u64()
                     .and_then(|i| usize::try_from(i).ok())
-                    .and_then(|i| challenge.body()["lawStatements"].get(i));
-                let writer = goal["goal"]["writer"]
+                    .and_then(|i| at(challenge.body(), "lawStatements").get(i));
+                let writer = at(at(goal, "goal"), "writer")
                     .as_u64()
                     .and_then(|i| usize::try_from(i).ok())
-                    .and_then(|i| challenge.body()["writerStatements"].get(i));
+                    .and_then(|i| at(challenge.body(), "writerStatements").get(i));
                 match &model {
                     Ok((law_id, module, _))
-                        if law.is_some_and(|l| l["artifactId"] == *law_id)
+                        if law.is_some_and(|l| at(l, "artifactId") == *law_id)
                             && (kind == "initialization"
                                 || kind == "non_vacuity"
                                 || (kind == "preservation"
                                     && writer.is_some_and(|w| {
-                                        w["identity"]["artifactId"] == bounds.action
+                                        at(at(w, "identity"), "artifactId") == bounds.action
                                     }))) =>
                     {
                         Ok(module.clone())
@@ -74,14 +74,16 @@ impl ApprovedContract {
             .collect();
         let interpretation = model
             .as_ref()
-            .map(|(_, _, types)| types.clone())
-            .unwrap_or(Value::Null);
+            .map_or(Value::Null, |(_, _, types)| types.clone());
         Ok(Batch {
             challenge,
             bounds: json!({"profile":"norn.quint.one-create/1","action":bounds.action,"inputs":bounds.inputs,"identity":bounds.identity,"seed":bounds.seed,"initialStore":"empty","maxObjects":1,"maxSteps":1,"authorization":"pre-authorized; permission policy outside profile","absentInputs":"all non-identity fields not in inputs","interpretation":interpretation}),
             goals,
         })
     }
+}
+fn at<'a>(value: &'a Value, key: &str) -> &'a Value {
+    value.get(key).unwrap_or(&Value::Null)
 }
 fn text(value: &Value) -> Result<&str, String> {
     value
@@ -186,13 +188,14 @@ fn lower(
             && action.access.is_none(),
         "unsupported transitive action effects or reads",
     )?;
-    let effect = &action_json["effectProgram"];
+    let effect = at(&action_json, "effectProgram");
     demand(
-        effect["kind"] == "upsert_input_object" && effect["writeMode"]["kind"] == "create_only",
+        at(effect, "kind") == "upsert_input_object"
+            && at(at(effect, "writeMode"), "kind") == "create_only",
         "only create-only input writers supported",
     )?;
-    let subject = text(&effect["objectKind"])?;
-    let identity = text(&effect["objectIdField"])?;
+    let subject = text(at(effect, "objectKind"))?;
+    let identity = text(at(effect, "objectIdField"))?;
     demand(
         !bounds.identity.is_empty() && bounds.identity.len() <= 128 && bounds.inputs.len() <= 16,
         "bounds exceed profile",
@@ -217,7 +220,7 @@ fn lower(
     let mut variables = Vec::new();
     let mut types = BTreeMap::new();
     let mut numeric = None;
-    let schema = &action_json["inputSchema"]["properties"];
+    let schema = at(at(&action_json, "inputSchema"), "properties");
     demand(
         schema
             .as_object()
@@ -229,7 +232,10 @@ fn lower(
         demand(
             !property.computed
                 && !property.nullable
-                && property.constraints.iter().all(|c| c.is_empty()),
+                && property
+                    .constraints
+                    .iter()
+                    .all(norn_ir::PropertyConstraints::is_empty),
             "unsupported property constraints",
         )?;
         let crate::EffectiveKind::Base(kind) = &property.kind else {
@@ -238,9 +244,9 @@ fn lower(
         let declared = serde_json::to_value(kind).map_err(|_error| "property")?;
         if id == identity {
             demand(
-                declared["kind"] == "text"
+                at(&declared, "kind") == "text"
                     && !bounds.inputs.contains_key(id)
-                    && schema[id] == json!({"type":"string"}),
+                    && at(schema, id) == json!({"type":"string"}),
                 "identity must be singleton text",
             )?;
             object
@@ -252,27 +258,27 @@ fn lower(
             continue;
         }
         demand(
-            declared["kind"] == "decimal"
+            at(&declared, "kind") == "decimal"
                 && declared.get("currencySource").is_none()
                 && declared.get("perUnit").is_none()
                 && declared.get("rounding").is_none(),
             "only fixed-unit decimals supported",
         )?;
         demand(
-            schema[id]["nornType"] == declared
-                && schema[id]
+            serde_json::from_value::<norn_ir::PropertyType>(at(at(schema, id), "nornType").clone())
+                .ok()
+                .as_ref()
+                == Some(kind)
+                && at(schema, id)
                     .as_object()
                     .is_some_and(|s| s.keys().all(|k| k == "type" || k == "nornType")),
-            &format!(
-                "input decimal contract differs for {id}: stored {declared}; input {}",
-                schema[id]
-            ),
+            "input decimal contract differs",
         )?;
-        let scale = declared["scale"]
+        let scale = at(&declared, "scale")
             .as_u64()
             .and_then(|v| u32::try_from(v).ok())
             .ok_or("scale")?;
-        let interpretation = json!({"scale":scale,"unit":declared["unit"]});
+        let interpretation = json!({"scale":scale,"unit":at(&declared, "unit")});
         demand(
             numeric.as_ref().is_none_or(|n| n == &interpretation),
             "mixed scales or units unsupported",
@@ -298,7 +304,7 @@ fn lower(
     )?;
     let scale = numeric
         .as_ref()
-        .and_then(|n| n["scale"].as_u64())
+        .and_then(|n| at(n, "scale").as_u64())
         .and_then(|n| u32::try_from(n).ok())
         .ok_or("no numeric properties")?;
     for derivation in &action.derive {
@@ -313,7 +319,7 @@ fn lower(
         let value = expression(derivation.expression.as_str(), &fields, scale)?;
         fields.insert(derivation.field.clone(), format!("({value})"));
     }
-    for required in action_json["inputSchema"]["required"]
+    for required in at(at(&action_json, "inputSchema"), "required")
         .as_array()
         .ok_or("required input")?
     {
@@ -364,7 +370,9 @@ fn lower(
     let response = match law.modality {
         norn_ir::LawModality::Always {} => response,
         norn_ir::LawModality::Never {} => format!("not({response})"),
-        _ => return Err("unsupported temporal law".into()),
+        norn_ir::LawModality::Eventually {} | norn_ir::LawModality::Until { .. } => {
+            return Err("unsupported temporal law".into());
+        }
     };
     let condition = law
         .condition
