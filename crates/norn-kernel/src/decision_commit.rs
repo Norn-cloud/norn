@@ -1609,6 +1609,14 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-UNIQUE-1: commit refused a normalized business-key collision.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// Declaring key root, without object identities or key values.
+        owner: String,
+        /// Declared key name.
+        key: String,
+    },
     /// Complete atomic closure includes foreign or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the local profile")]
     AtomicBoundary {
@@ -1894,6 +1902,7 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
             Self::InvalidInitialState { .. } | Self::NotFromState { .. } => {
@@ -1944,7 +1953,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::AtomicDeliveryBoundary { .. }
+            Self::IdentityCollision { .. }
+            | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -1959,13 +1969,16 @@ impl<X> DecisionRefusal<X> {
     }
 
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
+        use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
+
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
-            CommitError::AtomicDeliveryBoundary { consumed } => {
-                Self::AtomicDeliveryBoundary { consumed }
-            }
+            AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
+            CommitError::IdentityCollision { owner, key, .. } => {
+                Self::IdentityCollision { owner, key }
+            }
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },
@@ -2027,9 +2040,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
             },
-            CommitError::AccountingPosting { key, reason } => {
-                Self::AccountingPosting { key, reason }
-            }
+            AccountingPosting { key, reason } => Self::AccountingPosting { key, reason },
             CommitError::InvariantViolation {
                 key,
                 owner,
