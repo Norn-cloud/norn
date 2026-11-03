@@ -905,7 +905,7 @@ mod tests {
                 *additivity = PropertyAdditivity::Additive;
             }
         }
-        let mut declared = artifacts.clone();
+        let mut declared = artifacts;
         declared[0].payload = payload(&ArtifactKind::Entity, &root);
         let existing = compute::admit(
             plan.definitions(),
@@ -957,6 +957,40 @@ mod tests {
             compute::arithmetic::ratio(showcase[0], showcase[1]),
             Some(980_000)
         );
+    }
+
+    #[test]
+    fn explicit_ratio_properties_derive_from_their_declared_operands() {
+        let mut artifacts = fixture();
+        artifacts.truncate(1);
+        let mut root: EntityRootV2 = serde_json::from_value(serde_json::to_value(artifacts[0].payload.to_json_value()).expect("payload JSON")).expect("entity");
+        for property in &mut root.object_type.properties {
+            if let PropertyType::Decimal { additivity, .. } = &mut property.property_type {
+                *additivity = PropertyAdditivity::Additive;
+            }
+        }
+        root.object_type.properties.push(property("yield_ratio", PropertyType::Decimal {
+            scale: WholeNumber(6), rounding: None, unit: None, currency_source: None, per_unit: None,
+            additivity: PropertyAdditivity::Ratio { numerator: PropertyId("recovered".to_owned()), denominator: PropertyId("input".to_owned()) },
+        }));
+        artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
+        let generated = space(&artifacts);
+        let plan = generated.admit(&yield_question(&generated), 100).expect("declared ratio terms");
+        assert_eq!(plan.sums().iter().map(|sum| sum.property.id.as_str()).collect::<Vec<_>>(), ["recovered", "input"]);
+        assert!(generated.candidates().iter().all(|candidate| candidate.conservation.is_empty() && !candidate.definition.norn.certified));
+    }
+
+    #[test]
+    fn conservation_cannot_replace_an_explicit_non_additive_or_balance_contract() {
+        for class in [PropertyAdditivity::NonAdditive, PropertyAdditivity::SemiAdditive,
+            PropertyAdditivity::Ratio { numerator: PropertyId("recovered".to_owned()), denominator: PropertyId("loss".to_owned()) }] {
+            let mut artifacts = fixture();
+            let mut root: EntityRootV2 = serde_json::from_value(serde_json::to_value(artifacts[0].payload.to_json_value()).expect("payload JSON")).expect("entity");
+            let PropertyType::Decimal { additivity, .. } = &mut root.object_type.properties[0].property_type else { panic!("input quantity") };
+            *additivity = class;
+            artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
+            assert!(space(&artifacts).candidates().is_empty());
+        }
     }
 
     #[test]
