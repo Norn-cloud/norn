@@ -149,7 +149,7 @@
   },
   {
     "code": "artifact_set.lifecycle.direct_write",
-    "fix": "Change lifecycle state through a declared transition instead of a direct property assignment."
+    "fix": "Change lifecycle state through a declared transition instead of a direct property assignment, and omit lifecycle-owned properties from the action input schema."
   },
   {
     "code": "artifact_set.lifecycle.not_a_lifecycle",
@@ -169,7 +169,7 @@
   },
   {
     "code": "artifact_set.lifecycle.unresolved_lifecycles",
-    "fix": "Include the lifecycle declarations and their pinned dependencies before checking the writer."
+    "fix": "Resolve the reported blocking lifecycle diagnostic before checking the writer; supply missing declarations or dependencies only when that diagnostic requires them."
   },
   {
     "code": "artifact_set.marking.duplicate",
@@ -1005,7 +1005,7 @@
   },
   {
     "code": "lifecycle.validation.undeclared_write",
-    "fix": "Replace the state assignment with a declared transition matching its source and destination."
+    "fix": "For creation, use an admitted initial state; for later state changes, use a declared transition matching the source and destination."
   },
   {
     "code": "lifecycle.validation.unknown_property",
@@ -1057,7 +1057,7 @@
   },
   {
     "code": "mapping.model.lifecycle_member",
-    "fix": "Change the lifecycle property through a lifecycle mapping rule instead of a member assignment."
+    "fix": "Use a lifecycle mapping rule for lifecycle properties; use a property mapping rule when the named property has no lifecycle."
   },
   {
     "code": "mapping.model.link_target_mismatch",
