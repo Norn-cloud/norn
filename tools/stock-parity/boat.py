@@ -7,8 +7,8 @@ from threading import Timer
 import hashlib
 
 
-def boat(*args):
-    return subprocess.check_output(['boat', *args], text=True, timeout=900)
+def boat(*args, timeout=900):
+    return subprocess.check_output(['boat', *args], text=True, timeout=timeout)
 
 
 def cleanup(vm):
@@ -71,7 +71,7 @@ bash /home/user/parity-source/tools/stock-parity/boot.sh
 cd /home/user/parity-source/tools/stock-parity
 python3 run.py /home/user/traces.json /home/user/results.json
 '''.replace('DIGEST', digest)
-        result = json.loads(boat('exec', vm, '--json', '--timeout', '600', '--', 'bash', '-lc', command))
+        result = json.loads(boat('exec', vm, '--json', '--timeout', '1800', '--', 'bash', '-lc', command, timeout=1860))
         if not result.get('success'):
             raise RuntimeError('Oracle batch incomplete; inspect disposable VM logs before cleanup')
         boat('scp', f'{vm}:/home/user/results.json', str(args.output))
