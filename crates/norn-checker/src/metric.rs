@@ -650,9 +650,8 @@ impl<'a> Checker<'a> {
             {
                 Some(codes::SEMI_ADDITIVE_TIME)
             }
-            norn_ir::PropertyAdditivity::SemiAdditive {} | norn_ir::PropertyAdditivity::Additive {} => {
-                None
-            }
+            norn_ir::PropertyAdditivity::SemiAdditive {}
+            | norn_ir::PropertyAdditivity::Additive {} => None,
         };
         if let Some(code) = refusal {
             self.reject(code, &format!("{at}/measure/property"));
