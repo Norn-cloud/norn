@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.stale_evidence",
+  "message": "evidence identity differs from the current generated goal or independently retained result pin",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
