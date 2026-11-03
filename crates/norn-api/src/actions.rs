@@ -21,7 +21,7 @@ pub struct ActionRequest {
     /// Admitted action identity.
     pub action_id: String,
     /// Exact business arguments.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = action_input_schema)]
     pub input: RuntimeObject,
     /// Stable retry identity.
     pub idempotency_key: String,
@@ -36,8 +36,14 @@ pub struct ActionResponse {
     /// Whether this was an identical retry.
     pub replayed: bool,
     /// Kernel call record without transport reinterpretation.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = action_record_schema)]
     pub record: norn_kernel::ActionCallRecord,
+}
+fn action_input_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornActionInput")
+}
+fn action_record_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornActionCallRecord")
 }
 pub(crate) struct Policy<'a>(pub(crate) &'a dyn crate::authz::Authorizer);
 impl ActionAuthorizer for Policy<'_> {

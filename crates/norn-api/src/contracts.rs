@@ -24,6 +24,16 @@ impl Modify for ContractSchemas {
         for (name, schema) in artifact_envelope_schemas()
             .into_iter()
             .chain(project_schemars_components(
+                schemars::schema_for!(norn_ir::RuntimeObject),
+                "NornActionInput",
+                "NornAction",
+            ))
+            .chain(project_schemars_components(
+                schemars::schema_for!(norn_kernel::ActionCallRecord),
+                "NornActionCallRecord",
+                "NornAction",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",

@@ -11,6 +11,7 @@ default = ["http-host"]
 http-host = ["dep:axum", "dep:tokio"]
 
 [dependencies]
+schemars = { version = "1.2.1", features = ["derive"] }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }

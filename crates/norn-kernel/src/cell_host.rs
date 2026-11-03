@@ -120,7 +120,9 @@ impl OwnedRowsCommitProof {
 }
 
 /// Identity of one ontology object in a cell: its type and identity key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactKey {
     /// The object type.

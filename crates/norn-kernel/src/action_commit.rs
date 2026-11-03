@@ -285,7 +285,7 @@ pub trait ActionAuthorizer {
 }
 
 /// One field produced by an ordered action input derivation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionDerivedValue {
     /// The derived field.
@@ -295,7 +295,7 @@ pub struct ActionDerivedValue {
 }
 
 /// The successful outcome of one action precondition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionPreconditionOutcome {
     /// The expression evaluated.
@@ -366,7 +366,7 @@ struct ActionPreconditionOutcomeRef<'a> {
 
 /// The idempotency record of a committed call (the values of its
 /// [`ACTION_CALL_TYPE`] object).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionCallRecord {
     /// The action.

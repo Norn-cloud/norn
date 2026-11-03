@@ -10,6 +10,7 @@ description = "sans-IO decider + CellHost trait/effects (ring 0; see AGENTS.md)"
 path = "src/lib.rs"
 
 [dependencies]
+schemars = { version = "1.2.1", features = ["derive"] }
 norn-authz = { path = "../norn-authz" }
 norn-decisions = { path = "../norn-decisions" }
 # #3083: shared commit admission invokes the existing pure exact posting validator.
