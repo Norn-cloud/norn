@@ -5513,7 +5513,12 @@ fn warning_severity_governing_law_quarantines_observed_fact() {
             .expect("authority")
             .is_none()
     );
-    let raw = norn_kernel::FactKey::new("quality.Measurement", "MEAS-1");
+    let raw = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "quality.Measurement", "MEAS-1")
+        .expect("raw record")
+        .expect("captured");
     assert!(
         cell.store()
             .read()
