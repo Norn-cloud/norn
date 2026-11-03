@@ -49,3 +49,12 @@ test("an operand without a declared unit shows its bare amount", () => {
   expect(operandUnits(question, metrics, unitless)).toEqual([undefined, undefined])
   expect(measured("294", undefined)).toBe("294")
 })
+
+test("a count is a number of records, never an amount in its property's unit", () => {
+  const metrics = readDocument<Metric[]>(recorded("scrap-yield.metrics.json"), "recorded").document
+  const objectType = readDocument<ObjectType>(recorded("scrap-yield.object-type.json"), "recorded").document
+  const counted = metrics.map((metric) => metric.type_params.metric_aggregation_params
+    ? { ...metric, type_params: { ...metric.type_params, metric_aggregation_params: { ...metric.type_params.metric_aggregation_params, agg: "count" as const } } }
+    : metric)
+  expect(operandUnits(question, counted, objectType)).toEqual([undefined, undefined])
+})

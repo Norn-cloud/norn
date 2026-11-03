@@ -3,8 +3,9 @@ import type { Metric, ObjectType, Question } from "./transport.ts"
 /**
  * The unit of each operand, in `totals` order, read from the declarations the
  * question was admitted with: the selected metric (or a ratio's numerator and
- * denominator), the stored property each one sums, and that property's
- * declared unit. An operand whose unit is not declared reads as `undefined`.
+ * denominator), the stored property each one aggregates, and that property's
+ * declared unit. A count has no unit, and neither does an operand whose unit
+ * is not declared: both read as `undefined`.
  */
 export function operandUnits(question: Question, metrics: readonly Metric[], objectType: ObjectType): readonly (string | undefined)[] {
   const named = (name: string | null | undefined) => metrics.find((metric) => metric.name === name)
@@ -14,6 +15,8 @@ export function operandUnits(question: Question, metrics: readonly Metric[], obj
     ? [named(selected.type_params.numerator), named(selected.type_params.denominator)]
     : [selected]
   return operands.map((operand) => {
+    const agg = operand?.type_params.metric_aggregation_params?.agg
+    if (agg === "count" || agg === "count_distinct") return undefined
     const property = objectType.properties?.find(({ id }) => id === operand?.type_params.expr)
     const type = property?.type
     return type !== undefined && "unit" in type ? type.unit?.code : undefined
