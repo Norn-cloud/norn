@@ -1303,7 +1303,9 @@ define_payload_root!(
     // per-member contract of `value` here is any JSON because it depends on
     // its sibling. The doc comment below is that schema's description.
     /// The payload of a `setting` artifact: one reviewed, effective-dated
-    /// value whose JSON type is fixed by `valueType`.
+    /// value paired with `valueType`. Version 0.2 number settings require exact
+    /// decimal-string literals; verified retained 0.1 keeps its binary64 JSON
+    /// number profile.
     #[schemars(with = "SettingRoot")]
     SettingPayload {
     required {

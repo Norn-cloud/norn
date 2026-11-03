@@ -6,10 +6,10 @@
 //! top, and its nested objects keep the members the validator does not check
 //! in a flattened `additional` map (see [`crate::members`]).
 //!
-//! `value` is a [`SettingValue`], a union tagged by the wire `valueType`: a
+//! `value` is a [`SettingValue`], a union tagged by the wire `valueType`:
 //! `number` settings use the shared exact decimal-string literal on the wire.
 //! This keeps economic values out of definition JSON's binary64 representation;
-//! execution decodes them to exact runtime numbers. Numeric JSON tokens refuse.
+//! execution decodes them to exact runtime numbers. New 0.2 numeric JSON tokens refuse.
 //! PARAM-EXACT-1: numeric settings retain their literal through admission and
 //! decode to the common exact runtime profile without rounding. Other value
 //! kinds retain their existing value representation. PARAM-WIRE-2 keeps retained
@@ -28,7 +28,9 @@ use crate::{Decimal, DecimalLiteral, JsonValue, RuntimeValue, RuntimeValueError}
 pub struct SettingRoot {
     pub setting_version: IrVersion02,
     pub setting_key: String,
-    /// The value, tagged by its wire `valueType`.
+    /// The wire value paired with `valueType`: version 0.2 numbers require
+    /// exact decimal-string literals; retained 0.1 keeps its binary64 profile.
+    /// A `json` setting may be `null`.
     pub value: SettingValue,
     pub effective_from: String,
     /// Must sort after `effectiveFrom` (checker rule).
@@ -59,7 +61,7 @@ pub enum SettingValue {
 
 impl SettingValue {
     /// Pair a wire `valueType` with its `value`, or `None` when the value's
-    /// JSON type disagrees with `valueType` or a decimal literal is inexact.
+    /// wire encoding disagrees with `valueType` or a decimal literal is inexact.
     #[must_use]
     pub fn from_wire(value_type: SettingValueType, value: JsonValue) -> Option<Self> {
         match (value_type, value) {
@@ -138,7 +140,7 @@ struct SettingRootWire {
     setting_version: IrVersion02,
     setting_key: String,
     value_type: SettingValueType,
-    /// Version 0.2 numbers use exact decimal strings; retained 0.1 numbers
+    /// Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers
     /// keep binary64 JSON numbers. A `json` setting may be `null`.
     value: JsonValue,
     effective_from: String,
