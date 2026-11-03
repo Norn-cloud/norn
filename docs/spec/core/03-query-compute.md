@@ -16,6 +16,29 @@ Reuse `RuleRoot`, `RuleDecisionV1`, `JdmGraph`, `SliceDeclaration`, `ZenExpressi
 
 Derived concepts and questions share this algebra. Source cursors are opaque and compared only by their connector's declared ordering; never take a meaningless minimum across unrelated sources. Expose a vector frontier, not a fabricated global source sequence.
 
+## Numeric additivity admission (#527)
+
+**METRIC-ADDITIVITY-1:** numeric property types declare `additivity.kind` as
+`additive`, `semi_additive`, `non_additive`, or `ratio`. Ratio declarations bind
+`numerator` and `denominator` properties at the object's grain. Omission means
+`undeclared`: point reads remain legal, but every aggregate over that numeric
+property, including counts and extrema, refuses with
+`metric.validation.undeclared_additivity` and `FixDefinition` guidance.
+Units never imply additivity. Existing metric metadata cannot authorize an
+aggregation the property's contract forbids. Stored ratios refuse scalar
+aggregation (`metric.validation.ratio_aggregation`); callers must sum their
+operands separately before dividing. Non-additive prices require a declared
+weighting calculation; this bounded aggregate vocabulary provides none.
+Semi-additive balances require the existing snapshot contract, whose unsupported
+execution continues to refuse. Inheritance must preserve the classification.
+
+Named scenarios: **METRIC-UNDECLARED** (all numeric aggregates refuse without a
+declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
+**METRIC-BALANCE-TIME** (an additive metric cannot bypass a balance's time
+restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
+keyed compute admission). Conservation-derived candidates and their law
+provenance are a separate slice; this admission change grants no law exemption.
+
 ## Evaluation and obligation semantics
 
 1. Resolve the pinned graph and read scope. Materialize bounded complete dependencies, including empty partitions and memberships; pagination cannot stand for a universal domain. Sort by the declared total order before each fold; missing/duplicate final IDs refuse.

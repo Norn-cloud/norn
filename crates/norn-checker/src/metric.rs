@@ -20,6 +20,10 @@ use norn_ir::metric::DimensionPath;
 
 /// Stable diagnostic codes for this vocabulary.
 pub mod codes {
+    /// Numeric types without an explicit aggregation contract fail closed.
+    pub const UNDECLARED_ADDITIVITY: &str = "metric.validation.undeclared_additivity";
+    /// Ratios must be recomputed from operand sums, never aggregated as scalars.
+    pub const RATIO_AGGREGATION: &str = "metric.validation.ratio_aggregation";
     /// Calculation semantics outside the admitted pure checker profile.
     pub const UNSUPPORTED_SEMANTICS: &str = "metric.validation.unsupported_semantics";
     /// Norn policy values must be explicit and valid.
@@ -391,7 +395,7 @@ fn is_time(property: &EffectiveProperty) -> bool {
 fn is_numeric(property: &EffectiveProperty) -> bool {
     matches!(
         property.kind,
-        EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+        EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. })
     )
 }
 
@@ -400,7 +404,7 @@ fn is_scalar(property: &EffectiveProperty) -> bool {
         property.kind,
         EffectiveKind::Base(
             PropertyType::Text { .. }
-                | PropertyType::Integer {}
+                | PropertyType::Integer { .. }
                 | PropertyType::Decimal { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Timestamp { .. }
@@ -633,6 +637,24 @@ impl<'a> Checker<'a> {
             self.reject(codes::UNSUPPORTED_SEMANTICS, &format!("{at}/measure"));
             return None;
         }
+        if let Some(property) = resolved.filter(|property| is_numeric(property)) {
+            let EffectiveKind::Base(kind) = &property.kind else { return None };
+            let refusal = match kind.additivity() {
+                norn_ir::PropertyAdditivity::Undeclared => Some(codes::UNDECLARED_ADDITIVITY),
+                norn_ir::PropertyAdditivity::Ratio { .. } => Some(codes::RATIO_AGGREGATION),
+                norn_ir::PropertyAdditivity::NonAdditive => Some(codes::INVALID_ADDITIVITY),
+                norn_ir::PropertyAdditivity::SemiAdditive
+                    if !matches!(metric.additivity, MetricAdditivity::SemiAdditive { .. })
+                        || aggregate != MeasureAggregate::Sum => Some(codes::SEMI_ADDITIVE_TIME),
+                norn_ir::PropertyAdditivity::SemiAdditive | norn_ir::PropertyAdditivity::Additive => None,
+            };
+            if let Some(code) = refusal {
+                self.reject(code, &format!("{at}/measure/property"));
+                if let Some(finding) = self.out.last_mut() {
+                    finding.remediation = Some(crate::DiagnosticRemediation::FixDefinition);
+                }
+            }
+        }
         if property.is_some() && resolved.is_none() {
             self.reject(codes::UNKNOWN_PATH, &format!("{at}/measure/property"));
         }
@@ -806,7 +828,7 @@ impl<'a> Checker<'a> {
                 }
                 EffectiveKind::Base(
                     PropertyType::Text { .. }
-                    | PropertyType::Integer {}
+                    | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
                     | PropertyType::Boolean {}
                     | PropertyType::Timestamp { .. }

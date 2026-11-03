@@ -127,6 +127,8 @@ proptest! {
 
 fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
     PropertyType::Decimal {
+        additivity: Default::default(),
+
         scale: norn_ir::WholeNumber(2),
         unit: Some(norn_ir::UnitRef {
             system,

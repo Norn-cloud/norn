@@ -40,11 +40,16 @@ export interface EnumValue {
   readonly description?: string
 }
 
+/** Numeric aggregation semantics; omission permits point reads only. */
+export type PropertyAdditivity =
+  | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
+  | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
+
 /** One of the ten EntityIR v2 value kinds (`PropertyType`). */
 export type PropertyType =
   | { readonly kind: "text"; readonly format?: TextFormat }
-  | { readonly kind: "integer" }
-  | { readonly kind: "decimal"; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
+  | { readonly kind: "integer"; readonly additivity?: PropertyAdditivity }
+  | { readonly kind: "decimal"; readonly additivity?: PropertyAdditivity; readonly scale: number; readonly unit?: UnitRef; readonly currencySource?: CurrencySource; readonly perUnit?: UnitRef; readonly rounding?: Rounding }
   | { readonly kind: "boolean" }
   | { readonly kind: "timestamp"; readonly timezone: TimezonePolicy }
   | { readonly kind: "date" }

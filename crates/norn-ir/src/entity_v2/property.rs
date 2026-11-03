@@ -111,6 +111,37 @@ pub struct PropertyTypeDef {
     pub markings: Vec<MarkingId>,
 }
 
+/// METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
+/// Missing declarations permit point reads but never authorize aggregation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PropertyAdditivity {
+    /// No aggregation contract has been declared.
+    #[default]
+    Undeclared,
+    /// Summable across entities and time.
+    Additive,
+    /// Summable across entities at a single instant, never across time.
+    SemiAdditive,
+    /// Requires a separately declared weighting calculation.
+    NonAdditive,
+    /// Recompute from the sums of these operands, never average stored ratios.
+    Ratio {
+        /// Numerator property at the same object grain.
+        numerator: super::object::PropertyId,
+        /// Denominator property at the same object grain.
+        denominator: super::object::PropertyId,
+    },
+}
+
+impl PropertyAdditivity {
+    /// Whether canonical serialization omits the undeclared default.
+    #[must_use]
+    pub const fn is_undeclared(&self) -> bool {
+        matches!(self, Self::Undeclared)
+    }
+}
+
 /// The value kind of a property, tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -131,10 +162,17 @@ pub enum PropertyType {
         format: Option<TextFormat>,
     },
     /// A signed 64-bit integer.
-    Integer {},
+    Integer {
+        /// Explicit aggregation contract; a missing declaration fails closed.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
+    },
     /// An exact decimal with a fixed number of fraction digits, optionally a
     /// quantity in a declared unit.
     Decimal {
+        /// Explicit aggregation contract; units do not imply additivity.
+        #[serde(default, skip_serializing_if = "PropertyAdditivity::is_undeclared")]
+        additivity: PropertyAdditivity,
         /// Fraction digits every value is held at (`2` for cents). At most 28,
         /// the exact range of ZEN Expression's decimal (checked by
         /// `norn-checker`).
@@ -212,6 +250,15 @@ pub enum PropertyType {
 }
 
 impl PropertyType {
+    /// METRIC-ADDITIVITY-1: only an explicit numeric contract admits aggregation.
+    #[must_use]
+    pub const fn additivity(&self) -> &PropertyAdditivity {
+        match self {
+            Self::Integer { additivity } | Self::Decimal { additivity, .. } => additivity,
+            _ => &PropertyAdditivity::Undeclared,
+        }
+    }
+
     /// The wire `kind` tag.
     #[must_use]
     pub const fn kind(&self) -> PropertyKind {

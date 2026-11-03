@@ -242,15 +242,28 @@ export class SchemaProjection {
           throw new CompileError("NORN-FLOW-LITERAL", `Norn.decimal takes an integer literal scale between 0 and ${MAX_DECIMAL_SCALE}`, scale)
         }
         const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
-        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
+        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding" && key !== "additivity") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
         const unitNode = options.get("unit")
         const currencyNode = options.get("currency")
         const modeNode = options.get("rounding")
         const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
         if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
+        const additivityNode = options.get("additivity")
+        let additivity: E.PropertyAdditivity | undefined
+        if (additivityNode !== undefined) {
+          const fields = this.objectLiteral(additivityNode)
+          const kind = this.stringLiteral(fields.get("kind"), additivityNode, "additivity.kind")
+          if (kind === "ratio" && fields.size === 3) {
+            additivity = { kind, numerator: this.stringLiteral(fields.get("numerator"), additivityNode, "additivity.numerator"), denominator: this.stringLiteral(fields.get("denominator"), additivityNode, "additivity.denominator") }
+          } else if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
+            additivity = { kind }
+          } else {
+            throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", additivityNode)
+          }
+        }
         const rounded = (type: E.PropertyType): E.PropertyType => {
           if (type.kind !== "decimal") throw new CompileError("NORN-FLOW-LITERAL", "rounding requires Decimal", call)
-          return mode === undefined ? type : { ...type, rounding: mode }
+          return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }) }
         }
 
         if (currencyNode !== undefined) {

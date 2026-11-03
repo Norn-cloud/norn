@@ -555,7 +555,7 @@ impl EffectiveProperty {
             }
             PropertyType::Record { .. }
             | PropertyType::Text { .. }
-            | PropertyType::Integer {}
+            | PropertyType::Integer { .. }
             | PropertyType::Boolean {}
             | PropertyType::Enum { .. }
             | PropertyType::Timestamp { .. }
@@ -633,7 +633,7 @@ impl EffectiveProperty {
                 | Value::Array(_)
                 | Value::Object(_) => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let integer =
                     integer_literal(value).ok_or(InstanceError::TypeMismatch("integer"))?;
                 self.check_bounds(&integer.to_string())
@@ -739,7 +739,7 @@ impl EffectiveProperty {
                 Some(text) if values.iter().any(|entry| entry.value == text) => Ok(()),
                 _ => Err(InstanceError::TypeMismatch("enum")),
             },
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 let Some(integer) = value.as_i64() else {
                     return Err(InstanceError::TypeMismatch("integer"));
                 };
@@ -1041,10 +1041,10 @@ impl EffectiveProperty {
     ) -> Result<RuntimeValue, norn_ir::RuntimeValueError> {
         match (&self.kind, literal) {
             (
-                EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }),
+                EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }),
                 JsonValue::String(text),
             ) => text.parse::<norn_ir::Decimal>().map(RuntimeValue::Number),
-            (EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }), _) => {
+            (EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }), _) => {
                 Err(norn_ir::RuntimeValueError::InvalidJson {
                     message: "numeric IR defaults must be exact decimal strings".to_owned(),
                 })
@@ -1088,11 +1088,11 @@ impl EffectiveProperty {
         }
         let value = match (&self.kind, &default.0) {
             // An integer default is an exact decimal string in IR.
-            (EffectiveKind::Base(PropertyType::Integer {}), JsonValue::String(text)) => text
+            (EffectiveKind::Base(PropertyType::Integer { .. }), JsonValue::String(text)) => text
                 .parse::<i64>()
                 .map(Value::from)
                 .map_err(|_out_of_range| InstanceError::TypeMismatch("integer"))?,
-            (EffectiveKind::Base(PropertyType::Integer {}), _) => {
+            (EffectiveKind::Base(PropertyType::Integer { .. }), _) => {
                 return Err(InstanceError::TypeMismatch("integer"));
             }
             (EffectiveKind::Base(PropertyType::Record { .. }), literal) => {
@@ -1252,6 +1252,7 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
         }
         (
             PropertyType::Decimal {
+        additivity: candidate_additivity,
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
@@ -1259,13 +1260,15 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 per_unit: candidate_per_unit,
             },
             PropertyType::Decimal {
+        additivity: previous_additivity,
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
                 rounding: previous_rounding,
                 per_unit: previous_per_unit,
             },
-        ) if candidate_per_unit == previous_per_unit
+        ) if candidate_additivity == previous_additivity
+            && candidate_per_unit == previous_per_unit
             && candidate_unit == previous_unit
             && candidate_currency == previous_currency
             && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
@@ -1549,7 +1552,7 @@ impl EffectiveKey {
                         let steps = self.normalize.get(id).map_or(&[][..], Vec::as_slice);
                         Some(KeyComponent::Text(normalize_text(text, steps)))
                     }
-                    (PropertyType::Integer {}, value) => {
+                    (PropertyType::Integer { .. }, value) => {
                         integer_literal(value).map(KeyComponent::Integer)
                     }
                     (PropertyType::Boolean {}, Value::Bool(value)) => {

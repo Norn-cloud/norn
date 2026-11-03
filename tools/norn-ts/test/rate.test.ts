@@ -49,3 +49,17 @@ test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bou
   expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({code:"NORN-FLOW-UNBOUNDED",message:expect.stringContaining("norn-expr/4 source bounds")})]))
  }
 })
+
+
+test("METRIC-ADDITIVITY-1 decimal authoring retains explicit classes and refuses incomplete ratios", () => {
+  for (const declaration of ['{kind:"additive"}', '{kind:"semi_additive"}', '{kind:"non_additive"}', '{kind:"ratio",numerator:"recovered",denominator:"input"}']) {
+    const text = source("6").replace(/Norn\.rate\(6,.*?\) /, `Norn.decimal(6, {additivity:${declaration}}) `)
+    const result = compileModule(text, {orgId:"org_demo",environmentId:"dev"})
+    if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
+    expect(JSON.stringify(result.artifacts)).toContain('"additivity"')
+  }
+  for (const declaration of ['{kind:"ratio"}', '{kind:"additive",numerator:"x"}', '{kind:"guess"}']) {
+    const text = source("6").replace(/Norn\.rate\(6,.*?\) /, `Norn.decimal(6, {additivity:${declaration}}) `)
+    expect(compileModule(text, {orgId:"org_demo",environmentId:"dev"}).ok).toBe(false)
+  }
+})

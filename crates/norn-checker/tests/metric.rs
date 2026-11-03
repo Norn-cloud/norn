@@ -1027,3 +1027,36 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
     definitions[0].norn.default_filters = std::mem::take(&mut question.filters);
     assert!(admit(&definitions, &question, &catalog, 100).is_err());
 }
+
+/// METRIC-ADDITIVITY-1: declaration, rather than unit or metric metadata, authorizes aggregation.
+#[test]
+fn numeric_additivity_is_required_even_for_count_and_extrema() {
+    let (metric, question) = sales();
+    for aggregate in ["sum", "average", "min", "max", "count", "count_distinct"] {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
+        let amount = properties.iter_mut().find(|p| p["id"] == "net_amount").expect("amount");
+        amount["type"].as_object_mut().expect("type").remove("additivity");
+        let mut measure = metric.clone();
+        measure["type_params"]["metric_aggregation_params"]["agg"] = json!(aggregate);
+        let findings = check_metrics_and_questions(&[decode(&measure)], &[decode(&question)], &catalog(&ontology.to_string()));
+        assert_code(&findings, codes::UNDECLARED_ADDITIVITY);
+        let refusal = findings.iter().find(|d| d.code == codes::UNDECLARED_ADDITIVITY).expect("refusal");
+        assert_eq!(refusal.remediation, Some(norn_checker::DiagnosticRemediation::FixDefinition));
+    }
+}
+
+#[test]
+fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
+    let (metric, question) = sales();
+    for (class, expected) in [
+        (json!({"kind":"ratio", "numerator":"weight", "denominator":"volume"}), codes::RATIO_AGGREGATION),
+        (json!({"kind":"non_additive"}), codes::INVALID_ADDITIVITY),
+        (json!({"kind":"semi_additive"}), codes::SEMI_ADDITIVE_TIME),
+    ] {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
+        properties.iter_mut().find(|p| p["id"] == "net_amount").expect("amount")["type"]["additivity"] = class;
+        assert_code(&check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string())), expected);
+    }
+}

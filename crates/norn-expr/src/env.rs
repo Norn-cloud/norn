@@ -1697,8 +1697,9 @@ impl<'d, 'e> Derivation<'d, 'e> {
         loop {
             let ty = match current {
                 PropertyType::Text { format } => Type::Text { format: *format },
-                PropertyType::Integer {} => Type::Integer,
+                PropertyType::Integer { .. } => Type::Integer,
                 PropertyType::Decimal {
+        additivity: _,
                     scale,
                     unit,
                     rounding,
