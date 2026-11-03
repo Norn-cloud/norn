@@ -33,11 +33,10 @@ Case = TypedDict('Case', {'case': str, 'method': str,
     'initial': Checkpoint, 'checkpoints': List[Checkpoint]}, total=False)
 
 
-class StockDump(TypedDict):
-    format: Literal['norn.stock-dump/1']
-    engine: Literal['norn', 'erpnext']
-    versions: Dict[str, Any]
-    cases: List[Case]
+StockDump = TypedDict('StockDump', {
+    'format': Literal['norn.stock-dump/1'], 'engine': Literal['norn', 'erpnext'],
+    'versions': Dict[str, Any], 'cases': List[Case],
+})
 
 
 # Input has already passed the shared TypeScript parseStockTrace boundary.

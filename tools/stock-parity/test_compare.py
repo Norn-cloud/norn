@@ -76,6 +76,8 @@ class Contract(unittest.TestCase):
             d['cases'][0]['checkpoints'][0]['attempts'][0]['outcome'] = 'refused'
         counts = self.report()['counts']
         self.assertEqual((counts['unsupported'], counts['untriaged']), (2, 0))
+        self.n['cases'][0]['initial'] = dump('norn')['cases'][0]['initial']
+        self.assertEqual(self.report()['counts']['untriaged'], 1)
 
     def test_unavailable_snapshot_is_not_an_empty_observation(self):
         for dump in (self.n, self.e):
