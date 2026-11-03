@@ -1,6 +1,6 @@
 //! PROOF-QUINT-RUN-1: bounded acceptance with real backends and exact result binding.
-use norn_checker::obligations::evidence::{EvidenceIdentity, EvidenceRecord, EvidenceTool};
-use norn_checker::obligations::{ApprovedContract, DefinitionSource, quint::Bounds};
+use crate::obligations::evidence::{EvidenceIdentity, EvidenceRecord, EvidenceTool};
+use crate::obligations::{ApprovedContract, DefinitionSource, quint::Bounds};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -68,9 +68,11 @@ fn assessment(kind: &str, status: &str) -> (&'static str, &'static str) {
     clippy::too_many_lines,
     reason = "bounded acceptance driver; all backend and binding steps remain explicit"
 )]
-fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let [mode, original, mutant, base, profile, work, _tools] = args.as_slice() else {
+/// Prepare generated jobs or bind independently checked results on a native host.
+/// # Errors
+/// Refuses invalid inputs, stale pins, changed models/results or failed acceptance.
+pub fn run(args: &[String]) -> Result<()> {
+    let [mode, original, mutant, base, profile, work, _tools] = args else {
         return Err(
             "usage: quint prepare|bind ORIGINAL MUTANT BASE BOUNDS OUTPUT_DIR TOOL_ROOT".into(),
         );
@@ -259,7 +261,27 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::assessment;
+    use super::{assessment, scenario};
+    use serde_json::json;
+
+    #[test]
+    fn counterexample_reconstruction_uses_declared_exact_units_and_empty_state() {
+        let bounds = json!({"action":"test.writer","identity":"one","interpretation":{
+            "v0":{"property":"mass","type":{"scale":2,"unit":{"kind":"ucum","code":"g"}}}
+        }});
+        let trace = json!([
+            {"state":{"present":false,"v0":0}},
+            {"state":{"present":true,"v0":125}}
+        ]);
+        let result = scenario(&trace, &bounds, &json!("test.law")).expect("scenario");
+        assert_eq!(result["states"][0], json!({"exists":false,"values":{}}));
+        assert_eq!(result["states"][1]["values"]["mass"],
+            json!({"coefficient":"125","scale":2,"unit":{"kind":"ucum","code":"g"}}));
+        for bad in [json!(1.25), json!("125"), json!(null)] {
+            assert!(scenario(&json!([{"state":{"present":true,"v0":bad}}]),
+                &bounds, &json!("test.law")).is_err());
+        }
+    }
     #[test]
     fn missing_witness_and_unsupported_goals_keep_unknown_assurance() {
         assert_eq!(assessment("non_vacuity", "ok"), ("unknown", "unknown"));

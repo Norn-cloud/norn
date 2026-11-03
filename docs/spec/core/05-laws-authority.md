@@ -165,7 +165,7 @@ bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
-producer/binder reconstructs every Challenge, checks controller-retained model
+`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
