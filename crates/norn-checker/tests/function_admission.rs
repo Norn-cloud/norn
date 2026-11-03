@@ -748,9 +748,10 @@ fn authored_host_refused() {
     );
 }
 
-/// ENGINE-BUILTIN-AVAILABLE remains unsupported: no public Host admission exists.
+/// ENGINE-BUILTIN-AVAILABLE is unsupported until the engine-owned registry (#761).
+/// That C2 follow-up under Core 07 (#345) is the only future positive path.
 #[test]
-fn engine_builtin_availability_is_unsupported() {
+fn engine_builtin_available_is_unsupported_until_registry_761() {
     for profile in PROFILES {
         let mut host = manifest(profile);
         host.implementation.format = ImplementationFormat::Host;
