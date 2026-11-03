@@ -228,8 +228,18 @@ fn wording_with_the_same_law_id_but_a_different_pin_is_refused() {
     let mut report = run(&pool(), ExplainKind::Law, "erpnext.no_unpaid_ship");
     let mut stale = requirement(&report.laws[0].law, false);
     stale.norm.law.rationale.push_str(" stale revision");
-    let error = norn_checker::explain::render_wording(&mut report, &ExplainOptions { locale:Some("en".into()), requirements:vec![stale] }).unwrap_err();
-    assert_eq!(error[0].code.as_str(), norn_checker::verification::codes::UNKNOWN_BINDING);
+    let error = norn_checker::explain::render_wording(
+        &mut report,
+        &ExplainOptions {
+            locale: Some("en".into()),
+            requirements: vec![stale],
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        error[0].code.as_str(),
+        norn_checker::verification::codes::UNKNOWN_BINDING
+    );
     assert!(report.laws[0].wording.is_none());
 }
 

@@ -128,8 +128,12 @@ pub fn conformance_manifest() -> serde_json::Value {
                 "message": entry.message,
                 "since": entry.since,
             });
-            if let (Some(fields), Some(fix)) = (value.as_object_mut(), entry.fix) { fields.insert("fix".to_owned(), fix.into()); }
-            if let (Some(fields), Some(reason)) = (value.as_object_mut(), entry.no_fix) { fields.insert("no_fix".to_owned(), reason.into()); }
+            if let (Some(fields), Some(fix)) = (value.as_object_mut(), entry.fix) {
+                fields.insert("fix".to_owned(), fix.into());
+            }
+            if let (Some(fields), Some(reason)) = (value.as_object_mut(), entry.no_fix) {
+                fields.insert("no_fix".to_owned(), reason.into());
+            }
             value
         })
         .collect();

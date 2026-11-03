@@ -31,7 +31,10 @@ fn refusal(code: &str, message: impl Into<String>) -> Vec<Diagnostic> {
 }
 
 fn closure_error(error: impl std::fmt::Display) -> Vec<Diagnostic> {
-    refusal(crate::verification::codes::CLOSURE_REFUSED, error.to_string())
+    refusal(
+        crate::verification::codes::CLOSURE_REFUSED,
+        error.to_string(),
+    )
 }
 
 /// EXPLAIN-CLOSURE-1: admission precedes projection; identities come from the catalog.
@@ -46,7 +49,9 @@ pub fn explain(
     id: &str,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
     if artifacts.len().saturating_add(context.base.len()) > 16_384 {
-        return Err(closure_error("definition count exceeds the graph node budget"));
+        return Err(closure_error(
+            "definition count exceeds the graph node budget",
+        ));
     }
     let diagnostics = crate::check_artifact_set(artifacts, context);
     if diagnostics.iter().any(Diagnostic::is_error) {
@@ -126,15 +131,31 @@ pub fn explain(
     })
 }
 
-fn declared_interpretations(pool: &[ArtifactEnvelope]) -> Result<Vec<norn_ir::explain::ExplainInterpretation>, Vec<Diagnostic>> {
+fn declared_interpretations(
+    pool: &[ArtifactEnvelope],
+) -> Result<Vec<norn_ir::explain::ExplainInterpretation>, Vec<Diagnostic>> {
     let mut result = Vec::new();
-    for artifact in pool.iter().filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack) {
-        let pack: norn_ir::BusinessPackRoot = serde_json::to_value(artifact.payload.to_json_value()).and_then(serde_json::from_value)
-            .map_err(|error| refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string()))?;
+    for artifact in pool
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack)
+    {
+        let pack: norn_ir::BusinessPackRoot =
+            serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value)
+                .map_err(|error| {
+                    refusal(
+                        crate::verification::codes::INVALID_DOCUMENT,
+                        error.to_string(),
+                    )
+                })?;
         if let norn_ir::BusinessPackRoot::Link(link) = pack {
             result.push(norn_ir::explain::ExplainInterpretation {
-                declaration: ArtifactKey { artifact_id: artifact.artifact_id.clone(), version: artifact.version.clone() },
-                link, proof: norn_ir::explain::ExplainProof::Unknown,
+                declaration: ArtifactKey {
+                    artifact_id: artifact.artifact_id.clone(),
+                    version: artifact.version.clone(),
+                },
+                link,
+                proof: norn_ir::explain::ExplainProof::Unknown,
             });
         }
     }
@@ -142,9 +163,14 @@ fn declared_interpretations(pool: &[ArtifactEnvelope]) -> Result<Vec<norn_ir::ex
     Ok(result)
 }
 
-fn explain_laws(pool: &[ArtifactEnvelope], kind: ExplainKind, target: &MemberRef,
-    catalog: &DefinitionCatalog, closure: &crate::verification::LawClosure, goals: &[serde_json::Value])
-    -> Result<Vec<ExplainedLaw>, Vec<Diagnostic>> {
+fn explain_laws(
+    pool: &[ArtifactEnvelope],
+    kind: ExplainKind,
+    target: &MemberRef,
+    catalog: &DefinitionCatalog,
+    closure: &crate::verification::LawClosure,
+    goals: &[serde_json::Value],
+) -> Result<Vec<ExplainedLaw>, Vec<Diagnostic>> {
     let mut law_ids: Vec<_> = catalog
         .laws
         .iter()
@@ -340,7 +366,8 @@ fn inheritance_path(
         .filter_map(|row| type_name(&row.at).map(|name| (name, row)))
         .collect();
     let mut queue = VecDeque::from([start.clone()]);
-    let mut parents: BTreeMap<MemberRef, Option<MemberRef>> = BTreeMap::from([(start.clone(), None)]);
+    let mut parents: BTreeMap<MemberRef, Option<MemberRef>> =
+        BTreeMap::from([(start.clone(), None)]);
     while let Some(at) = queue.pop_front() {
         if at == *end {
             let mut path = vec![at.clone()];
@@ -357,9 +384,10 @@ fn inheritance_path(
         };
         for name in row.extends.iter().chain(&row.implements) {
             if let Some(parent) = by_name.get(name.as_str())
-                && !parents.contains_key(&parent.at) {
-                    parents.insert(parent.at.clone(), Some(at.clone()));
-                    queue.push_back(parent.at.clone());
+                && !parents.contains_key(&parent.at)
+            {
+                parents.insert(parent.at.clone(), Some(at.clone()));
+                queue.push_back(parent.at.clone());
             }
         }
     }
@@ -375,20 +403,39 @@ fn containment_paths(
         version: law.version.clone(),
     };
     let mut parents: BTreeMap<ArtifactKey, Vec<ArtifactKey>> = BTreeMap::new();
-    for edge in catalog.depends_on.iter().filter(|edge| edge.via == DependencyVia::PackMember) {
-        parents.entry(edge.to.clone()).or_default().push(edge.from.clone());
+    for edge in catalog
+        .depends_on
+        .iter()
+        .filter(|edge| edge.via == DependencyVia::PackMember)
+    {
+        parents
+            .entry(edge.to.clone())
+            .or_default()
+            .push(edge.from.clone());
     }
     let mut visited = BTreeSet::from([root.clone()]);
     let mut queue = VecDeque::from([vec![root]]);
     let mut result = Vec::new();
     let mut work = 0_usize;
     while let Some(path) = queue.pop_front() {
-        let Some(at) = path.first() else { continue; };
+        let Some(at) = path.first() else {
+            continue;
+        };
         for parent in parents.get(at).into_iter().flatten() {
-            if !visited.insert(parent.clone()) { continue; }
+            if !visited.insert(parent.clone()) {
+                continue;
+            }
             work = work.saturating_add(path.len());
-            if work > 1_048_576 { return Err(refusal(crate::verification::codes::CLOSURE_REFUSED, "law origin paths exceed the graph budget")); }
-            let mut next = vec![parent.clone()]; next.extend(path.clone()); result.push(next.clone()); queue.push_back(next);
+            if work > 1_048_576 {
+                return Err(refusal(
+                    crate::verification::codes::CLOSURE_REFUSED,
+                    "law origin paths exceed the graph budget",
+                ));
+            }
+            let mut next = vec![parent.clone()];
+            next.extend(path.clone());
+            result.push(next.clone());
+            queue.push_back(next);
         }
     }
     Ok(result)
@@ -474,7 +521,11 @@ pub fn render_wording(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "ontology-link projection correspondence fixture")]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "ontology-link projection correspondence fixture"
+)]
 mod interpretation_tests {
     #[test]
     fn declared_correspondence_never_becomes_a_checked_law_path() {
@@ -527,7 +578,13 @@ mod interpretation_tests {
     })).expect("existing link fixture");
         let report = super::declared_interpretations(&[artifact]).expect("project correspondence");
         assert_eq!(report[0].proof, norn_ir::explain::ExplainProof::Unknown);
-        assert_eq!(report[0].declaration.artifact_id, "norn.link.fixture-shop.fixture-canon");
-        assert_eq!(report[0].link.correspondences[0].from_term_id, "norn.shop.order");
+        assert_eq!(
+            report[0].declaration.artifact_id,
+            "norn.link.fixture-shop.fixture-canon"
+        );
+        assert_eq!(
+            report[0].link.correspondences[0].from_term_id,
+            "norn.shop.order"
+        );
     }
 }

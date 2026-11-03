@@ -103,7 +103,9 @@ pub struct ExplainOptions {
     pub requirements: Vec<crate::deontic::StructuredRequirement>,
 }
 
-pub fn explain_options_schema() -> schemars::Schema { schemars::schema_for!(ExplainOptions) }
+pub fn explain_options_schema() -> schemars::Schema {
+    schemars::schema_for!(ExplainOptions)
+}
 
 pub fn explain_schema() -> schemars::Schema {
     schemars::schema_for!(ExplainReport)
