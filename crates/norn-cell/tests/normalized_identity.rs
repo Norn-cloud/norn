@@ -249,6 +249,7 @@ fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
     let mut amount = defs[0].properties[0].clone();
     amount.id = PropertyId("amount".into());
     amount.property_type = PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
         scale: norn_ir::WholeNumber(2),
         rounding: None,
         unit: None,
