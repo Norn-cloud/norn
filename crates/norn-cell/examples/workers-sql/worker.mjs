@@ -8,9 +8,9 @@ export class Probe {
     const path = new URL(request.url).pathname;
     if (path === "/alarm-refusal") {
       try {
-        await this.ctx.storage.transaction(async txn => {
-          txn.sql.exec("INSERT INTO probe VALUES (4,'alarm-refused',NULL)").toArray();
-          await txn.setAlarm(Date.now() + 7200000);
+        await this.ctx.storage.transaction(async () => {
+          this.ctx.storage.sql.exec("INSERT INTO probe VALUES (4,'alarm-refused',NULL)").toArray();
+          await this.ctx.storage.setAlarm(Date.now() + 7200000);
           throw new Error("refuse after alarm");
         });
       } catch (error) {
@@ -24,9 +24,9 @@ export class Probe {
         row => row.map(value => value instanceof ArrayBuffer || ArrayBuffer.isView(value) ? Array.from(new Uint8Array(value)) : value)) });
     }
     // The alarm write and synchronous Rust transaction share the outer commit.
-    return this.ctx.storage.transaction(async txn => {
-      const result = exercise(txn);
-      await txn.setAlarm(Date.now() + 3600000);
+    return this.ctx.storage.transaction(async () => {
+      const result = exercise(this.ctx.storage);
+      await this.ctx.storage.setAlarm(Date.now() + 3600000);
       return new Response(result);
     });
   }

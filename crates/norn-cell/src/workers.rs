@@ -22,7 +22,7 @@ extern "C" {
     fn transact(storage: &JsValue, callback: &JsValue) -> Result<JsValue, JsValue>;
 }
 
-/// A trusted DO storage handle, optionally the view of an outer transaction.
+/// A trusted DO root storage handle; SQL joins any outer SQLite transaction.
 /// Platform SQL authorization must reject transaction-control SQL, as DO does.
 /// Neither this handle nor arbitrary SQL is a network operation.
 #[derive(Debug)]
@@ -32,10 +32,13 @@ pub struct WorkersEngine {
 }
 
 impl WorkersEngine {
-    /// Bind the storage supplied by the DO constructor/transaction callback.
+    /// Bind the root storage supplied by the DO constructor.
     #[must_use]
     pub const fn new(storage: JsValue) -> Self {
-        Self { storage, active: Cell::new(false) }
+        Self {
+            storage,
+            active: Cell::new(false),
+        }
     }
 }
 
@@ -43,7 +46,11 @@ fn backend(error: JsValue) -> CellError {
     CellError::Engine(format!("DO SQLite: {error:?}"))
 }
 
-#[allow(clippy::as_conversions, clippy::cast_precision_loss, reason = "validate_bindings bounds integers to the exactly representable JS range")]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "validate_bindings bounds integers to the exactly representable JS range"
+)]
 fn encode(value: &SqlValue) -> JsValue {
     match value {
         SqlValue::Null => JsValue::NULL,
@@ -54,7 +61,12 @@ fn encode(value: &SqlValue) -> JsValue {
     }
 }
 
-#[allow(clippy::as_conversions, clippy::cast_precision_loss, clippy::cast_possible_truncation, reason = "finite integral values are checked against the exact JS integer range before conversion")]
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "finite integral values are checked against the exact JS integer range before conversion"
+)]
 fn decode(value: JsValue) -> Result<SqlValue, CellError> {
     if value.is_null() {
         return Ok(SqlValue::Null);
@@ -98,13 +110,16 @@ impl SqlEngine for WorkersEngine {
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         validate_bindings(sql, params)?;
         let bindings = params.iter().map(encode).collect::<Array>();
-        rows(&self.storage, sql, &bindings).map_err(backend)?
-            .iter().map(|row| {
+        rows(&self.storage, sql, &bindings)
+            .map_err(backend)?
+            .iter()
+            .map(|row| {
                 if !Array::is_array(&row) {
                     return Err(CellError::Engine("invalid DO SQL row".into()));
                 }
                 Array::from(&row).iter().map(decode).collect()
-            }).collect()
+            })
+            .collect()
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
@@ -125,17 +140,27 @@ impl SqlEngine for WorkersEngine {
             let result = f();
             let failed = result.is_err();
             output = Some(result);
-            if failed { Err(JsValue::from_str("norn:rollback")) } else { Ok(()) }
+            if failed {
+                Err(JsValue::from_str("norn:rollback"))
+            } else {
+                Ok(())
+            }
         };
         let result = {
             let closure = ScopedClosure::borrow_mut_aborting(&mut callback);
             transact(&self.storage, closure.as_js_value())
         };
         match (result, output) {
-            (Err(error), Some(Err(refusal))) if error.as_string().as_deref() == Some("norn:rollback") => Err(refusal),
+            (Err(error), Some(Err(refusal)))
+                if error.as_string().as_deref() == Some("norn:rollback") =>
+            {
+                Err(refusal)
+            }
             (Err(error), _) => Err(backend(error).into()),
             (Ok(_), Some(Ok(value))) => Ok(value),
-            (Ok(_), None | Some(Err(_))) => Err(CellError::Engine("transaction callback/rollback missing".into()).into()),
+            (Ok(_), None | Some(Err(_))) => {
+                Err(CellError::Engine("transaction callback/rollback missing".into()).into())
+            }
         }
     }
 }
