@@ -150,7 +150,12 @@ pub fn derive_metric_space(
         {
             let time_path = direct(&time.id);
             let sources = evidence.get(name).cloned().unwrap_or_default();
-            candidates.extend(candidates_at_time(object, &dimensions, &sources, &time_path));
+            candidates.extend(candidates_at_time(
+                object,
+                &dimensions,
+                &sources,
+                &time_path,
+            ));
         }
         if candidates.len() > 16_384 {
             return Err(vec![crate::property_types::error(
@@ -168,7 +173,10 @@ pub fn derive_metric_space(
     })
 }
 
-fn conservation_laws(artifacts: &[ArtifactEnvelope], scope: &LawRoot) -> Vec<(LawIR, ConservationSource)> {
+fn conservation_laws(
+    artifacts: &[ArtifactEnvelope],
+    scope: &LawRoot,
+) -> Vec<(LawIR, ConservationSource)> {
     let mut laws: Vec<_> = artifacts
         .iter()
         .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Law(_)))
@@ -218,35 +226,57 @@ fn conservation_laws(artifacts: &[ArtifactEnvelope], scope: &LawRoot) -> Vec<(La
     laws
 }
 
-fn candidates_at_time(object: &EffectiveObjectType, dimensions: &[DimensionPath], sources: &[ConservationSource], time_path: &DimensionPath) -> Vec<MetricCandidate> {
+fn candidates_at_time(
+    object: &EffectiveObjectType,
+    dimensions: &[DimensionPath],
+    sources: &[ConservationSource],
+    time_path: &DimensionPath,
+) -> Vec<MetricCandidate> {
     let mut candidates = Vec::new();
     let mut sums = BTreeMap::new();
     for property in &object.properties {
         let EffectiveKind::Base(kind) = &property.kind else {
             continue;
         };
-        if !super::is_numeric(property)
-            || kind.additivity() != &PropertyAdditivity::Additive
-        {
+        if !super::is_numeric(property) || kind.additivity() != &PropertyAdditivity::Additive {
             continue;
         }
         let proof: Vec<_> = sources
             .iter()
-            .filter(|source| {
-                source.input == property.id || source.outputs.contains(&property.id)
-            })
+            .filter(|source| source.input == property.id || source.outputs.contains(&property.id))
             .cloned()
             .collect();
         let definition = sum(object, &property.id, time_path, &proof);
         sums.insert(property.id.clone(), definition.name.clone());
         candidates.push(candidate(definition, dimensions, proof));
     }
-    declared_ratios(object, dimensions, sources, time_path, &sums, &mut candidates);
-    conserved_ratios(object, dimensions, sources, time_path, &sums, &mut candidates);
+    declared_ratios(
+        object,
+        dimensions,
+        sources,
+        time_path,
+        &sums,
+        &mut candidates,
+    );
+    conserved_ratios(
+        object,
+        dimensions,
+        sources,
+        time_path,
+        &sums,
+        &mut candidates,
+    );
     candidates
 }
 
-fn declared_ratios(object: &EffectiveObjectType, dimensions: &[DimensionPath], sources: &[ConservationSource], time_path: &DimensionPath, sums: &BTreeMap<PropertyId, String>, candidates: &mut Vec<MetricCandidate>) {
+fn declared_ratios(
+    object: &EffectiveObjectType,
+    dimensions: &[DimensionPath],
+    sources: &[ConservationSource],
+    time_path: &DimensionPath,
+    sums: &BTreeMap<PropertyId, String>,
+    candidates: &mut Vec<MetricCandidate>,
+) {
     for property in &object.properties {
         let EffectiveKind::Base(kind) = &property.kind else {
             continue;
@@ -293,7 +323,14 @@ fn declared_ratios(object: &EffectiveObjectType, dimensions: &[DimensionPath], s
     }
 }
 
-fn conserved_ratios(object: &EffectiveObjectType, dimensions: &[DimensionPath], sources: &[ConservationSource], time_path: &DimensionPath, sums: &BTreeMap<PropertyId, String>, candidates: &mut Vec<MetricCandidate>) {
+fn conserved_ratios(
+    object: &EffectiveObjectType,
+    dimensions: &[DimensionPath],
+    sources: &[ConservationSource],
+    time_path: &DimensionPath,
+    sums: &BTreeMap<PropertyId, String>,
+    candidates: &mut Vec<MetricCandidate>,
+) {
     for source in sources {
         let Some(denominator) = sums.get(&source.input) else {
             continue;
@@ -302,8 +339,7 @@ fn conserved_ratios(object: &EffectiveObjectType, dimensions: &[DimensionPath], 
             let Some(numerator) = sums.get(output) else {
                 continue;
             };
-            let mut definition =
-                sum(object, output, time_path, std::slice::from_ref(source));
+            let mut definition = sum(object, output, time_path, std::slice::from_ref(source));
             definition.name = format!(
                 "{}.per_{}.law_{}",
                 definition.name,
@@ -488,7 +524,10 @@ fn sum(
 
 fn encoded_name(name: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    name.bytes().flat_map(|byte| [byte >> 4, byte & 15]).filter_map(|digit| HEX.get(usize::from(digit)).map(|byte| char::from(*byte))).collect()
+    name.bytes()
+        .flat_map(|byte| [byte >> 4, byte & 15])
+        .filter_map(|digit| HEX.get(usize::from(digit)).map(|byte| char::from(*byte)))
+        .collect()
 }
 
 fn candidate(
@@ -576,7 +615,10 @@ fn sum_terms(text: &str, depth: u8) -> Option<Vec<PropertyId>> {
             b')' => nesting = nesting.checked_sub(1)?,
             b'+' if nesting == 0 => {
                 let mut terms = sum_terms(text.get(..index)?, depth.checked_add(1)?)?;
-                terms.extend(sum_terms(text.get(index.checked_add(1)?..)?, depth.checked_add(1)?)?);
+                terms.extend(sum_terms(
+                    text.get(index.checked_add(1)?..)?,
+                    depth.checked_add(1)?,
+                )?);
                 return (terms.len() <= 64).then_some(terms);
             }
             _ => {}
