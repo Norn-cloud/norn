@@ -1,4 +1,6 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+/// Typed-question answer documents.
+pub mod answers;
 pub mod clock;
 pub mod contracts;
 pub mod openapi;

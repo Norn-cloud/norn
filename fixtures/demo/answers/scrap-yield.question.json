@@ -1,0 +1,36 @@
+{
+  "irVersion": "0.1",
+  "name": "demo.yield_week",
+  "objectSet": "demo.Conversion",
+  "aggregate": [
+    {
+      "metric": "demo.yield"
+    }
+  ],
+  "groupBy": [
+    {
+      "path": {
+        "property": "occurred_at"
+      },
+      "grain": "week"
+    }
+  ],
+  "filter": [
+    {
+      "path": {
+        "property": "metal"
+      },
+      "operator": "eq",
+      "value": "gold"
+    }
+  ],
+  "window": {
+    "start": "2026-07-06T00:00:00Z",
+    "end": "2026-10-26T00:00:00Z"
+  },
+  "calendar": "iso_utc",
+  "freshness": {
+    "kind": "live",
+    "maxAgeMs": 5000
+  }
+}
