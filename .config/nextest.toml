@@ -56,6 +56,7 @@ default-filter = '''binary_id(norn-cell::exact_values) | binary_id(norn-expr::pr
 [[profile.drop-01.scripts]]
 filter = "all()"
 setup = ["kani-068-install", "kani-068-setup", "decimal-kani-0", "decimal-kani-1", "decimal-kani-2"]
+run-wrapper = "sampled-evidence"
 
 [profile.drop-02]
 default-filter = '''binary(=jewelry_demo) & test(=authored_laws_admit_refuse_and_render_en_ar)'''
@@ -63,6 +64,7 @@ default-filter = '''binary(=jewelry_demo) & test(=authored_laws_admit_refuse_and
 [[profile.drop-02.scripts]]
 filter = "all()"
 setup = ["authored-profile"]
+run-wrapper = "sampled-evidence"
 
 [profile.drop-03]
 default-filter = '''binary(=catalog_demo) & test(=authored_catalog_reads_and_refusals_use_kernel_pdp)'''
@@ -70,6 +72,7 @@ default-filter = '''binary(=catalog_demo) & test(=authored_catalog_reads_and_ref
 [[profile.drop-03.scripts]]
 filter = "all()"
 setup = ["authored-profile"]
+run-wrapper = "sampled-evidence"
 
 [profile.drop-04]
 default-filter = '''binary_id(norn-decisions::evaluate) & (test(=fold_capacity_complete_allocate_matches_the_core_spec) |
@@ -83,6 +86,7 @@ default-filter = '''binary_id(norn-decisions::evaluate) & (test(=fold_capacity_c
 [[profile.drop-04.scripts]]
 filter = "all()"
 setup = ["fold-authoring"]
+run-wrapper = "sampled-evidence"
 
 [profile.drop-05]
 default-filter = '''binary_id(norn-cell::definitions_install) & (test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses) |
@@ -108,6 +112,7 @@ default-filter = '''binary_id(norn-cell::jewelry_pricing)'''
 [[profile.drop-06.scripts]]
 filter = "all()"
 setup = ["rate-authoring"]
+run-wrapper = "sampled-evidence"
 
 [profile.drop-07]
 default-filter = '''package(=norn-cell) & binary(/^incremental_question$/) & (test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart) |
@@ -155,3 +160,4 @@ default-filter = '''binary(=constitution) & test(=constitution_loss_mutation_ref
 [[profile.drop-constitution.scripts]]
 filter = "all()"
 setup = ["constitution-authoring"]
+run-wrapper = "sampled-evidence"
