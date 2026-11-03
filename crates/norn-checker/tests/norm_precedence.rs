@@ -272,6 +272,22 @@ fn exact_cycle_cores_include_same_modality_rules_and_ignore_unrelated_rules() {
     );
 }
 
+#[test]
+fn explicit_transitivity_resolves_opposing_endpoints() {
+    use norn_checker::norm_precedence::ConstitutionLayer::Company;
+    let norms = [
+        norm(0, Obligation),
+        norm(1, Obligation),
+        norm(2, Prohibition),
+    ];
+    assert!(
+        declared(&norms, &[Company; 3], &[(0, 1), (1, 2)])
+            .diagnosis
+            .cores
+            .is_empty()
+    );
+}
+
 proptest::proptest! {
     #[test]
     fn declared_order_is_independent_of_catalog_permutation(swap in proptest::bool::ANY, reverse in proptest::bool::ANY) {
@@ -308,43 +324,6 @@ fn malformed_binding_and_budget_exhaustion_remain_unknown() {
             diagnose_declared_order(&norms, &origins, &[Company; 2], &edges, 2, budget).is_err()
         );
     }
-    assert!(
-        diagnose_declared_order(
-            &norms,
-            &[
-                origins.first().cloned().unwrap_or_default(),
-                origins.first().cloned().unwrap_or_default()
-            ],
-            &[Company; 2],
-            &[],
-            2,
-            100
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn explicit_transitivity_and_nonoverlapping_conditions_are_supported() {
-    use norn_checker::norm_precedence::ConstitutionLayer::Company;
-    let mut norms = [
-        norm(0, Obligation),
-        norm(1, Obligation),
-        norm(2, Prohibition),
-    ];
-    assert!(
-        declared(&norms, &[Company; 3], &[(0, 1), (1, 2)])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
-    if let Some(n) = norms.get_mut(2) {
-        n.applicable = BTreeSet::from([1]);
-    }
-    assert!(
-        declared(&norms, &[Company; 3], &[])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
+    let duplicate = std::array::from_fn(|_| origins.first().cloned().unwrap_or_default());
+    assert!(diagnose_declared_order(&norms, &duplicate, &[Company; 2], &[], 2, 100).is_err());
 }

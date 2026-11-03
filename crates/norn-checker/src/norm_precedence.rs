@@ -306,7 +306,7 @@ fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet
 /// resolve opposing rules. An absent edge never acquires an implicit tie-break.
 ///
 /// This first cut checks trusted exhaustive masks for one common action/subject,
-/// not DeonticIR lowering. Preserve scope and explicit exceptions when grounding;
+/// not `DeonticIR` lowering. Preserve scope and explicit exceptions when grounding;
 /// CTD, temporal and Datalog applicability remain unknown. Layers/edges are trusted.
 ///
 /// # Errors
@@ -377,7 +377,7 @@ pub fn diagnose_declared_order(
             .map(|i| norms.get(*i).map_or("", |n| n.id.as_str()))
             .collect();
         let located: Vec<_> = core.iter().filter_map(|i| origins.get(*i)).collect();
-        diagnostics.extend(core_findings("consistency.normative.conflict", crate::DiagnosticSeverity::Error,
+        diagnostics.extend(core_findings("consistency.normative.conflict", &crate::DiagnosticSeverity::Error,
             &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
     }
     diagnostics.extend(legacy_notes(norms, contexts, origins, &diagnosis));
@@ -405,7 +405,7 @@ fn legacy_notes(
                     .any(|core| core.contains(&defeat.winner) && core.contains(&defeat.loser))
                     && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
                 {
-                    diagnostics.extend(core_findings("consistency.normative.legacy_resolution", crate::DiagnosticSeverity::Warning,
+                    diagnostics.extend(core_findings("consistency.normative.legacy_resolution", &crate::DiagnosticSeverity::Info,
                         &format!("Legacy norm_precedence resolves {} over {} by {:?}; declared-only/layer analysis diagnoses these rules. See #767; admission behaviour is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
                         &[origins.get(defeat.winner), origins.get(defeat.loser)].into_iter().flatten().collect::<Vec<_>>()));
                 }
