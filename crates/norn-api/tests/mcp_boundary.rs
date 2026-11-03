@@ -202,3 +202,28 @@ fn ping_is_empty_before_and_after_initialization_without_initializing_tools() {
     );
     assert_eq!(unknown["error"]["code"], -32601);
 }
+
+#[test]
+fn human_catalog_and_mcp_discovery_share_pages_and_cursors() {
+    let mut session = Session::new(vec![tool("a"), tool("b")], "scope/actor/revision").unwrap();
+    let human: Value = serde_json::to_value(session.catalog(None, Some(1)).unwrap()).unwrap();
+    init(&mut session);
+    let mcp = send(
+        &mut session,
+        &json!({"jsonrpc":"2.0","id":10,"method":"tools/list","params":{"limit":1}}),
+    );
+    assert_eq!(human, mcp["result"]);
+    let cursor = human["nextCursor"].as_str().unwrap();
+    let human_next: Value =
+        serde_json::to_value(session.catalog(Some(cursor), Some(1)).unwrap()).unwrap();
+    let mcp_next = send(
+        &mut session,
+        &json!({"jsonrpc":"2.0","id":11,"method":"tools/list","params":{"cursor":cursor,"limit":1}}),
+    );
+    assert_eq!(human_next, mcp_next["result"]);
+    assert!(human_next.get("nextCursor").is_none());
+    assert_eq!(
+        session.catalog(Some("obsolete"), None).unwrap_err().code,
+        "request.invalid"
+    );
+}
