@@ -1644,12 +1644,18 @@ impl EffectiveCatalog {
         object_type: &str,
         terms: &BTreeSet<PropertyId>,
     ) {
-        let Some(artifact_id) = self.by_name.get(object_type) else { return };
-        let Some(Ok(object)) = self.by_artifact.get_mut(artifact_id) else { return };
+        let Some(artifact_id) = self.by_name.get(object_type) else {
+            return;
+        };
+        let Some(Ok(object)) = self.by_artifact.get_mut(artifact_id) else {
+            return;
+        };
         for property in &mut object.properties {
-            if !terms.contains(&property.id) { continue; }
+            if !terms.contains(&property.id) {
+                continue;
+            }
             if let EffectiveKind::Base(
-                PropertyType::Integer { additivity } | PropertyType::Decimal { additivity, .. }
+                PropertyType::Integer { additivity } | PropertyType::Decimal { additivity, .. },
             ) = &mut property.kind
                 && *additivity == norn_ir::PropertyAdditivity::Undeclared
             {

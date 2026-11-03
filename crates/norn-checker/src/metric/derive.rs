@@ -68,19 +68,31 @@ impl MetricSpace {
         question: &QuestionIR,
         max_items: u32,
     ) -> Result<compute::QuestionPlan, Vec<Diagnostic>> {
-        let by_name: BTreeMap<_, _> = self.candidates.iter()
-            .map(|candidate| (candidate.definition.name.as_str(), &candidate.definition)).collect();
-        let mut pending: Vec<_> = question.metrics.iter().map(|selection| selection.metric.as_str()).collect();
+        let by_name: BTreeMap<_, _> = self
+            .candidates
+            .iter()
+            .map(|candidate| (candidate.definition.name.as_str(), &candidate.definition))
+            .collect();
+        let mut pending: Vec<_> = question
+            .metrics
+            .iter()
+            .map(|selection| selection.metric.as_str())
+            .collect();
         let mut selected = BTreeSet::new();
         while let Some(name) = pending.pop() {
-            if !selected.insert(name) { continue; }
+            if !selected.insert(name) {
+                continue;
+            }
             if let Some(definition) = by_name.get(name) {
                 pending.extend(definition.type_params.numerator.as_deref());
                 pending.extend(definition.type_params.denominator.as_deref());
             }
         }
-        let definitions: Vec<_> = selected.into_iter().filter_map(|name| by_name.get(name))
-            .map(|definition| (**definition).clone()).collect();
+        let definitions: Vec<_> = selected
+            .into_iter()
+            .filter_map(|name| by_name.get(name))
+            .map(|definition| (**definition).clone())
+            .collect();
         compute::admit(&definitions, question, &self.catalog, max_items)
     }
 }
@@ -123,14 +135,27 @@ pub fn derive_metric_space(
             let (input, outputs) = conservation_terms(expression.as_str())?;
             let bytes = norn_canonical::canonical_json_of(artifact).ok()?;
             let digest = norn_canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes);
-            Some((law, ConservationSource { law: String::new(), digest, input, outputs }))
+            Some((
+                law,
+                ConservationSource {
+                    law: String::new(),
+                    digest,
+                    input,
+                    outputs,
+                },
+            ))
         })
         .map(|(law, mut source)| {
             source.law.clone_from(&law.id);
             (law, source)
         })
         .collect();
-    laws.sort_by(|left, right| left.1.law.cmp(&right.1.law).then(left.1.digest.cmp(&right.1.digest)));
+    laws.sort_by(|left, right| {
+        left.1
+            .law
+            .cmp(&right.1.law)
+            .then(left.1.digest.cmp(&right.1.digest))
+    });
     laws.dedup_by(|left, right| left.1 == right.1);
     let mut evidence: BTreeMap<String, Vec<ConservationSource>> = BTreeMap::new();
     for name in catalog.object_type_names() {
@@ -139,7 +164,10 @@ pub fn derive_metric_space(
         };
         for (law, source) in &laws {
             if applies(law, object) && compatible_terms(object, source) {
-                evidence.entry(name.to_owned()).or_default().push(source.clone());
+                evidence
+                    .entry(name.to_owned())
+                    .or_default()
+                    .push(source.clone());
             }
         }
     }
@@ -157,7 +185,11 @@ pub fn derive_metric_space(
             continue;
         };
         let dimensions = dimensions(object, &catalog);
-        for time in object.properties.iter().filter(|property| super::is_time(property)) {
+        for time in object
+            .properties
+            .iter()
+            .filter(|property| super::is_time(property))
+        {
             let time_path = direct(&time.id);
             let sources = evidence.get(name).cloned().unwrap_or_default();
             let mut sums = BTreeMap::new();
@@ -165,42 +197,93 @@ pub fn derive_metric_space(
                 let EffectiveKind::Base(kind) = &property.kind else {
                     continue;
                 };
-                if !super::is_numeric(property) || kind.additivity() != &PropertyAdditivity::Additive {
+                if !super::is_numeric(property)
+                    || kind.additivity() != &PropertyAdditivity::Additive
+                {
                     continue;
                 }
-                let proof: Vec<_> = sources.iter().filter(|source| {
-                    source.input == property.id || source.outputs.contains(&property.id)
-                }).cloned().collect();
+                let proof: Vec<_> = sources
+                    .iter()
+                    .filter(|source| {
+                        source.input == property.id || source.outputs.contains(&property.id)
+                    })
+                    .cloned()
+                    .collect();
                 let definition = sum(object, &property.id, &time_path, &proof);
                 sums.insert(property.id.clone(), definition.name.clone());
                 candidates.push(candidate(definition, &dimensions, proof));
             }
             for property in &object.properties {
-                let EffectiveKind::Base(kind) = &property.kind else { continue };
-                let PropertyAdditivity::Ratio { numerator, denominator } = kind.additivity() else { continue };
-                let (Some(numerator_name), Some(denominator_name)) = (sums.get(numerator), sums.get(denominator)) else { continue };
-                let proof: Vec<_> = sources.iter().filter(|source| {
-                    [&source.input].into_iter().chain(&source.outputs).any(|term| term == numerator || term == denominator)
-                }).cloned().collect();
+                let EffectiveKind::Base(kind) = &property.kind else {
+                    continue;
+                };
+                let PropertyAdditivity::Ratio {
+                    numerator,
+                    denominator,
+                } = kind.additivity()
+                else {
+                    continue;
+                };
+                let (Some(numerator_name), Some(denominator_name)) =
+                    (sums.get(numerator), sums.get(denominator))
+                else {
+                    continue;
+                };
+                let proof: Vec<_> = sources
+                    .iter()
+                    .filter(|source| {
+                        [&source.input]
+                            .into_iter()
+                            .chain(&source.outputs)
+                            .any(|term| term == numerator || term == denominator)
+                    })
+                    .cloned()
+                    .collect();
                 let mut definition = sum(object, &property.id, &time_path, &proof);
                 definition.name.push_str(".ratio_of_sums");
-                definition.label = format!("sum({}) / sum({}); {}", numerator.as_str(), denominator.as_str(), definition.label);
+                definition.label = format!(
+                    "sum({}) / sum({}); {}",
+                    numerator.as_str(),
+                    denominator.as_str(),
+                    definition.label
+                );
                 definition.metric_type = MetricType::Ratio;
-                definition.type_params = MetricTypeParams { numerator: Some(numerator_name.clone()), denominator: Some(denominator_name.clone()), ..MetricTypeParams::default() };
+                definition.type_params = MetricTypeParams {
+                    numerator: Some(numerator_name.clone()),
+                    denominator: Some(denominator_name.clone()),
+                    ..MetricTypeParams::default()
+                };
                 definition.norn.additivity = MetricAdditivity::NonAdditive;
                 definition.norn.currency = None;
                 candidates.push(candidate(definition, &dimensions, proof));
             }
             for source in &sources {
-                let Some(denominator) = sums.get(&source.input) else { continue };
+                let Some(denominator) = sums.get(&source.input) else {
+                    continue;
+                };
                 for output in &source.outputs {
-                    let Some(numerator) = sums.get(output) else { continue };
-                    let mut definition = sum(object, output, &time_path, std::slice::from_ref(source));
-                    definition.name = format!("{}.per_{}.law_{}", definition.name, source.input.as_str(), source.digest);
-                    definition.label = format!("sum({}) / sum({}); law {}@{}", output.as_str(), source.input.as_str(), source.law, source.digest);
+                    let Some(numerator) = sums.get(output) else {
+                        continue;
+                    };
+                    let mut definition =
+                        sum(object, output, &time_path, std::slice::from_ref(source));
+                    definition.name = format!(
+                        "{}.per_{}.law_{}",
+                        definition.name,
+                        source.input.as_str(),
+                        source.digest
+                    );
+                    definition.label = format!(
+                        "sum({}) / sum({}); law {}@{}",
+                        output.as_str(),
+                        source.input.as_str(),
+                        source.law,
+                        source.digest
+                    );
                     definition.metric_type = MetricType::Ratio;
                     definition.type_params = MetricTypeParams {
-                        numerator: Some(numerator.clone()), denominator: Some(denominator.clone()),
+                        numerator: Some(numerator.clone()),
+                        denominator: Some(denominator.clone()),
                         ..MetricTypeParams::default()
                     };
                     definition.norn.additivity = MetricAdditivity::NonAdditive;
@@ -209,83 +292,174 @@ pub fn derive_metric_space(
             }
         }
         if candidates.len() > 16_384 {
-            return Err(vec![crate::property_types::error(codes::COMPLEXITY_LIMIT,
-                "Derived metric space exceeds 16384 candidates".to_owned(), Span::pointer("/metrics"))]);
+            return Err(vec![crate::property_types::error(
+                codes::COMPLEXITY_LIMIT,
+                "Derived metric space exceeds 16384 candidates".to_owned(),
+                Span::pointer("/metrics"),
+            )]);
         }
     }
     candidates.sort_by(|left, right| left.definition.name.cmp(&right.definition.name));
     candidates.dedup_by(|left, right| left.definition == right.definition);
-    Ok(MetricSpace { candidates, catalog })
+    Ok(MetricSpace {
+        candidates,
+        catalog,
+    })
 }
 
 fn applies(law: &LawIR, object: &EffectiveObjectType) -> bool {
-    let matches = |name: &str| object.lineage.iter().any(|ancestor| ancestor.as_str() == name)
-        || object.interfaces.iter().any(|interface| interface.as_str() == name);
+    let matches = |name: &str| {
+        object
+            .lineage
+            .iter()
+            .any(|ancestor| ancestor.as_str() == name)
+            || object
+                .interfaces
+                .iter()
+                .any(|interface| interface.as_str() == name)
+    };
     matches(&law.subject) && law.scope.object_types.iter().any(|name| matches(name))
 }
 
 fn compatible_terms(object: &EffectiveObjectType, source: &ConservationSource) -> bool {
-    let Some(input) = object.property(source.input.as_str()) else { return false };
-    let EffectiveKind::Base(input_kind) = &input.kind else { return false };
-    std::iter::once(&source.input).chain(&source.outputs).all(|id| {
-        let Some(property) = object.property(id.as_str()) else { return false };
-        if property.nullable || property.computed { return false; }
-        let EffectiveKind::Base(kind) = &property.kind else { return false };
-        if !matches!(kind.additivity(), PropertyAdditivity::Undeclared | PropertyAdditivity::Additive) {
-            return false;
-        }
-        match (input_kind, kind) {
-            (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
-            (PropertyType::Decimal { scale: a, unit: u, currency_source: None, .. },
-             PropertyType::Decimal { scale: b, unit: v, currency_source: None, .. }) => a == b && u == v,
-            _ => false,
-        }
-    })
+    let Some(input) = object.property(source.input.as_str()) else {
+        return false;
+    };
+    let EffectiveKind::Base(input_kind) = &input.kind else {
+        return false;
+    };
+    std::iter::once(&source.input)
+        .chain(&source.outputs)
+        .all(|id| {
+            let Some(property) = object.property(id.as_str()) else {
+                return false;
+            };
+            if property.nullable || property.computed {
+                return false;
+            }
+            let EffectiveKind::Base(kind) = &property.kind else {
+                return false;
+            };
+            if !matches!(
+                kind.additivity(),
+                PropertyAdditivity::Undeclared | PropertyAdditivity::Additive
+            ) {
+                return false;
+            }
+            match (input_kind, kind) {
+                (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
+                (
+                    PropertyType::Decimal {
+                        scale: a,
+                        unit: u,
+                        currency_source: None,
+                        ..
+                    },
+                    PropertyType::Decimal {
+                        scale: b,
+                        unit: v,
+                        currency_source: None,
+                        ..
+                    },
+                ) => a == b && u == v,
+                _ => false,
+            }
+        })
 }
 
 fn direct(property: &PropertyId) -> DimensionPath {
-    DimensionPath { links: Vec::new(), property: property.clone() }
+    DimensionPath {
+        links: Vec::new(),
+        property: property.clone(),
+    }
 }
 
 fn dimensions(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec<DimensionPath> {
-    let mut paths: BTreeSet<_> = object.properties.iter().filter(|p| super::is_scalar(p))
-        .map(|p| direct(&p.id)).collect();
-    for link in catalog.links_for_object_type(object.name.as_str()).into_iter().flatten() {
-        for target in catalog.target_types(link.target.as_str()).into_iter().flatten() {
-            let Some(Ok(target)) = catalog.object_type_named(&target) else { continue };
+    let mut paths: BTreeSet<_> = object
+        .properties
+        .iter()
+        .filter(|p| super::is_scalar(p))
+        .map(|p| direct(&p.id))
+        .collect();
+    for link in catalog
+        .links_for_object_type(object.name.as_str())
+        .into_iter()
+        .flatten()
+    {
+        for target in catalog
+            .target_types(link.target.as_str())
+            .into_iter()
+            .flatten()
+        {
+            let Some(Ok(target)) = catalog.object_type_named(&target) else {
+                continue;
+            };
             for property in target.properties.iter().filter(|p| super::is_scalar(p)) {
-                paths.insert(DimensionPath { links: vec![link.id.clone()], property: property.id.clone() });
+                paths.insert(DimensionPath {
+                    links: vec![link.id.clone()],
+                    property: property.id.clone(),
+                });
             }
         }
     }
     paths.into_iter().collect()
 }
 
-fn sum(object: &EffectiveObjectType, property: &PropertyId, time: &DimensionPath, sources: &[ConservationSource]) -> MetricDefinition {
-    let proof = sources.iter().map(|source| format!("{}@{}", source.law, source.digest)).collect::<Vec<_>>().join(",");
-    let currency = object.property(property.as_str()).and_then(|property| match &property.kind {
-        EffectiveKind::Base(PropertyType::Decimal { currency_source: Some(path), .. }) => Some(norn_ir::metric::MetricCurrency {
-            property: path.clone(), conversion: None,
-        }),
-        _ => None,
-    });
+fn sum(
+    object: &EffectiveObjectType,
+    property: &PropertyId,
+    time: &DimensionPath,
+    sources: &[ConservationSource],
+) -> MetricDefinition {
+    let proof = sources
+        .iter()
+        .map(|source| format!("{}@{}", source.law, source.digest))
+        .collect::<Vec<_>>()
+        .join(",");
+    let currency = object
+        .property(property.as_str())
+        .and_then(|property| match &property.kind {
+            EffectiveKind::Base(PropertyType::Decimal {
+                currency_source: Some(path),
+                ..
+            }) => Some(norn_ir::metric::MetricCurrency {
+                property: path.clone(),
+                conversion: None,
+            }),
+            _ => None,
+        });
     MetricDefinition {
-        name: format!("analysis.object_{}.{}.by_{}", encoded_name(object.name.as_str()), property.as_str(), time.property.as_str()),
+        name: format!(
+            "analysis.object_{}.{}.by_{}",
+            encoded_name(object.name.as_str()),
+            property.as_str(),
+            time.property.as_str()
+        ),
         label: format!("sum({}); conservation [{proof}]", property.as_str()),
         metric_type: MetricType::Simple,
         type_params: MetricTypeParams {
             expr: Some(property.as_str().to_owned()),
             metric_aggregation_params: Some(MetricAggregationParams {
-                semantic_model: object.name.clone(), agg: MeasureAggregate::Sum,
-                agg_time_dimension: field_name(time), non_additive_dimension: None,
+                semantic_model: object.name.clone(),
+                agg: MeasureAggregate::Sum,
+                agg_time_dimension: field_name(time),
+                non_additive_dimension: None,
             }),
             ..MetricTypeParams::default()
         },
         norn: MetricNorn {
-            ir_version: norn_ir::IrVersion01::V0_1, additivity: MetricAdditivity::Additive,
-            time_dimension: Some(time.clone()), default_filters: Vec::new(), currency,
-            safe_aggregation: None, owner: "ontology-derived".to_owned(), certified: false,
-            authz: None, freshness: None, derived: None, incremental: None,
+            ir_version: norn_ir::IrVersion01::V0_1,
+            additivity: MetricAdditivity::Additive,
+            time_dimension: Some(time.clone()),
+            default_filters: Vec::new(),
+            currency,
+            safe_aggregation: None,
+            owner: "ontology-derived".to_owned(),
+            certified: false,
+            authz: None,
+            freshness: None,
+            derived: None,
+            incremental: None,
         },
     }
 }
@@ -294,22 +468,45 @@ fn encoded_name(name: &str) -> String {
     name.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn candidate(definition: MetricDefinition, dimensions: &[DimensionPath], conservation: Vec<ConservationSource>) -> MetricCandidate {
-    MetricCandidate { definition, dimensions: dimensions.to_vec(), conservation,
-        time_grains: [TimeGrain::Day, TimeGrain::Week, TimeGrain::Month, TimeGrain::Quarter, TimeGrain::Year] }
+fn candidate(
+    definition: MetricDefinition,
+    dimensions: &[DimensionPath],
+    conservation: Vec<ConservationSource>,
+) -> MetricCandidate {
+    MetricCandidate {
+        definition,
+        dimensions: dimensions.to_vec(),
+        conservation,
+        time_grains: [
+            TimeGrain::Day,
+            TimeGrain::Week,
+            TimeGrain::Month,
+            TimeGrain::Quarter,
+            TimeGrain::Year,
+        ],
+    }
 }
 
 // This recognizes a bounded structural equality, not an algebraic solver. Any
 // subtraction, coefficient, conditional or non-property term is left unknown.
 fn conservation_terms(expression: &str) -> Option<(PropertyId, Vec<PropertyId>)> {
-    if expression.len() > 16_384 { return None; }
+    if expression.len() > 16_384 {
+        return None;
+    }
     let expression = unwrap(expression)?;
     let (left, right) = expression.split_once("==")?;
     let left = sum_terms(left, 0)?;
     let right = sum_terms(right, 0)?;
-    let [input] = left.as_slice() else { return None };
-    if right.len() < 2 || right.len() > 64 || right.contains(input)
-        || right.iter().collect::<BTreeSet<_>>().len() != right.len() { return None; }
+    let [input] = left.as_slice() else {
+        return None;
+    };
+    if right.len() < 2
+        || right.len() > 64
+        || right.contains(input)
+        || right.iter().collect::<BTreeSet<_>>().len() != right.len()
+    {
+        return None;
+    }
     Some((input.clone(), right))
 }
 
@@ -318,24 +515,36 @@ fn unwrap(mut text: &str) -> Option<&str> {
     let mut wrappers = 0u8;
     while text.starts_with('(') {
         wrappers = wrappers.checked_add(1)?;
-        if wrappers > 16 { return None; }
+        if wrappers > 16 {
+            return None;
+        }
         let mut depth = 0u32;
         let mut end = None;
         for (index, byte) in text.bytes().enumerate() {
             match byte {
                 b'(' => depth = depth.checked_add(1)?,
-                b')' => { depth = depth.checked_sub(1)?; if depth == 0 { end = Some(index); break; } }
+                b')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        end = Some(index);
+                        break;
+                    }
+                }
                 _ => {}
             }
         }
-        if end? + 1 != text.len() { break; }
+        if end? + 1 != text.len() {
+            break;
+        }
         text = text.get(1..text.len().checked_sub(1)?)?.trim();
     }
     Some(text)
 }
 
 fn sum_terms(text: &str, depth: u8) -> Option<Vec<PropertyId>> {
-    if depth > 16 { return None; }
+    if depth > 16 {
+        return None;
+    }
     let text = unwrap(text)?;
     let mut nesting = 0u32;
     for (index, byte) in text.bytes().enumerate() {
@@ -352,81 +561,179 @@ fn sum_terms(text: &str, depth: u8) -> Option<Vec<PropertyId>> {
     }
     let id = text.strip_prefix("self.")?;
     (id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
-        .then(|| vec![PropertyId(id.to_owned())])
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
+    .then(|| vec![PropertyId(id.to_owned())])
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::indexing_slicing, reason = "typed fixture construction and assertions")]
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "typed fixture construction and assertions"
+    )]
 
     use super::*;
-    use norn_ir::metric::{CalendarPolicy, FilterOperator, FreshnessPolicy, MetricFilter, QuestionDimension, QuestionMetric, QuestionTimeWindow};
-    use norn_ir::{ArtifactDependency, ArtifactKind, EntityRootV2, ObjectTypeName, Property, PropertyConstraints, RuntimeObject, RuntimeValue, TimezonePolicy, UtcTimestamp, WholeNumber, ZenExpression};
+    use norn_ir::metric::{
+        CalendarPolicy, FilterOperator, FreshnessPolicy, MetricFilter, QuestionDimension,
+        QuestionMetric, QuestionTimeWindow,
+    };
+    use norn_ir::{
+        ArtifactDependency, ArtifactKind, EntityRootV2, ObjectTypeName, Property,
+        PropertyConstraints, RuntimeObject, RuntimeValue, TimezonePolicy, UtcTimestamp,
+        WholeNumber, ZenExpression,
+    };
 
     fn payload<T: serde::Serialize>(kind: &ArtifactKind, value: &T) -> ArtifactPayload {
-        ArtifactPayload::from_kind_json(kind, serde_json::from_value(serde_json::to_value(value).expect("typed JSON")).expect("IR JSON"))
-            .expect("typed payload")
+        ArtifactPayload::from_kind_json(
+            kind,
+            serde_json::from_value(serde_json::to_value(value).expect("typed JSON"))
+                .expect("IR JSON"),
+        )
+        .expect("typed payload")
     }
 
     fn property(id: &str, kind: PropertyType) -> Property {
-        Property { id: PropertyId(id.to_owned()), description: None, property_type: kind,
-            constraints: PropertyConstraints::default(), default: None, markings: Vec::new(), computed: None }
+        Property {
+            id: PropertyId(id.to_owned()),
+            description: None,
+            property_type: kind,
+            constraints: PropertyConstraints::default(),
+            default: None,
+            markings: Vec::new(),
+            computed: None,
+        }
     }
 
     fn fixture() -> Vec<ArtifactEnvelope> {
-        let mut entities: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!("../../../../fixtures/ir/metrics/ontology.json")).expect("fixture");
+        let mut entities: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../../fixtures/ir/metrics/ontology.json"
+        ))
+        .expect("fixture");
         let mut entity = entities.remove(0);
-        let mut root: EntityRootV2 = serde_json::from_value(entity.payload.to_json_value()).expect("typed entity");
+        let mut root: EntityRootV2 =
+            serde_json::from_value(entity.payload.to_json_value()).expect("typed entity");
         root.object_type.name = ObjectTypeName("demo.Conversion".to_owned());
         root.object_type.links.clear();
         root.object_type.identity.clear();
-        root.object_type.properties = ["input", "recovered", "loss"].into_iter().map(|id| property(id, PropertyType::Decimal {
-            scale: WholeNumber(3), unit: Some(norn_ir::UnitRef { system: norn_ir::UnitSystem::Ucum, code: "g".to_owned() }),
-            currency_source: None, additivity: PropertyAdditivity::Undeclared,
-        })).collect();
+        root.object_type.properties = ["input", "recovered", "loss"]
+            .into_iter()
+            .map(|id| {
+                property(
+                    id,
+                    PropertyType::Decimal {
+                        scale: WholeNumber(3),
+                        unit: Some(norn_ir::UnitRef {
+                            system: norn_ir::UnitSystem::Ucum,
+                            code: "g".to_owned(),
+                        }),
+                        currency_source: None,
+                        additivity: PropertyAdditivity::Undeclared,
+                    },
+                )
+            })
+            .collect();
         root.object_type.properties.extend([
             property("name", PropertyType::Text {}),
             property("metal", PropertyType::Text {}),
-            property("effective_at", PropertyType::Timestamp { timezone: TimezonePolicy::Utc }),
-            property("known_at", PropertyType::Timestamp { timezone: TimezonePolicy::Utc }),
+            property(
+                "effective_at",
+                PropertyType::Timestamp {
+                    timezone: TimezonePolicy::Utc,
+                },
+            ),
+            property(
+                "known_at",
+                PropertyType::Timestamp {
+                    timezone: TimezonePolicy::Utc,
+                },
+            ),
         ]);
         entity.artifact_id = "demo.Conversion.entity".to_owned();
         entity.namespace = "demo".to_owned();
         entity.name = "Conversion".to_owned();
         entity.payload = payload(&ArtifactKind::Entity, &root);
-        let mut laws: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!("../../../../fixtures/law-ir/laws.json")).expect("law fixture");
+        let mut laws: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../../fixtures/law-ir/laws.json"))
+                .expect("law fixture");
         let mut artifact = laws.remove(0);
-        let mut law: LawIR = serde_json::from_value(artifact.payload.to_json_value()).expect("typed law");
+        let mut law: LawIR =
+            serde_json::from_value(artifact.payload.to_json_value()).expect("typed law");
         law.id = "demo.mass_conservation".to_owned();
         law.subject = "demo.Conversion".to_owned();
         law.modality = LawModality::Always {};
         law.scope.root = LawRoot::Entity("demo.Conversion".to_owned());
         law.scope.object_types = vec![law.subject.clone()];
-        law.response = LawResponse::Predicate { expression: ZenExpression("self.input == self.recovered + self.loss".to_owned()) };
+        law.response = LawResponse::Predicate {
+            expression: ZenExpression("self.input == self.recovered + self.loss".to_owned()),
+        };
         artifact.artifact_id = "demo.mass_conservation.law".to_owned();
         artifact.scope = entity.scope.clone();
-        artifact.dependencies = vec![ArtifactDependency { artifact_id: entity.artifact_id.clone(), kind: ArtifactKind::Entity, version: Some(entity.version.clone()), required: true }];
+        artifact.dependencies = vec![ArtifactDependency {
+            artifact_id: entity.artifact_id.clone(),
+            kind: ArtifactKind::Entity,
+            version: Some(entity.version.clone()),
+            required: true,
+        }];
         artifact.payload = payload(&ArtifactKind::Law, &law);
         vec![entity, artifact]
     }
 
-    fn scope() -> LawRoot { LawRoot::Entity("demo.Conversion".to_owned()) }
+    fn scope() -> LawRoot {
+        LawRoot::Entity("demo.Conversion".to_owned())
+    }
 
     fn space(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
         derive_metric_space(artifacts, &BTreeSet::new(), &scope()).expect("derived space")
     }
 
     fn yield_question(space: &MetricSpace) -> QuestionIR {
-        let candidate = space.candidates().iter().find(|candidate| candidate.definition.label.starts_with("sum(recovered) / sum(input)")
-            && candidate.definition.norn.time_dimension.as_ref().is_some_and(|path| path.property.as_str() == "effective_at")).expect("yield candidate");
+        let candidate = space
+            .candidates()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .definition
+                    .label
+                    .starts_with("sum(recovered) / sum(input)")
+                    && candidate
+                        .definition
+                        .norn
+                        .time_dimension
+                        .as_ref()
+                        .is_some_and(|path| path.property.as_str() == "effective_at")
+            })
+            .expect("yield candidate");
         QuestionIR {
-            ir_version: norn_ir::IrVersion01::V0_1, name: "demo.scrap_yield".to_owned(), object_set: ObjectTypeName("demo.Conversion".to_owned()),
-            search_around: Vec::new(), metrics: vec![QuestionMetric { metric: candidate.definition.name.clone(), inline: None, reaggregate: None }],
-            dimensions: vec![QuestionDimension { path: direct(&PropertyId("effective_at".to_owned())), grain: Some(TimeGrain::Week) }],
-            filters: vec![MetricFilter { path: direct(&PropertyId("metal".to_owned())), operator: FilterOperator::Eq, value: RuntimeValue::from("gold") }],
-            time_window: QuestionTimeWindow { start: UtcTimestamp("2026-07-06T00:00:00Z".to_owned()), end: UtcTimestamp("2026-10-26T00:00:00Z".to_owned()) },
-            calendar: CalendarPolicy::IsoUtc, comparison: None, freshness: FreshnessPolicy::Live { max_age_ms: WholeNumber(5000) },
+            ir_version: norn_ir::IrVersion01::V0_1,
+            name: "demo.scrap_yield".to_owned(),
+            object_set: ObjectTypeName("demo.Conversion".to_owned()),
+            search_around: Vec::new(),
+            metrics: vec![QuestionMetric {
+                metric: candidate.definition.name.clone(),
+                inline: None,
+                reaggregate: None,
+            }],
+            dimensions: vec![QuestionDimension {
+                path: direct(&PropertyId("effective_at".to_owned())),
+                grain: Some(TimeGrain::Week),
+            }],
+            filters: vec![MetricFilter {
+                path: direct(&PropertyId("metal".to_owned())),
+                operator: FilterOperator::Eq,
+                value: RuntimeValue::from("gold"),
+            }],
+            time_window: QuestionTimeWindow {
+                start: UtcTimestamp("2026-07-06T00:00:00Z".to_owned()),
+                end: UtcTimestamp("2026-10-26T00:00:00Z".to_owned()),
+            },
+            calendar: CalendarPolicy::IsoUtc,
+            comparison: None,
+            freshness: FreshnessPolicy::Live {
+                max_age_ms: WholeNumber(5000),
+            },
         }
     }
 
@@ -435,21 +742,40 @@ mod tests {
         let artifacts = fixture();
         let generated = space(&artifacts);
         assert_eq!(generated.candidates().len(), 10);
-        assert!(generated.candidates().iter().any(|candidate| candidate.definition.label.starts_with("sum(loss) / sum(input)")));
+        assert!(generated.candidates().iter().any(|candidate| {
+            candidate
+                .definition
+                .label
+                .starts_with("sum(loss) / sum(input)")
+        }));
         let question = yield_question(&generated);
-        let plan = generated.admit(&question, 100).expect("ordinary compute plan");
+        let plan = generated
+            .admit(&question, 100)
+            .expect("ordinary compute plan");
         assert_eq!(plan.grain().as_str(), "demo.Conversion");
-        assert_eq!(plan.sums().iter().map(|sum| sum.property.id.as_str()).collect::<Vec<_>>(), ["recovered", "input"]);
+        assert_eq!(
+            plan.sums()
+                .iter()
+                .map(|sum| sum.property.id.as_str())
+                .collect::<Vec<_>>(),
+            ["recovered", "input"]
+        );
         let raw = EffectiveCatalog::from_artifacts(&artifacts);
-        let findings = compute::admit(plan.definitions(), &question, &raw, 100).expect_err("raw undeclared terms remain closed");
-        assert!(findings.iter().any(|finding| finding.code.as_str() == codes::UNDECLARED_ADDITIVITY));
+        let findings = compute::admit(plan.definitions(), &question, &raw, 100)
+            .expect_err("raw undeclared terms remain closed");
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code.as_str() == codes::UNDECLARED_ADDITIVITY)
+        );
     }
 
     #[test]
     fn conditional_advisory_state_limited_or_other_scope_laws_do_not_supply_additivity() {
         for variant in 0..4 {
             let mut artifacts = fixture();
-            let mut law: LawIR = serde_json::from_value(artifacts[1].payload.to_json_value()).expect("law");
+            let mut law: LawIR =
+                serde_json::from_value(artifacts[1].payload.to_json_value()).expect("law");
             match variant {
                 0 => law.condition = Some(ZenExpression("self.metal == 'gold'".to_owned())),
                 1 => law.severity = LawSeverity::Warning,
@@ -467,11 +793,26 @@ mod tests {
         let original = space(&artifacts);
         artifacts.reverse();
         let reordered = space(&artifacts);
-        assert_eq!(original.candidates().iter().map(|candidate| &candidate.definition).collect::<Vec<_>>(), reordered.candidates().iter().map(|candidate| &candidate.definition).collect::<Vec<_>>());
-        let mut law: LawIR = serde_json::from_value(artifacts[0].payload.to_json_value()).expect("law");
+        assert_eq!(
+            original
+                .candidates()
+                .iter()
+                .map(|candidate| &candidate.definition)
+                .collect::<Vec<_>>(),
+            reordered
+                .candidates()
+                .iter()
+                .map(|candidate| &candidate.definition)
+                .collect::<Vec<_>>()
+        );
+        let mut law: LawIR =
+            serde_json::from_value(artifacts[0].payload.to_json_value()).expect("law");
         law.rationale.push_str(" (reviewed)");
         artifacts[0].payload = payload(&ArtifactKind::Law, &law);
-        assert_ne!(yield_question(&original).metrics, yield_question(&space(&artifacts)).metrics);
+        assert_ne!(
+            yield_question(&original).metrics,
+            yield_question(&space(&artifacts)).metrics
+        );
     }
 
     #[test]
@@ -480,45 +821,77 @@ mod tests {
         let generated = space(&artifacts);
         let question = yield_question(&generated);
         let plan = generated.admit(&question, 100).expect("derived plan");
-        let mut root: EntityRootV2 = serde_json::from_value(artifacts[0].payload.to_json_value()).expect("entity");
+        let mut root: EntityRootV2 =
+            serde_json::from_value(artifacts[0].payload.to_json_value()).expect("entity");
         for property in &mut root.object_type.properties {
-            if let PropertyType::Decimal { additivity, .. } = &mut property.property_type { *additivity = PropertyAdditivity::Additive; }
+            if let PropertyType::Decimal { additivity, .. } = &mut property.property_type {
+                *additivity = PropertyAdditivity::Additive;
+            }
         }
         let mut declared = artifacts.clone();
         declared[0].payload = payload(&ArtifactKind::Entity, &root);
-        let existing = compute::admit(plan.definitions(), &question, &EffectiveCatalog::from_artifacts(&declared), 100).expect("existing plan");
+        let existing = compute::admit(
+            plan.definitions(),
+            &question,
+            &EffectiveCatalog::from_artifacts(&declared),
+            100,
+        )
+        .expect("existing plan");
         let mut showcase = [0i128; 2];
         let mut count = 0;
-        for line in include_str!("../../../../fixtures/demo/scrap-yield-k1.csv").lines().skip(1) {
+        for line in include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
+            .lines()
+            .skip(1)
+        {
             let columns: Vec<_> = line.split(',').collect();
             let mass = |column: usize| {
                 let value: i64 = columns[column].parse().expect("integer milligrams");
-                let decimal: norn_ir::Decimal = format!("{}.{:03}", value / 1000, value % 1000).parse().expect("exact grams");
+                let decimal: norn_ir::Decimal = format!("{}.{:03}", value / 1000, value % 1000)
+                    .parse()
+                    .expect("exact grams");
                 RuntimeValue::Decimal(decimal)
             };
             let row = RuntimeObject::from([
                 ("name".to_owned(), RuntimeValue::from(columns[2])),
                 ("metal".to_owned(), RuntimeValue::from(columns[3])),
-                ("input".to_owned(), mass(4)), ("recovered".to_owned(), mass(5)), ("loss".to_owned(), mass(6)),
+                ("input".to_owned(), mass(4)),
+                ("recovered".to_owned(), mass(5)),
+                ("loss".to_owned(), mass(6)),
                 ("effective_at".to_owned(), RuntimeValue::from(columns[8])),
             ]);
             let actual = compute::contribution::project(&plan, &row).expect("derived contribution");
-            assert_eq!(actual, compute::contribution::project(&existing, &row).expect("existing contribution"));
-            if columns[0] == "15" && let Some(contribution) = actual {
+            assert_eq!(
+                actual,
+                compute::contribution::project(&existing, &row).expect("existing contribution")
+            );
+            if columns[0] == "15"
+                && let Some(contribution) = actual
+            {
                 for (total, amount) in showcase.iter_mut().zip(contribution.amounts) {
-                    *total = compute::arithmetic::add(*total, amount.expect("sum term")).expect("exact addition");
+                    *total = compute::arithmetic::add(*total, amount.expect("sum term"))
+                        .expect("exact addition");
                 }
             }
             count += 1;
         }
         assert_eq!(count, 80);
         assert_eq!(showcase, [294_000, 300_000]);
-        assert_eq!(compute::arithmetic::ratio(showcase[0], showcase[1]), Some(980_000));
+        assert_eq!(
+            compute::arithmetic::ratio(showcase[0], showcase[1]),
+            Some(980_000)
+        );
     }
 
     #[test]
     fn nonlinear_duplicate_or_conditional_equalities_do_not_derive() {
-        for expression in ["self.input == self.recovered * self.loss", "self.input == self.loss + self.loss", "self.input == self.input + self.loss", "self.input >= self.recovered + self.loss", "self.input == self.recovered + self.loss or true", "self.input == self.recovered + self.loss + 0"] {
+        for expression in [
+            "self.input == self.recovered * self.loss",
+            "self.input == self.loss + self.loss",
+            "self.input == self.input + self.loss",
+            "self.input >= self.recovered + self.loss",
+            "self.input == self.recovered + self.loss or true",
+            "self.input == self.recovered + self.loss + 0",
+        ] {
             assert!(conservation_terms(expression).is_none(), "{expression}");
         }
     }
