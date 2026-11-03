@@ -1235,23 +1235,35 @@ fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
 
 fn same_value_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
-        (
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-            EffectiveKind::Base(PropertyType::Decimal { .. }),
-        ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
-        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
-            (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
-            // Resolved member contracts are compared recursively by the caller.
-            (PropertyType::Record { .. }, PropertyType::Record { .. }) => true,
-            (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
-                enum_values(left) == enum_values(right)
-            }
-            (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
-            _ => left == right,
-        },
+        (EffectiveKind::Base(left), EffectiveKind::Base(right)) => {
+            same_base_value_kind(left, right)
+        }
         (EffectiveKind::Registry(left), EffectiveKind::Registry(right)) => left == right,
         (EffectiveKind::Unresolved, EffectiveKind::Unresolved) => true,
         _ => false,
+    }
+}
+
+fn same_base_value_kind(left: &PropertyType, right: &PropertyType) -> bool {
+    match (left, right) {
+        (PropertyType::Decimal { .. }, PropertyType::Decimal { .. }) => {
+            base_kind_narrows(left, right) == Some(true)
+                && base_kind_narrows(right, left) == Some(true)
+        }
+        (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => true,
+        (PropertyType::Record { members: left }, PropertyType::Record { members: right }) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(left, right)| {
+                    left.id == right.id
+                        && left.constraints == right.constraints
+                        && same_base_value_kind(&left.property_type, &right.property_type)
+                })
+        }
+        (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
+            enum_values(left) == enum_values(right)
+        }
+        (PropertyType::Timestamp { .. }, PropertyType::Timestamp { .. }) => true,
+        _ => left == right,
     }
 }
 
@@ -1261,9 +1273,15 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
     else {
         return None;
     };
+    base_kind_narrows(candidate, previous)
+}
+
+fn base_kind_narrows(candidate: &PropertyType, previous: &PropertyType) -> Option<bool> {
     match (candidate, previous) {
         (PropertyType::Integer { .. }, PropertyType::Integer { .. }) => Some(true),
-        (PropertyType::Record { .. }, PropertyType::Record { .. }) => Some(true),
+        (PropertyType::Record { .. }, PropertyType::Record { .. }) => {
+            same_base_value_kind(candidate, previous).then_some(true)
+        }
         (PropertyType::Text { format: candidate }, PropertyType::Text { format: previous }) => {
             match (candidate, previous) {
                 (_, None) => Some(true),
