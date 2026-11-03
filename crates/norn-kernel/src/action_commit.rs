@@ -929,9 +929,11 @@ where
     check_scope(call)?;
     let prepared_input = match preparation {
         Some(preparation) if preparation.matches_call(call) => preparation,
-        Some(_) => return Err(ActionRefusal::InvalidInput {
-            field: "$prepared_input".to_owned(),
-        }),
+        Some(_) => {
+            return Err(ActionRefusal::InvalidInput {
+                field: "$prepared_input".to_owned(),
+            });
+        }
         None => prepare_action_input_for_call::<H::Error>(
             action,
             &call.input,
@@ -1107,7 +1109,10 @@ where
         )?;
         check_action_envelope::<H::Error>(
             limits,
-            changes.len().saturating_add(output.facts.len()).saturating_add(1),
+            changes
+                .len()
+                .saturating_add(output.facts.len())
+                .saturating_add(1),
             action.commands.len(),
         )?;
         for change in &output.facts {
