@@ -5,7 +5,7 @@ use crate::{
     scope::CellScope,
 };
 
-/// Operation admitted before reading definitions.
+/// Host operation subject to trusted server authorization.
 pub enum Operation {
     /// Read the admitted definitions.
     ReadDefinitions,
@@ -23,7 +23,7 @@ pub struct AccessRequest<'a> {
     pub operation: Operation,
 }
 
-/// Trusted server policy for host reads.
+/// HOST-AUTH-1: trusted server policy; every kernel callback denies by default.
 pub trait Authorizer: Send + Sync {
     /// Current and proposed state authorization, delegated by the kernel.
     ///
@@ -34,7 +34,7 @@ pub trait Authorizer: Send + Sync {
         _request: &norn_kernel::ActionAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::ActionDenial> {
         Err(norn_kernel::ActionDenial::Forbidden {
-            reason: "authz.denied".into(),
+            reason: codes::AUTHZ_DENIED.into(),
         })
     }
     /// Object disclosure for declared action reads.
