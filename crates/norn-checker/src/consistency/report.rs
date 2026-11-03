@@ -32,6 +32,8 @@ pub struct Report {
     /// SHA-256 of exact attempted source, base and complete analysis profile.
     pub digests: [String; 3],
     /// Diagnostic result only; no admission or proof verdict.
+    /// Success requires the complete tree search and final checks to finish;
+    /// any interruption returns unknown, never partial cores or corrections.
     pub diagnosis: Result<super::diagnosis::Diagnosis, super::diagnosis::Unknown<Unknown>>,
     /// Existing readable diagnostics, with exact source member locations.
     pub diagnostics: Vec<crate::Diagnostic>,
