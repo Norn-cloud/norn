@@ -162,13 +162,14 @@ impl<'de> Deserialize<'de> for GoalGuarantee {
     }
 }
 fn ineligible_is_unknown(schema: &mut schemars::Schema) {
-    schema.insert("allOf".into(), serde_json::json!([{
-        "if":{"properties":{"eligible":{"const":false}},"required":["eligible"]},
-        "then":{"properties":{
+    schema.insert("oneOf".into(), serde_json::json!([
+        {"properties":{"eligible":{"const":true}},"required":["eligible"]},
+        {"properties":{
+            "eligible":{"const":false},
             "verdict":{"properties":{"kind":{"const":"unknown"}}},
             "level":{"properties":{"kind":{"const":"unknown"}}}
-        }}
-    }]));
+        },"required":["eligible"]}
+    ]));
 }
 
 /// The presentation contract consumed by Studio; identity alone grants no verdict.
