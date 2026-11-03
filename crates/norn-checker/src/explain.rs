@@ -475,7 +475,10 @@ pub fn render_wording(
         return if options.requirements.is_empty() {
             Ok(())
         } else {
-            Err(refusal(wording_codes::UNKNOWN_LOCALE, "wording requires a locale from the reviewed locale map"))
+            Err(refusal(
+                wording_codes::UNKNOWN_LOCALE,
+                "wording requires a locale from the reviewed locale map",
+            ))
         };
     };
     if options.requirements.is_empty() || report.laws.is_empty() {

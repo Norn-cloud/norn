@@ -220,7 +220,10 @@ fn wording_uses_arabic_and_data_only_french_maps_and_refuses_missing_locale() {
         };
         let errors = norn_checker::explain::render_wording(&mut report, &invalid).unwrap_err();
         assert_eq!(errors[0].code.as_str(), "law.wording.unknown_locale");
-        let missing = ExplainOptions { locale: None, ..invalid };
+        let missing = ExplainOptions {
+            locale: None,
+            ..invalid
+        };
         let errors = norn_checker::explain::render_wording(&mut report, &missing).unwrap_err();
         assert_eq!(errors[0].code.as_str(), "law.wording.unknown_locale");
     }
