@@ -303,7 +303,7 @@ mod tests {
         #[test]
         fn cons_linear_fractional_balance(n in -10000_i64..10000, d in 1_i64..10000, amount in -10000_i64..10000) {
             let r = Rational::new(n, d).unwrap();
-            let neg = Rational::new(-n, d).unwrap();
+            let neg = Rational::new(n.checked_neg().unwrap(), d).unwrap();
             prop_assert_eq!(r.add(neg), Some(q(0)));
             prop_assert_eq!(r.mul(q(amount)).unwrap().add(neg.mul(q(amount)).unwrap()), Some(q(0)));
             let (mut c, mut w) = system();
