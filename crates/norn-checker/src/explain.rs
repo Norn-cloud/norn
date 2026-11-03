@@ -129,7 +129,7 @@ pub fn explain(
 fn declared_interpretations(pool: &[ArtifactEnvelope]) -> Result<Vec<norn_ir::explain::ExplainInterpretation>, Vec<Diagnostic>> {
     let mut result = Vec::new();
     for artifact in pool.iter().filter(|artifact| artifact.kind() == ArtifactKind::BusinessPack) {
-        let pack: norn_ir::BusinessPackRoot = serde_json::from_value(artifact.payload.to_json_value())
+        let pack: norn_ir::BusinessPackRoot = serde_json::to_value(artifact.payload.to_json_value()).and_then(serde_json::from_value)
             .map_err(|error| refusal(crate::verification::codes::INVALID_DOCUMENT, error.to_string()))?;
         if let norn_ir::BusinessPackRoot::Link(link) = pack {
             result.push(norn_ir::explain::ExplainInterpretation {
