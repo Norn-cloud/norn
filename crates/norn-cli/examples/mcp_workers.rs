@@ -15,7 +15,9 @@ impl McpHost {
     /// Invalid generated catalog.
     #[wasm_bindgen(constructor)]
     pub fn new(org: String, environment: String, origin: String) -> Result<Self, JsValue> {
-        backend::host(org, environment, origin).map(Self).map_err(|e| JsValue::from_str(&e.explanation))
+        backend::host(org, environment, origin)
+            .map(Self)
+            .map_err(|e| JsValue::from_str(&e.explanation))
     }
     /// Preserve the JSON-RPC text across the JS boundary.
     /// # Errors

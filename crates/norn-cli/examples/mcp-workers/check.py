@@ -81,9 +81,10 @@ try:
     host_catalog_excludes_raw_storage(catalog)
     checked = send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': '[]', 'context': '{}'}}))
     assert checked['result']['structuredContent']['admitted'] is True
+    assert send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': 'invalid', 'context': '{}'}}))['result']['isError'] is True
     for name in ['sql', 'tables', 'columns', 'schema', 'norn.sql', 'norn.tables']:
         assert 'error' in send(message=rpc('tools/call', {'name': name, 'arguments': {'sql': 'SELECT * FROM sqlite_master'}}))
-    refused = send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'sql': 'SELECT 1'}}))
+    refused = send(message=rpc('tools/call', {'name': 'norn.check', 'arguments': {'artifacts': '[]', 'context': '{}', 'sql': 'SELECT 1'}}))
     assert refused['result']['isError'] is True
     assert refused['result']['structuredContent']['code'] == 'request.invalid'
     send(message={'jsonrpc': '2.0', 'method': 'notifications/initialized'}, status=202)

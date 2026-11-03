@@ -52,12 +52,7 @@ impl<B: Backend> Host<B> {
     }
     /// Dispatch using the trusted cryptographic nonce and host time.
     #[must_use]
-    pub fn handle(
-        &mut self,
-        request: &Request,
-        nonce: &str,
-        now: u64,
-    ) -> Response {
+    pub fn handle(&mut self, request: &Request, nonce: &str, now: u64) -> Response {
         match self.serve(request, nonce, now) {
             Ok(reply) => reply,
             Err(refusal) => Response {
@@ -67,12 +62,7 @@ impl<B: Backend> Host<B> {
             },
         }
     }
-    fn serve(
-        &mut self,
-        r: &Request,
-        nonce: &str,
-        now: u64,
-    ) -> Result<Response, Refusal> {
+    fn serve(&mut self, r: &Request, nonce: &str, now: u64) -> Result<Response, Refusal> {
         let reply = |status, body, session| {
             Ok(Response {
                 status,
@@ -128,22 +118,13 @@ impl<B: Backend> Host<B> {
             if source.get("id").is_none() {
                 return reply(202, String::new(), None);
             }
-            self.sessions.insert(
-                id.clone(),
-                (
-                    Session::new(self.tools.clone(), &binding)?,
-                    now.saturating_add(300_000),
-                ),
-            );
+            let session = Session::new(self.tools.clone(), &binding)?;
+            self.sessions.insert(id.clone(), (session, now.saturating_add(300_000)));
         }
-        if !self.sessions.contains_key(&id) {
+        let Some((session, _)) = self.sessions.get_mut(&id) else {
             return reply(404, String::new(), None);
-        }
-        let (session, _) = self
-            .sessions
-            .get_mut(&id)
-            .ok_or_else(|| Refusal::host("session absent"))?;
-        let body = session.handle(&r.body)?;
+        };
+        let body = session.handle(&r.body, &mut self.backend)?;
         reply(
             if body.is_some() { 200 } else { 202 },
             body.unwrap_or_default(),
