@@ -98,7 +98,14 @@ fn assessment(kind: &str, status: &str) -> (&'static str, &'static str) {
 /// # Errors
 /// Refuses invalid inputs, stale pins, changed models/results or failed acceptance.
 pub fn run(request: DriverRequest<'_>) -> Result<()> {
-    let DriverRequest { mode, original, mutant, base, profile, work } = request;
+    let DriverRequest {
+        mode,
+        original,
+        mutant,
+        base,
+        profile,
+        work,
+    } = request;
     let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile)?)?;
     let bounds = Bounds {
         action: field(&profile, "action")?.into(),
