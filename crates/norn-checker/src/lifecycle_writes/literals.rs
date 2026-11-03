@@ -230,6 +230,7 @@ struct Parser<'t, 's> {
     tokens: &'t [Token<'s>],
     pos: usize,
     records: Vec<Record>,
+    complete: bool,
 }
 
 impl Parser<'_, '_> {
@@ -353,6 +354,7 @@ impl Parser<'_, '_> {
                     self.records.push(record);
                     continue;
                 }
+                Token::Punct('{') => self.complete = false,
                 Token::Punct('(' | '[') => nesting = nesting.saturating_add(1),
                 Token::Punct(')' | ']') => nesting = nesting.saturating_sub(1),
                 Token::Ident(_)
@@ -374,8 +376,12 @@ pub(super) fn records(source: &str) -> Vec<Record> {
         tokens: &tokens,
         pos: 0,
         records: Vec::new(),
+        complete: true,
     };
     parser.scan();
+    if !parser.complete {
+        for record in &mut parser.records { record.closed = false; }
+    }
     parser.records
 }
 
@@ -386,6 +392,7 @@ pub(super) fn whole_value(source: &str) -> Value {
         tokens: &tokens,
         pos: 0,
         records: Vec::new(),
+        complete: true,
     };
     let value = parser.value(0);
     if parser.pos == tokens.len() {
@@ -417,6 +424,14 @@ mod tests {
             let found = records(source);
             assert!(!found.last().expect("record").has_closed_keys(), "{source}");
         }
+    }
+
+    #[test]
+    fn depth_limited_scans_cannot_certify_closed_keys() {
+        let source = format!("{}0{}", "{nested:".repeat(super::MAX_DEPTH.saturating_add(2)), "}".repeat(super::MAX_DEPTH.saturating_add(2)));
+        let found = records(&source);
+        assert!(!found.is_empty());
+        assert!(found.iter().all(|record| !record.has_closed_keys()));
     }
 
     #[test]
