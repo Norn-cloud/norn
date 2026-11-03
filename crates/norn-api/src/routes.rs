@@ -300,7 +300,7 @@ mod tests {
                     .unwrap();
             receipt.as_object_mut().unwrap().insert(
                 key.into(),
-                norn_ir::RuntimeValue::from_json_text(&value.to_string()).unwrap(),
+                norn_ir::RuntimeValue::from_json_text(value.to_string()).unwrap(),
             );
             set.admission_receipt =
                 Some(String::from_utf8(receipt.canonical_json().unwrap()).unwrap());
@@ -330,7 +330,7 @@ mod tests {
             rewrite(&mut bad, key, value);
             assert_eq!(verify(&bad).unwrap_err().code, expected, "{key}");
         }
-        let mut bad = installed.clone();
+        let mut bad = installed;
         bad.canonical_set = "[]".into();
         assert_eq!(verify(&bad).unwrap_err().status, 500);
     }
