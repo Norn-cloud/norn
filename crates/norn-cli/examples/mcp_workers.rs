@@ -10,7 +10,7 @@ mod backend;
 
 /// One configured cell's ephemeral protocol sessions.
 #[wasm_bindgen]
-pub struct McpHost(Host);
+pub struct McpHost(Host<backend::Checker>);
 #[wasm_bindgen]
 impl McpHost {
     /// Trusted deployment binding.
@@ -25,6 +25,7 @@ impl McpHost {
             },
             origin,
             backend::tools().map_err(|e| JsValue::from_str(&e.explanation))?,
+            backend::Checker,
         )))
     }
     /// Preserve the JSON-RPC text across the JS boundary.
@@ -33,7 +34,7 @@ impl McpHost {
     pub fn fetch(&mut self, source: &str, nonce: &str, now: u64) -> Result<String, JsValue> {
         let request: Request =
             serde_json::from_str(source).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&self.0.handle(&request, nonce, now, &mut backend::Checker))
+        serde_json::to_string(&self.0.handle(&request, nonce, now))
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }

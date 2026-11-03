@@ -6,9 +6,8 @@ from pathlib import Path
 import subprocess
 import signal
 import time
-import urllib.request
+from http.client import HTTPConnection
 project = Path(os.environ['NORN_MCP_PROJECT']).resolve()
-URL = 'http://127.0.0.1:9876'
 assert subprocess.check_output(['celld', '--version'], text=True).strip() == 'celld 0.6.3'
 transcript, observed = [], []
 def stop(child):
@@ -29,9 +28,9 @@ def start():
         for _ in range(100):
             assert child.poll() is None, 'celld exited'
             try:
-                urllib.request.urlopen(URL, timeout=1).close()
-                return child
-            except urllib.error.HTTPError:
+                with HTTPConnection('127.0.0.1', 9876, timeout=1) as connection:
+                    connection.request('GET', '/')
+                    connection.getresponse().read()
                 return child
             except OSError:
                 time.sleep(0.2)
@@ -51,14 +50,11 @@ def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     if session:
         headers.setdefault('Mcp-Session-Id', session)
     body = '' if message is None else json.dumps(message)
-    req = urllib.request.Request(URL + path, data=body.encode() if method == 'POST' else None, method=method, headers=headers)
-    try:
-        response = urllib.request.urlopen(req, timeout=15)
-    except urllib.error.HTTPError as error:
-        response = error
-    with response:
+    with HTTPConnection('127.0.0.1', 9876, timeout=15) as connection:
+        connection.request(method, path, body=body if method == 'POST' else None, headers=headers)
+        response = connection.getresponse()
         raw = response.read().decode()
-        actual = {'status': response.code, 'body': raw, 'session': response.headers.get('Mcp-Session-Id')}
+        actual = {'status': response.status, 'body': raw, 'session': response.getheader('Mcp-Session-Id')}
     envelope = dict(method=method, path=path, headers={k.lower(): v for k, v in headers.items()}, body=body)
     transcript.append([envelope, actual['session'] or 'unused', 1])
     observed.append(actual)

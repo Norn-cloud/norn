@@ -31,17 +31,19 @@ pub struct Response {
     pub session: Option<String>,
 }
 /// Trusted single-cell configuration and bounded, ephemeral protocol sessions.
-pub struct Host {
+pub struct Host<B> {
+    backend: B,
     tools: Vec<McpTool>,
     scope: CellScope,
     origin: String,
     sessions: BTreeMap<String, (Session, u64)>,
 }
-impl Host {
+impl<B: Backend> Host<B> {
     /// Construct from trusted deployment configuration, not request headers.
     #[must_use]
-    pub fn new(scope: CellScope, origin: String, tools: Vec<McpTool>) -> Self {
+    pub fn new(scope: CellScope, origin: String, tools: Vec<McpTool>, backend: B) -> Self {
         Self {
+            backend,
             tools,
             scope,
             origin,
@@ -51,8 +53,13 @@ impl Host {
     /// Dispatch a request value to the existing Rust Session and backend.
     /// `nonce` comes from platform cryptographic randomness; `now` is host time.
     #[must_use]
-    pub fn handle(&mut self, request: &Request, nonce: &str, now: u64, backend: &mut impl Backend) -> Response {
-        match self.serve(request, nonce, now, backend) {
+    pub fn handle(
+        &mut self,
+        request: &Request,
+        nonce: &str,
+        now: u64,
+    ) -> Response {
+        match self.serve(request, nonce, now) {
             Ok(reply) => reply,
             Err(refusal) => Response {
                 status: refusal.status,
@@ -61,7 +68,12 @@ impl Host {
             },
         }
     }
-    fn serve(&mut self, r: &Request, nonce: &str, now: u64, backend: &mut impl Backend) -> Result<Response, Refusal> {
+    fn serve(
+        &mut self,
+        r: &Request,
+        nonce: &str,
+        now: u64,
+    ) -> Result<Response, Refusal> {
         let reply = |status, body, session| {
             Ok(Response {
                 status,
@@ -81,11 +93,7 @@ impl Host {
         if r.body.len() > 1024 * 1024 {
             return reply(413, String::new(), None);
         }
-        let binding = format!(
-            "{}/public/{}",
-            self.scope.key(),
-            env!("CARGO_PKG_VERSION")
-        );
+        let binding = format!("{}/public/{}", self.scope.key(), env!("CARGO_PKG_VERSION"));
         if r.path == "/catalog" && r.method == "GET" {
             let body = Session::new(self.tools.clone(), &binding)?
                 .catalog(None, None)?
@@ -123,7 +131,10 @@ impl Host {
             }
             self.sessions.insert(
                 id.clone(),
-                (Session::new(self.tools.clone(), &binding)?, now.saturating_add(300_000)),
+                (
+                    Session::new(self.tools.clone(), &binding)?,
+                    now.saturating_add(300_000),
+                ),
             );
         }
         if !self.sessions.contains_key(&id) {
@@ -133,7 +144,7 @@ impl Host {
             .sessions
             .get_mut(&id)
             .ok_or_else(|| Refusal::host("session absent"))?;
-        let body = session.handle(&r.body, backend)?;
+        let body = session.handle(&r.body)?;
         reply(
             if body.is_some() { 200 } else { 202 },
             body.unwrap_or_default(),
