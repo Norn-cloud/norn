@@ -215,10 +215,7 @@ jobs:
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   rights-revocation:
     name: Record durable rights revocations for PR ${{ github.event.issue.number }} comment ${{ github.event.comment.id }} revoke ${{ contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')) }}
-    if: >-
-      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-      (contains(github.event.comment.body, '/revoke-rights') ||
-      (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
     permissions:
       contents: read
       statuses: write
@@ -232,6 +229,9 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const comment = context.payload.comment;
+            const bodies = [comment.body, context.payload.changes?.body?.from];
+            const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));
+            if (!heads.size) return;
             const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
             if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error('Missing revocation attempt identity');
             const ignore = () => { if (attempt > 1) throw new Error('Cannot reconcile without the original admin reviewer'); };
@@ -239,8 +239,6 @@ jobs:
             const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login })
               .catch(error => { if (error.status === 404) return { data: { permission: 'none' } }; throw error; });
             if (permission.permission !== 'admin') { ignore(); return; }
-            const bodies = [comment.body, context.payload.changes?.body?.from];
-            const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));
             for (const sha of heads) {
               // Commit statuses are append-only. Read ALL history, never just the latest context.
               await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'success',

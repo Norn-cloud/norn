@@ -642,7 +642,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
         'Resolve the pull request': ('77ee31967cc3351930d8984f33b0f19caec0b59600236000a53094b4391e28eb', ['script', 'retries'], False, None),
-        'Persist the rights revocation boundary': ('b50f6d14753547850e5f945b641ecc8ae00463b52b90fcb13e3fb1ecc11dce47', ['script', 'retries'], False, None),
+        'Persist the rights revocation boundary': ('aee22d8468a156a4e6e6937a537178abe267925aada543d4c617c56d4465e1a5', ['script', 'retries'], False, None),
         'Record admin approvals of the exact PR head': ('3a5d0cbb2e712e78486e67d3c41bd76d91e4201ea9b1be5c8ebf36c99ead33f8', ['script'], False, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
         'Record admin approvals of the queued heads': ('3051e6caa6077067d7ba6df0f65784329019427aae51cfa238f785caa0060f6b', ['script'], False, None),
@@ -666,9 +666,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     ledger = public["jobs"].get("rights-revocation", {})
     expected_ledger = {
         "name": "Record durable rights revocations for PR ${{ github.event.issue.number }} comment ${{ github.event.comment.id }} revoke ${{ contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')) }}",
-        "if": ("github.event_name == 'issue_comment' && github.event.issue.pull_request && "
-               "(contains(github.event.comment.body, '/revoke-rights') || "
-               "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))"),
+        "if": "github.event_name == 'issue_comment' && github.event.issue.pull_request",
         "permissions": {"contents": "read", "statuses": "write"},
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
     }
