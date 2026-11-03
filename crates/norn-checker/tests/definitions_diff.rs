@@ -688,7 +688,7 @@ fn additivity_change_is_declared_separately_from_value_narrowing() {
         let mut additive = kind;
         additive["additivity"] = json!({"kind":"additive"});
         let candidate = object(additive.clone());
-        let diff = diff_definition_sets(&[previous.clone()], &[candidate]);
+        let diff = diff_definition_sets(std::slice::from_ref(&previous), &[candidate]);
         assert_eq!(diff.changed.len(), 1);
         assert!(diff.narrowing.is_empty());
         assert_eq!(diff.additivity_changes.len(), 1);
