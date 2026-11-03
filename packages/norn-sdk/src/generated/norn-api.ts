@@ -2972,27 +2972,7 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: {
-            id: string;
-            /** @enum {string} */
-            kind: "company";
-        } | {
-            id: string;
-            /** @enum {string} */
-            kind: "app";
-        } | {
-            id: string;
-            /** @enum {string} */
-            kind: "cell";
-        } | {
-            id: string;
-            /** @enum {string} */
-            kind: "entity";
-        } | {
-            id: string;
-            /** @enum {string} */
-            kind: "pack";
-        };
+        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"] | components["schemas"]["NornIrLawRootOneOf4"];
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -3517,44 +3497,7 @@ export interface components {
          *     interface name, a property, link, lifecycle-property, or transition id,
          *     an object-map id, a law id.
          */
-        NornIrMember: {
-            /** @enum {string} */
-            kind: "artifact";
-        } | {
-            /** @enum {string} */
-            kind: "type";
-            typeName: string;
-        } | {
-            /** @enum {string} */
-            kind: "property";
-            property: string;
-            typeName: string;
-        } | {
-            /** @enum {string} */
-            kind: "link";
-            link: string;
-            typeName: string;
-        } | {
-            /** @enum {string} */
-            kind: "state";
-            lifecycle: string;
-            state: string;
-            typeName: string;
-        } | {
-            /** @enum {string} */
-            kind: "transition";
-            lifecycle: string;
-            transition: string;
-            typeName: string;
-        } | {
-            /** @enum {string} */
-            kind: "object_map";
-            map: string;
-        } | {
-            /** @enum {string} */
-            kind: "law";
-            law: string;
-        };
+        NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
         /** @description One interpretation between exact catalog members, never a coverage claim. */
         NornIrMemberInterpretation: {
             /** @description Source type, property, link, lifecycle state or transition identity. */
