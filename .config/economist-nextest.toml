@@ -1,0 +1,76 @@
+# Native fallback for the four-beat economist rehearsal (#213).
+# Setup phases run in declaration order; Nextest owns execution and failure.
+# A phase's label describes its actual surface, not a product-completion claim.
+experimental = ["setup-scripts"]
+
+[scripts.setup."Prepare required drop inventory"]
+command = ["python3", "scripts/check_demo_scenarios.py"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 1 | native run | three systems"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-09"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 1 | native run | quarantine reason"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-05"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 2 | native run | exact question and contributions"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "exact_question"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 2 | native run | incremental equals recompute"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-07"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 2 | native run | restatement and old as-of answer"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-08"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 3 | native run | allocation plans"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-04"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 3 | native run | committed pricing"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-06"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 4 | native run | refused conservation transaction"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-constitution"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 4 | native run | retained invariant responses"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "drop-11"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 4 | native run | build generated proof backend"]
+command = ["cargo", "build", "--locked", "-p", "norn-checker", "--example", "quint"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[scripts.setup."Beat 4 | native run | generated bounded counterexample"]
+command = ["bun", "test", "./tools/norn-proofs/check.test.ts", "--test-name-pattern", "^tla_ts_apalache_parity$"]
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[profile.economist-rehearsal]
+default-filter = "binary_id(norn-kernel::invariant_commit) & test(=law_invariant_runtime_valid_response_admits)"
+test-threads = 1
+retries = 0
+fail-fast = true
+success-output = "immediate"
+
+[[profile.economist-rehearsal.scripts]]
+filter = "all()"
+setup = [
+  "Prepare required drop inventory",
+  "Beat 1 | native run | three systems",
+  "Beat 1 | native run | quarantine reason",
+  "Beat 2 | native run | exact question and contributions",
+  "Beat 2 | native run | incremental equals recompute",
+  "Beat 2 | native run | restatement and old as-of answer",
+  "Beat 3 | native run | allocation plans",
+  "Beat 3 | native run | committed pricing",
+  "Beat 4 | native run | refused conservation transaction",
+  "Beat 4 | native run | retained invariant responses",
+  "Beat 4 | native run | build generated proof backend",
+  "Beat 4 | native run | generated bounded counterexample",
+]
