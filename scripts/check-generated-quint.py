@@ -14,6 +14,17 @@ import zipfile
 from quint_apalache import ApalacheServer, HarnessError, run_quint_apalache, scrubbed_environment
 
 
+def verdict(primary, oracle, returncode, timed_out, expected):
+    """PROOF-QUINT-RUN-1: only complete, agreeing backend results qualify."""
+    if timed_out or oracle.get("errors") != []:
+        return "unknown"
+    if returncode == 0 and primary.get("status") == "success" and primary.get("distinctStates") == expected and oracle.get("status") == "ok":
+        return "ok"
+    if returncode == 1 and primary.get("status") == "invariant-violation" and primary.get("violation", {}).get("trace") and oracle.get("status") == "violation" and oracle.get("trace"):
+        return "violation"
+    return "unknown"
+
+
 def run(args):
     model = args.model.read_text()
     magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
@@ -62,15 +73,11 @@ def run(args):
         ], environment=environment, timeout_seconds=120, result_root=work, emit=lambda line: print(line, file=sys.stderr, flush=True))
         oracle_raw = oracle_path.read_text()
         oracle = json.loads(oracle_raw)
-        clean = oracle.get("errors") == []
-        status = "unknown"
         expected = 1 if args.step == "idle" else args.expected_states
-        if primary.get("status") == "success" and primary.get("distinctStates") == expected and clean and oracle.get("status") == "ok" and oracle_run.returncode == 0:
-            status = "ok"
-        if primary.get("status") == "invariant-violation" and primary.get("violation", {}).get("trace") and clean and oracle.get("status") == "violation" and oracle.get("trace"):
-            status = "violation"
+        status = verdict(primary, oracle, oracle_run.returncode, oracle_run.timed_out, expected)
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",
                 "compilation": compilation, "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
+                "oracleRun": {"exitCode": oracle_run.returncode, "timedOut": oracle_run.timed_out},
                 "tlaSha256": hashlib.sha256(compiled.stdout).hexdigest(), "trace": primary.get("violation", {}).get("trace")}
 
 

@@ -40,3 +40,10 @@ test("tla_ts_apalache_parity", async () => {
     await rm(work, {recursive: true, force: true})
   }
 }, 600_000)
+
+
+test("generated_solver_timeout_and_exit_status", async () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url))
+  const child = Bun.spawn(["python3", "scripts/test_generated_proofs.py"], {cwd: root, stdout: "inherit", stderr: "inherit"})
+  expect(await child.exited).toBe(0)
+})
