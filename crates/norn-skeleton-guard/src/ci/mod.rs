@@ -831,37 +831,7 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         .get("comments")
         .and_then(serde_json::Value::as_array)
         .ok_or("missing rights comments")?;
-    let revocations = evidence
-        .get("revocations")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("missing durable revocation history")?;
-    // GitHub caps statuses per SHA/context at 1000. A full ledger requires a new head.
-    if revocations.len() >= 1000 {
-        return Err("durable revocation history exhausted; use a new head".into());
-    }
-    let mut boundary = None;
-    let mut status_ids = BTreeSet::new();
-    for status in revocations {
-        let id = status
-            .get("id")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or("missing revocation status ID")?;
-        let at = status
-            .get("created_at")
-            .and_then(serde_json::Value::as_str)
-            .filter(|at| rights_timestamp(at))
-            .ok_or("invalid revocation timestamp")?;
-        if !status_ids.insert(id)
-            || status
-                .get("context")
-                .and_then(serde_json::Value::as_str)
-                .is_none_or(|context| !context.eq_ignore_ascii_case("rights-revocation"))
-            || status.get("state").and_then(serde_json::Value::as_str) != Some("success")
-        {
-            return Err("invalid durable revocation status".into());
-        }
-        boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
-    }
+    let boundary = rights_revocation_boundary(evidence)?;
     let mut decisions = Vec::new();
     let mut ids = BTreeSet::new();
     for comment in comments {
@@ -927,6 +897,41 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         )),
         _ => Err(format!("missing, edited or revoked /ack-rights {head}")),
     }
+}
+
+fn rights_revocation_boundary(evidence: &serde_json::Value) -> Result<Option<&str>, String> {
+    let revocations = evidence
+        .get("revocations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing durable revocation history")?;
+    // GitHub caps statuses per SHA/context at 1000. A full ledger requires a new head.
+    if revocations.len() >= 1000 {
+        return Err("durable revocation history exhausted; use a new head".into());
+    }
+    let mut boundary = None;
+    let mut status_ids = BTreeSet::new();
+    for status in revocations {
+        let id = status
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("missing revocation status ID")?;
+        let at = status
+            .get("created_at")
+            .and_then(serde_json::Value::as_str)
+            .filter(|at| rights_timestamp(at))
+            .ok_or("invalid revocation timestamp")?;
+        if !status_ids.insert(id)
+            || status
+                .get("context")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|context| !context.eq_ignore_ascii_case("rights-revocation"))
+            || status.get("state").and_then(serde_json::Value::as_str) != Some("success")
+        {
+            return Err("invalid durable revocation status".into());
+        }
+        boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
+    }
+    Ok(boundary)
 }
 
 // GitHub API timestamps use canonical UTC seconds, so lexical order is time order.
