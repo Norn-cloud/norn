@@ -6,7 +6,7 @@ use crate::{
 };
 use norn_checker::mapping::{SourceDocument, compile_mapping_artifact};
 use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
-use norn_kernel::{ObservationId, Observed};
+use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
 
 /// Trusted source selection; every evaluation input participates in bundle identity.
@@ -245,22 +245,14 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        let version = self
-            .read()
-            .installed_definitions(None)?
-            .ok_or_else(mismatch)?
-            .version;
-        let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
-        let id = format!("mapping-bundle:{}", bundle.digest);
-        let observed = Observed {
-            id: ObservationId(id.clone()),
-            provenance: raw.provenance.clone(),
-            input: norn_ir::runtime::encode(&bundle).map_err(CellError::Encoding)?,
-        };
-        let inserted = self.inject(
-            &id,
-            &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
-        )?;
-        Ok((id, inserted))
+        self.conn.transaction(|| {
+            let version = self
+                .read()
+                .installed_definitions(None)?
+                .ok_or_else(mismatch)?
+                .version;
+            let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
+            crate::mapping_conflict::capture(self, raw, &bundle)
+        })
     }
 }

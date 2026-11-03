@@ -85,6 +85,17 @@ sealed raw-envelope digest and exact source/mapping/definition pins, preserving
 diagnostics and nonconforming records, and issues observed-write authority only
 after cell-owned recomputation matches the pinned bundle
 (`core.boundary.bundle_mismatch` on disagreement).
+FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
+`kind`, `source_version`, `payload_digest` and redaction record for the trusted
+connector/partition plus source/record/event identity, matching the ingress oracle.
+Receipt time, cursor and pipeline metadata do not change source-event content.
+In one capture transaction, preserve the first bundle and retain conflicting raw
+input, pins, diagnostics and a replay-stable `core.boundary.import_finding` in the
+Observed inbox. The conflicting candidate cannot be applied and every affected mapped subject, including the preserved first canonical object, is quarantined from authoritative/governed reads and aggregates (with visible counts), may appear only as `disputed` in label-permitted analytical reads, and is released only by an explicit governed accept-first, accept-second-as-correction or reject review action recorded with its own receipt. Rechecking recomputes
+both admitted bundles; stored finding claims confer no authority. Redelivery and
+restart add no second conflict finding; ordinary corrections do not resolve it.
+Full cursor convergence and conflict capture for ordinary unmapped submissions
+remain follow-up cuts for this CP2 bundle bridge.
 
 ## Perform and recovery semantics
 

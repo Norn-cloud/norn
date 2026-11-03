@@ -5284,6 +5284,7 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(reader.authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
             let page = reader.authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("authoritative projection");
             norn_testkit::proptest::prop_assert!(page.records.is_empty());
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1-ALT").expect("second role").is_none());
             norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 1);
             norn_testkit::proptest::prop_assert_eq!(page.scanned_through.as_deref(), Some("MEAS-1"));
             let findings = reader.observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("findings");
@@ -5599,6 +5600,10 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     mapping["payload"]["interfaces"] = json!(["quality.Measured.interface"]);
     mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"quality.Measurement.entity", "interface":"quality.Measured.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"purity", "value":"input.purity"}]}]);
     artifacts.push(source);
+    let mut alternate = mapping.clone();
+    alternate["artifactId"] = json!("quality.alternate");
+    alternate["payload"]["maps"][0]["subject"] = json!("input.name + '-ALT'");
+    artifacts.push(serde_json::from_value(alternate).expect("alternate role"));
     artifacts.push(serde_json::from_value(mapping).expect("mapping"));
     let object =
         serde_json::to_value(&artifacts[0]).expect("object")["payload"]["objectType"].clone();
@@ -6399,6 +6404,125 @@ fn host_provision_atomic_retry_preserves_later_installs() {
         store.read().active_definitions_version().expect("active"),
         Some(2)
     );
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn feed_conflict_replay_preserves_first_capture_and_one_finding(fraction in 1u16..1000, deliveries in 2i64..5) {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("conflict.sqlite");
+        let mut store = mapping_bundle_store(&path);
+        let input = bundle_input();
+        let original = bundle_raw("MEAS-1", "0.90");
+        let (accepted_id, _) = store.inject_mapping_bundle(&original, &input).expect("original");
+        let model = store.model().clone();
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&accepted_id).expect("apply first");
+        drop(cell);
+        store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("second mapping context");
+        let mut alternate = input.clone(); alternate.mapping = "quality.alternate".into();
+        let (second_id, _) = store.inject_mapping_bundle(&original, &alternate).expect("second role");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&second_id).expect("apply second role");
+        let before = cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("read").expect("object");
+        drop(cell);
+        store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        let mut expected_id = None;
+        for attempt in 0..deliveries {
+            let mut raw = bundle_raw("MEAS-1", &format!("1.{fraction:03}"));
+            raw.input.as_object_mut().expect("raw object").insert("extracted_at".into(), Value::from(100i64.checked_add(attempt).expect("receipt metadata")));
+            let (id, inserted) = store.inject_mapping_bundle(&raw, &input).expect("conflict capture");
+            norn_testkit::proptest::prop_assert_eq!(inserted, attempt == 0);
+            if let Some(expected) = &expected_id { norn_testkit::proptest::prop_assert_eq!(&id, expected); }
+            expected_id = Some(id.clone());
+            let pending = store.read().pending_observations().expect("queue");
+            norn_testkit::proptest::prop_assert_eq!(pending.len(), 1);
+            let observed: norn_kernel::Observed<Value> = norn_ir::runtime::decode(&pending[0].observed).expect("envelope");
+            let conflict: norn_cell::mapping_conflict::MappingConflict = norn_ir::runtime::decode(&observed.input).expect("typed finding");
+            store.read().recheck_mapping_conflict(&conflict).expect("recomputed evidence");
+            norn_testkit::proptest::prop_assert_eq!(&conflict.accepted_bundle_id, &accepted_id);
+            norn_testkit::proptest::prop_assert_eq!(conflict.finding.status, norn_ir::DataQualityFindingStatus::Open);
+            let mut forged = conflict.clone(); forged.finding.message.push('!');
+            norn_testkit::proptest::prop_assert!(matches!(store.read().recheck_mapping_conflict(&forged), Err(CellError::MappingBundleMismatch)));
+            let bypass = format!("mapping-bundle:{}", conflict.incoming.digest);
+            if attempt.checked_add(1) == Some(deliveries) {
+                let forged = norn_kernel::Observed { id: norn_kernel::ObservationId(bypass.clone()), provenance: raw.provenance.clone(), input: norn_ir::runtime::encode(&conflict.incoming).expect("bundle") };
+                store.inject(&bypass, &norn_ir::runtime::encode(&forged).expect("envelope")).expect("untrusted claim");
+            }
+            let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+            norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::UnsupportedMappingProfile)));
+            if attempt.checked_add(1) == Some(deliveries) {
+                let delivery = norn_kernel::CellHost::observe(&mut cell).expect("queue").expect("conflict");
+                norn_kernel::CellHost::commit(&mut cell, norn_kernel::CellCommit::empty().consuming(delivery.consumed())).expect("ordinary acknowledgement receipt");
+                norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&bypass), Err(CellError::UnsupportedMappingProfile)));
+            }
+            norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+            norn_testkit::proptest::prop_assert_eq!(cell.store().read().object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("first bytes"), Some(before.clone()));
+            let page = cell.store().read().authoritative_page(MAIN_WORLD, "quality.Measurement", None, 10).expect("aggregate population");
+            norn_testkit::proptest::prop_assert_eq!(page.quarantine_count, 2);
+            norn_testkit::proptest::prop_assert!(page.records.is_empty());
+            norn_testkit::proptest::prop_assert_eq!(cell.store().read().observation_findings(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("review").len(), 1);
+            drop(cell);
+            store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("restart");
+        }
+        let mut correction = bundle_raw("MEAS-1", "0.80");
+        correction.input.as_object_mut().expect("raw").insert("event_id".into(), Value::from("2"));
+        let (id, _) = store.inject_mapping_bundle(&correction, &input).expect("new source event");
+        let mut cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
+        cell.process_mapping_bundle(&id).expect("capture correction");
+        norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());
+        norn_testkit::proptest::prop_assert_eq!(cell.store().read().object_at_version(MAIN_WORLD, "quality.Measurement", "MEAS-1", before.version).expect("immutable first version"), Some(before));
+
+    }
+}
+
+#[test]
+fn feed_conflict_uses_ingress_content_and_partition_semantics() {
+    let dir = tempfile::tempdir().expect("directory");
+    let mut store = mapping_bundle_store(&dir.path().join("scopes.sqlite"));
+    let raw = bundle_raw("MEAS-1", "0.90");
+    let input = bundle_input();
+    store.inject_mapping_bundle(&raw, &input).expect("original");
+    let mut metadata = raw.clone();
+    metadata
+        .input
+        .as_object_mut()
+        .expect("raw object")
+        .insert("cursor".into(), Value::from("new cursor"));
+    metadata
+        .input
+        .as_object_mut()
+        .expect("raw object")
+        .insert("pipeline_version".into(), Value::from("pipeline/2"));
+    let (id, _) = store
+        .inject_mapping_bundle(&metadata, &input)
+        .expect("metadata");
+    assert!(id.starts_with("mapping-bundle:"));
+    for (field, value) in [
+        ("source_version", Value::from("2")),
+        ("kind", Value::from("delete")),
+        (
+            "redaction",
+            norn_ir::runtime_object! {"policy_id"=>"synthetic", "policy_version"=>"1", "redacted"=>Value::Array(Vec::new())},
+        ),
+    ] {
+        let mut changed = raw.clone();
+        changed
+            .input
+            .as_object_mut()
+            .expect("raw object")
+            .insert(field.into(), value);
+        let (id, _) = store
+            .inject_mapping_bundle(&changed, &input)
+            .expect("conflict");
+        assert!(id.starts_with("mapping-conflict:"));
+    }
+    let mut partition = input;
+    partition.partition.push('x');
+    let (id, _) = store
+        .inject_mapping_bundle(&bundle_raw("MEAS-1", "1.20"), &partition)
+        .expect("independent partition");
+    assert!(id.starts_with("mapping-bundle:"));
 }
 
 #[test]

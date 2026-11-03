@@ -24,6 +24,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         else {
             return Ok(false);
         };
+        if observation_id.starts_with("mapping-conflict:") {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
         if observed.id.0 != observation_id {
@@ -41,6 +44,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             || observation_id != format!("mapping-bundle:{}", bundle.digest)
         {
             return Err(CellError::MappingBundleMismatch);
+        }
+        if self.store().read().mapping_conflict(&bundle)?.is_some() {
+            return Err(CellError::UnsupportedMappingProfile);
         }
         let model = self.store().model().clone();
         let catalog = TypeCatalog::new(model.object_types())
