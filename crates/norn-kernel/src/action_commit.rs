@@ -4262,6 +4262,7 @@ fn precondition_read_refusal<X>(
         CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -4298,6 +4299,7 @@ fn precondition_read_refusal<X>(
         CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }

@@ -756,6 +756,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
@@ -1920,6 +1921,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
     Ok(match error {
         Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
         AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
+        Error::ImmutableObject { key } => Error::ImmutableObject { key },
         Error::Law { key, reason } => Error::Law { key, reason },
         IdentityCollision {
             owner,
@@ -2155,6 +2157,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
