@@ -4907,10 +4907,18 @@
       "pattern": "^[a-z][a-z0-9_]*$"
     },
     "IrVersion01": {
-      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
       "type": "string",
       "enum": [
         "0.1"
+      ]
+    },
+    "IrVersion02": {
+      "description": "Setting value profiles: historical binary64 and current exact decimal literals.",
+      "type": "string",
+      "enum": [
+        "0.1",
+        "0.2"
       ]
     },
     "JdmCustomNodeContent": {
@@ -9832,7 +9840,7 @@
       ]
     },
     "SettingPayload": {
-      "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue whose JSON type is fixed by `valueType`.",
+      "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue paired with `valueType`. Version 0.2 number settings require exact\ndecimal-string literals; verified retained 0.1 keeps its binary64 JSON\nnumber profile.",
       "type": "object",
       "properties": {
         "effectiveFrom": {
@@ -9863,14 +9871,14 @@
           "type": "string"
         },
         "settingVersion": {
-          "$ref": "#/$defs/IrVersion01"
+          "$ref": "#/$defs/IrVersion02"
         },
         "supersedes": {
           "description": "The setting version this one replaces.",
           "$ref": "#/$defs/SettingSupersedes"
         },
         "value": {
-          "description": "The value, whose JSON type agrees with `valueType`. A `json` setting\nmay be `null`.",
+          "description": "Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`.",
           "$ref": "#/$defs/JsonValue"
         },
         "valueType": {
@@ -9891,9 +9899,24 @@
         },
         {
           "properties": {
+            "settingVersion": {
+              "const": "0.2"
+            },
             "value": {
-              "type": "number",
-              "format": "double"
+              "$ref": "#/$defs/DecimalLiteral"
+            },
+            "valueType": {
+              "const": "number"
+            }
+          }
+        },
+        {
+          "properties": {
+            "settingVersion": {
+              "const": "0.1"
+            },
+            "value": {
+              "type": "number"
             },
             "valueType": {
               "const": "number"
@@ -9987,7 +10010,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
@@ -10042,6 +10065,84 @@
     "SliceKey": {
       "description": "Where a [`SliceDeclaration`]'s key comes from.",
       "oneOf": [
+        {
+          "description": "A unique effective parameter selected from an earlier authorized link list.",
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "object",
+              "properties": {
+                "defaultFrom": {
+                  "description": "Earlier single-object slice holding an explicit default setting.",
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "description": "Action input field carrying the declared effective timestamp.",
+                  "$ref": "#/$defs/PropertyId"
+                },
+                "from": {
+                  "description": "Earlier list slice containing the candidate setting facts.",
+                  "type": "string"
+                },
+                "precedence": {
+                  "description": "Explicit scope precedence, highest first.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "businessUnitId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "environmentId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orgId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenantId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "workspaceId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "settingKey": {
+                  "description": "Stable parameter key.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "settingKey",
+                "effectiveAt",
+                "precedence"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "parameter"
+          ]
+        },
         {
           "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
           "type": "string",

@@ -1,0 +1,19 @@
+{
+  "sha256": "03bad9d1a174548c98b930d45ddde7547439d3fc4c8b92f4e115dd725eef3945",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "verification/parameters/tax/Cargo.toml"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

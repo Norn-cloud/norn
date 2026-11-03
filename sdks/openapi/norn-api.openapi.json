@@ -6444,9 +6444,17 @@
       },
       "NornIrIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
+        ]
+      },
+      "NornIrIrVersion02": {
+        "type": "string",
+        "description": "Setting value profiles: historical binary64 and current exact decimal literals.",
+        "enum": [
+          "0.1",
+          "0.2"
         ]
       },
       "NornIrJdmCustomNodeContent": {
@@ -7903,7 +7911,7 @@
       },
       "NornIrLayoutIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
         ]
@@ -11008,7 +11016,7 @@
       },
       "NornIrRequirementIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
         ]
@@ -13041,7 +13049,7 @@
                 "type": "string"
               },
               "settingVersion": {
-                "$ref": "#/components/schemas/NornIrIrVersion01"
+                "$ref": "#/components/schemas/NornIrIrVersion02"
               },
               "supersedes": {
                 "$ref": "#/components/schemas/NornIrSettingSupersedes",
@@ -13049,7 +13057,7 @@
               },
               "value": {
                 "$ref": "#/components/schemas/NornIrJsonValue",
-                "description": "The value, whose JSON type agrees with `valueType`. A `json` setting\nmay be `null`."
+                "description": "Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`."
               },
               "valueType": {
                 "$ref": "#/components/schemas/NornIrSettingValueType"
@@ -13073,9 +13081,30 @@
               },
               {
                 "properties": {
+                  "settingVersion": {
+                    "enum": [
+                      "0.2"
+                    ]
+                  },
                   "value": {
-                    "type": "number",
-                    "format": "double"
+                    "$ref": "#/components/schemas/NornIrDecimalLiteral"
+                  },
+                  "valueType": {
+                    "enum": [
+                      "number"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "settingVersion": {
+                    "enum": [
+                      "0.1"
+                    ]
+                  },
+                  "value": {
+                    "type": "number"
                   },
                   "valueType": {
                     "enum": [
@@ -13110,7 +13139,7 @@
               }
             ],
             "type": "object",
-            "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue whose JSON type is fixed by `valueType`."
+            "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue paired with `valueType`. Version 0.2 number settings require exact\ndecimal-string literals; verified retained 0.1 keeps its binary64 JSON\nnumber profile."
           }
         ]
       },
@@ -13178,7 +13207,7 @@
       },
       "NornIrSettingValueType": {
         "type": "string",
-        "description": "The JSON type of a setting's `value`.",
+        "description": "The setting value kind; numbers use exact decimal-string literals.",
         "enum": [
           "text",
           "number",
@@ -13233,6 +13262,9 @@
       "NornIrSliceKey": {
         "oneOf": [
           {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0"
+          },
+          {
             "type": "string",
             "description": "The object the triggering event names (a `transitioned` or `created`\ntrigger).",
             "enum": [
@@ -13261,15 +13293,100 @@
             ]
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
           },
           {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6"
           }
         ],
         "description": "Where a [`SliceDeclaration`]'s key comes from."
       },
-      "NornIrSliceKeyOneOf4": {
+      "NornIrSliceKeyOneOf0": {
+        "type": "object",
+        "description": "A unique effective parameter selected from an earlier authorized link list.",
+        "required": [
+          "parameter"
+        ],
+        "properties": {
+          "parameter": {
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameter"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameter": {
+        "type": "object",
+        "required": [
+          "from",
+          "settingKey",
+          "effectiveAt",
+          "precedence"
+        ],
+        "properties": {
+          "defaultFrom": {
+            "type": "string",
+            "description": "Earlier single-object slice holding an explicit default setting."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "Action input field carrying the declared effective timestamp.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "from": {
+            "type": "string",
+            "description": "Earlier list slice containing the candidate setting facts."
+          },
+          "precedence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"
+            },
+            "description": "Explicit scope precedence, highest first."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "Stable parameter key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems": {
+        "type": "object",
+        "properties": {
+          "businessUnitId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environmentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orgId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspaceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSliceKeyOneOf5": {
         "type": "object",
         "description": "A text property of an earlier slice entry (a link by key).",
         "required": [
@@ -13277,12 +13394,12 @@
         ],
         "properties": {
           "property": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf4PropertyProperty"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyProperty"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf4PropertyProperty": {
+      "NornIrSliceKeyOneOf5PropertyProperty": {
         "type": "object",
         "required": [
           "from",
@@ -13301,7 +13418,7 @@
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5": {
+      "NornIrSliceKeyOneOf6": {
         "type": "object",
         "description": "Every target of link `link`, declared on the type of earlier\nsingle-object entry `from`, loaded as a list ordered by target key\nand bounded by the limit profile's slice records (#3079).",
         "required": [
@@ -13309,12 +13426,12 @@
         ],
         "properties": {
           "link": {
-            "$ref": "#/components/schemas/NornIrSliceKeyOneOf5PropertyLink"
+            "$ref": "#/components/schemas/NornIrSliceKeyOneOf6PropertyLink"
           }
         },
         "additionalProperties": false
       },
-      "NornIrSliceKeyOneOf5PropertyLink": {
+      "NornIrSliceKeyOneOf6PropertyLink": {
         "type": "object",
         "required": [
           "from",

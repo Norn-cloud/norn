@@ -646,6 +646,14 @@ class DefinitionCompiler {
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       if (rows.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "use a conditional expression for a scalar expression", body)
+      const options = e.arguments[2]
+      if (options) {
+        const members = this.closedRecord(options, ["root"], ["root"])
+        if (this.string(members.get("root")!) !== "context" || schema.type !== "object") throw new CompileError("NORN-FLOW-EXPRESSION", "a context expression needs a record schema and root: context", options)
+        const context = new Map<string, X.Binding>(Object.entries(schema.properties).map(([name, member]) => [name, { zen: name, schema: member }]))
+        const inline = X.record(Object.fromEntries(Object.keys(schema.properties).map((name) => [name, X.ref(name)])))
+        return X.render(rows[0]!.value, new Map([["input", { inline, scope: context, schema }]]))
+      }
       return X.render(rows[0]!.value, new Map([["input", { zen: root, schema }]]))
     }
     throw new CompileError("NORN-FLOW-EXPRESSION", "raw ZEN is not typed authoring; use Norn.expression(Schema, input => ...) or the explicit unsafeZen escape", input)
@@ -1089,10 +1097,15 @@ class DefinitionCompiler {
       if (keyNode.text !== "triggerObject") throw new CompileError("NORN-FLOW-LITERAL", "a slice key is \"triggerObject\", { property: { from, property } }, or { link: { from, link } }", keyNode)
       key = "triggerObject"
     } else {
-      const k = this.closedRecord(keyNode, ["property", "link"], [])
-      const property = k.get("property"), link = k.get("link")
-      if ((property === undefined) === (link === undefined)) throw new CompileError("NORN-FLOW-LITERAL", "a slice key is { property: { from, property } } or { link: { from, link } }", keyNode)
-      if (property) {
+      const k = this.closedRecord(keyNode, ["property", "link", "parameter"], [])
+      const property = k.get("property"), link = k.get("link"), parameter = k.get("parameter")
+      if ([property, link, parameter].filter((member) => member !== undefined).length !== 1) throw new CompileError("NORN-FLOW-LITERAL", "a slice key is { property: { from, property } } or { link: { from, link } }", keyNode)
+      if (parameter) {
+        const p = this.closedRecord(parameter, ["from", "settingKey", "effectiveAt", "precedence", "defaultFrom"], ["from", "settingKey", "effectiveAt", "precedence"])
+        const precedence = this.list(p.get("precedence")!).map((scope) => Object.fromEntries([...this.closedRecord(scope, ["orgId", "tenantId", "workspaceId", "environmentId", "businessUnitId"], [])].map(([name, value]) => [name, this.string(value)])))
+        const defaultFrom = p.get("defaultFrom")
+        key = { parameter: { from: this.string(p.get("from")!), settingKey: this.string(p.get("settingKey")!), effectiveAt: this.string(p.get("effectiveAt")!), precedence, ...(defaultFrom ? { defaultFrom: this.string(defaultFrom) } : {}) } }
+      } else if (property) {
         const p = this.closedRecord(property, ["from", "property"], ["from", "property"])
         key = { property: { from: this.string(p.get("from")!), property: this.string(p.get("property")!) } }
       } else {

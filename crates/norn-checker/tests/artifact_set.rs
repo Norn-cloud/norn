@@ -637,3 +637,119 @@ proptest::proptest! {
         if !cycle { proptest::prop_assert!(findings.is_empty()); }
     }
 }
+
+#[test]
+fn param_fallthrough_boundaries_ambiguity_and_explicit_default() {
+    use norn_checker::parameter::{
+        ParameterCandidate, ParameterContext, ParameterError, resolve_parameter,
+    };
+    fn candidate<'a>(
+        setting: &'a norn_ir::SettingRoot,
+        scope: &'a norn_ir::ScopeRef,
+        revision: u64,
+    ) -> ParameterCandidate<'a> {
+        ParameterCandidate {
+            setting,
+            scope,
+            revision,
+        }
+    }
+    let payload =
+        read_json(&fixtures().join("ir/retail-reorder-threshold-v0.3.setting.json"))["payload"]
+            .clone();
+    let mut first: norn_ir::SettingRoot = serde_json::from_value(payload).expect("setting");
+    first.effective_from = "2026-06-01T00:00:00Z".into();
+    first.effective_to = Some("2026-07-01T00:00:00Z".into());
+    let mut second = first.clone();
+    second.effective_from = "2026-07-01T02:00:00+02:00".into();
+    second.effective_to = None;
+    let narrow = norn_ir::ScopeRef {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+        ..Default::default()
+    };
+    let broad = norn_ir::ScopeRef {
+        org_id: narrow.org_id.clone(),
+        ..Default::default()
+    };
+    let scopes = [narrow.clone(), broad.clone()];
+    let candidates = [candidate(&first, &narrow, 1), candidate(&second, &broad, 2)];
+    let mut context = ParameterContext {
+        key: &first.setting_key,
+        scope: &narrow,
+        precedence: &scopes,
+        effective_at: "2026-06-30T23:59:59.999999999Z",
+        revision: 2,
+    };
+    assert!(std::ptr::eq(
+        resolve_parameter(&candidates, &context, None).expect("June"),
+        std::ptr::from_ref(&candidates[0])
+    ));
+    context.effective_at = "2026-07-01T00:00:00Z";
+    let fallback = candidate(&second, &broad, 1);
+    assert!(std::ptr::eq(
+        resolve_parameter(&candidates, &context, Some(&fallback))
+            .expect("candidate before default"),
+        std::ptr::from_ref(&candidates[1])
+    ));
+    context.revision = 1;
+    assert_eq!(
+        resolve_parameter(&candidates, &context, None).expect_err("refusal"),
+        ParameterError::Missing
+    );
+    context.revision = 2;
+    let default = candidate(&second, &broad, 2);
+    assert!(std::ptr::eq(
+        resolve_parameter(&[], &context, Some(&default)).expect("explicit default"),
+        std::ptr::from_ref(&default)
+    ));
+    let duplicate = [candidate(&second, &broad, 1), candidate(&second, &broad, 2)];
+    assert_eq!(
+        resolve_parameter(&duplicate, &context, Some(&default))
+            .expect_err("refusal")
+            .code(),
+        "core.composition.parameter_ambiguous"
+    );
+    let shadowed = [
+        candidate(&second, &narrow, 1),
+        candidate(&second, &broad, 1),
+        candidate(&second, &broad, 2),
+    ];
+    assert_eq!(
+        resolve_parameter(&shadowed, &context, None).expect_err("refusal"),
+        ParameterError::Ambiguous
+    );
+    context.effective_at = "2026-02-30T00:00:00Z";
+    assert_eq!(
+        resolve_parameter(&candidates, &context, None).expect_err("refusal"),
+        ParameterError::Invalid
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn param_exact_generated_active_set_is_unique(rows in proptest::collection::vec((0i64..100, proptest::option::of(0i64..100), 0u64..10), 0..8), at in 0i64..100, snapshot in 0u64..10) {
+        use norn_checker::parameter::{ParameterWindow, ParameterError, unique_active};
+        let windows: Vec<_> = rows.iter().map(|&(from, to, revision)| ParameterWindow { from: (from, 0), to: to.map(|x| (x, 0)), revision }).collect();
+        let actual = unique_active(&windows, (at, 0), snapshot);
+        let active: Vec<_> = rows.iter().enumerate().filter(|(_, (from, to, revision))| *revision <= snapshot && *from <= at && to.is_none_or(|end| at < end)).map(|(i, _)| i).collect();
+        let expected = if rows.iter().any(|(from, to, _)| to.is_some_and(|end| end <= *from)) { Err(ParameterError::Invalid) } else { match active.as_slice() { [] => Ok(None), [one] => Ok(Some(*one)), _ => Err(ParameterError::Ambiguous) } };
+        proptest::prop_assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn parameter_slice_contract_refuses_missing_source() {
+    let mut case = read_json(&fixtures().join("ir/artifact-set/valid-retail-set.case.json"));
+    let mut action = read_json(&fixtures().join("ir/retail-reorder.action.json"));
+    action["payload"]["slice"] = json!([{"name":"tax", "objectType":"retail.Sku", "key":{"parameter":{"from":"rates","settingKey":"tax","effectiveAt":"requestId","precedence":[{}]}}}]);
+    case["artifacts"][4] =
+        json!({"fixture":"ir/retail-reorder.action.json","patch":{"payload":action["payload"]}});
+    assert!(
+        run(&case)
+            .iter()
+            .any(|finding| finding[1] == "action.validation.invalid_payload"
+                && finding[2].contains("slice")
+                && finding[2].contains("key"))
+    );
+}

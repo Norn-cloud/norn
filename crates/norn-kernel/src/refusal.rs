@@ -613,7 +613,8 @@ impl<X> ActionRefusal<X> {
                 RefusalCategory::Limit
             }
             Self::Command(rejection) => rejection.category(),
-            Self::MissingScope { .. }
+            Self::Parameter { .. }
+            | Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
             | Self::UncheckedWriter { .. }
             | Self::InvalidInput { .. }

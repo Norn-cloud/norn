@@ -2532,10 +2532,15 @@ export interface components {
         };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrIrVersion01: "0.1";
+        /**
+         * @description Setting value profiles: historical binary64 and current exact decimal literals.
+         * @enum {string}
+         */
+        NornIrIrVersion02: "0.1" | "0.2";
         /** @description Custom-node content (`CustomNodeContent`). Decodable only for rejection. */
         NornIrJdmCustomNodeContent: {
             config: components["schemas"]["NornIrJsonValue"];
@@ -3016,7 +3021,7 @@ export interface components {
         };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrLayoutIrVersion01: "0.1";
@@ -4434,7 +4439,7 @@ export interface components {
         };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrRequirementIrVersion01: "0.1";
@@ -5102,12 +5107,12 @@ export interface components {
             /** @description Scope dimensions the caller must supply (fail closed). */
             scopeRequired: string[];
             settingKey: string;
-            settingVersion: components["schemas"]["NornIrIrVersion01"];
+            settingVersion: components["schemas"]["NornIrIrVersion02"];
             /** @description The setting version this one replaces. */
             supersedes?: components["schemas"]["NornIrSettingSupersedes"];
             /**
-             * @description The value, whose JSON type agrees with `valueType`. A `json` setting
-             *     may be `null`.
+             * @description Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers
+             *     keep binary64 JSON numbers. A `json` setting may be `null`.
              */
             value: components["schemas"]["NornIrJsonValue"];
             valueType: components["schemas"]["NornIrSettingValueType"];
@@ -5116,7 +5121,14 @@ export interface components {
             /** @enum {unknown} */
             valueType?: "text";
         } | {
-            /** Format: double */
+            /** @enum {unknown} */
+            settingVersion?: "0.2";
+            value?: components["schemas"]["NornIrDecimalLiteral"];
+            /** @enum {unknown} */
+            valueType?: "number";
+        } | {
+            /** @enum {unknown} */
+            settingVersion?: "0.1";
             value?: number;
             /** @enum {unknown} */
             valueType?: "number";
@@ -5155,7 +5167,7 @@ export interface components {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
         /**
-         * @description The JSON type of a setting's `value`.
+         * @description The setting value kind; numbers use exact decimal-string literals.
          * @enum {string}
          */
         NornIrSettingValueType: "text" | "number" | "boolean" | "json";
@@ -5185,12 +5197,35 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf4"] | components["schemas"]["NornIrSliceKeyOneOf5"];
-        /** @description A text property of an earlier slice entry (a link by key). */
-        NornIrSliceKeyOneOf4: {
-            property: components["schemas"]["NornIrSliceKeyOneOf4PropertyProperty"];
+        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"];
+        /** @description A unique effective parameter selected from an earlier authorized link list. */
+        NornIrSliceKeyOneOf0: {
+            parameter: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameter"];
         };
-        NornIrSliceKeyOneOf4PropertyProperty: {
+        NornIrSliceKeyOneOf0PropertyParameter: {
+            /** @description Earlier single-object slice holding an explicit default setting. */
+            defaultFrom?: string;
+            /** @description Action input field carrying the declared effective timestamp. */
+            effectiveAt: string;
+            /** @description Earlier list slice containing the candidate setting facts. */
+            from: string;
+            /** @description Explicit scope precedence, highest first. */
+            precedence: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems"][];
+            /** @description Stable parameter key. */
+            settingKey: string;
+        };
+        NornIrSliceKeyOneOf0PropertyParameterPropertyPrecedenceItems: {
+            businessUnitId?: string | null;
+            environmentId?: string | null;
+            orgId?: string | null;
+            tenantId?: string | null;
+            workspaceId?: string | null;
+        };
+        /** @description A text property of an earlier slice entry (a link by key). */
+        NornIrSliceKeyOneOf5: {
+            property: components["schemas"]["NornIrSliceKeyOneOf5PropertyProperty"];
+        };
+        NornIrSliceKeyOneOf5PropertyProperty: {
             /** @description The earlier entry's name. */
             from: string;
             /** @description The property holding the key. */
@@ -5201,10 +5236,10 @@ export interface components {
          *     single-object entry `from`, loaded as a list ordered by target key
          *     and bounded by the limit profile's slice records (#3079).
          */
-        NornIrSliceKeyOneOf5: {
-            link: components["schemas"]["NornIrSliceKeyOneOf5PropertyLink"];
+        NornIrSliceKeyOneOf6: {
+            link: components["schemas"]["NornIrSliceKeyOneOf6PropertyLink"];
         };
-        NornIrSliceKeyOneOf5PropertyLink: {
+        NornIrSliceKeyOneOf6PropertyLink: {
             /** @description The earlier (single-object) entry's name. */
             from: string;
             /** @description The link id, declared on that entry's type or a supertype. */

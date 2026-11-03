@@ -2148,7 +2148,7 @@ fn validate_setting_payload(
     require_literal_field(
         payload,
         "settingVersion",
-        &["0.1"],
+        &["0.1", "0.2"],
         "payload.settingVersion",
         diagnostics,
         artifact_id,
@@ -2174,6 +2174,7 @@ fn validate_setting_payload(
     validate_setting_typed_value(
         payload.get("value"),
         value_type.as_deref(),
+        matches!(payload.get("settingVersion"), Some(JsonValue::String(v)) if v == "0.1"),
         diagnostics,
         artifact_id,
     );
@@ -2227,13 +2228,29 @@ fn validate_setting_payload(
 fn validate_setting_typed_value(
     value: Option<&JsonValue>,
     value_type: Option<&str>,
+    historical: bool,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
     const CODE: &str = "setting.validation.invalid_payload";
     match (value_type, value) {
         (Some("text"), Some(JsonValue::String(_))) => {}
-        (Some("number"), Some(JsonValue::Number(value))) if value.is_finite() => {}
+        (Some("number"), Some(JsonValue::Number(n))) if historical && n.is_finite() => {}
+        (Some("number"), Some(JsonValue::String(value))) if !historical => {
+            if let Err(error) = norn_ir::SettingValue::decimal(value) {
+                let code = if matches!(&error, norn_ir::RuntimeValueError::InvalidJson { .. }) {
+                    CODE
+                } else {
+                    "core.values.inexact"
+                };
+                diagnostics.push(invalid_diagnostic(
+                    code,
+                    error.to_string(),
+                    "payload.value",
+                    artifact_id,
+                ));
+            }
+        }
         (Some("boolean"), Some(JsonValue::Bool(_))) => {}
         (Some("json"), Some(value)) => {
             validate_json_value(value, "payload.value", diagnostics, artifact_id)
@@ -2246,7 +2263,11 @@ fn validate_setting_typed_value(
         )),
         (Some("number"), Some(_)) => diagnostics.push(invalid_diagnostic(
             CODE,
-            "payload.value must be a finite number for number settings",
+            if historical {
+                "payload.value must be a JSON number for historical number settings"
+            } else {
+                "payload.value must be an exact decimal string for number settings"
+            },
             "payload.value",
             artifact_id,
         )),

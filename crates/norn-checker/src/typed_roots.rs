@@ -388,6 +388,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
+            SliceKey::Parameter { .. } => action_parameter_slice_depth(
+                &slice,
+                index,
+                payload,
+                derivations,
+                &link_depths,
+                diagnostics,
+                artifact_id,
+            ),
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -443,6 +452,50 @@ fn validate_action_slice(
             ));
         }
     }
+}
+
+fn action_parameter_slice_depth(
+    slice: &[SliceDeclaration],
+    index: usize,
+    payload: &BTreeMap<String, JsonValue>,
+    derivations: &ActionDerivationCheck,
+    link_depths: &BTreeMap<String, u32>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) -> u32 {
+    let Some(entry) = slice.get(index) else {
+        return 0;
+    };
+    let SliceKey::Parameter {
+        from,
+        effective_at,
+        precedence,
+        default_from,
+        ..
+    } = &entry.key
+    else {
+        return 0;
+    };
+    let path = format!("payload.slice[{index}]");
+    let earlier = slice.iter().take(index).find(|prior| prior.name == *from);
+    let source_ok =
+        earlier.is_some_and(|prior| prior.is_list() && prior.object_type == entry.object_type);
+    let default_ok = default_from.as_ref().is_none_or(|name| {
+        slice.iter().take(index).any(|prior| {
+            prior.name == *name && !prior.is_list() && prior.object_type == entry.object_type
+        })
+    });
+    let time_ok = action_input_field_type(payload.get("inputSchema"), effective_at.as_str())
+        .is_some_and(|ty| is_string_key_type(&ty))
+        && action_input_key_is_guaranteed(payload, effective_at.as_str(), derivations);
+    let scopes_unique = precedence
+        .iter()
+        .enumerate()
+        .all(|(index, scope)| !precedence.iter().take(index).any(|prior| prior == scope));
+    if !source_ok || !default_ok || !time_ok || !scopes_unique {
+        diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a guaranteed string effective instant, distinct precedence scopes and an optional earlier same-type default", format!("{path}.key"), artifact_id));
+    }
+    *link_depths.get(from).unwrap_or(&0)
 }
 
 fn action_prior_slice_depth(
@@ -2467,7 +2520,7 @@ fn check_setting_root(
         diagnostics,
         artifact_id,
         members {
-            "settingVersion" => norn_ir::IrVersion01,
+            "settingVersion" => norn_ir::IrVersion02,
             "settingKey" => String,
             "valueType" => norn_ir::SettingValueType,
             "effectiveFrom" => String,
@@ -4017,7 +4070,7 @@ mod tests {
     }
 
     const SETTING_FIXTURE: &str =
-        include_str!("../../../fixtures/ir/retail-reorder-threshold.setting.json");
+        include_str!("../../../fixtures/ir/retail-reorder-threshold-v0.3.setting.json");
     const COMPOSITION_FIXTURE: &str =
         include_str!("../../../fixtures/ir/retail-core.business_pack.json");
     const ONTOLOGY_FIXTURE: &str =

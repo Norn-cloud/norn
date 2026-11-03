@@ -1,0 +1,13 @@
+[package]
+name = "norn-parameter-tax-proof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rust_decimal = { version = "=1.43.0", default-features = false }
+
+[lib]
+path = "tax_kani.rs"

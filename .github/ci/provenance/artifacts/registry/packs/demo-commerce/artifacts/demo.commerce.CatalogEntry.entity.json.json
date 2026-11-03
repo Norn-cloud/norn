@@ -6,7 +6,8 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/demo-commerce/identities.ts"
+    "crates/norn-checker/src/codes.rs",
+    "crates/norn-checker/tests/code_registry.rs"
   ],
   "rights_evidence": [
     {

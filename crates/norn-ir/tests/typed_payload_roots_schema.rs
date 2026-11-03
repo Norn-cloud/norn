@@ -492,8 +492,7 @@ fn setting_schema_types_value_by_value_type() {
     let branches = schema["oneOf"]
         .as_array()
         .expect("setting schema should branch on valueType");
-    // The branches are disjoint: `valueType` is required and each branch fixes
-    // a different literal.
+    // Required valueType and settingVersion jointly distinguish numeric profiles.
     assert!(schema.get("anyOf").is_none());
     assert!(
         schema["required"]
@@ -519,7 +518,11 @@ fn setting_schema_types_value_by_value_type() {
             ),
             (
                 serde_json::json!("number"),
-                serde_json::json!({ "type": "number", "format": "double" })
+                serde_json::json!({ "$ref": "#/$defs/DecimalLiteral" })
+            ),
+            (
+                serde_json::json!("number"),
+                serde_json::json!({ "type": "number" })
             ),
             (
                 serde_json::json!("boolean"),

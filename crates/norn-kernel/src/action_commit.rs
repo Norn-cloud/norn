@@ -394,6 +394,9 @@ pub struct ActionCallRecord {
     /// Successful precondition results, in declaration order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub precondition_outcomes: Vec<ActionPreconditionOutcome>,
+    /// PARAM-PIN-1: selected setting identities and exact observed revisions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter_reads: Vec<FactExpectation>,
     /// The actor.
     pub actor: String,
     /// The turn the call committed in.
@@ -429,6 +432,7 @@ impl ActionCallRecord {
                 .then(|| preparation.effective_input.clone()),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes: Vec::new(),
+            parameter_reads: Vec::new(),
             actor: call.actor.clone(),
             turn: call.turn.id.clone(),
             transition: transition.as_str().to_owned(),
@@ -461,18 +465,15 @@ impl ActionCallRecord {
 
     fn to_values(&self) -> JsonObject {
         let string = |value: &str| JsonValue::String(value.to_owned());
+        let key_value = |key: &FactKey| {
+            JsonValue::Object(JsonObject::from([
+                ("objectType".to_owned(), string(key.object_type.as_str())),
+                ("key".to_owned(), string(&key.key)),
+            ]))
+        };
         let mut values = JsonObject::from([
             ("actionId".to_owned(), string(&self.action_id)),
-            (
-                "object".to_owned(),
-                JsonValue::Object(JsonObject::from([
-                    (
-                        "objectType".to_owned(),
-                        string(self.object.object_type.as_str()),
-                    ),
-                    ("key".to_owned(), string(&self.object.key)),
-                ])),
-            ),
+            ("object".to_owned(), key_value(&self.object)),
             ("input".to_owned(), JsonValue::Object(self.input.clone())),
             ("actor".to_owned(), string(&self.actor)),
             ("turn".to_owned(), string(&self.turn)),
@@ -521,6 +522,25 @@ impl ActionCallRecord {
                     .collect(),
             ),
         );
+        if !self.parameter_reads.is_empty() {
+            values.insert(
+                "parameterReads".into(),
+                JsonValue::Array(
+                    self.parameter_reads
+                        .iter()
+                        .map(|read| {
+                            JsonValue::Object(JsonObject::from([
+                                ("key".into(), key_value(&read.key)),
+                                (
+                                    "expected".into(),
+                                    JsonValue::Number(Decimal::from(read.expected.0)),
+                                ),
+                            ]))
+                        })
+                        .collect(),
+                ),
+            );
+        }
         if let Some(action_artifact_id) = &self.action_artifact_id {
             values.insert("actionArtifactId".to_owned(), string(action_artifact_id));
         }
@@ -587,6 +607,10 @@ impl ActionCallRecord {
             None | Some(JsonValue::Null) => Vec::new(),
             Some(value) => norn_ir::runtime::decode(value).ok()?,
         };
+        let parameter_reads = match values.get("parameterReads") {
+            None | Some(JsonValue::Null) => Vec::new(),
+            Some(value) => norn_ir::runtime::decode(value).ok()?,
+        };
         Some(Self {
             action_id: string("actionId")?,
             action_artifact_id,
@@ -602,6 +626,7 @@ impl ActionCallRecord {
             effective_input,
             derived_values,
             precondition_outcomes,
+            parameter_reads,
             actor: string("actor")?,
             turn: string("turn")?,
             transition: string("transition")?,
@@ -709,6 +734,12 @@ pub enum ActionRefusal<X> {
         /// The link name when the stale read was a complete adjacency set.
         link: Option<String>,
     },
+    /// Scoped parameter selection refused before any effect.
+    #[error("parameter resolution refused ({code})")]
+    Parameter {
+        /// Stable composition refusal code.
+        code: &'static str,
+    },
     /// A precondition is false or cannot be evaluated (fail-closed).
     #[error("precondition `{precondition}` does not hold ({})", .reason.as_deref().unwrap_or("false"))]
     PreconditionFailed {
@@ -758,6 +789,7 @@ impl<X> ActionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Parameter { code } => code,
             Self::Command(rejection) => rejection.code(),
             Self::MissingScope { .. } => "action.missing_scope",
             Self::UnsupportedEffect { .. } => "action.unsupported_effect",
@@ -1093,6 +1125,7 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record.parameter_reads.clone_from(&slice.parameter_reads);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let mut changes = if let Some(rule) = rule {
         let output = rule.evaluate(
@@ -1314,6 +1347,7 @@ where
         effective_input: (!action.derive.is_empty()).then(|| preparation.effective_input.clone()),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
+        parameter_reads: Vec::new(),
         actor: call.actor.clone(),
         turn: call.turn.id.clone(),
         transition: String::new(),
@@ -1364,6 +1398,7 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record.parameter_reads.clone_from(&slice.parameter_reads);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     let mut business_input =
@@ -2484,6 +2519,7 @@ where
             .then(|| preparation.effective_input.clone()),
         derived_values: preparation.derived_values.clone(),
         precondition_outcomes: Vec::new(),
+        parameter_reads: Vec::new(),
         actor: call.actor.clone(),
         turn: call.turn.id.clone(),
         transition: String::new(),
@@ -2571,6 +2607,9 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record
+        .parameter_reads
+        .clone_from(&action_slice.parameter_reads);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     // Replays must be resolved before CAS validation: a create retry carries
@@ -3378,6 +3417,7 @@ where
             effective_input: Some(generated_input.clone()),
             derived_values: preparation.derived_values.clone(),
             precondition_outcomes,
+            parameter_reads: slice.parameter_reads.clone(),
             actor: call.actor.clone(),
             turn: call.turn.id.clone(),
             transition: String::new(),
@@ -5086,6 +5126,7 @@ fn check_scope<X>(call: &ActionCall<'_>) -> Result<(), ActionRefusal<X>> {
 
 /// The facts, link sets, and expression values read by one action call.
 struct LoadedActionSlice {
+    parameter_reads: Vec<FactExpectation>,
     facts: FactSlice,
     reference_only: bool,
     values: JsonObject,
@@ -5102,6 +5143,8 @@ struct ActionSliceContext<'a, 'model, 'call, H: CellHost + ?Sized> {
 }
 
 struct ActionSliceState {
+    parameter_reads: Vec<FactExpectation>,
+    entry_records: BTreeMap<String, Vec<FactKey>>,
     facts: FactSlice,
     values: JsonObject,
     link_reads: Vec<LinkReadExpectation>,
@@ -5153,6 +5196,12 @@ fn action_slice_key<X>(
                 .saturating_add(1);
             (depth, None)
         }
+        SliceKey::Parameter { .. } => {
+            return Err(ActionRefusal::SliceUnavailable {
+                entry: entry.name.clone(),
+                reason: "parameter slice execution is not qualified in this cut".to_owned(),
+            });
+        }
         SliceKey::TriggerObject
         | SliceKey::TriggerBefore
         | SliceKey::TriggerAfter
@@ -5178,6 +5227,9 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
         effective_input,
         authorizer,
     } = *context;
+    if matches!(entry.key, SliceKey::Parameter { .. }) {
+        return load_action_parameter(context, state, entry);
+    }
     let (depth, key) =
         action_slice_key(entry, effective_input, &state.values, &state.entry_depths)?;
     if matches!(entry.key, SliceKey::Link { .. }) {
@@ -5269,6 +5321,88 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
     Ok(())
 }
 
+/// PARAM-PIN-1: selection reuses already authorized, fully fenced slice facts.
+fn load_action_parameter<H: CellHost + ?Sized>(
+    context: &ActionSliceContext<'_, '_, '_, H>,
+    state: &mut ActionSliceState,
+    entry: &SliceDeclaration,
+) -> Result<(), ActionRefusal<H::Error>> {
+    let invalid = || ActionRefusal::Parameter {
+        code: "setting.validation.invalid_payload",
+    };
+    let SliceKey::Parameter {
+        from,
+        setting_key,
+        effective_at,
+        precedence,
+        default_from,
+    } = &entry.key
+    else {
+        return Err(invalid());
+    };
+    let keys = state.entry_records.get(from).ok_or_else(invalid)?;
+    let records = keys
+        .iter()
+        .map(|key| {
+            state
+                .facts
+                .get(key)
+                .map(|fact| (key.clone(), fact.clone()))
+                .ok_or_else(invalid)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let default = match default_from {
+        None => None,
+        Some(name) => match state.entry_keys.get(name) {
+            Some(Some(key)) => Some((
+                key.clone(),
+                state.facts.get(key).ok_or_else(invalid)?.clone(),
+            )),
+            Some(None) => None,
+            None => return Err(invalid()),
+        },
+    };
+    let dimension = |name| context.call.scope.get(name).cloned();
+    let scope = norn_ir::ScopeRef {
+        org_id: dimension("orgId"),
+        tenant_id: dimension("tenantId"),
+        workspace_id: dimension("workspaceId"),
+        environment_id: dimension("environmentId"),
+        business_unit_id: dimension("businessUnitId"),
+    };
+    let at = context
+        .effective_input
+        .get(effective_at.as_str())
+        .and_then(RuntimeValue::as_str)
+        .ok_or_else(invalid)?;
+    let query = norn_checker::parameter::ParameterContext {
+        key: setting_key,
+        scope: &scope,
+        precedence,
+        effective_at: at,
+        revision: u64::MAX,
+    };
+    let (key, fact) =
+        crate::parameter_source::resolve_current_parameter(&records, default.as_ref(), &query)
+            .map_err(|error| ActionRefusal::Parameter { code: error.code() })?;
+    let object = fact.values.as_ref().ok_or_else(invalid)?;
+    state.parameter_reads.push(FactExpectation {
+        key: key.clone(),
+        expected: fact.version,
+    });
+    state
+        .entry_keys
+        .insert(entry.name.clone(), Some(key.clone()));
+    state.entry_depths.insert(
+        entry.name.clone(),
+        *state.entry_depths.get(from).ok_or_else(invalid)?,
+    );
+    state
+        .values
+        .insert(entry.name.clone(), RuntimeValue::Object(object.clone()));
+    Ok(())
+}
+
 fn load_action_slice_links<H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     state: &mut ActionSliceState,
@@ -5283,6 +5417,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         authorizer,
     } = *context;
     let ActionSliceState {
+        entry_records,
         facts,
         values,
         link_reads,
@@ -5293,6 +5428,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         meter,
         read_types,
         limits,
+        ..
     } = state;
     let SliceKey::Link { from, link } = &entry.key else {
         return Ok(());
@@ -5300,6 +5436,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
     let Some(source_key) = entry_keys.get(from).and_then(Option::as_ref) else {
         // A list sourced from an omitted optional entry is an empty
         // list; there is no existing source whose adjacency can change.
+        entry_records.insert(entry.name.clone(), Vec::new());
         values.insert(entry.name.clone(), RuntimeValue::Array(Vec::new()));
         entry_keys.insert(entry.name.clone(), None);
         entry_depths.insert(entry.name.clone(), depth);
@@ -5317,6 +5454,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         *observed_records,
         meter.bytes(),
     )?;
+    let mut keys = Vec::with_capacity(targets.len());
     let mut items = Vec::with_capacity(targets.len());
     for target in &targets {
         if !catalog
@@ -5345,7 +5483,9 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
             read_types,
             false,
         )?;
-        precondition_keys.insert(known_fact_key(facts, catalog, &target.key.target));
+        let key = known_fact_key(facts, catalog, &target.key.target);
+        precondition_keys.insert(key.clone());
+        keys.push(key);
         let Some(object) = state.values.as_ref() else {
             return Err(ActionRefusal::SliceObjectMissing {
                 entry: entry.name.clone(),
@@ -5353,6 +5493,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
         };
         items.push(RuntimeValue::Object(object.clone()));
     }
+    entry_records.insert(entry.name.clone(), keys);
     record_action_link_read(link_reads, source_key, link, targets)?;
     values.insert(entry.name.clone(), RuntimeValue::Array(items));
     entry_keys.insert(entry.name.clone(), None);
@@ -5461,6 +5602,8 @@ fn load_action_slice<H: CellHost + ?Sized>(
     let observed_records = meter.records();
     let read_types = BTreeSet::<ObjectTypeName>::new();
     let mut state = ActionSliceState {
+        parameter_reads: Vec::new(),
+        entry_records: BTreeMap::new(),
         facts,
         values,
         link_reads,
@@ -5487,6 +5630,7 @@ fn load_action_slice<H: CellHost + ?Sized>(
         load_action_slice_entry(context, &mut state, entry, identity_only)?;
     }
     let ActionSliceState {
+        parameter_reads,
         mut facts,
         values,
         link_reads,
@@ -5519,6 +5663,7 @@ fn load_action_slice<H: CellHost + ?Sized>(
         });
     }
     Ok(LoadedActionSlice {
+        parameter_reads,
         facts,
         reference_only,
         values,
@@ -5938,5 +6083,22 @@ mod reference_lineage_tests {
                 .with_read_guards(&mut commit.clone(), &[mismatch])
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "parameter receipt codec fixtures")]
+mod parameter_pin_tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn receipt_pins_preserve_every_u64_revision(version in proptest::num::u64::ANY) {
+            let record: ActionCallRecord = serde_json::from_value(serde_json::json!({
+                "actionId":"test.parameter", "effectKind":"upsert_input_object", "object":{"objectType":"test.Probe","key":"probe"},
+                "input":{}, "actor":"reviewer", "turn":"turn", "transition":"", "from":"", "to":"",
+                "parameterReads":[{"key":{"objectType":"test.Setting","key":"rate"},"expected":version}]
+            })).expect("typed receipt");
+            proptest::prop_assert_eq!(ActionCallRecord::from_values(&record.to_values()), Some(record));
+        }
     }
 }

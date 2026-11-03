@@ -182,7 +182,7 @@ pub use lineage::{
     LineageTrigger, commit_stable_id, object_stable_id,
 };
 pub use marking::{MARKING_ID_PATTERN, MarkingId, MarkingIr, MarkingSeverity, MaskPolicy};
-pub use members::{EmptyList, IrVersion01, JsonFalse, ProposalMetadata, WholeNumber};
+pub use members::{EmptyList, IrVersion01, IrVersion02, JsonFalse, ProposalMetadata, WholeNumber};
 pub use metric::{MetricDefinition, QuestionIR, metric_ir_schema, question_ir_schema};
 pub use osi::MetricIR;
 pub use provenance::{
@@ -1303,11 +1303,13 @@ define_payload_root!(
     // per-member contract of `value` here is any JSON because it depends on
     // its sibling. The doc comment below is that schema's description.
     /// The payload of a `setting` artifact: one reviewed, effective-dated
-    /// value whose JSON type is fixed by `valueType`.
+    /// value paired with `valueType`. Version 0.2 number settings require exact
+    /// decimal-string literals; verified retained 0.1 keeps its binary64 JSON
+    /// number profile.
     #[schemars(with = "SettingRoot")]
     SettingPayload {
     required {
-        setting_version => "settingVersion" as IrVersion01,
+        setting_version => "settingVersion" as IrVersion02,
         setting_key => "settingKey" as String,
         value_type => "valueType" as SettingValueType,
         value => "value" as JsonValue,

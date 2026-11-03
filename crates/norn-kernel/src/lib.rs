@@ -72,6 +72,7 @@ mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
 pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
+pub mod parameter_source;
 pub mod quantity;
 pub mod receipt_binding;
 pub mod refusal;

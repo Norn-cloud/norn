@@ -379,6 +379,7 @@ fn hidden_absent_and_oversized_slice_objects_have_the_same_opaque_refusal() {
 }
 
 enum CommitRace {
+    Fact(FactKey, JsonObject),
     RelatedFact,
     Tombstone,
     LinkSetTooLarge,
@@ -458,6 +459,7 @@ impl CellHost for RacingCell {
         mut commit: CellCommit<FactEvent, JsonObject, JsonObject>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         match self.race.take() {
+            Some(CommitRace::Fact(key, values)) => put(self.cell.get_mut(), key, values),
             Some(CommitRace::RelatedFact) => put(
                 self.cell.get_mut(),
                 FactKey::new("fashion.Season", "SS26"),
@@ -894,4 +896,142 @@ fn create_link_consumes_only_fields_without_a_declared_scalar_property() {
             .exists()
         );
     }
+}
+
+#[test]
+#[allow(
+    clippy::disallowed_methods,
+    clippy::too_many_lines,
+    reason = "native parameter commit/replay and typed fixture compilation"
+)]
+fn parameter_projection_pins_selected_revision_and_replays_original_evidence() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let compiled = std::process::Command::new("bun").current_dir(root).args("tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/parameters/binding.source.ts --org org_demo --env dev".split_whitespace()).output().expect("typed binding compiler");
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stdout)
+    );
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_slice(&compiled.stdout).expect("compiled artifacts");
+    let mut definitions = Vec::<ObjectTypeDef>::new();
+    let mut selected_action = None;
+    for artifact in artifacts {
+        let payload = serde_json::to_value(artifact.payload.to_json_value()).expect("bare payload");
+        if let Some(object) = payload.get("objectType") {
+            definitions.push(serde_json::from_value(object.clone()).expect("type"));
+        }
+        if payload.get("actionId").is_some() {
+            selected_action = Some(serde_json::from_value::<ActionRoot>(payload).expect("action"));
+        }
+    }
+    let action = selected_action.expect("probe action");
+    let catalog = TypeCatalog::new(&definitions);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(definitions.clone());
+    let registry = FactKey::new("demo.SettingRegistry", "tax");
+    let setting = FactKey::new("demo.NumericSetting", "rate");
+    put(&mut cell, registry.clone(), object(json!({"id":"tax"})));
+    let source = norn_ir::RuntimeValue::from_json_text(r#"{"id":"rate","setting_key":"example.rate","value":0.10,"effective_from":"2026-01-01T00:00:00Z","effective_to":null,"review_state":"approved","org_id":"org_demo","environment_id":"dev","tenant_id":null,"workspace_id":null,"business_unit_id":null}"#).expect("exact setting").as_object().expect("setting object").clone();
+    put(&mut cell, setting.clone(), source.clone());
+    let mut links = CellCommit::empty();
+    links.links.push(norn_kernel::LinkWrite {
+        key: LinkKey::new(registry, "settings", setting.clone()),
+        expected: FactVersion(0),
+        mutation: norn_kernel::LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    });
+    cell.commit(links).expect("membership");
+    let mut invocation = invocation(&action);
+    invocation.input = norn_ir::RuntimeValue::from_json_text(
+        r#"{"id":"probe","registry":"tax","value":0.10,"effective_at":"2026-06-30T00:00:00Z"}"#,
+    )
+    .expect("exact probe")
+    .as_object()
+    .expect("object")
+    .clone();
+    let ActionOutcome::Committed { record, .. } =
+        commit_action(&mut cell, &catalog, &invocation, &Allow).expect("selected setting commits")
+    else {
+        panic!("new probe")
+    };
+    assert_eq!(
+        record.parameter_reads,
+        vec![FactExpectation {
+            key: setting.clone(),
+            expected: cell.load(&setting).expect("version").version
+        }]
+    );
+    let receipt_key = format!("{}/{}", action.action_id, invocation.idempotency_key);
+    let stored = cell
+        .load(&FactKey::new(ACTION_CALL_TYPE, receipt_key))
+        .expect("stored receipt");
+    let values = stored.values.as_ref().expect("receipt values");
+    assert_eq!(
+        norn_kernel::ActionCallRecord::from_values(values),
+        Some(record.clone())
+    );
+    let mut later = source;
+    later.insert(
+        "value".into(),
+        norn_ir::RuntimeValue::from_json_text("0.12").expect("exact edit"),
+    );
+    put(&mut cell, setting, later);
+    let ActionOutcome::Replayed { record: replayed } =
+        commit_action(&mut cell, &catalog, &invocation, &Allow).expect("replay")
+    else {
+        panic!("original replay")
+    };
+    assert_eq!(replayed, record);
+    invocation.idempotency_key = "wrong-rate".into();
+    invocation
+        .input
+        .insert("id".into(), norn_ir::RuntimeValue::from("wrong"));
+    assert_eq!(
+        commit_action(&mut cell, &catalog, &invocation, &Allow)
+            .expect_err("cannot override selected setting")
+            .code(),
+        "action.precondition_failed"
+    );
+    invocation.idempotency_key = "missing-rate".into();
+    invocation.input.insert(
+        "effective_at".into(),
+        norn_ir::RuntimeValue::from("2025-01-01T00:00:00Z"),
+    );
+    assert_eq!(
+        commit_action(&mut cell, &catalog, &invocation, &Allow)
+            .expect_err("absent optional default")
+            .code(),
+        "core.composition.parameter_missing"
+    );
+    invocation.idempotency_key = "racing-rate".into();
+    invocation.input.insert(
+        "effective_at".into(),
+        norn_ir::RuntimeValue::from("2026-06-30T00:00:00Z"),
+    );
+    invocation.input.insert(
+        "value".into(),
+        norn_ir::RuntimeValue::from_json_text("0.12").expect("current rate"),
+    );
+    let key = FactKey::new("demo.NumericSetting", "rate");
+    let mut changed = cell.load(&key).expect("setting").values.expect("values");
+    changed.insert("value".into(), norn_ir::RuntimeValue::from(1));
+    let mut host = RacingCell {
+        cell: RefCell::new(cell),
+        race: Some(CommitRace::Fact(key, changed)),
+        bounded_race: RefCell::new(None),
+    };
+    assert_eq!(
+        commit_action(&mut host, &catalog, &invocation, &Allow)
+            .expect_err("setting raced at commit")
+            .code(),
+        "action.precondition_stale_read"
+    );
+    assert!(
+        !host
+            .load(&FactKey::new("demo.ParameterProbe", "wrong"))
+            .expect("no raced write")
+            .exists()
+    );
 }

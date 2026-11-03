@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SettingPayload",
-  "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue whose JSON type is fixed by `valueType`.",
+  "description": "The payload of a `setting` artifact: one reviewed, effective-dated\nvalue paired with `valueType`. Version 0.2 number settings require exact\ndecimal-string literals; verified retained 0.1 keeps its binary64 JSON\nnumber profile.",
   "type": "object",
   "properties": {
     "effectiveFrom": {
@@ -32,14 +32,14 @@
       "type": "string"
     },
     "settingVersion": {
-      "$ref": "#/$defs/IrVersion01"
+      "$ref": "#/$defs/IrVersion02"
     },
     "supersedes": {
       "description": "The setting version this one replaces.",
       "$ref": "#/$defs/SettingSupersedes"
     },
     "value": {
-      "description": "The value, whose JSON type agrees with `valueType`. A `json` setting\nmay be `null`.",
+      "description": "Version 0.2 numbers require exact decimal-string literals; retained 0.1 numbers\nkeep binary64 JSON numbers. A `json` setting may be `null`.",
       "$ref": "#/$defs/JsonValue"
     },
     "valueType": {
@@ -60,9 +60,24 @@
     },
     {
       "properties": {
+        "settingVersion": {
+          "const": "0.2"
+        },
         "value": {
-          "type": "number",
-          "format": "double"
+          "$ref": "#/$defs/DecimalLiteral"
+        },
+        "valueType": {
+          "const": "number"
+        }
+      }
+    },
+    {
+      "properties": {
+        "settingVersion": {
+          "const": "0.1"
+        },
+        "value": {
+          "type": "number"
         },
         "valueType": {
           "const": "number"
@@ -100,11 +115,17 @@
     "scopeRequired"
   ],
   "$defs": {
-    "IrVersion01": {
-      "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+    "DecimalLiteral": {
+      "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "IrVersion02": {
+      "description": "Setting value profiles: historical binary64 and current exact decimal literals.",
       "type": "string",
       "enum": [
-        "0.1"
+        "0.1",
+        "0.2"
       ]
     },
     "JsonValue": {
@@ -192,7 +213,7 @@
       ]
     },
     "SettingValueType": {
-      "description": "The JSON type of a setting's `value`.",
+      "description": "The setting value kind; numbers use exact decimal-string literals.",
       "type": "string",
       "enum": [
         "text",
