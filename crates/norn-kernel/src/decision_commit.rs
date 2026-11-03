@@ -74,6 +74,7 @@ use crate::observations::{LogicalTime, World};
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
+    pub(crate) action_rules: &'a [crate::SynchronousRule],
     pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
@@ -107,6 +108,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
         Self {
+            action_rules: &[],
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -117,6 +119,13 @@ impl<'a> TypeCatalog<'a> {
             property_types: None,
             effective_model: OnceLock::new(),
         }
+    }
+
+    /// Admitted, immutable synchronous writers available to governed actions.
+    #[must_use]
+    pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
+        self.action_rules = rules;
+        self
     }
 
     /// OBS-EVIDENCE-1: bind the retained law artifacts of this definition snapshot.
@@ -214,6 +223,40 @@ impl<'a> TypeCatalog<'a> {
             values.insert(name.to_owned(), value);
         }
         Ok(values)
+    }
+
+    /// VAL-EXACT-1: derive invariant operand types from the same catalog as values.
+    pub(crate) fn expression_environment(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.base_expression_environment()?
+            .bind_self(object_type)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
+        let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
+        let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
+        let definitions = norn_expr::EntityDefinitions {
+            property_types: self.property_types.unwrap_or_default(),
+            object_types: &objects,
+            interfaces: &interfaces,
+            extensions: &extensions,
+        };
+        norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+            &definitions,
+            &BTreeSet::new(),
+            norn_expr::EnvOptions::default(),
+        )
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
     }
 
     /// Materialize declared defaults without filling other absent properties
@@ -2289,7 +2332,7 @@ pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
     }
 }
 
-fn fact_key(change: &FactChange) -> FactKey {
+pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {
         FactChange::Create {
             object_type, key, ..

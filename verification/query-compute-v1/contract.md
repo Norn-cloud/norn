@@ -62,8 +62,9 @@ permission authority. Required source partitions retain opaque cursor vectors;
 missing coverage/quarantine is incomplete; heartbeat lag above the declared
 maximum, or a future heartbeat, is stale. Bound tenant scope is checked before scanning even an empty population.
 The envelope binds actual ledger/knowledge revision, model/declarations, window,
-mapping/population/epoch, contributions and frontier. Historical knowledge
-selection refuses; retained old results are not a historical-query API.
+mapping/population/epoch, contributions and frontier. This G2 current-world
+evaluator does not select historical knowledge; `evaluate_question_known_at`
+(ASOF-KNOWLEDGE-1, Core 08) owns authenticated knowledge-cutoff evaluation.
 The unchanged #353 CSV is a generated numerical fixture, not authenticated
 training knowledge. Native cell scenarios cover 98%/97.5%, immutable prior
 results, exact contribution membership, unavailable zero-input ratios and

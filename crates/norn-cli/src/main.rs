@@ -1,6 +1,7 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
 mod eval;
+mod mcp;
 mod remote;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -15,9 +16,23 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Serve available human operations over bounded MCP stdio.
+    Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
+    /// List the available human operations and their input schemas.
+    #[command(
+        long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
+    )]
+    Capabilities {
+        /// Opaque nextCursor from the preceding catalog page; omit to start discovery.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Check a JSON artifact array using the shared checker and resource limits.
+    #[command(
+        long_about = "Check a JSON artifact array using the shared checker and resource limits. Read artifacts and context from local files. Author ordinary typed source, compile it with the authoring CLI, then check its output. A refused report retains diagnostic codes, source locations, remediation and receipt/profile pins. Edit the named source and compile/check again; checking never installs definitions."
+    )]
     Check {
         /// JSON array emitted by typed authoring.
         #[arg(long)]
@@ -50,6 +65,8 @@ enum Command {
 
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
+        Command::Mcp => mcp::serve(),
+        Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))

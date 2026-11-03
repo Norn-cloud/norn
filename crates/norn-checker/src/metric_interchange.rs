@@ -456,6 +456,7 @@ pub fn generate_metric_ir(
             && let EffectiveKind::Base(PropertyType::Decimal {
                 unit,
                 currency_source,
+                per_unit: None,
                 ..
             }) = &property.kind
         {
