@@ -198,15 +198,15 @@ fn param_tax_governed_rates_commit_reopen_and_preserve_both_receipts() {
         "2025-07-01T00:00:00Z",
         "2026-01-01T00:00:00Z",
     );
-    org_rate.insert("environment_id".into(), RuntimeValue::Null);
+    org_rate.remove("environment_id");
     let mut global_rate = rate(
         "global",
         "0.05",
         "2025-01-01T00:00:00Z",
         "2026-01-01T00:00:00Z",
     );
-    global_rate.insert("org_id".into(), RuntimeValue::Null);
-    global_rate.insert("environment_id".into(), RuntimeValue::Null);
+    global_rate.remove("org_id");
+    global_rate.remove("environment_id");
     let denied = commit_action(
         &mut cell,
         &catalog,
