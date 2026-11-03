@@ -16,6 +16,29 @@ Reuse `RuleRoot`, `RuleDecisionV1`, `JdmGraph`, `SliceDeclaration`, `ZenExpressi
 
 Derived concepts and questions share this algebra. Source cursors are opaque and compared only by their connector's declared ordering; never take a meaningless minimum across unrelated sources. Expose a vector frontier, not a fabricated global source sequence.
 
+## Numeric additivity admission (#527)
+
+**METRIC-ADDITIVITY-1:** numeric property types declare `additivity.kind` as
+`additive`, `semi_additive`, `non_additive`, or `ratio`. Ratio declarations bind
+`numerator` and `denominator` properties at the object's grain. Omission means
+`undeclared`: point reads remain legal, but every aggregate over that numeric
+property, including counts and extrema, refuses with
+`metric.validation.undeclared_additivity` and `FixDefinition` guidance.
+Units never imply additivity. Existing metric metadata cannot authorize an
+aggregation the property's contract forbids. Stored ratios refuse scalar
+aggregation (`metric.validation.ratio_aggregation`); callers must sum their
+operands separately before dividing. Non-additive prices require a declared
+weighting calculation; this bounded aggregate vocabulary provides none.
+Semi-additive balances require the existing snapshot contract, whose unsupported
+execution continues to refuse. Inheritance must preserve the classification.
+
+Named scenarios: **METRIC-UNDECLARED** (all numeric aggregates refuse without a
+declaration), **METRIC-RATIO-AVERAGE** (stored-ratio aggregation refuses),
+**METRIC-BALANCE-TIME** (an additive metric cannot bypass a balance's time
+restriction), **METRIC-DECLARED-SUM** (explicit additive quantities use the same
+keyed compute admission). Conservation-derived candidates and their law
+provenance are a separate slice; this admission change grants no law exemption.
+
 ## Typed question construction (#658, #528)
 
 **QUESTION-LOWER-1:** `Norn.question` is syntax-only construction of the existing
@@ -81,3 +104,9 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Aggregation changes during model migration
+
+**METRIC-ADDITIVITY-MIGRATION:** additivity changes aggregation semantics and the full plan/model contract, not which stored values are admitted. An additivity-only change remains a governed declared model change in `additivityChanges`, with previous/candidate classes, and never triggers a live-value narrowing scan. Actual kind, scale or constraint narrowing still scans, including when additivity changes in the same update. Object, link and nested-record property changes retain their affected identities; ledger summaries bound rows and identifiers.
+
+Named scenarios: `additivity_only_change_skips_live_scan_over_4096_rows` (Integer and Decimal), `additivity_change_with_value_narrowing_still_scans_live_rows`, `additivity_change_is_declared_separately_from_value_narrowing`, `additivity_changes_preserve_values_but_change_the_plan_contract`. Ratio authoring operands must match the complete `PropertyId` grammar before emission; `ratio operands must be complete PropertyId values` covers malformed operands.

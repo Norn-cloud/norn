@@ -11264,6 +11264,118 @@
         },
         "additionalProperties": false
       },
+      "NornIrPropertyAdditivity": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivityOneOf4"
+          }
+        ],
+        "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation."
+      },
+      "NornIrPropertyAdditivityOneOf0": {
+        "type": "object",
+        "description": "No aggregation contract has been declared.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "undeclared"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf1": {
+        "type": "object",
+        "description": "Summable across entities and time.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf2": {
+        "type": "object",
+        "description": "Summable across entities at a single instant, never across time.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "semi_additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf3": {
+        "type": "object",
+        "description": "Requires a separately declared weighting calculation.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "non_additive"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPropertyAdditivityOneOf4": {
+        "type": "object",
+        "description": "Recompute from the sums of these operands, never average stored ratios.",
+        "required": [
+          "kind",
+          "numerator",
+          "denominator"
+        ],
+        "properties": {
+          "denominator": {
+            "type": "string",
+            "description": "Denominator property at the same object grain.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ratio"
+            ]
+          },
+          "numerator": {
+            "type": "string",
+            "description": "Numerator property at the same object grain.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrPropertyConstraints": {
         "type": "object",
         "description": "Constraints on the values of a property type.\n\nApplicability (checked by `norn-checker`): `min`/`max` apply to `integer`\nand `decimal`; `minLength`/`maxLength`/`pattern` apply to `text`;\n`nullable` applies to every kind. Through a `ref` they apply to the\nreferenced type's kind.",
@@ -11489,6 +11601,10 @@
           "kind"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivity",
+            "description": "Explicit aggregation contract; a missing declaration fails closed."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -11528,6 +11644,10 @@
           "scale"
         ],
         "properties": {
+          "additivity": {
+            "$ref": "#/components/schemas/NornIrPropertyAdditivity",
+            "description": "Explicit aggregation contract; units do not imply additivity."
+          },
           "currencySource": {
             "$ref": "#/components/schemas/NornIrDimensionPath",
             "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics."

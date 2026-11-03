@@ -4478,6 +4478,40 @@ export interface components {
             type: components["schemas"]["NornIrPropertyType"];
         };
         /**
+         * @description METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
+         *     Missing declarations permit point reads but never authorize aggregation.
+         */
+        NornIrPropertyAdditivity: components["schemas"]["NornIrPropertyAdditivityOneOf0"] | components["schemas"]["NornIrPropertyAdditivityOneOf1"] | components["schemas"]["NornIrPropertyAdditivityOneOf2"] | components["schemas"]["NornIrPropertyAdditivityOneOf3"] | components["schemas"]["NornIrPropertyAdditivityOneOf4"];
+        /** @description No aggregation contract has been declared. */
+        NornIrPropertyAdditivityOneOf0: {
+            /** @enum {string} */
+            kind: "undeclared";
+        };
+        /** @description Summable across entities and time. */
+        NornIrPropertyAdditivityOneOf1: {
+            /** @enum {string} */
+            kind: "additive";
+        };
+        /** @description Summable across entities at a single instant, never across time. */
+        NornIrPropertyAdditivityOneOf2: {
+            /** @enum {string} */
+            kind: "semi_additive";
+        };
+        /** @description Requires a separately declared weighting calculation. */
+        NornIrPropertyAdditivityOneOf3: {
+            /** @enum {string} */
+            kind: "non_additive";
+        };
+        /** @description Recompute from the sums of these operands, never average stored ratios. */
+        NornIrPropertyAdditivityOneOf4: {
+            /** @description Denominator property at the same object grain. */
+            denominator: string;
+            /** @enum {string} */
+            kind: "ratio";
+            /** @description Numerator property at the same object grain. */
+            numerator: string;
+        };
+        /**
          * @description Constraints on the values of a property type.
          *
          *     Applicability (checked by `norn-checker`): `min`/`max` apply to `integer`
@@ -4591,6 +4625,8 @@ export interface components {
         };
         /** @description A signed 64-bit integer. */
         NornIrPropertyTypeOneOf1: {
+            /** @description Explicit aggregation contract; a missing declaration fails closed. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /** @enum {string} */
             kind: "integer";
         };
@@ -4606,6 +4642,8 @@ export interface components {
          *     quantity in a declared unit.
          */
         NornIrPropertyTypeOneOf2: {
+            /** @description Explicit aggregation contract; units do not imply additivity. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /**
              * @description Authoritative currency path relative to the object holding this amount.
              *     Monetary decimals declare this instead of a quantity unit. Metrics

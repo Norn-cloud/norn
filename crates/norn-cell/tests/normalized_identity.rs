@@ -249,6 +249,7 @@ fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
     let mut amount = defs[0].properties[0].clone();
     amount.id = PropertyId("amount".into());
     amount.property_type = PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
         scale: norn_ir::WholeNumber(2),
         rounding: None,
         unit: None,
@@ -425,7 +426,9 @@ fn normalized_composite_integer_key_keeps_values_beyond_binary64_precision() {
     let mut defs = definitions();
     let mut ordinal = defs[0].properties[0].clone();
     ordinal.id = PropertyId("ordinal".into());
-    ordinal.property_type = PropertyType::Integer {};
+    ordinal.property_type = PropertyType::Integer {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+    };
     defs[0].properties.push(ordinal);
     defs[0].identity[0]
         .properties

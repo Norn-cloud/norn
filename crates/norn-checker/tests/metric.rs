@@ -65,6 +65,14 @@ fn assert_code(findings: &[norn_checker::Diagnostic], code: &str) {
             finding.code
         );
         assert!(finding.is_error());
+        if [codes::UNDECLARED_ADDITIVITY, codes::RATIO_AGGREGATION].contains(&finding.code.as_str())
+        {
+            assert_eq!(
+                finding.remediation,
+                Some(norn_checker::DiagnosticRemediation::FixDefinition)
+            );
+        }
+
         assert!(
             finding
                 .span
@@ -294,6 +302,14 @@ fn ratios_check_units_currencies_object_grain_references_cycles_and_additivity()
         check_metrics_and_questions(&metrics, &[], &catalog(ONTOLOGY))
     };
     assert!(run(&sales, &other, &base_ratio).is_empty());
+    let mut average = other.clone();
+    average["type_params"]["metric_aggregation_params"]["agg"] = json!("average");
+    average["x-norn"]["additivity"] = json!({"kind":"non_additive"});
+    assert_code(
+        &run(&sales, &average, &base_ratio),
+        codes::RATIO_AGGREGATION,
+    );
+
     other["x-norn"]["currency"] = json!({"property":{"links":["parent_sales_invoice"],"property":"currency"},"conversion":{"target":"USD","rate":{"property":"conversion_rate"}}});
     assert_code(&run(&sales, &other, &base_ratio), codes::UNIT_MISMATCH);
     let mut kg = sales;
@@ -420,7 +436,7 @@ fn effective_shared_units_and_inherited_links_are_used() {
     let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
     let mut types = ontology[0].clone();
     types["artifactId"] = json!("erpnext.property_types.entity.v2");
-    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.mass","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"kg"}}}]});
+    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.mass","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"kg"}}}]});
     ontology.as_array_mut().expect("array").push(types);
     // Locate the physical weight property by id, rather than relying on order.
     for property in ontology[0]["payload"]["objectType"]["properties"]
@@ -818,7 +834,7 @@ fn shared_and_inherited_monetary_types_keep_the_authoritative_currency_source() 
     let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
     let mut types = ontology[0].clone();
     types["artifactId"] = json!("erpnext.money_types.entity.v2");
-    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.money","type":{"kind":"decimal","scale":2,"currencySource":{"links":["parent_sales_invoice"],"property":"currency"}}}]});
+    types["payload"] = json!({"entityVersion":"2.0","propertyTypes":[{"name":"erpnext.money","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":2,"currencySource":{"links":["parent_sales_invoice"],"property":"currency"}}}]});
     ontology.as_array_mut().expect("array").push(types);
     for property in ontology[0]["payload"]["objectType"]["properties"]
         .as_array_mut()
@@ -884,7 +900,7 @@ fn keyed_compute_fixture() -> (Vec<MetricDefinition>, QuestionIR, EffectiveCatal
 }
 
 #[test]
-fn query_grain_keyed_sum_preserves_typed_identity_and_freshness() {
+fn property_additivity_declared_sum_preserves_typed_identity_and_freshness() {
     use norn_checker::metric::compute::admit;
     let (definitions, question, catalog) = keyed_compute_fixture();
     let plan = admit(&definitions, &question, &catalog, 100).expect("keyed sum");
@@ -1026,6 +1042,107 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
     assert!(admit(&definitions, &question, &catalog, 100).is_err());
     definitions[0].norn.default_filters = std::mem::take(&mut question.filters);
     assert!(admit(&definitions, &question, &catalog, 100).is_err());
+}
+
+/// METRIC-ADDITIVITY-1: declaration, rather than unit or metric metadata, authorizes aggregation.
+#[test]
+fn invoice_totals_require_their_authoritative_currency() {
+    let (mut metric, _) = sales();
+    metric["type_params"]["expr"] = json!("grand_total");
+    metric["type_params"]["metric_aggregation_params"]["semantic_model"] =
+        json!("erpnext.SalesInvoice");
+    metric["x-norn"]["timeDimension"] = json!({"property":"posting_date"});
+    metric["x-norn"]["defaultFilters"] = json!([]);
+    metric["x-norn"]
+        .as_object_mut()
+        .expect("policy")
+        .remove("currency");
+    let metric: MetricDefinition = decode(&metric);
+    assert_code(
+        &check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)),
+        codes::MIXED_CURRENCY,
+    );
+}
+
+#[test]
+fn property_additivity_refuses_every_undeclared_numeric_aggregate() {
+    let (metric, question) = sales();
+    for aggregate in ["sum", "average", "min", "max", "count", "count_distinct"] {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties");
+        let amount = properties
+            .iter_mut()
+            .find(|p| p["id"] == "net_amount")
+            .expect("amount");
+        amount["type"]
+            .as_object_mut()
+            .expect("type")
+            .remove("additivity");
+        let mut measure = metric.clone();
+        measure["type_params"]["metric_aggregation_params"]["agg"] = json!(aggregate);
+        let findings = check_metrics_and_questions(
+            &[decode(&measure)],
+            &[decode(&question)],
+            &catalog(&ontology.to_string()),
+        );
+        assert_code(&findings, codes::UNDECLARED_ADDITIVITY);
+        let refusal = findings
+            .iter()
+            .find(|d| d.code == codes::UNDECLARED_ADDITIVITY)
+            .expect("refusal");
+        assert_eq!(
+            refusal.remediation,
+            Some(norn_checker::DiagnosticRemediation::FixDefinition)
+        );
+    }
+}
+
+#[test]
+fn ratios_prices_and_balances_cannot_be_laundered_through_additive_metrics() {
+    let (metric, question) = sales();
+    for (class, expected) in [
+        (
+            json!({"kind":"ratio", "numerator":"weight", "denominator":"volume"}),
+            codes::RATIO_AGGREGATION,
+        ),
+        (json!({"kind":"non_additive"}), codes::INVALID_ADDITIVITY),
+        (json!({"kind":"semi_additive"}), codes::SEMI_ADDITIVE_TIME),
+    ] {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties");
+        properties
+            .iter_mut()
+            .find(|p| p["id"] == "net_amount")
+            .expect("amount")["type"]["additivity"] = class;
+        assert_code(
+            &check_metrics_and_questions(
+                &[decode(&metric)],
+                &[decode(&question)],
+                &catalog(&ontology.to_string()),
+            ),
+            expected,
+        );
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn numeric_additivity_cannot_be_inferred_from_units_or_scale(scale in 0u64..=18, additive in proptest::bool::ANY) {
+        let mut ontology: Value = serde_json::from_str(ONTOLOGY).expect("ontology");
+        let properties = ontology[0]["payload"]["objectType"]["properties"].as_array_mut().expect("properties");
+        let amount = properties.iter_mut().find(|p| p["id"] == "weight").expect("weight");
+        amount["type"]["scale"] = json!(scale);
+        if !additive { amount["type"].as_object_mut().expect("type").remove("additivity"); }
+        let (mut metric, question) = sales();
+        metric["type_params"]["expr"] = json!("weight");
+        metric["x-norn"].as_object_mut().expect("extension").remove("currency");
+        let findings = check_metrics_and_questions(&[decode(&metric)], &[decode(&question)], &catalog(&ontology.to_string()));
+        proptest::prop_assert_eq!(findings.iter().any(|d| d.code == codes::UNDECLARED_ADDITIVITY), !additive);
+    }
 }
 
 fn question_wording() -> norn_checker::metric::question_display::QuestionWording {
