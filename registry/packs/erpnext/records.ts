@@ -105,7 +105,7 @@ export const Mapping = Norn.mapping({
   id: "erpnext.three.mapping",
   title: "erpnext synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "ef588de89afc97bb03a35392f8072c9b4d66484c37568e5a8d0ca9781e706c28"},
+  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "5493a3f662c855a2040cc04940b046d6688abe0caa82fc759181634aa7f7a4bb"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [
@@ -115,7 +115,7 @@ export const Mapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/demo/Item/' + input.name",
-      properties: [{property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
+      properties: [{property: "id", value: "input.custom_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [{field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."}, {field: "price", reason: "Sales price is not stock cost, valuation or a ledger effect."}]
     },
     {

@@ -105,7 +105,7 @@ export const Mapping = Norn.mapping({
   id: "odoo.three.mapping",
   title: "odoo synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "5e804ff37e123b8a2967b8aad98adcc8043c4748be93626d74ccc10eb194cd5c"},
+  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "4e64de3ac09814bd664aa179a08b67974bc3727d50603cff1c8e7ccd28f90b37"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [
@@ -115,7 +115,7 @@ export const Mapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.x_norn_ref",
       sourceRecord: "'odoo/demo/product.product/' + input.id",
-      properties: [{property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
+      properties: [{property: "id", value: "input.x_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [{field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."}, {field: "price", reason: "Sales price is not stock cost, valuation or a ledger effect."}]
     },
     {

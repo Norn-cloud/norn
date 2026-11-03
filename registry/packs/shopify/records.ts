@@ -86,7 +86,7 @@ export const Mapping = Norn.mapping({
   id: "shopify.three.mapping",
   title: "shopify synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "b751b7065405b7d1984dc3aa9cdacbed2a7b5908373a2fabb55249c72a1c92b4"},
+  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "452a8dfff590da61932050ceb4e87c42ea388b9b7a34830d6bde9d4b9f36c8c1"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, Settlement],
   maps: [
@@ -96,7 +96,7 @@ export const Mapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/ProductVariant/' + input.id",
-      properties: [{property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
+      properties: [{property: "id", value: "input.metafield_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [{field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."}, {field: "price", reason: "Sales price is not stock cost, valuation or a ledger effect."}]
     },
     {

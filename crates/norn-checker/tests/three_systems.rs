@@ -55,7 +55,8 @@ fn all_rows(f: &Fixture) -> Vec<Row> {
 #[test]
 fn mvp_map_three_artifact_set_is_admitted() {
     let set=artifacts();
-    let diagnostics=check_artifact_set(&set, &EntityArtifactSetContext { registry:&BTreeSet::new(), base:&[], tenant:None });
+    let (base,candidate): (Vec<_>,Vec<_>)=set.into_iter().partition(|a|a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let diagnostics=check_artifact_set(&candidate, &EntityArtifactSetContext { registry:&BTreeSet::new(), base:&base, tenant:None });
     assert!(diagnostics.iter().all(|d| d.severity != norn_ir::DiagnosticSeverity::Error), "{diagnostics:#?}");
 }
 #[test]

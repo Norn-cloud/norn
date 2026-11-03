@@ -4,12 +4,12 @@ import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } f
 
 export const Catalog = Norn.interfaceType({
   name: "canon.Catalog", title: "Catalog metadata, never stock", version: "0.1.0",
-  properties: Schema.Struct({ code: Schema.String, label: Schema.String }),
+  properties: Schema.Struct({ id: Schema.String, code: Schema.String, label: Schema.String }),
 })
 export const Item = Norn.type({
   name: "canon.Item", title: "Item", version: "0.1.0", implements: [Catalog],
-  properties: Schema.Struct({ code: Schema.String, label: Schema.String }),
-  identity: [{ name: "primary", properties: ["code"] }],
+  properties: Schema.Struct({ id: Schema.String, code: Schema.String, label: Schema.String }),
+  identity: [{ name: "primary", properties: ["id"] }],
 })
 export const Party = Norn.type({
   name: "canon.Party", title: "Party", version: "0.1.0", implements: [Agent],
