@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PROOF-QUINT-RUN-1: result availability never overrides timeout/exit policy."""
 import importlib.util
+import copy
 from pathlib import Path
 import unittest
 
@@ -55,6 +56,50 @@ class VerdictPolicy(unittest.TestCase):
         self.assertTrue(runner.arithmetic_qualified("-127"))
         self.assertFalse(runner.arithmetic_qualified("128"))
         self.assertTrue(runner.arithmetic_qualified("v999999999999"))
+
+
+class ConstantInitializerPredicate(unittest.TestCase):
+    def fixture(self, coefficient=0):
+        return {"modules": [{"name": "generated", "declarations": [
+            {"kind": "var", "name": "present"}, {"kind": "var", "name": "amount"},
+            {"kind": "def", "name": "init", "qualifier": "action", "expr": {
+                "kind": "app", "opcode": "actionAll", "args": [
+                    {"kind": "app", "opcode": "assign", "args": [{"kind": "name", "name": "present"}, {"kind": "bool", "value": False}]},
+                    {"kind": "app", "opcode": "assign", "args": [{"kind": "name", "name": "amount"}, {"kind": "int", "value": coefficient}]},
+                ]}},
+            {"kind": "def", "name": "q::init", "qualifier": "action", "expr": {"kind": "name", "name": "init"}},
+            {"kind": "def", "name": "step", "qualifier": "action", "expr": {
+                "kind": "app", "opcode": "assign", "args": [{"kind": "name", "name": "amount"}, {"kind": "int", "value": 1}]}},
+        ]}], "table": {"retained": 1}, "types": {"retained": 2}, "effects": {"retained": 3}}
+
+    def test_constant_initializer_predicate_preserves_every_other_byte_value(self):
+        for coefficient in range(-127, 128):
+            source = self.fixture(coefficient)
+            before = copy.deepcopy(source)
+            expected = copy.deepcopy(source)
+            for assignment in expected["modules"][0]["declarations"][2]["expr"]["args"]:
+                assignment["opcode"] = "eq"
+            self.assertEqual(runner.initializer_predicate(source), expected)
+            self.assertEqual(source, before)
+
+    def test_constant_initializer_predicate_refuses_partial_opaque_or_reused_init(self):
+        mutations = [
+            lambda ds: ds[2]["expr"].update(opcode="actionAny"),
+            lambda ds: ds[2]["expr"]["args"].pop(),
+            lambda ds: ds[2]["expr"]["args"].append(copy.deepcopy(ds[2]["expr"]["args"][0])),
+            lambda ds: ds[2]["expr"]["args"][1]["args"][1].update(kind="name", name="amount"),
+            lambda ds: ds[2]["expr"]["args"][1]["args"][1].update(value=True),
+            lambda ds: ds[3]["expr"].update(name="other"),
+            lambda ds: ds[4].update(expr={"kind": "name", "name": "init"}),
+            lambda ds: ds[4].update(expr={"kind": "name", "name": "q::init"}),
+            lambda ds: ds[4].update(qualifier="run"),
+            lambda ds: ds.append(copy.deepcopy(ds[0])),
+        ]
+        for mutate in mutations:
+            source = self.fixture()
+            mutate(source["modules"][0]["declarations"])
+            with self.assertRaises(ValueError):
+                runner.initializer_predicate(source)
 
 
 if __name__ == "__main__":

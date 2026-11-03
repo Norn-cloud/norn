@@ -170,6 +170,15 @@ and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
 
+Compiler transport must not determine discharge. Flattened Quint JSON uses the
+pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
+The initializer conversion accepts only a complete constant assignment to each
+state variable, with no initializer reuse; it changes assignment to equality
+only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
+as Unknown. Both compilation stages share the existing 120-second budget and
+own their process groups. Named scenario: `constant_initializer_predicate`;
+real generated output must match the prior RPC compiler bytes.
+
 Qualification is restricted to integer/Boolean states and one worker. Raw
 successful universal searches require nonempty initialization, a drained queue
 and declared state cardinality. Counterexamples and non-vacuity witnesses stop
