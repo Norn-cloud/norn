@@ -15,3 +15,16 @@ The [quickstart](../../QUICK_START.md) uses an independently authored definition
 `bun run typecheck` and `bun test` exercise the profile, compiler, builders and
 native/WASM checker contracts. The public frontend has no remote deployment or
 product-server commands.
+
+### Standalone typed questions
+
+`bun src/cli.ts question file.ts` emits candidate `QuestionIR` values from
+`Norn.question({ name, of, where, measure, by, asOf, population })`. `of` is an
+object definition reference or installed qualified name, `measure` is an exact
+metric identity, and direct predicates/dimensions retain the existing IR shape.
+The initial population is `{ kind: "authorized_objects" }`; the host resolves
+scope, visibility, source pins and population identity.
+`asOf` declares `{ basis: "effective", from, to, freshness }`. The ordinary Rust
+compute checker must admit the candidate and selected metric definitions before
+execution. Knowledge-time policy, richer populations, rendering and ambiguity
+interpretation remain separate qualification work.
