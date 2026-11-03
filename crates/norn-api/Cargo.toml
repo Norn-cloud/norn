@@ -19,5 +19,8 @@ utoipa = "5.4.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 
+[dev-dependencies]
+proptest = "1.11.0"
+
 [lints]
 workspace = true

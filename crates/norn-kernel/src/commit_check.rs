@@ -471,18 +471,41 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         InvariantAdmissionError::Violation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
         } => CommitError::InvariantViolation {
             key,
             owner,
+            version,
             id,
             message,
             outcome,
         },
         InvariantAdmissionError::ObservationAuthorization => CommitError::ObservationAuthorization,
     })?;
+    let mut remaining = EvaluationBudget::default().units();
+    for write in &commit.writes {
+        let FactMutation::Put { values } = &write.mutation else {
+            continue;
+        };
+        let failures =
+            crate::governing_laws::evaluate(model.catalog, &write.key, values, &mut remaining)
+                .map_err(|reason| CommitError::Law {
+                    key: write.key.clone(),
+                    reason,
+                })?;
+        if authorization.is_some_and(|authority| authority.authorizes_write(write)) {
+            continue;
+        }
+        if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
+            return Err(CommitError::Law {
+                key: write.key.clone(),
+                reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
+            });
+        }
+    }
     next_versions(commit)
 }
 
@@ -793,6 +816,7 @@ fn evaluate_invariants_for_class(
         }
     };
     let context = ExprValue::object([("self", ExprValue::Object(object))]);
+    let environment = catalog.expression_environment(&key.object_type);
 
     for effective in invariants {
         // Charge one deterministic unit to dispatch each declaration. This
@@ -817,7 +841,20 @@ fn evaluate_invariants_for_class(
                 continue;
             }
         };
-        let attempt = expression.evaluate_metered(&context, EvaluationBudget::new(*remaining));
+        let attempt = match &environment {
+            Ok(env) => expression.evaluate_admitted_metered(
+                &context,
+                EvaluationBudget::new(*remaining),
+                env,
+                &norn_expr::Type::Bool,
+            ),
+            Err(reason) => norn_expr::EvaluationAttempt {
+                result: Err(ExprError::Compile {
+                    message: reason.clone(),
+                }),
+                units_used: 0,
+            },
+        };
         *remaining = (*remaining).saturating_sub(attempt.units_used);
         match attempt.result {
             Err(ExprError::BudgetExhausted { .. }) => {
@@ -956,6 +993,7 @@ enum InvariantAdmissionError {
     Violation {
         key: Box<FactKey>,
         owner: InvariantOwner,
+        version: String,
         id: InvariantId,
         message: String,
         outcome: Box<DataQualityOutcome>,
@@ -1028,6 +1066,16 @@ fn check_invariants<E, C, T>(
         {
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
+                version: catalog
+                    .invariant_owner_version(&failure.owner)
+                    .map_err(|error| InvariantAdmissionError::EffectiveValues {
+                        key: write.key.clone(),
+                        reason: error.to_string(),
+                    })?
+                    .ok_or_else(|| InvariantAdmissionError::EffectiveValues {
+                        key: write.key.clone(),
+                        reason: "invariant owner is unavailable".to_owned(),
+                    })?,
                 owner: failure.owner,
                 id: failure.id,
                 message: failure.message,

@@ -1,0 +1,68 @@
+import { expect, test } from "bun:test"
+import { compileModule } from "../src/compile-stdin.ts"
+import * as E from "../src/builder/entity.ts"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { canonicalJson } from "../src/canonical.ts"
+import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { TOOL_ROOT } from "../src/profile.ts"
+
+const source = (scale: string, currency = '"currency"') => `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Quote = Norn.type({ name: "demo.Quote", title: "Quote", version: "1.0.0", dependencies:[{artifactId:"core.units",version:"1.0.0",kind:"entity"}],
+ properties: Schema.Struct({ id: Schema.String, currency: Schema.Literal("USD"),
+ price: Norn.rate(${scale}, {currency: ${currency}, perUnit: {system: "ucum", code: "g"}, rounding: "half_even"}) }),
+ identity: [{ name: "primary", properties: ["id"] }] })`
+
+test("VAL-RATE typed authoring retains currency, denominator and one rounding site", () => {
+ const result = compileModule(source("6"), {orgId: "org_demo", environmentId: "dev"})
+ if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
+ expect(result.artifacts[0]).toMatchObject({payload: {objectType: {properties: expect.arrayContaining([{id: "price", type: E.rate(6, "currency", {system: "ucum", code: "g"}, "half_even")}])}}})
+})
+test("VAL-RATE refuses an unbounded scale or a nonliteral currency binding", () => {
+ expect(compileModule(source("19"), {orgId: "org_demo", environmentId: "dev"}).ok).toBe(false)
+ expect(compileModule(source("6", "missing"), {orgId: "org_demo", environmentId: "dev"}).ok).toBe(false)
+})
+
+test("VAL-RATE closed numeric schemas retain exact declarations in a direct callback", () => {
+ const result = compileModule(`import { Schema } from "effect"
+ import { Norn } from "@norn/authoring"
+ export const Pricing = Norn.decision({id:"demo.rule.pricing",title:"Pricing",version:"1.0.0",contract:"decide",scopeRequired:[],dependencies:[{artifactId:"core.units",version:"1.0.0",kind:"entity"}],
+ input:Schema.Struct({slice:Schema.Struct({currency:Schema.Literal("USD"),rate:Norn.rate(6,{currency:"currency",perUnit:{system:"ucum",code:"g"}}),grams:Norn.decimal(3,{unit:{system:"ucum",code:"g"}})}),event:Schema.Struct({})}),
+ output:Schema.Struct({facts:Schema.Array(Schema.Struct({id:Schema.String})),commands:Schema.Array(Schema.Struct({actionId:Schema.String,currency:Schema.Literal("USD"),amount:Norn.decimal(2,{currency:"currency",rounding:"half_even"})})),timers:Schema.Array(Schema.Struct({id:Schema.String}))})
+ }, input => ({facts:[],commands:[{actionId:"quote",currency:"USD",amount:input.slice.rate*input.slice.grams}],timers:[]}))`,{orgId:"org_demo",environmentId:"dev"})
+ if (!result.ok || result.artifacts === undefined) throw new Error(JSON.stringify(result))
+ expect(result.artifacts[0]).toMatchObject({dependencies:[{artifactId:"core.units",version:"1.0.0",kind:"entity",required:true}],payload:{inputSchema:{properties:{slice:{properties:{rate:{type:"number",nornType:E.rate(6,"currency",{system:"ucum",code:"g"})}}}}},graph:{nodes:expect.arrayContaining([{id:"decision",name:"decision",type:"expressionNode",content:{expressions:expect.any(Array)}}])}}})
+})
+
+test("JEWEL-PRICE native acceptance uses freshly compiled typed declarations", () => {
+ const sourcePath = "tools/norn-ts/fixtures/definitions/jewelry-pricing.source.ts"
+ const result = compileDefinitions(join(TOOL_ROOT, "fixtures/definitions/jewelry-pricing.source.ts"), {
+  scope: {orgId:"org_demo",environmentId:"dev"}, sourcePath,
+ })
+ if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+ expect(result.warnings).toEqual([])
+ const retained = JSON.parse(readFileSync(join(TOOL_ROOT,"fixtures/definitions/jewelry-pricing.ir.json"),"utf8"))
+ expect(canonicalJson(result.artifacts)).toBe(canonicalJson(retained))
+ expect(result.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({kind:"action",payload:expect.objectContaining({derive:[{field:"amount",expression:"input.price_per_g * input.fine_g",inputRequired:false}]})})]))
+})
+
+test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bounds", () => {
+ const branchSource = (count: number, label = "ok") => `
+ import { Schema } from "effect"
+ import { Norn } from "@norn/authoring"
+ export const Branches = Norn.decision({id:"demo.branches",title:"Branches",version:"1.0.0",contract:"sub_decision",scopeRequired:[],
+ input:Schema.Struct({amount:Norn.decimal(2)}),output:Schema.Struct({amount:Norn.decimal(2),label:Schema.String})}, input => {
+ ${Array.from({length:count}, (_,i) => `if (input.amount > ${i}) return {amount:input.amount,label:${JSON.stringify(label)}}`).join("\n")}
+ return {amount:input.amount,label:"fallback"}
+ })`
+ const scope = {orgId:"org_demo",environmentId:"dev"}
+ expect(compileModule(branchSource(2), scope).ok).toBe(true)
+ for (const source of [branchSource(160), branchSource(1, "🪙".repeat(5000))]) {
+  const result = compileModule(source, scope)
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error("oversized exact callback compiled")
+  expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({code:"NORN-FLOW-UNBOUNDED",message:expect.stringContaining("norn-expr/4 source bounds")})]))
+ }
+})

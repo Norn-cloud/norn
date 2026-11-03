@@ -565,6 +565,23 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
         })
         .unwrap_err();
     assert_eq!(error.code(), "commit.invariant_violation");
+    let reason = norn_kernel::Refusable::refusal(&error)
+        .reason
+        .expect("invariant reason");
+    let (types, interfaces) = definitions();
+    let owner = InvariantOwner::Object(ObjectTypeName(ITEM.to_owned()));
+    let expected_version = catalog(&types, &interfaces)
+        .invariant_owner_version(&owner)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reason.pin,
+        Some(DataQualityRuleRef::Invariant {
+            owner,
+            invariant_id: InvariantId("positive_amount".into()),
+            version: expected_version,
+        })
+    );
     assert!(matches!(
         error,
         CommitError::InvariantViolation {
@@ -3039,4 +3056,175 @@ fn concrete_implementers_of_child_interfaces_are_valid_parent_link_targets() {
     })
     .expect("inherited parent membership admits link");
     assert!(cell.load_link(&key).unwrap().values.is_some());
+}
+
+#[test]
+fn val_exact_invariants_admit_products_and_refuse_unqualified_division() {
+    for (source, refused) in [
+        ("self.amount * 0.1 > 0", false),
+        ("self.amount / 3 > 0", true),
+        ("self.amount * 0.000000000000000001 > 0", true),
+    ] {
+        let definition: ObjectTypeDef = serde_json::from_value(json!({
+            "name": ITEM,
+            "properties": [{"id":"amount", "type":{"kind":"decimal","scale":3}}],
+            "invariants":[{"id":"exact_value", "expression":source, "message":"exact arithmetic required"}]
+        })).expect("definition");
+        let catalog = TypeCatalog::new([&definition]);
+        let values = object(json!({"amount": "1.005"}));
+        let mut remaining = 10000;
+        let failures = norn_kernel::evaluate_invariants(
+            &catalog,
+            &FactKey::new(ITEM, "exact"),
+            &values,
+            &mut remaining,
+        )
+        .expect("evaluation");
+        assert_eq!(!failures.is_empty(), refused, "{source}");
+        assert!(remaining < 10000);
+    }
+}
+
+fn direct_amount_law() -> norn_ir::ArtifactEnvelope {
+    let mut laws: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
+    let law = &mut laws[0];
+    law["artifactId"] = json!("invariant.amount.law");
+    law["dependencies"][0]["artifactId"] = json!("invariant.Item.entity");
+    law["payload"]["id"] = json!("amount_bounded");
+    law["payload"]["subject"] = json!(ITEM);
+    law["payload"]["scope"] = json!({"root":{"kind":"entity", "id":ITEM}, "objectTypes":[ITEM]});
+    law["payload"]["response"] = json!({"kind":"predicate", "expression":"self.amount > 100"});
+    serde_json::from_value(law.clone()).expect("direct law")
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn law_commit_direct_positive_and_refusal_cases_are_atomic(amount in 1i64..200) {
+        use norn_testkit::proptest::prelude::*;
+        for amount in [100, 101, amount] {
+            let laws = [direct_amount_law()];
+            let (types, interfaces) = definitions();
+            let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+            let key = FactKey::new(ITEM, "bounded");
+            let values = object(json!({"item_id":"bounded", "amount":amount, "status":"draft"}));
+            for ty in ["norn.ActionCall", "norn.OwnedRows", "norn.ObservedTombstone", "norn.ObservedSource", norn_kernel::naming_series::NAMING_SERIES_COUNTER_TYPE, "norn.PendingLinks"] {
+                prop_assert!(catalog.governing_laws(&ObjectTypeName(ty.into())).expect("kernel-owned record").is_empty());
+            }
+            prop_assert!(catalog.governing_laws(&ObjectTypeName("unknown.Application".into())).is_err());
+            let mut budget = EvaluationBudget::default().units();
+            let failures = norn_kernel::governing_laws::evaluate(
+                &catalog, &key, &values, &mut budget,
+            ).expect("evaluate");
+            prop_assert_eq!(failures.is_empty(), amount <= 100);
+            prop_assert!(budget < EvaluationBudget::default().units());
+            let mut native = cell().with_governing_laws(laws.into());
+            let result = native.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key, expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values },
+                }],
+                ..CellCommit::empty()
+            });
+            prop_assert_eq!(result.is_ok(), amount <= 100);
+            if let Err(refusal) = result {
+                prop_assert_eq!(refusal.code(), "core.laws.violated");
+                prop_assert!(native.ledger().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
+    let laws = vec![direct_amount_law()];
+    let (types, interfaces) = definitions();
+    let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+    let key = FactKey::new(ITEM, "direct-law");
+    let values = object(json!({"item_id":"direct-law", "amount":101}));
+    let mut observed = observation_cell().with_governing_laws(laws.clone());
+    let slice = load_slice(&observed, [key.clone()]).expect("slice");
+    commit_observed_snapshot(
+        &mut observed,
+        &catalog,
+        &slice,
+        &turn("direct-law"),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &source_provenance(),
+        },
+    )
+    .expect("capture");
+    let findings: Vec<_> = observed
+        .ledger()
+        .iter()
+        .flat_map(|entry| &entry.events)
+        .filter_map(|event| match event {
+            ObservationEvent::DataQualityFinding { fact } => Some(fact),
+            ObservationEvent::ObservedFact { .. }
+            | ObservationEvent::ObservedTransition { .. }
+            | ObservationEvent::ObservedDeleted { .. }
+            | ObservationEvent::ObservedRecreated { .. } => None,
+        })
+        .collect();
+    assert_eq!(findings.len(), 1);
+    assert!(
+        matches!(&findings[0].rule_ref, DataQualityRuleRef::Law {law_id, ..} if law_id == "amount_bounded")
+    );
+    assert_eq!(findings[0].outcome, DataQualityOutcome::NotSatisfied);
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn obs_evidence_redelivery_keeps_the_law_finding_identity(amount in 101i64..200, delivery in "[a-z]{1,12}") {
+        use norn_testkit::proptest::prelude::*;
+        let laws = [direct_amount_law()];
+        let (types, interfaces) = definitions();
+        let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+        let cell = observation_cell();
+        let key = FactKey::new(ITEM, "law-replay");
+        let slice = load_slice(&cell, [key.clone()]).expect("slice");
+        let values = object(json!({"item_id":"law-replay", "amount":amount}));
+        let provenance = source_provenance();
+        let finding = |id: &str| {
+            let (mut commit, authority) = prepare_observed_snapshot(&catalog, &slice, &turn(id), ObservedSnapshot {key:&key, values:&values, lifecycles:&[], provenance:&provenance}).expect("prepare").into_parts();
+            authority.append_findings(&mut commit);
+            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None }).expect("law finding")
+        };
+        let first = finding("first-delivery");
+        let again = finding(&delivery);
+        prop_assert_eq!(&first.id, &again.id);
+        prop_assert_eq!(&first.dedupe_key, &again.dedupe_key);
+        prop_assert!(norn_kernel::snapshot_observe::verify_finding_values(&catalog, &key, &catalog.effective_object_values(&key.object_type, &values).expect("effective defaults"), &first).expect("verify"));
+        prop_assert_eq!(catalog.classify_data_quality_rule(&first.rule_ref).expect("classification"), norn_kernel::DataQualityRuleClassification::Integrity);
+    }
+}
+
+#[test]
+fn law_supported_temporal_semantics_refuse_even_when_activation_is_false() {
+    let mut law = serde_json::to_value(direct_amount_law()).expect("law");
+    law["payload"]["condition"] = json!("false");
+    law["payload"]["modality"] = json!({"kind":"eventually"});
+    let laws = [serde_json::from_value(law).expect("temporal law")];
+    let (types, interfaces) = definitions();
+    let catalog = catalog(&types, &interfaces).with_governing_laws(&laws);
+    let key = FactKey::new(ITEM, "unsupported-law");
+    let slice = load_slice(&observation_cell(), [key.clone()]).expect("slice");
+    let refusal = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("unsupported"),
+        ObservedSnapshot {
+            key: &key,
+            values: &object(json!({"item_id":"unsupported-law", "amount":5})),
+            lifecycles: &[],
+            provenance: &source_provenance(),
+        },
+    )
+    .expect_err("unsupported semantics");
+    assert!(
+        matches!(refusal, ObservationRefusal::Law(ref error) if error.code() == "core.laws.unsupported_semantics")
+    );
 }

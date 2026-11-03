@@ -86,14 +86,20 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
             ..batch(2)
         });
     }
-    // Reproduce the old hole: these semantic changes leave receipts identical.
+    // Identical DDL and input still commit to distinct semantic snapshots.
     let mut altered = CellStore::open_in_memory(changed.clone()).expect("changed store");
     for input in &inputs {
         let expected = store.commit(input).expect("original commit");
+        let actual = altered.commit(input).expect("changed commit");
         assert_eq!(
-            altered.commit(input).expect("changed commit").receipt(),
-            expected.receipt()
+            actual.receipt().body.request_hash,
+            expected.receipt().body.request_hash
         );
+        assert_ne!(
+            actual.receipt().body.written,
+            expected.receipt().body.written
+        );
+        assert_ne!(actual.receipt().hash, expected.receipt().hash);
     }
     let original_object = store
         .read()
