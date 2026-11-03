@@ -128,7 +128,8 @@ fn original_mutant_restore_and_visible_unknown_inventory() {
         .expect("lowered");
     let modules: Vec<_> = good.goals.iter().filter_map(|g| g.as_ref().ok()).collect();
     assert_eq!(modules.len(), 3, "{:?}", good.goals);
-    assert!(good.goals.iter().any(Result::is_err));
+    assert_eq!(good.goals.len(), 10);
+    assert_eq!(good.goals.iter().filter(|goal| goal.is_err()).count(), 7);
     assert!(modules[0].contains(" - "));
     artifacts[2]["payload"]["derive"] = json!([]);
     let bad = authority

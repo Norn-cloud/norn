@@ -92,7 +92,10 @@ fn demand(ok: bool, reason: &str) -> Result<(), String> {
     if ok { Ok(()) } else { Err(reason.into()) }
 }
 fn scaled(text: &str, scale: u32) -> Result<i64, String> {
-    demand(scale <= 6, "decimal scale exceeds exact bounded profile")?;
+    demand(
+        scale <= 6 && text.len() <= 64,
+        "decimal exceeds exact bounded profile",
+    )?;
     norn_ir::RuntimeValue::from_json_text(text).map_err(|_error| "invalid exact decimal")?;
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
     let padding = scale
@@ -260,7 +263,10 @@ fn lower(
                 && schema[id]
                     .as_object()
                     .is_some_and(|s| s.keys().all(|k| k == "type" || k == "nornType")),
-            "input decimal contract differs",
+            &format!(
+                "input decimal contract differs for {id}: stored {declared}; input {}",
+                schema[id]
+            ),
         )?;
         let scale = declared["scale"]
             .as_u64()
