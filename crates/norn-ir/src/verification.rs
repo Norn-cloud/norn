@@ -3,6 +3,8 @@
 pub mod evidence;
 /// Typed presentation of actual law guarantees and explicit missing evidence.
 pub mod guarantees;
+/// Backend-neutral finite relations produced from admitted declarations.
+pub mod finite;
 
 use crate::members::present_non_null;
 use crate::{IrVersion01, ProvenanceSource, ZenExpression};
