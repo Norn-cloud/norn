@@ -99,6 +99,27 @@ the original org_alpha golden is never adopted by the org_demo host.
 
 ## Governed action surfaces
 
+The shared Rust entrypoint for HTTP and Workers/DO hosts is
+`norn_api::actions::call_action_in_epoch`:
+
+```rust,ignore
+pub fn call_action_in_epoch<E: norn_cell::engine::SqlEngine>(
+    host: &norn_api::host::DevHost<E>,
+    scope: &norn_api::routes::DefinitionsQuery,
+    actor: Option<&str>,
+    request: norn_api::actions::ActionRequest,
+) -> Result<norn_api::actions::ActionResponse, norn_api::refusal::Refusal>
+```
+
+This service and its request/receipt types are available without `http-host`.
+`DefinitionsQuery` supplies plain organization/environment data; the action's
+definition revision is `ActionRequest.version`. A trusted adapter supplies the
+authenticated actor. The service owns scope admission, authorization, the
+definition epoch, governed kernel commit and idempotent replay. Adapters decode
+requests and serialize the returned `ActionResponse` or shared `Refusal`.
+`ActionResponse.record` is the original kernel `ActionCallRecord`. Input and
+receipt OpenAPI schemas are generated from these same Rust types.
+
 SURFACE-ACTION-1: HTTP `POST /v1/actions`, MCP `call_action` and the remote
 CLI invoke the same admitted ActionIR through `commit_action`. No application
 opcode, stock schema or domain dispatch registry belongs to this host.

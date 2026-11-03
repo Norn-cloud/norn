@@ -58,7 +58,12 @@ impl ActionAuthorizer for Policy<'_> {
     }
 }
 
-/// Dispatch under a single definition epoch through the governed kernel.
+/// Transport-neutral action service over one tenant's admitted cell.
+/// HTTP, MCP and Workers/DO hosts call this same function; only adapters decode
+/// transport metadata and render the returned receipt or shared refusal.
+/// The authenticated actor comes from the trusted host, never action input.
+/// Scope is plain Rust data; the action revision pin is `request.version`.
+/// Authorization, definition epoch, kernel commit and retry replay stay here.
 ///
 /// # Errors
 /// Scope, policy, revision, argument and kernel refusals change no business state.
