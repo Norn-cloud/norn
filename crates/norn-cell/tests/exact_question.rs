@@ -133,7 +133,8 @@ proptest::proptest! {
 
 #[test]
 fn typed_question_lowering_matches_the_native_scrap_yield_question() {
-    let source = include_str!("../../../tools/norn-ts/fixtures/questions/scrap-yield.question.json");
+    let source =
+        include_str!("../../../tools/norn-ts/fixtures/questions/scrap-yield.question.json");
     let questions: Vec<norn_ir::QuestionIR> =
         serde_json::from_str(source).expect("strict native QuestionIR");
     let [question] = questions.as_slice() else {
