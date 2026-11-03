@@ -558,6 +558,8 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
 )]
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
@@ -565,7 +567,8 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
     if commit.writes.iter().any(|write| {
-        write.key.object_type.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+        model.canonical(&write.key).object_type.as_str()
+            == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
             && !authorization.is_some_and(|a| a.authorizes_write(write))
     }) {
         return Err(CommitError::ObservationAuthorization);

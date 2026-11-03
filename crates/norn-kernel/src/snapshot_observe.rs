@@ -371,7 +371,10 @@ impl ObservationAuthorization {
             observation_id,
             failures,
         )?;
-        if !findings.is_empty() {
+        // Claim authority retains the checked values even when no finding is emitted.
+        if !findings.is_empty()
+            || expectation.key.object_type.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+        {
             self.read_findings.push(AuthorizedObservedReadFinding {
                 key: expectation.key.clone(),
                 expected: expectation.expected,
