@@ -149,7 +149,6 @@ impl Schema {
             "object" => &["type", "properties", "required", "additionalProperties"],
             "array" => &["type", "items"],
             "string" => &["type", "enum"],
-            "decimal" if action_input => &["type", "scale"],
             _ => &["type"],
         };
         if let Some(unknown) = schema.keys().find(|key| !allowed.contains(&key.as_str())) {
@@ -176,29 +175,6 @@ impl Schema {
                 None => Ok(Self::String(None)),
                 Some(values) => Ok(Self::String(Some(parse_enum(values, path)?))),
             },
-            "decimal" if action_input => {
-                let scale = schema
-                    .get("scale")
-                    .and_then(|value| match value {
-                        JsonValue::Number(scale)
-                            if scale.is_finite()
-                                && scale.fract() == 0.0
-                                && (0.0..=28.0).contains(scale) =>
-                        {
-                            scale.to_string().parse::<u32>().ok()
-                        }
-                        JsonValue::Null
-                        | JsonValue::Bool(_)
-                        | JsonValue::Number(_)
-                        | JsonValue::String(_)
-                        | JsonValue::Array(_)
-                        | JsonValue::Object(_) => None,
-                    })
-                    .ok_or_else(|| {
-                        Violation::new(path, "decimal scale must be an integer in 0..=28")
-                    })?;
-                Ok(Self::Decimal(scale))
-            }
             "integer" => Ok(Self::Integer),
             "number" => Ok(decimal.map_or(Self::Number, Self::Decimal)),
             "boolean" => Ok(Self::Boolean),
@@ -334,12 +310,13 @@ impl Schema {
     ) -> Result<norn_ir::RuntimeValue, Violation> {
         use norn_ir::{Decimal, RuntimeValue};
         match (self, value) {
-            (Self::Decimal(scale), RuntimeValue::String(text)) => {
+            (Self::Decimal(_site), RuntimeValue::String(text)) => {
                 let decimal = Decimal::parse(&text)
                     .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
-                if decimal.scale() > *scale {
-                    return Err(Violation::new(path, "decimal exceeds declared scale"));
-                }
+                let decoded = RuntimeValue::Number(decimal.clone());
+                let value = Value::try_from(&decoded)
+                    .map_err(|e| Violation::new(path, e.to_string()))?;
+                self.check(&value, path)?;
                 Ok(RuntimeValue::Number(decimal))
             }
             (Self::Decimal(_), _) => {
@@ -929,11 +906,8 @@ mod tests {
     #[test]
     fn action_decimal_wire_is_exact_text_and_bounded_by_scale() {
         use norn_ir::{Decimal, RuntimeValue};
-        let wire = obj(vec![
-            ("type", JsonValue::String("decimal".into())),
-            ("scale", JsonValue::Number(2.0)),
-        ]);
-        assert!(Schema::parse(&wire, "amount").is_err());
+        let wire: JsonValue = serde_json::from_str(r#"{"type":"number","nornType":{"kind":"decimal","scale":2}}"#).unwrap();
+        assert!(Schema::parse(&wire, "amount").is_ok());
         let schema = Schema::parse_action(&wire, "amount").unwrap();
         for text in ["0", "125.50", "-2.01", "9007199254740993.25"] {
             let decoded = schema
@@ -956,7 +930,7 @@ mod tests {
             assert!(schema.decode_action_input(bad, "amount").is_err());
         }
         let mut invalid = wire.as_object().unwrap().clone();
-        invalid.insert("scale".into(), JsonValue::Number(29.0));
+        invalid.insert("nornType".into(), serde_json::from_str(r#"{"kind":"decimal","scale":19}"#).unwrap());
         assert!(Schema::parse_action(&JsonValue::Object(invalid), "amount").is_err());
     }
 

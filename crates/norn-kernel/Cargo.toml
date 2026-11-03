@@ -13,7 +13,6 @@ path = "src/lib.rs"
 schemars = { version = "1.2.1", features = ["derive"] }
 norn-decisions = { path = "../norn-decisions" }
 norn-authz = { path = "../norn-authz" }
-norn-decisions = { path = "../norn-decisions" }
 # #3083: shared commit admission invokes the existing pure exact posting validator.
 norn-checker = { path = "../norn-checker" }
 norn-expr = { path = "../norn-expr" }
