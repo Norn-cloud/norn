@@ -452,7 +452,7 @@ fn layers_edge_unknown_retained_roots_cannot_obtain_or_reuse_approval() {
                 json!({"required":"checked-proof"}),
             )
             .err(),
-            Some(ChallengeError::Closure)
+            Some(ChallengeError::NotAdmitted)
         );
         let (document, _) = complete_member_interpretation();
         let (mut edge, _) = pinned_interpretation();
