@@ -26,6 +26,7 @@ test("tla_ts_apalache_parity", async () => {
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
     const output = await new Response(process.stdout).text()
+    console.info(output)
     expect(await process.exited).toBe(0)
     const report: unknown = JSON.parse(output)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
@@ -35,7 +36,6 @@ test("tla_ts_apalache_parity", async () => {
           scenario: expect.objectContaining({law: "constitution.fine_mass.law", writer: "constitution.melt.convert.action"})})])},
       {case: "restored", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
     ]})
-    console.info(output)
   } finally {
     await rm(work, {recursive: true, force: true})
   }
