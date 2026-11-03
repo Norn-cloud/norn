@@ -1401,6 +1401,14 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-UNIQUE-1: commit refused a normalized business-key collision.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// Declaring key root, without object identities or key values.
+        owner: String,
+        /// Declared key name.
+        key: String,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1671,6 +1679,7 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
             Self::InvalidInitialState { .. } | Self::NotFromState { .. } => {
@@ -1720,7 +1729,8 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::ReadOnlyWorld
+            Self::IdentityCollision { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -1737,6 +1747,7 @@ impl<X> DecisionRefusal<X> {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
             CommitError::Law { key, reason } => Self::Law { key, reason },
+            CommitError::IdentityCollision { owner, key } => Self::IdentityCollision { owner, key },
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },

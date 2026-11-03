@@ -289,7 +289,8 @@ impl<X> DecisionRefusal<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::GuardFalse { .. }
+            Self::IdentityCollision { .. }
+            | Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
             | Self::ObjectMissing { .. }
@@ -364,7 +365,8 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::ReadOnlyWorld
+            Self::IdentityCollision { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }
@@ -540,7 +542,8 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::ReadOnlyWorld
+            Self::IdentityCollision { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -766,7 +769,8 @@ impl<R: Refusable + fmt::Display> Refusable for StepError<R> {
     fn refusal(&self) -> Refusal {
         match self {
             Self::Rejected(rejection) => rejection.refusal(),
-            Self::ReadOnlyWorld
+            Self::IdentityCollision { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. } => Refusal::new(&self.code(), self.category(), self),
         }
