@@ -138,7 +138,7 @@ fn decimal_wire_schema(schema: &mut JsonObject) {
     {
         schema.insert("type".to_owned(), JsonValue::String("string".to_owned()));
         schema.entry("description".to_owned()).or_insert_with(|| {
-            JsonValue::String("Exact decimal text as a JSON string, for example \"125.50\". Use a dot decimal separator; do not send a JSON number.".to_owned())
+            JsonValue::String("Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number.".to_owned())
         });
     } else {
         for value in schema.values_mut() {

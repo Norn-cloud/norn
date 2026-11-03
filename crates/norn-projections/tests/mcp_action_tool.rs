@@ -53,7 +53,7 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
     assert_eq!(
         tool["inputSchema"]["properties"]["amount"]["anyOf"],
         json!([{"type":"string", "nornType":{"kind":"decimal","scale":2},
-            "description":"Exact decimal text as a JSON string, for example \"125.50\". Use a dot decimal separator; do not send a JSON number."},{"type":"null"}])
+            "description":"Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number."},{"type":"null"}])
     );
     assert_eq!(
         tool["_meta"]["norn/inputDerivations"],
@@ -72,6 +72,12 @@ fn derived_defaults_are_optional_but_normalized_caller_inputs_remain_required() 
             .map(<[norn_ir::JsonValue]>::len),
         Some(3)
     );
+    let mut schema = serde_json::to_value(&action.input_schema).expect("schema");
+    schema["properties"]["amount"]["description"] = json!("Author supplied decimal guidance");
+    action.input_schema = serde_json::from_value(schema).expect("typed schema");
+    let described = serde_json::to_value(action_tool(&action).expect("described tool")).expect("tool");
+    assert_eq!(described["inputSchema"]["properties"]["amount"]["anyOf"][0]["description"], "Author supplied decimal guidance");
+
 }
 
 #[test]
