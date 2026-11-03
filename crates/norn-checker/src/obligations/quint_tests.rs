@@ -224,6 +224,16 @@ fn finite_relation_is_backend_neutral() {
             assert_eq!(left, right);
         }
     }
+    // Check-time golden hashes from the approved 98a8149 generator on Boat.
+    let module = quint
+        .goals
+        .iter()
+        .find_map(|goal| goal.as_ref().ok())
+        .expect("original module");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(module.as_bytes())),
+        "bbc9ecb3244ae3b08a3141500dd534561df44a6c53152b9313e4141a45b30c26"
+    );
     let relation = neutral
         .goals
         .iter()
@@ -264,6 +274,17 @@ fn finite_relation_is_backend_neutral() {
     };
     assert!(update(relation).contains(" - "));
     artifacts[2]["payload"]["derive"] = json!([]);
+    let module = authority
+        .quint(&source(&artifacts), &registry, &profile)
+        .expect("mutant projection")
+        .goals
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("mutant module");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(module.as_bytes())),
+        "659ef2a4d880aca0f8c7a64e78273c759fb18d271743cedad2e99585c5185643"
+    );
     let mutant = authority
         .finite(&source(&artifacts), &registry, &profile)
         .expect("mutant");
