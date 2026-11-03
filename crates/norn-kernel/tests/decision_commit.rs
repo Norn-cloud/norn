@@ -2595,7 +2595,10 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
             assert_eq!(prepared.link_reads, slice.partition_reads());
             Ok(prepared)
         })();
-        assert_eq!(host.prefix_seen.get(), page_size.map(|size| size.min(count)));
+        assert_eq!(
+            host.prefix_seen.get(),
+            page_size.map(|size| size.min(count))
+        );
         if count == 2 && page_size.is_some() {
             assert_eq!(prepared.unwrap_err().code(), "decision.invalid_output");
             assert_eq!(host.prefix_seen.get(), page_size);
