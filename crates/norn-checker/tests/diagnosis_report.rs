@@ -8,25 +8,37 @@ use std::collections::BTreeSet;
 
 #[test]
 fn exact_pins_source_locations_protected_authority_and_unknowns() {
-    let schema = Schema::Boolean;
+    let people = Schema::String(Some(
+        ["person-a", "person-b", "person-c"]
+            .map(String::from)
+            .into(),
+    ));
+    let schema = Schema::Object {
+        properties: [("first".into(), people.clone()), ("second".into(), people)].into(),
+        required: ["first".into(), "second".into()].into(),
+    };
+    let member = |pointer: &str, predicate: &str| {
+        (
+            RuleOrigin {
+                artifact_id: Some("staffing".into()),
+                pointer: pointer.into(),
+            },
+            predicate.into(),
+        )
+    };
     let members = vec![
-        (
-            RuleOrigin {
-                artifact_id: Some("staffing".into()),
-                pointer: "/laws/two-assayers".into(),
-            },
-            "true".into(),
+        member("/laws/two-assayers", "first != second"),
+        member(
+            "/laws/seller-exclusion",
+            "first != 'person-a' and second != 'person-a'",
         ),
-        (
-            RuleOrigin {
-                artifact_id: Some("staffing".into()),
-                pointer: "/parameters/roster".into(),
-            },
-            "false".into(),
+        member(
+            "/parameters/roster",
+            "first != 'person-c' and second != 'person-c'",
         ),
     ];
-    let editable = BTreeSet::from([1]);
-    let protected = BTreeSet::from([0]);
+    let editable = BTreeSet::from([2]);
+    let protected = BTreeSet::from([0, 1]);
     let mut attempt = Attempt {
         source: b"attempted source",
         base: b"retained base",
@@ -41,12 +53,12 @@ fn exact_pins_source_locations_protected_authority_and_unknowns() {
     let report = diagnose_attempt(&attempt);
     assert!(report.diagnosis.is_ok());
     assert_eq!(report.digests, diagnose_attempt(&attempt).digests);
-    assert_eq!(report.diagnostics.len(), 1);
+    assert_eq!(report.diagnostics.len(), 3);
     let diagnostic = report.diagnostics.first().unwrap();
     assert_eq!(diagnostic.code.as_str(), "consistency.diagnosis.conflict");
     assert_eq!(
         diagnostic.span.as_ref().unwrap().pointer,
-        "/parameters/roster"
+        "/laws/two-assayers"
     );
     assert!(diagnostic.message.contains("roster exactly"));
     assert!(diagnostic.message.contains("256"));
@@ -83,4 +95,18 @@ fn exact_pins_source_locations_protected_authority_and_unknowns() {
             .as_str(),
         "consistency.diagnosis.no_editable_repair"
     );
+}
+
+proptest::proptest! {
+    #[test]
+    fn attempted_bytes_reproduce_and_a_changed_byte_changes_pins(bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..256)) {
+        let schema = Schema::Boolean;
+        let none = BTreeSet::new();
+        let mut attempt = Attempt { source: &bytes, base: b"base", profile: b"profile", assumptions: "finite Boolean universe", schema: &schema, members: &[], editable: &none, protected: &none, max_calls: 100 };
+        let first = diagnose_attempt(&attempt).digests;
+        proptest::prop_assert_eq!(&first, &diagnose_attempt(&attempt).digests);
+        let mut changed = bytes.clone(); changed.push(0);
+        attempt.source = &changed;
+        proptest::prop_assert_ne!(first, diagnose_attempt(&attempt).digests);
+    }
 }
