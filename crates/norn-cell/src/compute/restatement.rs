@@ -310,6 +310,8 @@ impl<E: SqlEngine> CellStore<E> {
     }
     /// RESTATE-HISTORY-1: compute every slice privately and compare receipt deltas
     /// with the exact evaluator before a candidate can be staged for approval.
+    /// Failure writes no candidate or slot state; the separately committed build
+    /// remains resumable through `resume_restatement`, including after restart.
     /// # Errors
     /// Missing/duplicate/incomplete slices, authorization changes or correspondence failure.
     pub fn prepare_restatement(
@@ -436,7 +438,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .receipt_at(frontier)?
                 .ok_or_else(|| refused(INVALID))?;
             let mut context = slice.context.clone();
-            context.now_ms = receipt.body.logical_time;
+            // Retain the already selected clock; the authenticated frontier still
+            // limits knowledge to this receipt, even when later receipts share it.
+            context.now_ms = receipt.body.logical_time.max(prior.recorded_at.as_millis());
             let cutoff = KnowledgeCutoff {
                 recorded_at: LogicalTime::from_millis(context.now_ms),
                 frontier,
