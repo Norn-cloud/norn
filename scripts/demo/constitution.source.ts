@@ -26,7 +26,7 @@ export const Melt = Norn.type({
 
 export const Conservation = Norn.law({
   id: "constitution.fine_mass.law", title: "Measured input equals output plus recorded loss", version: "1.0.0",
-  dependencies: [{ artifactId: "constitution.Melt.entity", kind: "entity", version: "1.0.0" }],
+  dependencies: [{ artifactId: "constitution.Melt.entity", kind: "entity", version: "1.0.0", required: true }],
   law: {
     lawVersion: "0.1", id: "constitution.fine_mass", owner: "constitution", severity: "error",
     rationale: "A fine-metal conversion records its loss instead of silently destroying mass.",
