@@ -408,7 +408,7 @@ pub fn render_wording(
             .collect();
         let [requirement] = matches.as_slice() else {
             return Err(refusal(
-                wording_codes::UNKNOWN_LOCALE,
+                crate::verification::codes::UNKNOWN_BINDING,
                 format!(
                     "no unique pinned wording map for law {} and locale {locale}",
                     law.law.id

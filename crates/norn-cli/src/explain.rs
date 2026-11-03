@@ -19,7 +19,7 @@ pub(crate) struct ExplainArgs {
     /// BCP 47 tag resolved by the supplied reviewed wording map.
     #[arg(long, requires = "wording")]
     locale: Option<String>,
-    /// JSON array of typed, reviewed StructuredRequirement values.
+    /// JSON array of typed, reviewed `StructuredRequirement` values.
     #[arg(long, requires = "locale")]
     wording: Option<PathBuf>,
 }

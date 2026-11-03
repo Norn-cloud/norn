@@ -126,7 +126,7 @@ fn containment_keeps_each_pinned_pack_on_the_path() {
 }
 
 #[test]
-fn ambiguous_and_unknown_selectors_are_existing_diagnostics_with_guidance() {
+fn unknown_selector_is_an_existing_diagnostic_with_guidance() {
     let errors = explain(
         &pool(),
         &EntityArtifactSetContext {
@@ -221,6 +221,16 @@ fn wording_uses_arabic_and_data_only_french_maps_and_refuses_missing_locale() {
         let errors = norn_checker::explain::render_wording(&mut report, &invalid).unwrap_err();
         assert_eq!(errors[0].code.as_str(), "law.wording.unknown_locale");
     }
+}
+
+#[test]
+fn wording_with_the_same_law_id_but_a_different_pin_is_refused() {
+    let mut report = run(&pool(), ExplainKind::Law, "erpnext.no_unpaid_ship");
+    let mut stale = requirement(&report.laws[0].law, false);
+    stale.norm.law.rationale.push_str(" stale revision");
+    let error = norn_checker::explain::render_wording(&mut report, &ExplainOptions { locale:Some("en".into()), requirements:vec![stale] }).unwrap_err();
+    assert_eq!(error[0].code.as_str(), norn_checker::verification::codes::UNKNOWN_BINDING);
+    assert!(report.laws[0].wording.is_none());
 }
 
 proptest::proptest! {
