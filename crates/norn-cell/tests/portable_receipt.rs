@@ -472,6 +472,7 @@ fn qualified_function_without_portable_envelope_refuses_export_and_replay() {
     invocation.provenance_commit =
         CommitProvenance::Qualified(QualifiedCommit::new(id(1), "main".into(), 1));
     let batch = CommitBatch {
+        world: invocation.world.clone(),
         effects: vec![command(function_envelope(
             norn_ir::runtime::encode(&invocation).expect("invocation"),
         ))],
