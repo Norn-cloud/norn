@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Link, Outlet, RouterProvider, createRootRoute, createRoute, createRouter, redirect, useRouterState } from "@tanstack/react-router"
 import { ChartLine, Database, ShieldCheck, Workflow, type LucideIcon } from "lucide-react"
-import { StrictMode } from "react"
+import { StrictMode, type JSX } from "react"
 import { createRoot } from "react-dom/client"
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { QuestionsPage } from "./questions.tsx"
+import { WorkflowsPage } from "./workflows.tsx"
 import "./index.css"
 
 interface Section {
@@ -69,6 +70,8 @@ function NotYet({ label, summary }: Section) {
   )
 }
 
+const PAGES: Readonly<Record<string, () => JSX.Element>> = { "/questions": QuestionsPage, "/workflows": WorkflowsPage }
+
 const root = createRootRoute({ component: Shell })
 const router = createRouter({
   routeTree: root.addChildren([
@@ -76,7 +79,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : () => <NotYet {...section} />,
+      component: PAGES[section.path] ?? (() => <NotYet {...section} />),
     })),
   ]),
 })

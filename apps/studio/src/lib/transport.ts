@@ -1,6 +1,8 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
 
+export type { Schemas }
+export type Envelope = Schemas["NornArtifactEnvelope"]
 export type Question = Schemas["NornIrQuestion"]
 export type Answer = Schemas["NornQueryResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
@@ -18,6 +20,8 @@ export interface QuestionAnswer {
 /** The app's only way to read server documents. Live HTTP joins once the host's read API lands. */
 export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
+  /** The admitted core definitions: object types, actions, laws and the rest, as artifact envelopes. */
+  readonly definitions: () => Promise<readonly Read<Envelope>[]>
 }
 
 const RECORDINGS = "../../../../fixtures/demo/answers/"
@@ -29,8 +33,11 @@ function recorded<T>(name: string): Read<T> {
   return readDocument<T>(source, "recorded")
 }
 
+const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
+
 /** Documents the engine produced for the synthetic scrap-yield world, replayed byte for byte. */
 export const recordedTransport: Transport = {
+  definitions: async () => Object.values(DEFINITIONS).map((source) => readDocument<Envelope>(source, "recorded")),
   questionBoard: async () => [{
     question: recorded<Question>("scrap-yield.question.json"),
     answer: recorded<Answer>("scrap-yield.k1.answer.json"),
