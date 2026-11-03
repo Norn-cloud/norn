@@ -76,3 +76,30 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 ## G3 receipt-maintained generations
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
+
+
+## G7 embedded SQL correspondence (CP3 stretch)
+
+QUERY-ENGINE-1 / QUERY-GRAIN-1 / COMPUTE-DETERMINISTIC-1: the optional
+`norn-cell/duckdb` feature lowers the same admitted sum/ratio plan over its
+authorized, bounded exact contribution snapshot. Shared projection supplies
+identity, predicates and time buckets. Generated SQL stores each operand in
+DECIMAL at its own declared scale, sums at identity grain and rounds ratios
+once with HUGEINT quotient/remainder. Values use bound parameters; extension
+loading and external access are disabled. Unsupported kinds/scales refuse
+`core.compute.unsupported_engine`.
+
+The obligation is complete equality with exact cell envelopes, totals, member
+amounts, versioned contribution IDs, lineage and frontier, normalizing only the
+engine label. `duckdb_question.rs` covers the unchanged scrap-yield fixture,
+correction/deletion, signed rounding, zero denominators, large coefficients,
+hidden contributions, unsupported precision and native feature selection.
+Unequal-declared-scale scenarios exercise correction/retraction at scale pairs
+0/3, 6/0 and 0/6, including zero input. A generated property varies distinct
+operand scales 0–6, exact signed coefficients, visibility and sum/ratio plans.
+
+This carries the approved #426 adapter onto the current query prerequisite;
+#422's lineage-dependent fan-out test remains separate. Evidence is runtime
+and sampled SQL/FFI correspondence; no new Rust arithmetic kernel or Kani
+input is introduced. Historical selection, governed SQL authority and
+Iceberg/WellDB persistence remain TARGET.

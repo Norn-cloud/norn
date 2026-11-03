@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
+#[cfg(feature = "duckdb")]
+mod olap;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
@@ -66,6 +68,8 @@ pub enum Engine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
+    /// Embedded SQL over the exact authorized contribution snapshot.
+    Duckdb,
 }
 /// Snapshot freshness, independent of source cursor ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
