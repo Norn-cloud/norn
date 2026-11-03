@@ -567,6 +567,7 @@ fn refuses(
     let error = fixture
         .invoke(cell, name, input, actor, operation)
         .unwrap_err();
+    eprintln!("{operation}: {error:?}");
     if operation.contains("overdraw") {
         assert_eq!(error.code(), "decision.guard_false");
     }
