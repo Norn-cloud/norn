@@ -163,3 +163,53 @@ fn asof_requires_matching_authenticated_cutoff_and_preserves_historical_pins() {
         ));
     }
 }
+
+#[test]
+fn asof_incremental_advance_refuses_a_changed_cutoff_without_publishing() {
+    use norn_cell::{CellError, compute::ivm::IncrementalQuestion};
+    let (mut store, base, context) = fixture();
+    load(&mut store);
+    let point = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(CLOCK),
+        frontier: store.verified_head().expect("head").commits,
+    };
+    let plan = asof_plan(&store, &base, "2026-10-26T00:00:00.000Z");
+    let mut maintained =
+        IncrementalQuestion::rebuild_known_at(&store, &plan, context.clone(), point, |_| Ok(true))
+            .expect("AsOf IVM");
+    maintained
+        .advance_known_at(&store, context.clone(), point, |_| Ok(true))
+        .expect("matching redelivery");
+    let before = maintained.result().clone();
+    let later = CLOCK.checked_add(1).expect("later knowledge");
+    store
+        .commit(&CommitBatch {
+            world: WORLD.into(),
+            scope: "synthetic".into(),
+            logical_time: later,
+            writes: vec![put(
+                "SYN-MELT-15-1",
+                75_000,
+                72_000,
+                "2026-10-23T12:01:00Z",
+                "gold",
+            )],
+            ..CommitBatch::default()
+        })
+        .expect("later correction");
+    let mut next = context.clone();
+    next.now_ms = later;
+    let cutoff = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(later),
+        frontier: store.verified_head().expect("next head").commits,
+    };
+    assert!(matches!(
+        maintained.advance_known_at(&store, next, cutoff, |_| panic!("no mismatched read")),
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
+    ));
+    assert_eq!(maintained.result(), &before);
+    maintained
+        .advance_known_at(&store, context, point, |_| Ok(true))
+        .expect("original cutoff remains resumable");
+    assert_eq!(maintained.result(), &before);
+}
