@@ -1,5 +1,5 @@
 //! MVP-CONSTITUTION / T4-C2: finite runtime correspondence, not an inductive proof.
-use std::{collections::BTreeMap, collections::BTreeSet, error::Error};
+use std::{collections::BTreeMap, collections::BTreeSet, error::Error, io::Write as _};
 
 use norn_cell::{CellStore, Model, SqliteCell};
 use norn_checker::obligations::evidence::{EvidenceIdentity, EvidenceRecord, EvidenceTool};
@@ -79,42 +79,58 @@ fn audit_type(mut object: ObjectTypeDef) -> ObjectTypeDef {
     object
 }
 
-fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result<Value> {
+fn authored(artifacts: &[ArtifactEnvelope]) -> Result<(ObjectTypeDef, norn_ir::ActionRoot)> {
     let mut object = None;
     let mut action = None;
     for a in artifacts {
-        match &a.payload {
-            ArtifactPayload::Entity(p) => {
-                object = Some(p.to_json_value().decode::<EntityRootV2>()?.object_type)
-            }
-            ArtifactPayload::Action(p) => {
-                action = Some(p.to_json_value().decode::<norn_ir::ActionRoot>()?)
-            }
-            _ => {}
+        if let ArtifactPayload::Entity(p) = &a.payload {
+            object = Some(p.to_json_value().decode::<EntityRootV2>()?.object_type);
+        }
+        if let ArtifactPayload::Action(p) = &a.payload {
+            action = Some(p.to_json_value().decode::<norn_ir::ActionRoot>()?);
         }
     }
-    let object = object.ok_or("missing authored conversion")?;
-    let action = action.ok_or("missing authored writer")?;
-    let interfaces: Vec<InterfaceDef> = base
-        .iter()
+    Ok((
+        object.ok_or("missing authored conversion")?,
+        action.ok_or("missing authored writer")?,
+    ))
+}
+
+fn field<'a>(value: &'a Value, key: &str) -> Result<&'a Value> {
+    value
+        .get(key)
+        .ok_or_else(|| format!("missing result field {key}").into())
+}
+
+fn interfaces(base: &[ArtifactEnvelope]) -> Result<Vec<InterfaceDef>> {
+    base.iter()
         .filter_map(|a| {
             let value = serde_json::to_value(a.payload.to_json_value()).ok()?;
             value.get("interface").cloned()
         })
         .map(serde_json::from_value)
-        .collect::<std::result::Result<_, _>>()?;
+        .collect::<std::result::Result<_, _>>()
+        .map_err(Into::into)
+}
+
+fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result<Value> {
+    let (object, action) = authored(artifacts)?;
+    let interfaces = interfaces(base)?;
     let definitions = [object.clone(), audit_type(object)];
     let model = Model::from_definitions_with_interfaces(&definitions, &[], &interfaces)?
         .with_governing_laws(artifacts)?;
     let catalog = TypeCatalog::new(definitions.iter().take(1))
         .with_interfaces(&interfaces)
         .with_governing_laws(artifacts);
-    let mut checked = 0;
-    let mut committed = 0;
-    let mut nonzero_loss = 0;
+    let mut checked = 0_u32;
+    let mut committed = 0_u32;
+    let mut nonzero_loss = 0_u32;
     let mut counterexamples = Vec::new();
-    for input in 2..=12 {
+    for input in 2_u32..=12 {
         for output in 1..=input {
+            let required_loss = input
+                .checked_sub(output)
+                .ok_or("invalid bounded input/output pair")?;
             let mut cell = Cell::new(
                 CellStore::open_in_memory(model.clone())?,
                 "org_demo/dev",
@@ -142,22 +158,22 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     consumes: None,
                 },
             };
-            checked += 1;
+            checked = checked.checked_add(1).ok_or("case count overflow")?;
             match commit_action(&mut cell, &catalog, &request, &Allow) {
                 Ok(ActionOutcome::Committed { .. }) => {
                     let values = cell
                         .load(&FactKey::new(MELT, "melt"))?
                         .values
                         .ok_or("missing committed conversion")?;
-                    let expected = RuntimeValue::from_json_text(&(input - output).to_string())?;
+                    let expected = RuntimeValue::from_json_text(required_loss.to_string())?;
                     if values.get("loss_fine_g") != Some(&expected) {
                         return Err(
                             "committed mass does not satisfy the independent integer oracle".into(),
                         );
                     }
-                    committed += 1;
+                    committed = committed.checked_add(1).ok_or("commit count overflow")?;
                     if input > output {
-                        nonzero_loss += 1;
+                        nonzero_loss = nonzero_loss.checked_add(1).ok_or("loss count overflow")?;
                     }
                 }
                 Ok(ActionOutcome::Replayed { .. }) => {
@@ -170,7 +186,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     if before != cell.store().read().dump()? {
                         return Err("refusal changed the complete SQLite state".into());
                     }
-                    counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":input-output,
+                    counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":required_loss,
                         "code":error.code(),"explanation":error.to_string(),"atomicUnchanged":true}));
                 }
             }
@@ -192,7 +208,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
         "counterexampleCount":counterexamples.len(),"counterexample":counterexamples.first(),
         "counterexampleTo":"writer proposal; runtime commit safety remains enforced",
         "nonVacuity":if committed > 0 {json!({"status":"witnessed","inputFineG":2,
-            "outputFineG":if nonzero_loss>0{1}else{2},"lossFineG":if nonzero_loss>0{1}else{0},
+            "outputFineG":if nonzero_loss>0{1}else{2},"lossFineG":u32::from(nonzero_loss>0),
             "positiveLossWitness":nonzero_loss>0})}else{json!({"status":"not_witnessed"})}}),
     )
 }
@@ -203,27 +219,35 @@ fn bind(
     tool: &EvidenceTool,
     bounds: &str,
 ) -> Result<(Vec<EvidenceRecord>, Vec<String>)> {
-    let goals = challenge.body()["obligations"]
+    let goals = field(challenge.body(), "obligations")?
         .as_array()
         .ok_or("missing generated goals")?;
     let mut records = Vec::new();
     let mut checked_digests = Vec::new();
     for (index, goal) in goals.iter().enumerate() {
-        let kind = goal["goal"]["kind"]
+        let kind = field(field(goal, "goal")?, "kind")?
             .as_str()
             .ok_or("missing generated goal kind")?;
         if !matches!(kind, "initialization" | "preservation" | "non_vacuity") {
             continue;
         }
         let pins = challenge.evidence_pins(u32::try_from(index)?, tool.clone(), bounds, 0)?;
-        let mut payload = result.clone();
-        payload["evidenceLevel"] = json!("bounded-runtime-conformance");
-        payload["goalDischarged"] = json!(false);
-        payload["proofStatus"] = json!("unknown");
-        payload["generatedBackend"] =
-            json!("unknown: action relations are not lowered to executable solver jobs");
+        let mut payload = result
+            .as_object()
+            .ok_or("runtime result is not an object")?
+            .clone();
+        payload.insert("evidenceLevel".into(), json!("bounded-runtime-conformance"));
+        payload.insert("goalDischarged".into(), json!(false));
+        payload.insert("proofStatus".into(), json!("unknown"));
+        payload.insert(
+            "generatedBackend".into(),
+            json!("unknown: action relations are not lowered to executable solver jobs"),
+        );
         if kind == "non_vacuity" {
-            payload["status"] = result["nonVacuity"]["status"].clone();
+            payload.insert(
+                "status".into(),
+                field(field(result, "nonVacuity")?, "status")?.clone(),
+            );
         }
         let checked_payload = serde_json::to_string(&payload)?;
         let checked_digest = format!("{:x}", Sha256::digest(checked_payload.as_bytes()));
@@ -243,9 +267,10 @@ fn bind(
 
 fn main() -> Result<()> {
     let fixture: Value = serde_json::from_str(include_str!("../tests/fixtures/constitution.json"))?;
-    let with_loss: Vec<ArtifactEnvelope> = serde_json::from_value(fixture["withLoss"].clone())?;
+    let with_loss: Vec<ArtifactEnvelope> =
+        serde_json::from_value(field(&fixture, "withLoss")?.clone())?;
     let without_loss: Vec<ArtifactEnvelope> =
-        serde_json::from_value(fixture["withoutLoss"].clone())?;
+        serde_json::from_value(field(&fixture, "withoutLoss")?.clone())?;
     let base = base()?;
     let source = |a: &[ArtifactEnvelope]| -> Result<DefinitionSource> {
         Ok(DefinitionSource::parse(
@@ -287,8 +312,8 @@ fn main() -> Result<()> {
     if good.sha256() != restored.sha256() {
         return Err("restored writer did not reproduce the generated challenge".into());
     }
-    if original_result["status"] != "bounded_pass"
-        || mutated_result["counterexampleCount"] != 66
+    if field(&original_result, "status")? != "bounded_pass"
+        || field(&mutated_result, "counterexampleCount")?.as_u64() != Some(66)
         || original_result != restored_result
     {
         return Err("positive/mutation/restoration correspondence failed".into());
@@ -297,19 +322,20 @@ fn main() -> Result<()> {
     let (bad_records, _) = bind(&bad, &mutated_result, &tool, &bounds)?;
     let (restored_records, _) = bind(&restored, &restored_result, &tool, &bounds)?;
     let prior = original_records.first().ok_or("no bound result")?;
-    let changed_pins = bad.evidence_pins(prior.pins.goal_index, tool.clone(), &bounds, 0)?;
+    let changed_pins = bad.evidence_pins(prior.pins.goal_index, tool, &bounds, 0)?;
     let prior_digest = original_digests.first().ok_or("no checked result digest")?;
     if bad.evidence_identity(&changed_pins, prior_digest, prior) != EvidenceIdentity::Unknown {
         return Err("stale pass accepted for changed writer".into());
     }
-    println!(
+    writeln!(
+        std::io::stdout().lock(),
         "{}",
         serde_json::to_string(
             &json!({"scenario":"MVP-CONSTITUTION/T4-C2","complete":false,"runtimeProfileStatus":"passed","generatedProofStatus":"unknown",
         "assurance":"bounded runtime only; generated solver/inductive proof unknown",
         "withLoss":original_records,"lossRemoved":bad_records,"restored":restored_records,"staleOriginalForMutation":"PROOF-STALE/unknown",
-        "openProofGoals":good.body()["obligations"]})
+        "openProofGoals":field(good.body(), "obligations")?})
         )?
-    );
+    )?;
     Ok(())
 }
