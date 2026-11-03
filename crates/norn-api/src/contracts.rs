@@ -64,6 +64,16 @@ impl Modify for ContractSchemas {
                 "NornIr",
             ))
             .chain(project_schemars_components(
+                norn_ir::question_ir_schema(),
+                "NornIrQuestion",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
+                norn_ir::data_quality_finding_schema(),
+                "NornIrDataQualityFinding",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
                 json!({
                     "title": "NornExprTypeEnvRef",
                     "description": "The identity of the ZEN Expression type environment recorded in a checker receipt.",
