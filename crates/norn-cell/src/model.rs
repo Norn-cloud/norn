@@ -382,7 +382,7 @@ impl Model {
                         (objects, links)
                     },
                 );
-        crate::identity::validate_model(&effective_objects)?;
+        crate::identity::validate_model(&effective_objects, input.object_types)?;
         Ok(Self {
             schema,
             types,
@@ -569,10 +569,8 @@ impl Model {
         Ok(&self.entry(object_type)?.def)
     }
 
-    pub(crate) fn identity_object(&self, name: &str) -> Result<&EffectiveObjectType, CellError> {
-        self.effective_objects
-            .get(name)
-            .ok_or_else(|| CellError::UnknownObjectType(name.to_owned()))
+    pub(crate) fn identity_objects(&self) -> impl Iterator<Item = &EffectiveObjectType> {
+        self.effective_objects.values()
     }
 
     /// Every object type of the model (#3018: the kernel's `TypeCatalog`

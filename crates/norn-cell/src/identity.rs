@@ -15,7 +15,20 @@ const MAX_STEPS: usize = 16;
 
 pub(crate) fn validate_model(
     objects: &BTreeMap<String, EffectiveObjectType>,
+    definitions: &[norn_ir::ObjectTypeDef],
 ) -> Result<(), CellError> {
+    for definition in definitions {
+        if definition.identity.iter().any(|key| {
+            key.rule
+                .as_ref()
+                .is_some_and(|rule| !rule.normalize.is_empty())
+        }) && !objects.contains_key(definition.name.as_str())
+        {
+            return Err(CellError::Encoding(
+                "normalized identity has no resolved effective contract".into(),
+            ));
+        }
+    }
     for object in objects.values() {
         for key in object.keys.iter().filter(|key| !key.normalize.is_empty()) {
             for component in &key.components {
@@ -52,8 +65,7 @@ pub(crate) fn validate<E: SqlEngine>(
     let mut rows = MAX_ROWS;
     let mut keys_left = MAX_ROWS;
     let mut bytes = MAX_BYTES;
-    for definition in reader.model().object_types() {
-        let object = reader.model().identity_object(definition.name.as_str())?;
+    for object in reader.model().identity_objects() {
         for key in object
             .keys
             .iter()
