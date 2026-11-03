@@ -209,6 +209,13 @@ fn normalized_scan_row_limit_refuses_atomically() {
 #[test]
 fn unrelated_key_domains_cannot_commit_beyond_the_reopen_budget() {
     let mut defs = definitions();
+    let key = defs[0].identity[0].clone();
+    defs[0].identity = (0..64)
+        .map(|n| norn_ir::KeySpec {
+            name: KeyName(format!("key{n}")),
+            ..key.clone()
+        })
+        .collect();
     let mut other = defs[0].clone();
     other.name = ObjectTypeName("identity.Other".into());
     defs.push(other);
@@ -216,14 +223,14 @@ fn unrelated_key_domains_cannot_commit_beyond_the_reopen_budget() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("budget.sqlite");
     let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("store");
-    let writes = (0..3000)
+    let writes = (0..33)
         .map(|n| put("identity.Root", &format!("a{n}"), &format!("A{n}")))
         .collect();
     store
         .commit(&batch("org_a", "main", writes))
         .expect("first domain");
     let before = store.read().dump().expect("before");
-    let writes = (0..1100)
+    let writes = (0..33)
         .map(|n| put("identity.Other", &format!("b{n}"), &format!("B{n}")))
         .collect();
     assert!(matches!(
