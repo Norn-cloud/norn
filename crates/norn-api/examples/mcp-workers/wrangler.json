@@ -1,0 +1,8 @@
+{
+  "name": "norn-mcp-host",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "vars": {"ORG": "demo", "ENVIRONMENT": "dev", "ORIGIN": "http://127.0.0.1:9876"},
+  "durable_objects": {"bindings": [{"name": "CELLS", "class_name": "Cell"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Cell"]}]
+}

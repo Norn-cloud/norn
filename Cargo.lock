@@ -1527,12 +1527,15 @@ dependencies = [
  "http",
  "norn-cell",
  "norn-checker",
+ "norn-checker-wasm",
  "norn-ir",
  "norn-kernel",
  "proptest",
+ "schemars",
  "serde",
  "serde_json",
  "utoipa",
+ "wasm-bindgen",
 ]
 
 [[package]]

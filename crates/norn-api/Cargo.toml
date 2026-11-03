@@ -7,6 +7,8 @@ publish.workspace = true
 description = "Generated core IR and checker API contracts"
 
 [dependencies]
+norn-checker-wasm = { path = "../norn-checker-wasm" }
+schemars = { version = "1.2.1", features = ["derive"] }
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }
@@ -24,3 +26,10 @@ proptest = "1.11.0"
 
 [lints]
 workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+
+[[example]]
+name = "mcp_workers"
+crate-type = ["cdylib"]

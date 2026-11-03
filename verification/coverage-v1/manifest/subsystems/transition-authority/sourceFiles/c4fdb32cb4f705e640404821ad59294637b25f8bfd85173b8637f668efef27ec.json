@@ -1,4 +1,4 @@
 {
-  "order": 100,
+  "order": 101,
   "value": "crates/norn-kernel/src/version_check.rs"
 }
