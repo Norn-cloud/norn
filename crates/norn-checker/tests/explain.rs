@@ -11,7 +11,7 @@ use norn_ir::{
     ArtifactEnvelope,
     explain::{ExplainKind, ExplainOptions, ExplainProof},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::BTreeSet;
 
 fn pool() -> Vec<ArtifactEnvelope> {
@@ -148,8 +148,8 @@ fn ambiguous_and_unknown_selectors_are_existing_diagnostics_with_guidance() {
 #[test]
 fn action_direct_effects_are_the_same_catalog_rows() {
     let paths = [
-        "../../../registry/core/artifacts/commerce.SalesOrder.entity.json",
-        "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json",
+        "../../registry/core/artifacts/commerce.SalesOrder.entity.json",
+        "../../fixtures/ir/commerce-sales-order-submit-invoice.action.json",
     ];
     let pool: Vec<_> = paths
         .iter()
@@ -229,8 +229,8 @@ proptest::proptest! {
         let mut artifacts = pool();
         let expected = serde_json::to_value(run(&artifacts, ExplainKind::Law, "erpnext.no_unpaid_ship")).unwrap();
         let count = artifacts.len();
-        artifacts.rotate_left(rotation % count);
-        if rotation % 2 == 0 { artifacts.reverse(); }
+        artifacts.rotate_left(rotation.checked_rem(count).unwrap_or_default());
+        if rotation.is_multiple_of(2) { artifacts.reverse(); }
         proptest::prop_assert_eq!(serde_json::to_value(run(&artifacts, ExplainKind::Law, "erpnext.no_unpaid_ship")).unwrap(), expected);
     }
 }
