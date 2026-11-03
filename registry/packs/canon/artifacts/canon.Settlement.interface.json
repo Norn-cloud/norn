@@ -1,0 +1,54 @@
+{
+  "artifactId": "canon.Settlement.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Reported settlement evidence",
+  "namespace": "canon",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "canon.Settlement",
+      "properties": [
+        {
+          "id": "amount",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "payment"
+              },
+              {
+                "value": "refund"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.Settlement.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
