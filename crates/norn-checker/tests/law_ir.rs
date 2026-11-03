@@ -320,3 +320,23 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .any(|code| code == "business_pack.validation.invalid_payload")
     );
 }
+
+#[test]
+fn law_contained_pack_root_refuses_unknown_retained_instance() {
+    let mut artifact: ArtifactEnvelope = serde_json::from_value(laws()[0].clone()).expect("law");
+    let mut law: norn_ir::LawIR = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).expect("wire"),
+    )
+    .expect("law");
+    law.scope.root = norn_ir::LawRoot::Pack("toy.unknown".to_owned());
+    artifact.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(law).expect("wire")).expect("tree"),
+    )
+    .expect("root");
+    assert!(
+        norn_checker::verification::check_law_set(&[artifact], &entities(), &BTreeSet::new())
+            .iter()
+            .any(|f| f.code == codes::UNRESOLVED_SCOPE)
+    );
+}
