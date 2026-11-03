@@ -194,7 +194,6 @@ impl IncrementalQuestion {
         head: &crate::LedgerHead,
     ) -> Result<BTreeSet<String>, CellError> {
         let reader = store.read();
-        let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         let mut changed = BTreeSet::new();
         if head != &self.result.revision {
@@ -223,13 +222,6 @@ impl IncrementalQuestion {
                 );
             }
         }
-        changed.extend(
-            old.exclusions
-                .keys()
-                .chain(context.exclusions.keys())
-                .filter(|id| old.exclusions.get(*id) != context.exclusions.get(*id))
-                .cloned(),
-        );
         Ok(changed)
     }
 
@@ -259,14 +251,37 @@ impl IncrementalQuestion {
         let candidates: BTreeSet<_> = self.members.union(&changed).cloned().collect();
         for id in candidates {
             let selected = if let Some(cutoff) = self.knowledge {
-                super::historical::historical_record(&mut history, &context.world, self.plan.grain().as_str(), &id, cutoff, store.model().model_hash(), &mut budget)?
+                super::historical::historical_record(
+                    &mut history,
+                    &context.world,
+                    self.plan.grain().as_str(),
+                    &id,
+                    cutoff,
+                    store.model().model_hash(),
+                    &mut budget,
+                )?
             } else {
-                reader.object_with_budget(&context.world, self.plan.grain().as_str(), &id, &mut budget)?
+                reader.object_with_budget(
+                    &context.world,
+                    self.plan.grain().as_str(),
+                    &id,
+                    &mut budget,
+                )?
             };
             match selected {
                 BudgetedRead::Found(record) => {
-                    if record.scope != context.scope { return Err(stale()); }
-                    if visible(&record)? && let Some(finding) = reader.question_findings(&context.world, &record, self.knowledge.map(|c| c.frontier))?.first() {
+                    if record.scope != context.scope {
+                        return Err(stale());
+                    }
+                    if visible(&record)?
+                        && let Some(finding) = reader
+                            .question_findings(
+                                &context.world,
+                                &record,
+                                self.knowledge.map(|c| c.frontier),
+                            )?
+                            .first()
+                    {
                         context.exclusions.insert(id.clone(), finding.id.clone());
                     }
                 }
@@ -274,7 +289,15 @@ impl IncrementalQuestion {
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
-        changed.extend(self.result.context.exclusions.keys().chain(context.exclusions.keys()).filter(|id| self.result.context.exclusions.get(*id) != context.exclusions.get(*id)).cloned());
+        changed.extend(
+            self.result
+                .context
+                .exclusions
+                .keys()
+                .chain(context.exclusions.keys())
+                .filter(|id| self.result.context.exclusions.get(*id) != context.exclusions.get(*id))
+                .cloned(),
+        );
         for id in changed {
             if let Some((_, previous)) = self.contributions.remove(&id) {
                 self.totals.adjust(&previous, true)?;

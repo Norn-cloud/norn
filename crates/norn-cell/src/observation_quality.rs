@@ -126,14 +126,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         record: &ObjectRecord,
         frontier: Option<u64>,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let mut findings: Vec<_> = self.review_findings_at(
-            world, &record.object_type, &record.id, Some(record), frontier.unwrap_or(u64::MAX),
-        )?.into_iter().filter_map(|(finding, quarantines)|
-            (quarantines && finding.status == DataQualityFindingStatus::Open).then_some(finding)
-        ).collect();
+        let mut findings: Vec<_> = self
+            .review_findings_at(
+                world,
+                &record.object_type,
+                &record.id,
+                Some(record),
+                frontier.unwrap_or(u64::MAX),
+            )?
+            .into_iter()
+            .filter_map(|(finding, quarantines)| {
+                (quarantines && finding.status == DataQualityFindingStatus::Open).then_some(finding)
+            })
+            .collect();
         if self.source_dispute_at(world, &record.object_type, &record.id)? {
             if frontier.is_some() {
-                return Err(CellError::ComputeRefused("core.world.source_dispute_unqualified"));
+                return Err(CellError::ComputeRefused(
+                    "core.world.source_dispute_unqualified",
+                ));
             }
             findings.extend(self.source_conflict_findings(&record.object_type, &record.id)?);
             findings.extend(self.identity_findings(&record.object_type, &record.id)?);

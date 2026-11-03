@@ -280,7 +280,10 @@ impl<E: SqlEngine> CellStore<E> {
                 if !visible(&record)? {
                     continue;
                 }
-                if let Some(finding) = reader.question_findings(&context.world, &record, cutoff.map(|c| c.frontier))?.first() {
+                if let Some(finding) = reader
+                    .question_findings(&context.world, &record, cutoff.map(|c| c.frontier))?
+                    .first()
+                {
                     context.exclusions.insert(id.clone(), finding.id.clone());
                     continue;
                 }
