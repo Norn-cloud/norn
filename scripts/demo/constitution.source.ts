@@ -4,15 +4,15 @@ import { Conversion } from "../../registry/core/src/physics"
 
 const StoredMeasurements = Schema.Struct({
   id: Schema.String,
-  input_fine_g: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
-  output_fine_g: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
-  loss_fine_g: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
+  input_quantity: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
+  output_quantity: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
+  loss_quantity: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
 })
 const Measurements = Schema.Struct({
   id: Schema.String,
-  input_fine_g: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
-  output_fine_g: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
-  loss_fine_g: Schema.optionalKey(Norn.decimal(0, { unit: { system: "ucum", code: "g" } })),
+  input_quantity: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
+  output_quantity: Norn.decimal(0, { unit: { system: "ucum", code: "g" } }),
+  loss_quantity: Schema.optionalKey(Norn.decimal(0, { unit: { system: "ucum", code: "g" } })),
 })
 
 export const Melt = Norn.type({
@@ -20,7 +20,7 @@ export const Melt = Norn.type({
   role: "happening", implements: [Conversion],
   dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   properties: StoredMeasurements,
-  defaults: { loss_fine_g: 0 },
+  defaults: { loss_quantity: 0 },
   identity: [{ name: "primary", properties: ["id"] }],
 })
 
@@ -33,7 +33,7 @@ export const Conservation = Norn.law({
     provenance: { source: "authoring_sdk", sourcePath: "scripts/demo/constitution.source.ts" },
     scope: { root: { kind: "entity", id: "constitution.Melt" }, objectTypes: ["constitution.Melt"] },
     subject: "constitution.Melt", modality: { kind: "always" },
-    response: { kind: "predicate", expression: "self.input_fine_g == self.output_fine_g + self.loss_fine_g" },
+    response: { kind: "predicate", expression: "self.input_quantity == self.output_quantity + self.loss_quantity" },
   },
 })
 
@@ -43,9 +43,9 @@ export const Convert = Norn.action({
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   input: Measurements, output: Schema.Struct({ id: Schema.String }),
   derive: [
-    { field: "loss_fine_g", inputRequired: false, expression: Norn.expression(Measurements, x => x.input_fine_g - x.output_fine_g) },
+    { field: "loss_quantity", inputRequired: false, expression: Norn.expression(Measurements, x => x.input_quantity - x.output_quantity) },
   ],
-  preconditions: [Norn.expression(Schema.Struct({ input: Measurements }), x => x.input.input_fine_g > 0 && x.input.output_fine_g >= 0 && x.input.output_fine_g <= x.input.input_fine_g)],
+  preconditions: [Norn.expression(Schema.Struct({ input: Measurements }), x => x.input.input_quantity > 0 && x.input.output_quantity >= 0 && x.input.output_quantity <= x.input.input_quantity)],
   writes: [{ type: Melt, change: "created" }],
   effect: { kind: "upsert_input_object", type: Melt, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
