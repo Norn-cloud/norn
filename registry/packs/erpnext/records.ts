@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-erpnext", instance: "demo", version: "erpnext-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "86fadb460f3dd7d40b79b926ae9426c364eff8cae261e5a96ca318ad4176c65c"},
+  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4"},
   datasets: [
     {id: "Item", nativeName: "Synthetic Item", kind: "document"},
     {id: "Warehouse Lot Balance", nativeName: "Synthetic Warehouse Lot Balance", kind: "document"},
@@ -105,7 +105,7 @@ export const Mapping = Norn.mapping({
   id: "erpnext.three.mapping",
   title: "erpnext synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "5493a3f662c855a2040cc04940b046d6688abe0caa82fc759181634aa7f7a4bb"},
+  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "3297994eee3f6f10c0541dc8b25b0c0c92e91c718c52a681e7b97ba8d2539cdc"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [

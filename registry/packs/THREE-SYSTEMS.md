@@ -62,7 +62,10 @@ is substituted for stock cost. No Shopify GL entries are emitted.
 
 Each `synthetic.json` declares `synthetic_snapshot_incremental`,
 `productionCdc: false`, snapshot watermark 10 and ordered upserts starting at 11.
-The first delivery is deliberately redelivered at sequence 11; replay produces
+The first delivery is deliberately redelivered at sequence 11. Sequence 12
+updates the same source holding from 200 g to 180 g (ERPNext/Odoo cost
+9,000 USD to 8,100 USD); 20 g and the 900 USD signed inventory/COGS pair
+remain distinct measures. Replay produces
 the same candidate and provenance. Odoo has a snapshot plus delivery, balanced
 signed ledger observations and settlement increments. There are no deletes,
 production cursor-convergence, transactional-capture or restart guarantees in

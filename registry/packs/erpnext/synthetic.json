@@ -128,6 +128,25 @@
     {
       "sequence": 12,
       "operation": "upsert",
+      "dataset": "Warehouse Lot Balance",
+      "record": {
+        "name": "SYN-ERPNEXT-holding-north",
+        "custom_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 180,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian",
+        "stock_cost": 8100,
+        "cost_currency": "USD",
+        "valuation_method": "moving_average"
+      }
+    },
+    {
+      "sequence": 13,
+      "operation": "upsert",
       "dataset": "GL Entry",
       "record": {
         "name": "SYN-ERPNEXT-gl-cogs",
@@ -142,7 +161,7 @@
       }
     },
     {
-      "sequence": 13,
+      "sequence": 14,
       "operation": "upsert",
       "dataset": "GL Entry",
       "record": {
@@ -158,7 +177,7 @@
       }
     },
     {
-      "sequence": 14,
+      "sequence": 15,
       "operation": "upsert",
       "dataset": "Payment Entry",
       "record": {

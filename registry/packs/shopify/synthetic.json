@@ -122,6 +122,22 @@
     {
       "sequence": 12,
       "operation": "upsert",
+      "dataset": "InventoryLevel",
+      "record": {
+        "id": "SYN-SHOPIFY-holding-north",
+        "metafield_norn_ref": "demo/holding/owner/north/gold",
+        "resource_code": "GOLD",
+        "quantity": 180,
+        "unit": "g",
+        "location": "north",
+        "item_ref": "demo/item/gold",
+        "owner_ref": "demo/party/owner",
+        "custodian_ref": "demo/party/custodian"
+      }
+    },
+    {
+      "sequence": 13,
+      "operation": "upsert",
       "dataset": "Transaction",
       "record": {
         "id": "SYN-SHOPIFY-settlement",

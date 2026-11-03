@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-shopify", instance: "demo", version: "shopify-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/shopify/synthetic.json", sha256: "a733feec8115eb2a25be4e6d33a8f36869f963d0951948d4196ef31657bc19e1"},
+  rawMetadata: {uri: "registry/packs/shopify/synthetic.json", sha256: "d4be1ecbf98bc011894cb0fd51cfda8a015275dd26af659d01dafa5d6e14f0a6"},
   datasets: [
     {id: "ProductVariant", nativeName: "Synthetic ProductVariant", kind: "document"},
     {id: "InventoryLevel", nativeName: "Synthetic InventoryLevel", kind: "document"},
@@ -86,7 +86,7 @@ export const Mapping = Norn.mapping({
   id: "shopify.three.mapping",
   title: "shopify synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "452a8dfff590da61932050ceb4e87c42ea388b9b7a34830d6bde9d4b9f36c8c1"},
+  source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "0f3b9172611997d6765978334a2a6b7cdd533930299d2194a92bb137dcee5f1d"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, Settlement],
   maps: [

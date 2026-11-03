@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-odoo", instance: "demo", version: "odoo-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "457a3b3af636b8de8e412d4d01ca8009fa095a229aaf907dd9945899315e9a88"},
+  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "681adbdf0de776701a4390dd3f94a25cbdfd657501b0f2a2e14398ceb647fb8a"},
   datasets: [
     {id: "product.product", nativeName: "Synthetic product.product", kind: "document"},
     {id: "stock.quant", nativeName: "Synthetic stock.quant", kind: "document"},
@@ -105,7 +105,7 @@ export const Mapping = Norn.mapping({
   id: "odoo.three.mapping",
   title: "odoo synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "4e64de3ac09814bd664aa179a08b67974bc3727d50603cff1c8e7ccd28f90b37"},
+  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "1e62871482bc326d6a16e2c19e532d396ee7ef529275f37402c02fcd345e7a54"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [
