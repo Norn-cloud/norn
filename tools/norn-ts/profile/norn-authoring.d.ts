@@ -204,8 +204,9 @@ declare module "@norn/authoring" {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
-      /** Append-only records; the kernel enforces this after creation. */
+      /** Definition-owned finite duty controls, inherited by subtypes. */
       readonly controls?: import("../src/builder/entity.ts").ControlsDeclaration
+      /** Append-only records; the kernel enforces this after creation. */
       readonly immutable?: boolean
       /** Stored properties maintained by declared rules, never action inputs. */
       readonly protected?: ReadonlyArray<keyof S["Type"] & string>

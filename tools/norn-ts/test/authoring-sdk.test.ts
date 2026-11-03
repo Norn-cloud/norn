@@ -200,3 +200,30 @@ test("CP3 allocation goldens come from core-aligned typed declarations", () => {
     expect(checked.admitted).toBe(true)
   }
 }, 60_000)
+
+
+describe("sensitive-path witness declaration", () => {
+  const source = (witness: string) => `import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Record = Norn.type({ name: "demo.Controlled", title: "Controlled", version: "1.0.0",
+ properties: Schema.Struct({ id: Schema.String }),
+ controls: { format: "norn.controls/1", sensitivePaths: [{ objectType: "demo.Controlled", actions: ["demo.edit"]${witness} }] },
+})`
+  for (const value of [true, false]) test(`preserves explicit requireWitness=${value}`, () => {
+    const result = compile(source(`, requireWitness: ${value}`))
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    expect(result.artifacts).toMatchObject([{ payload: { objectType: { controls: {
+      sensitivePaths: [{ objectType: "demo.Controlled", actions: ["demo.edit"], requireWitness: value }],
+    } } } }])
+  })
+  test("omission remains omitted", () => {
+    const result = compile(source(""))
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    expect(JSON.stringify(result.artifacts)).not.toContain("requireWitness")
+  })
+  for (const value of ['"yes"', 'null', '1']) test(`refuses non-boolean ${value}`, () => {
+    expect(compile(source(`, requireWitness: ${value}`)).ok).toBe(false)
+  })
+})

@@ -154,7 +154,7 @@ interface TypeMetaBase {
 
 export interface ControlsDeclaration {
   readonly format: "norn.controls/1"
-  readonly sensitivePaths: ReadonlyArray<{ readonly objectType: string; readonly actions: ReadonlyArray<string> }>
+  readonly sensitivePaths: ReadonlyArray<{ readonly objectType: string; readonly actions: ReadonlyArray<string>; readonly requireWitness?: boolean }>
 }
 
 export interface ObjectTypeDef extends TypeMetaBase {

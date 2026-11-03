@@ -540,8 +540,9 @@ class DefinitionCompiler {
     const members = this.closedRecord(input, ["format", "sensitivePaths"], ["format", "sensitivePaths"])
     if (this.string(members.get("format")!) !== "norn.controls/1") throw new CompileError("NORN-FLOW-LITERAL", "controls format must be norn.controls/1", input)
     return { format: "norn.controls/1", sensitivePaths: this.list(members.get("sensitivePaths")!).map((entry) => {
-      const path = this.closedRecord(entry, ["objectType", "actions"], ["objectType", "actions"])
-      return { objectType: this.string(path.get("objectType")!), actions: this.strings(path.get("actions")!) }
+      const path = this.closedRecord(entry, ["objectType", "actions", "requireWitness"], ["objectType", "actions"])
+      const requireWitness = path.get("requireWitness")
+      return { objectType: this.string(path.get("objectType")!), actions: this.strings(path.get("actions")!), ...(requireWitness !== undefined ? { requireWitness: this.boolean(requireWitness) } : {}) }
     }) }
   }
 
