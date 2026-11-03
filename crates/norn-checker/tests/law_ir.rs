@@ -1204,4 +1204,3 @@ fn interface_decimal_binding_inherited_contract_rechecks_effective_members() {
             .any(|finding| finding.code.as_str() == "core.values.unit_mismatch")
     );
 }
-
