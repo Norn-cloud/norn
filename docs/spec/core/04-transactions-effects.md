@@ -104,7 +104,9 @@ schedule/cancel alongside lifecycle state, commands and receipts, re-enter the
 same governed action path with current authority/laws, and consume the exact timer
 incarnation atomically with the accepted consequence. A timer never confers
 permission. At-least-once firing plus durable attempt identity provides one
-committed effect. Provider retries use the separate, attempt-independent operation
+committed effect: a retry after a lost acknowledgement reuses the original
+commit's attempt idempotency key, so the existing receipt lookup returns the
+stored receipt instead of committing again. Provider retries use the separate, attempt-independent operation
 key only with an explicit provider deduplication/lookup contract; uncertain
 non-idempotent outcomes require reconciliation. No universal external exactly-once
 claim follows from a local receipt.
