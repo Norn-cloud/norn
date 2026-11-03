@@ -125,7 +125,12 @@ fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) ->
     let clock = after.remove("_norn_clock");
     let initial_clock = unchanged.remove("_norn_clock");
     if after != unchanged {
-        return Err("refusal changed business, outbox or other non-journal state".into());
+        let changed: BTreeSet<_> = after
+            .keys()
+            .chain(unchanged.keys())
+            .filter(|name| after.get(*name) != unchanged.get(*name))
+            .collect();
+        return Err(format!("refusal changed non-journal tables: {changed:?}").into());
     }
     let receipts = read.receipts()?;
     let [receipt] = receipts.as_slice() else {
