@@ -1636,6 +1636,28 @@ pub(crate) const LAYER_DEPENDENT: &[&str] = &[
 ];
 
 impl EffectiveCatalog {
+    // Only the metric derivation checker calls this, after validating an
+    // unconditional conservation law and all of its terms. The source ontology
+    // and its explicit non-additive contracts are never overwritten.
+    pub(crate) fn refine_conserved_metric_terms(
+        &mut self,
+        object_type: &str,
+        terms: &BTreeSet<PropertyId>,
+    ) {
+        let Some(artifact_id) = self.by_name.get(object_type) else { return };
+        let Some(Ok(object)) = self.by_artifact.get_mut(artifact_id) else { return };
+        for property in &mut object.properties {
+            if !terms.contains(&property.id) { continue; }
+            if let EffectiveKind::Base(
+                PropertyType::Integer { additivity } | PropertyType::Decimal { additivity, .. }
+            ) = &mut property.kind
+                && *additivity == norn_ir::PropertyAdditivity::Undeclared
+            {
+                *additivity = norn_ir::PropertyAdditivity::Additive;
+            }
+        }
+    }
+
     /// Build the catalog of `artifacts` (see the type docs).
     #[must_use]
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
