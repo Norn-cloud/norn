@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { AllocateStep, ReceiptStep } from "./cp3-folds.source"
+import { AllocateStep } from "./cp3-folds.source"
 
 // INV-CP1: stock-only closure; conversion and approval belong to the jewelry app.
 // TARGET #58: measured-mass round/refuse currently uses the expression escape hatch.

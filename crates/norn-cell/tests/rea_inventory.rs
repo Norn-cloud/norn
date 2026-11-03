@@ -75,10 +75,7 @@ impl Fixture {
             "../../norn-decisions/tests/fixtures/jewelry-folds.json"
         ))
         .unwrap();
-        let required_helpers = [
-            "jewelry.fold.allocate_step.rule",
-            "jewelry.fold.receipt_step.rule",
-        ];
+        let required_helpers = ["jewelry.fold.allocate_step.rule"];
         let helpers: Vec<_> = helpers
             .into_iter()
             .filter(|document| {
@@ -90,7 +87,7 @@ impl Fixture {
         assert_eq!(
             helpers.len(),
             required_helpers.len(),
-            "both typed A5 inventory helpers are retained"
+            "the declared A5 allocation helper is retained"
         );
         documents.extend(helpers);
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/core/artifacts");
