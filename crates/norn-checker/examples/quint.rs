@@ -199,7 +199,7 @@ fn main() -> Result<()> {
             if passed {
                 discharged = discharged.saturating_add(1);
             }
-            goals.push(json!({"goal":index,"kind":kind,"status":if passed{"bounded-pass"}else if status=="violation"{"refuted"}else{"unknown"},"level":if status=="unknown"{"unknown"}else{"exhaustive-finite/bounded"},"reason":output.get("reason"),"scenario":output.get("trace").map(|t|scenario(t,&batch.bounds)).transpose()?,"record":record}));
+            goals.push(json!({"goal":index,"kind":kind,"status":if passed{"bounded-pass"}else if status=="violation"{"refuted"}else{"unknown"},"level":if status=="unknown"{"unknown"}else{"exhaustive-finite/bounded"},"reason":output.get("reason"),"scenario":output.get("trace").filter(|trace| !trace.is_null()).map(|t|scenario(t,&batch.bounds)).transpose()?,"record":record}));
         }
         let counterexample = label != "mutant"
             || goals.iter().any(|goal| {

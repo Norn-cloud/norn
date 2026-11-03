@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import zipfile
 
@@ -51,7 +52,7 @@ def run(args):
         oracle_run = run_quint_apalache([
             str(root / "bin/quint"), "verify", str(args.model), "--main", "generated", "--backend", "apalache",
             "--step", args.step, "--invariants", args.invariant, "--max-steps", "1", "--out", str(oracle_path),
-        ], environment=environment, timeout_seconds=120, result_root=work)
+        ], environment=environment, timeout_seconds=120, result_root=work, emit=lambda line: print(line, file=sys.stderr, flush=True))
         oracle_raw = oracle_path.read_text()
         oracle = json.loads(oracle_raw)
         clean = oracle.get("errors") == []
