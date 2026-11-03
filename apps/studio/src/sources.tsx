@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { catalogOf, conceptTitle, type Catalog, type Concept } from "./lib/catalog.ts"
+import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
 
 const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
@@ -56,6 +56,50 @@ function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly 
   )
 }
 
+function SourceCell({ source }: { readonly source: Source | undefined }) {
+  switch (source?.kind) {
+    case undefined: return <span className="text-muted-foreground">not sent</span>
+    case "field": return <code className="text-xs">{source.field}</code>
+    case "fixed": return <span>always “{source.value.replaceAll("_", " ")}”</span>
+    case "empty": return <span className="text-muted-foreground">left empty</span>
+    case "computed": return <code className="text-xs">{source.expression}</code>
+    case "gap": return <span className="text-amber-700 dark:text-amber-400" title={source.note}>not in this system</span>
+  }
+}
+
+/** Each fact against each system's record that feeds it, as the admitted mappings declare. */
+function SourceMatrix({ concept }: { readonly concept: Concept }) {
+  const gaps = new Map<string, { readonly system: string; readonly note: string; readonly facts: string[] }>()
+  for (const { system, facts } of concept.feeds) for (const [fact, source] of facts) {
+    if (source.kind !== "gap") continue
+    const key = `${system}\u0000${source.note}`
+    const gap = gaps.get(key) ?? { system, note: source.note, facts: [] }
+    gap.facts.push(fact.replaceAll("_", " "))
+    gaps.set(key, gap)
+  }
+  return (
+    <div className="space-y-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Fact</TableHead>
+            {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {concept.fields.map(({ id }) => (
+            <TableRow key={id}>
+              <TableCell className="font-medium">{id.replaceAll("_", " ")}</TableCell>
+              {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}><SourceCell source={facts.get(id)} /></TableCell>)}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {[...gaps].map(([key, { system, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system} has no {facts.join(" or ")}.</b> {note}</p>)}
+    </div>
+  )
+}
+
 function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; readonly name: string | undefined; readonly onOpen: (name: string | undefined) => void }) {
   const concept = name === undefined ? undefined : catalog.byName.get(name)
   const link = (target: string) => catalog.byName.has(target)
@@ -63,7 +107,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
     : <span>{conceptTitle(target)}</span>
   return (
     <Sheet open={concept !== undefined} onOpenChange={(open) => { if (!open) onOpen(undefined) }}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
         {concept && <>
           <SheetHeader>
             <SheetTitle className="text-xl">{concept.title}</SheetTitle>
@@ -106,9 +150,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
             </section>
             <section>
               <h3 className="pb-2 font-medium">Where its records come from</h3>
-              {concept.feeds.length > 0
-                ? <ul className="space-y-1 text-sm">{concept.feeds.map(({ system, dataset }) => <li key={`${system}/${dataset}`}><Badge variant="secondary">{system}</Badge> <span className="text-muted-foreground">{dataset}</span></li>)}</ul>
-                : <p className="text-sm text-muted-foreground">No connected system maps records into it directly.</p>}
+              {concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="text-sm text-muted-foreground">No connected system maps records into it directly.</p>}
             </section>
           </div>
         </>}

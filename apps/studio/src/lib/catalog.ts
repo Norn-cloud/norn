@@ -18,9 +18,28 @@ export interface Relationship {
   readonly count: "many" | "one" | "at most one"
 }
 
+/** Where one fact's value comes from in one source record, as the mapping declares it. */
+export type Source =
+  | { readonly kind: "field"; readonly field: string }
+  | { readonly kind: "fixed"; readonly value: string }
+  | { readonly kind: "empty" }
+  | { readonly kind: "computed"; readonly expression: string }
+  | { readonly kind: "gap"; readonly note: string }
+
 export interface Feed {
   readonly system: string
   readonly dataset: string
+  /** Declared source per fact id; a fact missing here is not mapped by this system. */
+  readonly facts: ReadonlyMap<string, Source>
+}
+
+/** Read one declared mapping expression: `input.code`, `'on_hand'`, `null` or anything else. */
+export function sourceOf(expression: string): Source {
+  const field = /^input\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression)
+  if (field?.[1]) return { kind: "field", field: field[1] }
+  const fixed = /^'([^']*)'$/.exec(expression)
+  if (fixed?.[1] !== undefined) return { kind: "fixed", value: fixed[1] }
+  return expression === "null" ? { kind: "empty" } : { kind: "computed", expression }
 }
 
 export interface Concept {
@@ -106,7 +125,9 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     for (const map of artifact.payload.maps) {
       const target = map.target.entity.replace(/\.entity$/, "")
       targets.add(target)
-      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset }])
+      const facts = new Map<string, Source>((map.properties ?? []).map(({ property, value }) => [property, sourceOf(value)]))
+      for (const { member, note, reason } of map.gaps ?? []) facts.set(member, { kind: "gap", note: note ?? reason.replaceAll("_", " ") })
+      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]
     systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets] })

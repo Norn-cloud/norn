@@ -30,6 +30,16 @@ test("a concept states its facts, relationships and parents as declared", () => 
   expect(field("quantity_basis")?.type).toBe("One of: on hand, available")
 })
 
+test("each system's declared source for a fact, including a declared gap", () => {
+  const holding = catalog.byName.get("canon.Holding")
+  const feed = (system: string) => holding?.feeds.find((candidate) => candidate.system === system)
+  expect(feed("ERPNext")?.dataset).toBe("Warehouse Lot Balance")
+  expect(feed("ERPNext")?.facts.get("quantity")).toEqual({ kind: "field", field: "quantity" })
+  expect(feed("ERPNext")?.facts.get("quantity_basis")).toEqual({ kind: "fixed", value: "on_hand" })
+  expect(feed("ERPNext")?.facts.get("currency")).toEqual({ kind: "empty" })
+  expect(feed("Shopify")?.facts.get("stock_cost")?.kind).toBe("gap")
+})
+
 test("laws attach to the concepts they govern", () => {
   expect(catalog.byName.get("core.analytics.Restatement")?.rules.length).toBeGreaterThan(0)
   expect(catalog.byName.get("core.analytics.RestatementEvidence")?.rules.length).toBeGreaterThan(0)
