@@ -211,7 +211,10 @@ mod tests {
             "../../../fixtures/engine-alpha/sales-order.definitions.json"
         ))
         .expect("authored declarations");
-        let scope = CellScope { org_id: "org_alpha".into(), environment_id: "dev".into() };
+        let scope = CellScope {
+            org_id: "org_alpha".into(),
+            environment_id: "dev".into(),
+        };
         let original = serde_json::to_string(&artifacts[..1]).expect("original source");
         assert!(Admitted::from_source(&original, &scope).is_ok());
         for name in ["norn.ActionCall", "norn.Actioncall", "norn.OWNEDROWS"] {

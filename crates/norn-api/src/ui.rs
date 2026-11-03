@@ -30,7 +30,10 @@ fn fields(schema: &serde_json::Value) -> Option<String> {
         };
         let (input_type, syntax) = match kind {
             "string" | "decimal" => ("text", ""),
-            "integer" | "number" => ("text", r#"inputmode="decimal" pattern="-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?" title="Enter a JSON number""#),
+            "integer" | "number" => (
+                "text",
+                r#"inputmode="decimal" pattern="-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?" title="Enter a JSON number""#,
+            ),
             "boolean" => ("checkbox", ""),
             _ => return None,
         };
