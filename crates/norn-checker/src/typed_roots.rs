@@ -1908,9 +1908,21 @@ fn check_document_root(
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
 ) {
-    if matches!(payload, ArtifactPayload::Mapping(_)) {
+    if matches!(payload, ArtifactPayload::Mapping(_))
+        && object.get("format").and_then(JsonValue::as_str) == Some("norn.interpretation/1")
+    {
         check_root!(
-            norn_ir::mapping::MappingDocument,
+            norn_ir::mapping::LawInterpretationIr,
+            "mapping.validation.invalid_document",
+            object,
+            diagnostics,
+            artifact_id,
+            members {}
+            arrays {}
+        );
+    } else if matches!(payload, ArtifactPayload::Mapping(_)) {
+        check_root!(
+            norn_ir::mapping::MappingIr,
             "mapping.validation.invalid_document",
             object,
             diagnostics,

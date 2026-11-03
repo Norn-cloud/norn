@@ -2935,3 +2935,14 @@ fn temporal_enum_mapping_runtime_rejects_invalid_values_and_preserves_nulls() {
         }
     }
 }
+
+#[test]
+fn mapping_decode_reports_the_missing_maps_member() {
+    let mut source = serde_json::to_value(erpnext_mapping()).expect("mapping");
+    source["payload"].as_object_mut().expect("payload").remove("maps");
+    let artifact: ArtifactEnvelope = serde_json::from_value(source).expect("lenient envelope");
+    let diagnostics = norn_checker::validate_artifact(&artifact).expect_err("maps required");
+    assert!(diagnostics.iter().any(|diagnostic|
+        diagnostic.code == "mapping.validation.invalid_document"
+        && diagnostic.message.contains("missing field `maps`")));
+}
