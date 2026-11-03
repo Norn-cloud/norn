@@ -228,7 +228,8 @@ fn bind(
         let checked_payload = serde_json::to_string(&payload)?;
         let checked_digest = format!("{:x}", Sha256::digest(checked_payload.as_bytes()));
         let record = challenge.record_evidence(&pins, &checked_payload)?;
-        if challenge.evidence_identity(&pins, &checked_digest, &record) != EvidenceIdentity::Current {
+        if challenge.evidence_identity(&pins, &checked_digest, &record) != EvidenceIdentity::Current
+        {
             return Err("fresh result identity refused".into());
         }
         records.push(record);
