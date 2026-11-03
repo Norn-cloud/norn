@@ -1,5 +1,5 @@
 {
-  "sha256": "b9ff5766686658df02dbe187ca4c31100ee0c94f97e2020968dc01990d0dd609",
+  "sha256": "b908d6e53a5f02089e60e87fff636a49d1ce4f72d47826a98414461a88488f57",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -8,7 +8,6 @@
   "parents": [
     "Cargo.lock",
     "crates/norn-api/Cargo.toml",
-    "crates/norn-api/src/answers.rs",
     "crates/norn-api/src/contracts.rs",
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/openapi.rs",

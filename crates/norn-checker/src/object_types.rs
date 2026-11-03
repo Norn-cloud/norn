@@ -1361,7 +1361,7 @@ fn check_default(
             }
             check_text_default(at, text, sets, out);
         }
-        PropertyType::Integer {} | PropertyType::Decimal { .. } => {
+        PropertyType::Integer { .. } | PropertyType::Decimal { .. } => {
             check_numeric_default(at, value, base, sets, out);
         }
         PropertyType::Boolean {} => {
@@ -1527,7 +1527,7 @@ fn check_numeric_default(
         return;
     };
     match base {
-        PropertyType::Integer {} => {
+        PropertyType::Integer { .. } => {
             if !parsed.fraction().is_empty() {
                 out.push(error(
                     codes::DEFAULT_TYPE_MISMATCH,
