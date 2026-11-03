@@ -3,6 +3,5 @@
   "message": "idempotency lookup returned a record from another scope or key",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T6",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T6"
 }

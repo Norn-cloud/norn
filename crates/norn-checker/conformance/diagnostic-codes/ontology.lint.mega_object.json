@@ -3,6 +3,5 @@
   "message": "object type {name} declares {count} properties and links, more than {max}; split it into the concepts it combines",
   "severity": "warning",
   "since": "0.1.0",
-  "tier": "T3",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T3"
 }

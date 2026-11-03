@@ -3,6 +3,5 @@
   "tier": "T2",
   "severity": "error",
   "message": "Reviewed wording locale map was refused: duplicate_locale",
-  "since": "0.2.0",
-  "fix": "Keep one locale entry per case-insensitive BCP 47 identity."
+  "since": "0.2.0"
 }

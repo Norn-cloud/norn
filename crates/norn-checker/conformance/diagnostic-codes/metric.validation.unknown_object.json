@@ -3,6 +3,5 @@
   "message": "The measure object type is unavailable.",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T3"
 }

@@ -3,6 +3,5 @@
   "message": "lifecycle property {property} is not a property of the type",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  "tier": "T2"
 }

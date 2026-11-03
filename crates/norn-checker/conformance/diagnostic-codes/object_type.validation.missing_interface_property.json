@@ -3,6 +3,5 @@
   "message": "interface {interface} requires property {property}, which the type neither declares nor inherits",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Declare the missing member at the reported path using the owning definition schema."
+  "tier": "T3"
 }

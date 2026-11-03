@@ -3,6 +3,5 @@
   "message": "{writer} writes {property} from {from} to {to}, which is not a declared transition of its lifecycle",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  "tier": "T3"
 }

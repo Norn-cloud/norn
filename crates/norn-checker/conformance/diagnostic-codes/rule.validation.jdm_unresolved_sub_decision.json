@@ -3,6 +3,5 @@
   "message": "sub-decision {key} is not a required rule dependency of this artifact; the key is the artifactId of a RuleIR v2 rule declared in dependencies",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T2"
 }

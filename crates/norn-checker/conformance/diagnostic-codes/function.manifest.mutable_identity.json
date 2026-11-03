@@ -3,6 +3,5 @@
   "message": "{what} {value} is not a content digest (sha256:<64 hex>); a tag, URI, or object key is never an identity",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T2"
 }

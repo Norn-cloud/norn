@@ -3,6 +3,5 @@
   "message": "row {rowId} has a cell for {columnId}, which is not a column of the table",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T2"
 }

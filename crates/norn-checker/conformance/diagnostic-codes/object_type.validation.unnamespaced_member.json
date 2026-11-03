@@ -3,6 +3,5 @@
   "message": "added {member} {id} must be named \"{namespace}__<name>\" in its layer's extension namespace, so it cannot shadow a base member",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T2"
 }

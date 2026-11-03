@@ -3,6 +3,5 @@
   "message": "Dimensions require a scalar property and compatible grain.",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T3"
 }

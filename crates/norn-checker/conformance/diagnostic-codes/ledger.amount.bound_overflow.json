@@ -3,6 +3,5 @@
   "message": "runtime coefficient for parameter `{parameterId}` overflows at a declared bound",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  "tier": "T2"
 }

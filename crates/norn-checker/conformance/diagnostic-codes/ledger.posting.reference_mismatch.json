@@ -3,6 +3,5 @@
   "message": "posting references do not match the installed pack seal and checker",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T6",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T6"
 }

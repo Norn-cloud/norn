@@ -3,6 +3,5 @@
   "message": "artifacts {artifactIds} depend on each other in a cycle; the set has no installation order",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  "tier": "T3"
 }

@@ -3,6 +3,5 @@
   "message": "a field bound to a nullable input cannot be cleared to null (no clear affordance, or always required): {detail}",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T2",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T2"
 }

@@ -3,6 +3,5 @@
   "message": "{transition} is not a declared transition of the {property} lifecycle of {objectType}",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  "tier": "T3"
 }

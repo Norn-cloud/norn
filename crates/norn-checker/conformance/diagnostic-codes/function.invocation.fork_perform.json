@@ -3,6 +3,5 @@
   "message": "world {world} is a fork; only main performs, and a fork never dispatches a Function",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T6",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T6"
 }

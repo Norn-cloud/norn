@@ -206,12 +206,18 @@ fn conformance_directory_matches_the_public_manifest() {
         .map(|entry| entry.expect("entry").path())
         .collect();
     files.sort();
-    let codes: Vec<serde_json::Value> = files
+    let mut codes: Vec<serde_json::Value> = files
         .iter()
         .map(|path| {
             serde_json::from_str(&fs::read_to_string(path).expect("code bytes")).expect("code JSON")
         })
         .collect();
+    let guidance: Vec<serde_json::Value> = serde_json::from_str(include_str!("../conformance/diagnostic-guidance.json")).expect("guidance");
+    for code in &mut codes {
+        let guide = guidance.iter().find(|guide| guide.get("code") == code.get("code")).expect("registered guidance");
+        let fields = code.as_object_mut().expect("code object");
+        for key in ["fix", "no_fix"] { if let Some(value) = guide.get(key) { fields.insert(key.to_owned(), value.clone()); } }
+    }
     assert_eq!(
         codes::conformance_manifest()["codes"],
         serde_json::json!(codes)
@@ -239,7 +245,8 @@ fn registry_generation_refuses_invalid_entries() {
         let temp =
             std::env::temp_dir().join(format!("norn-registry-{}-{change}", std::process::id()));
         fs::create_dir(&temp).expect("fixture directory");
-        let path = temp.join("toy.validation.invalid.json");
+        let directory = temp.join("codes"); fs::create_dir(&directory).expect("code directory");
+        let path = directory.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
             "no_fix" => {
@@ -261,6 +268,12 @@ fn registry_generation_refuses_invalid_entries() {
             "unknown" => value["extra"] = serde_json::json!(true),
             _ => {}
         }
+        let mut guide = serde_json::json!({"code":"toy.validation.invalid"});
+        for key in ["fix", "no_fix"] {
+            if let Some(v) = value.as_object_mut().expect("object").remove(key) { guide.as_object_mut().expect("guide object").insert(key.to_owned(), v); }
+        }
+        let guidance = temp.join("guidance.json");
+        fs::write(&guidance, serde_json::json!([guide]).to_string()).expect("guidance fixture");
         if change == "directory" {
             fs::create_dir(&path).expect("invalid directory");
         } else {
@@ -274,7 +287,7 @@ fn registry_generation_refuses_invalid_entries() {
             };
             fs::write(&path, text).expect("fixture entry");
         }
-        let result = registry_build::generate(&temp);
+        let result = registry_build::generate(&directory, &guidance);
         fs::remove_dir_all(temp).expect("cleanup fixture");
         assert_eq!(
             result.is_ok(),

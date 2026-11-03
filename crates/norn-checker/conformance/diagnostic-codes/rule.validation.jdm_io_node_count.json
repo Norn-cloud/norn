@@ -3,6 +3,5 @@
   "message": "the graph has {count} {inputOrOutput} nodes; a decision graph has exactly one",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T2"
 }

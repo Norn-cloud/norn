@@ -3,6 +3,5 @@
   "message": "inverse role {id} would add a member to {target}, which another layer owns; declare the link in an extension so its inverse role is namespaced, or omit the inverse",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T3"
 }

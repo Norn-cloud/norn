@@ -3,6 +3,5 @@
   "message": "Question names must be unique.",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T3"
 }

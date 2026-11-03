@@ -1,0 +1,2038 @@
+[
+  {
+    "code": "action.validation.command_environment_underivable",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "action.validation.invalid_effect_program",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "action.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "action.validation.invalid_schema",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.create_link",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.action.duplicate_action_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.action.effect_kind_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.invalid_slice",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.invalid_write_mode",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.naming_series_target_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.action.quantity_effect",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.action.target_not_writable",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.action.undeclared_effect_write",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.action.unknown_slice_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.unknown_write_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.unresolved_effect_entity",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.write_without_effect",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.decision.fact_literal_outside_schema",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.decision.invalid_source_command",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.decision.invalid_stored_property_write",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.decision.sub_decision_bound",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.decision.sub_decision_target",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.decision.unknown_binding",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.decision.unknown_fact_object_type",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.decision.unresolved_stored_property_contract",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.entity.duplicate_object_type",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.expression.environment_underivable",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.flow_source_map.duplicate_flow",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.flow_source_map.duplicate_step",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_edge",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_location",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.invalid_mapping",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_artifact",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_decision_row",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.missing_state",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "artifact_set.flow_source_map.stale_artifact",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.lifecycle.delete_lifecycle_object",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.direct_write",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.not_a_lifecycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.unconstrained_state",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.undeclared_transition_literal",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.unknown_transition",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.lifecycle.unresolved_lifecycles",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.marking.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.marking.unknown",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.resolution.conflicting_version",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.resolution.dependency_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "artifact_set.resolution.duplicate_artifact",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "artifact_set.resolution.kind_incompatible",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.resolution.kind_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.resolution.missing_dependency",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.resolution.shadows_base",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "artifact_set.resolution.version_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.scope.incompatible_reference",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "business_pack.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "connector.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "connector.validation.unknown_resource",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "consistency.chase.refused",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.instance.violation",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.mapping.non_total",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.schema.incompatible",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.schema.unpreserved_constraint",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "consistency.theory.malformed",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.theory.not_weakly_acyclic",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "consistency.theory.vacuous",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.composition.duplicate_instance",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "core.composition.instance_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "core.composition.unresolved_pin",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "core.compute.ambiguous_grain",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.compute.unsupported_engine",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "core.graph.catalog_write",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.graph.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "core.graph.incomplete_classification",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.graph.role_conflict",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.graph.role_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "core.laws.stale_evidence",
+    "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
+  },
+  {
+    "code": "core.values.inexact",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.values.literal_unit",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "core.values.unit_mismatch",
+    "fix": "Pin the visible core unit catalog, use an admitted UCUM code, and declare any conversion explicitly."
+  },
+  {
+    "code": "customization.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "customization.validation.retired_boundary",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "defined_concept.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "derived.validation.incremental_not_supported",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "derived.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "derived.validation.io_in_view",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "entity.deprecation.v1_payload",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "entity.validation.invalid_mutation_authority",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "entity.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "entity.validation.layer_scope_mismatch",
+    "fix": "Bind the declarations to the same explicit organization and environment scope."
+  },
+  {
+    "code": "function.invocation.blank_value",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.fork_perform",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.freshness_shape",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.input_bound",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.manifest_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "function.invocation.mutable_input",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.non_canonical_text",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.non_scalar_input",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.secret_input",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.invocation.unbounded_command",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.blank_value",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.conflicting_golden_runs",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.dependency_closure_mismatch",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "function.manifest.duplicate_step",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "function.manifest.embedded_secret",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.inadmissible_evidence",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.missing_dependency_closure",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "function.manifest.missing_determinism_evidence",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "function.manifest.mutable_identity",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.non_canonical_text",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.profile_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "function.manifest.unbounded_resource",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.uncacheable_profile",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.manifest.unsupported_abi",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "function.receipt.attempt_out_of_range",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.receipt.blank_value",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.receipt.bound_exceeded",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.receipt.cache_origin",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.receipt.dispatch_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "function.receipt.non_canonical_text",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.receipt.output_manifest_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "function.receipt.summary_bound",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "function.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "graph_load.validation.excessive_depth",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "graph_load.validation.invalid_shape",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "graph_load.validation.missing_relation_kind",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "graph_load.validation.missing_scope",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "graph_load.validation.n_plus_one_risk",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "graph_load.validation.over_budget",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "identifier.validation.too_long",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "interface.validation.duplicate_link_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.duplicate_property_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "interface.validation.invalid_inheritance",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_link_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_property_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.invalid_status_date",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "interface.validation.shadows_base",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "interface.validation.tenant_interface",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "interface.validation.unknown_link_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "interface.validation.unknown_replacement",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ir.validation.invalid_artifact",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ir.validation.invalid_dependency",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ir.validation.invalid_envelope",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ir.validation.kind_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ir.validation.required_field",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ir.validation.retired_kind",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ir.validation.unknown_kind",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ir.validation.unsupported_version",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "law.model.closure_refused",
+    "fix": "Supply every required pinned declaration and keep the complete closure within the graph budget."
+  },
+  {
+    "code": "law.model.predicate_type",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "law.model.unknown_binding",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "law.model.weakens_inherited",
+    "fix": "Retain the inherited law unchanged; strengthen it with an additional law identity."
+  },
+  {
+    "code": "law.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "law.validation.unsupported_temporal",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "law.wording.duplicate_locale",
+    "fix": "Keep one locale entry per case-insensitive BCP 47 identity."
+  },
+  {
+    "code": "law.wording.incomplete_locale",
+    "fix": "Supply every required template, semantic label and phrase for the declared locale."
+  },
+  {
+    "code": "law.wording.invalid_locale",
+    "fix": "Use a well-formed BCP 47 tag and declare it in the reviewed wording map."
+  },
+  {
+    "code": "law.wording.unknown_locale",
+    "fix": "Select an available BCP 47 tag from the pinned wording map; no fallback is applied."
+  },
+  {
+    "code": "layout.validation.invalid_inline_field",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "layout.validation.merge_conflict",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "layout.validation.orphaned_entry",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.account.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.account.duplicate_unit",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.account.no_units",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.account.unknown_unit",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.amount.bound_overflow",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "ledger.amount.constant_scale_exceeds_result",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.amount.duplicate_parameter_term",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.amount.normalization_overflow",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "ledger.amount.result_scale_exceeds_unit",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.amount.result_scale_out_of_range",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.amount.term_scale_exceeds_result",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.amount.unknown_parameter",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.certificate.claim_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.certificate.hash_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.certificate.pack_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.certificate.version_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.commit.evidence_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.commit.idempotency_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.commit.owner_version_overflow",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "ledger.commit.partial_evidence",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.identifier.empty",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.layer.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.leg.account_unit_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.leg.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.leg.empty_layer",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.leg.unknown_account",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.leg.unknown_layer",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.leg.unknown_unit",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.numeric.invalid_integer",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.numeric.non_canonical_integer",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.ontology.empty_artifact_id",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.ontology.empty_artifact_version",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.ontology.invalid_artifact_sha256",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.ontology.non_exact_artifact_id",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.ontology.non_exact_artifact_version",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.empty_id",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.no_accounts",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.no_layers",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.no_templates",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.no_units",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.pack.unsupported_ir_version",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "ledger.parameter.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.parameter.invalid_bounds",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.parameter.scale_out_of_range",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.posting.certificate_coverage_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.posting.contract_version_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.posting.identity_empty",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.posting.reference_mismatch",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.runtime.duplicate_parameter",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.runtime.evaluation_overflow",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "ledger.runtime.missing_parameter",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ledger.runtime.parameter_out_of_bounds",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.runtime.parameter_scale_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.runtime.unbalanced",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.runtime.unknown_parameter",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.runtime.unknown_template",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ledger.template.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.template.residual_overflow",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "ledger.template.too_few_legs",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.template.unbalanced_coefficient",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.template.unbalanced_constant",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.unit.duplicate",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.unit.duplicate_unit_term",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ledger.unit.empty_quantity_kind_term",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.unit.empty_unit_term",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.unit.inconsistent_dimension_binding",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.unit.invalid_quantity_kind_term",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.unit.invalid_unit_term",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ledger.unit.scale_out_of_range",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ledger.validation.too_many_diagnostics",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "lifecycle.validation.dead_end_state",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.default_not_initial",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.drops_guard",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_lifecycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_state",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_transition",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.duplicate_transition_id",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.empty_guard",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.empty_initial",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.empty_transition_source",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.invalid_guard",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.invalid_transition_id",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.path_property_violated",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.property_computed",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.property_not_enum",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.property_nullable",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.self_transition",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.terminal_has_transition",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.undeclared_write",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.unknown_property",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.unknown_state",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.unreachable_state",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.widens_initial",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "lifecycle.validation.widens_transition",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "mapping.model.expression_type",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.interface_not_implemented",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_condition",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_grantee",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_entitlement_join",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_nesting",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.invalid_on_delete",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.lifecycle_member",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "mapping.model.link_target_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.read_only_member",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.model.source_hash_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.model.undeclared_dependency",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unencodable_member",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.model.unknown_dataset",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_entitlement_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_interface",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_member",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unknown_object_type",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.model.unresolved_source",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.runtime.evaluation_failed",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.runtime.invalid_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.runtime.invalid_record",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.runtime.observed_out_of_band",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.validation.duplicate_map",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "mapping.validation.duplicate_member",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "mapping.validation.empty_scope",
+    "fix": "Bind the declarations to the same explicit organization and environment scope."
+  },
+  {
+    "code": "mapping.validation.incomplete_entitlement_snapshot",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "mapping.validation.interface_out_of_scope",
+    "fix": "Bind the declarations to the same explicit organization and environment scope."
+  },
+  {
+    "code": "mapping.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_entitlement_map",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_identity_binding",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "mapping.validation.invalid_required_link",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "mapping.validation.lifecycle_rule_shape",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "mapping.validation.unknown_target_map",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "mapping.vendor.invalid_contract",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.complexity_limit",
+    "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  },
+  {
+    "code": "metric.validation.currency_source_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "metric.validation.duplicate_metric",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "metric.validation.fan_out",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "metric.validation.grain_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.import_gap",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "metric.validation.invalid_additivity",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_conversion",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_currency",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_dimension",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_filter",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_measure",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_owner",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.invalid_time",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.mixed_currency",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "metric.validation.ontology_projection",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "metric.validation.partial_path",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "metric.validation.unit_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "metric.validation.unknown_metric",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unknown_object",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unknown_path",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "metric.validation.unsupported_semantics",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.computed_key_component",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.computed_with_default",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.default_out_of_range",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.default_type_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.default_unchecked",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.default_violates_constraint",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.duplicate_interface",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_invariant_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_key_component",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_key_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_link_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_normalization",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.duplicate_property_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "object_type.validation.empty_computed",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.empty_identity_rule",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.empty_invariant_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.empty_invariant_message",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.empty_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.empty_normalization",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.extension_namespace_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.extension_of_local_type",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.extension_shadows_member",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.foreign_inverse",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.inadmissible_key_kind",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.inheritance_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "object_type.validation.interface_link_target_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.interface_link_widens_cardinality",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.interface_property_type_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.interface_property_widens_nullability",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.interface_requirement_conflict",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_accounting_leg_declaration",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_computed",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_extension_namespace",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_invariant_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_invariant_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_key_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_link_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_match_policy",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_naming_series",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_owned_collection",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_property_id",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.invalid_status_date",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_override_changes_acyclic",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_override_redeclares",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_override_target_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_override_widens_cardinality",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.link_property_markings_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "object_type.validation.member_id_conflict",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.missing_interface_link",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "object_type.validation.missing_interface_property",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "object_type.validation.normalization_not_applicable",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.normalization_not_in_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.nullable_key_component",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.override_computed",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.override_type_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.override_widens_nullability",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.redundant_key",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.reserved_member_separator",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.shadows_base",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.tenant_type_not_subtype",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.tenant_type_outside_namespace",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.unknown_extension_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_interface",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_key_property",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_link_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_replacement",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unknown_supertype",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "object_type.validation.unnamespaced_member",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "object_type.validation.unsatisfiable_constraints",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology.lint.deep_hierarchy",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.duplicate_definition",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "ontology.lint.incomplete_provenance",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.mega_object",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.plural_type_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology.lint.redundant_member_prefix",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.source_mirroring",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.unknown_mapping_target",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "ontology.lint.unmapped_required_member",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "ontology.lint.unmapped_source_field",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.untraceable_provenance",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.versioned_name",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology.lint.weak_relationship",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "ontology_instance.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_link.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_pack.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "ontology_registry.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "policy.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.bound_exceeds_scale",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.bound_not_integer",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.bound_out_of_range",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.constraint_not_applicable",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.duplicate_enum_value",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.duplicate_member",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.duplicate_name",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "property_type.validation.empty_enum",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.empty_record",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_bound",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_enum_value",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_member",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_pattern",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.invalid_unit",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.inverted_range",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.ref_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "property_type.validation.scale_out_of_range",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "property_type.validation.unknown_ref",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "question.validation.comparison_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "question.validation.duplicate_question",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "question.validation.duplicate_selection",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "question.validation.empty_metrics",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.fan_out_rollup",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.invalid_freshness",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_name",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_rollup",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.invalid_window",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "question.validation.mixed_axis_rollup",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.non_additive_rollup",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.semi_additive_time",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.snapshot_aggregation",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "question.validation.unknown_comparison",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "relation.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "relation.validation.v2_relation_is_link",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.invalid_binding",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_decision_contract",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_fact_change",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_schema",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.invalid_source_command",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.jdm_custom_node_rejected",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_cycle",
+    "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
+  },
+  {
+    "code": "rule.validation.jdm_dangling_edge",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "rule.validation.jdm_function_node_rejected",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_hit_policy_rejected",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_invalid_edge",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.jdm_invalid_expression",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.jdm_io_node_count",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_recursive_sub_decision",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_switch_default",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_switch_unconnected_branch",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_unknown_column",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "rule.validation.jdm_unknown_node_type",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "rule.validation.jdm_unreachable_node",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "rule.validation.jdm_unresolved_import",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "rule.validation.jdm_unresolved_sub_decision",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "rule.validation.ordered_fold_invalid",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "rule.validation.ordered_fold_unsupported",
+    "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "sealing.extension_point.capability_missing",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "sealing.extension_point.contract_violation",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "sealing.extension_point.kind_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "sealing.extension_point.unresolved",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "sealing.input.duplicate_extension_point",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "sealing.input.duplicate_seal",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "sealing.monotonic.unseal_forbidden",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "sealing.overlay.base_mutation_denied",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "sealing.overlay.sealed_mutation",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "sealing.overlay.tenant_namespace_mismatch",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "sealing.overlay.tenant_namespace_required",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "sealing.runtime.capability_denied",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "sealing.upgrade.monotonic_violation",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "setting.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.blank_value",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "source_schema.validation.constraint_shape",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.duplicate_code",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.duplicate_field",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.duplicate_id",
+    "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  },
+  {
+    "code": "source_schema.validation.invalid_document",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_evidence",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_source_identity",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.invalid_timestamp",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "source_schema.validation.profile_counts",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "source_schema.validation.promoted_inference",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "source_schema.validation.sample_bound",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "source_schema.validation.unknown_dataset",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "source_schema.validation.unknown_field",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "widget.interaction.control_missing_for_transition",
+    "fix": "Declare the missing member at the reported path using the owning definition schema."
+  },
+  {
+    "code": "widget.interaction.control_without_legal_transition",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.dialog_depth_exceeds_verified_bound",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.dialog_no_keyboard_close",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.dialog_no_restore_target",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.keyboard_unreachable_control",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.nullable_without_clear",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.unnamed_control",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.interaction.unreachable_page",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  },
+  {
+    "code": "widget.validation.invalid_payload",
+    "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "widget.validation.missing_dependency",
+    "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "widget.validation.unsafe_action_binding",
+    "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  }
+]

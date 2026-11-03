@@ -3,6 +3,5 @@
   "message": "a declared navigation item or action binding has no control that offers it: {detail}",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T2",
-  "fix": "Declare the missing member at the reported path using the owning definition schema."
+  "tier": "T2"
 }

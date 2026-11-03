@@ -3,6 +3,5 @@
   "message": "key component {property} is listed twice",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T2"
 }

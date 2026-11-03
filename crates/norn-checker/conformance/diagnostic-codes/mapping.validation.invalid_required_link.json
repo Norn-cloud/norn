@@ -3,6 +3,5 @@
   "message": "required relationship {link} has no exact target key",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T6",
-  "fix": "Declare the missing member at the reported path using the owning definition schema."
+  "tier": "T6"
 }

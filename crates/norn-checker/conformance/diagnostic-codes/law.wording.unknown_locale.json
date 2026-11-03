@@ -3,6 +3,5 @@
   "tier": "T2",
   "severity": "error",
   "message": "Reviewed wording locale map was refused: unknown_locale",
-  "since": "0.2.0",
-  "fix": "Select an available BCP 47 tag from the pinned wording map; no fallback is applied."
+  "since": "0.2.0"
 }

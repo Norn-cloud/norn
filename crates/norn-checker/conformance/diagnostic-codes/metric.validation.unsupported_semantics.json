@@ -3,6 +3,5 @@
   "message": "Calculation requires semantics outside the admitted checker profile.",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  "tier": "T3"
 }

@@ -3,6 +3,5 @@
   "message": "{artifactId} is scoped to {dimension} {value}, which the referring artifact's scope cannot see",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T3"
 }

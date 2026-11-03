@@ -3,6 +3,5 @@
   "message": "constant cannot be normalized to unit precision without i128 overflow",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  "tier": "T2"
 }

@@ -3,6 +3,5 @@
   "message": "tenant object type {type} must extend a type: a tenant adds subtypes of installed types, never new base types",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T2"
 }

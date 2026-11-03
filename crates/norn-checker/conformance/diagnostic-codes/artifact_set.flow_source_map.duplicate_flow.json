@@ -3,6 +3,5 @@
   "message": "flow id {flowId} appears more than once in the flow source map",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T3"
 }

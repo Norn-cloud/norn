@@ -3,6 +3,5 @@
   "message": "implements {interface}, which names no interface",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T3"
 }

@@ -3,6 +3,5 @@
   "message": "Snapshot aggregation requires a series grain and ordered reductions; this contract refuses it.",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T3"
 }

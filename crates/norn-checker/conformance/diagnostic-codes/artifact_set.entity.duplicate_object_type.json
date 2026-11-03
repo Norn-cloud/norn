@@ -3,6 +3,5 @@
   "message": "object type {name} is already defined by entity artifact {artifactId}",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T3"
 }

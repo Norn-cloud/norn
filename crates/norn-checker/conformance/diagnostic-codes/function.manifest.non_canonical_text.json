@@ -3,6 +3,5 @@
   "message": "a manifest string or key is not in NFC form; hashing normalizes it, so it would share an identity with a different value",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T2"
 }

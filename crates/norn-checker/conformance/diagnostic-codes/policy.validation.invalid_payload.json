@@ -3,6 +3,5 @@
   "message": "PolicyIR payload is invalid at {path}: {detail}",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T2"
 }

@@ -3,6 +3,5 @@
   "message": "property {property} overrides the one {owner} declares with a type that is not the same or narrower; an override may only narrow",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T3"
 }

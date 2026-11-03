@@ -3,6 +3,5 @@
   "message": "existing law identities cannot be replaced; tightening adds a conjunctive identity",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Retain the inherited law unchanged; strengthen it with an additional law identity."
+  "tier": "T3"
 }

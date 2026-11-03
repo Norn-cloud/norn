@@ -3,6 +3,5 @@
   "message": "{artifactId} is pinned at version {version}, but resolves only at {available}",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  "tier": "T3"
 }

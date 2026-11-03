@@ -3,6 +3,5 @@
   "message": "abi {abi} is not supported; expected norn.function-abi/1",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  "tier": "T2"
 }

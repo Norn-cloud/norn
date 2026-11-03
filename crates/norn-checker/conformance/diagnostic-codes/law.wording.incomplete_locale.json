@@ -3,6 +3,5 @@
   "tier": "T2",
   "severity": "error",
   "message": "Reviewed wording locale map was refused: incomplete_locale",
-  "since": "0.2.0",
-  "fix": "Supply every required template, semantic label and phrase for the declared locale."
+  "since": "0.2.0"
 }

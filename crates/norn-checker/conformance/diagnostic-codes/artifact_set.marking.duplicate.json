@@ -3,6 +3,5 @@
   "message": "marking id {id} is already declared in the base or candidate set, or a marking reference is repeated",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T3"
 }

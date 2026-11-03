@@ -3,6 +3,5 @@
   "message": "whole-set law dependency closure refused: {detail}",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T3",
-  "fix": "Supply every required pinned declaration and keep the complete closure within the graph budget."
+  "tier": "T3"
 }

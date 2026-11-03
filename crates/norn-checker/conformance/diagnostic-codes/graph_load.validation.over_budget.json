@@ -3,6 +3,5 @@
   "message": "{measure} exceeds budget {budget}",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T6",
-  "fix": "Reduce the reported declaration or traversal footprint to the selected profile limit and check the complete set again."
+  "tier": "T6"
 }

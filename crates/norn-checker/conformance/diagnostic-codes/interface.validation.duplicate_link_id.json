@@ -3,6 +3,5 @@
   "message": "required link id {link} is already a required link or property id",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
+  "tier": "T2"
 }

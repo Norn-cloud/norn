@@ -3,6 +3,5 @@
   "message": "a unit term cannot also be its quantity-kind/dimension term",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
+  "tier": "T2"
 }

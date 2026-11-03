@@ -3,6 +3,5 @@
   "message": "source schema {schemaId} version {version} is not a source_schema artifact of the set or the base",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  "tier": "T3"
 }

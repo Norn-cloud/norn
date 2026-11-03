@@ -3,6 +3,5 @@
   "message": "unsupported ledger pack IR version `{irVersion}`; expected `{expected}`",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2",
-  "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  "tier": "T2"
 }

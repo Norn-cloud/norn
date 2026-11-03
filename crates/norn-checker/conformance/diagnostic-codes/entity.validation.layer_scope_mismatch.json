@@ -3,6 +3,5 @@
   "message": "artifact scope.tenantId {detail} does not match the {layer} layer it is checked in",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3",
-  "fix": "Bind the declarations to the same explicit organization and environment scope."
+  "tier": "T3"
 }
