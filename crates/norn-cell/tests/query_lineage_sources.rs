@@ -38,6 +38,12 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     let mut binding = serde_json::to_value(&*mapping).expect("compiled declaration");
     binding["payload"]["source"]["sha256"] = serde_json::Value::String(pin.sha256);
     *mapping = serde_json::from_value(binding).expect("bind compiled source identity");
+    artifacts.push(
+        serde_json::from_str(include_str!(
+            "../../../registry/core/artifacts/core.units.json"
+        ))
+        .expect("pinned unit catalog"),
+    );
     artifacts
 }
 fn store(path: &std::path::Path) -> CellStore {

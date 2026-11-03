@@ -8,6 +8,7 @@ export const Identified = Norn.interfaceType({
 export const Conversion = Norn.type({
   name: "demo.Conversion", title: "Synthetic scrap conversion", version: "0.1.0",
   implements: [Identified],
+  dependencies: [{ artifactId: "core.units", kind: "entity", version: "1.0.0", required: true }],
   properties: Schema.Struct({
     id: Schema.String,
     input: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
