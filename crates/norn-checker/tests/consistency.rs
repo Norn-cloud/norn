@@ -539,7 +539,10 @@ fn a_refused_relation_is_named() {
     );
 }
 
-fn path_concept(equations: serde_json::Value, many: bool) -> norn_ir::ArtifactEnvelope {
+fn path_concept(
+    equations: &serde_json::Value,
+    many: bool,
+) -> Result<norn_ir::ArtifactEnvelope, serde_json::Error> {
     serde_json::from_value(serde_json::json!({
         "irVersion":"0.1", "artifactId":"paths.Node.entity", "kind":"entity",
         "namespace":"paths", "name":"Node", "version":"0.1.0", "lifecycle":"draft",
@@ -548,17 +551,30 @@ fn path_concept(equations: serde_json::Value, many: bool) -> norn_ir::ArtifactEn
         "payload":{"entityVersion":"2.0", "objectType":{"name":"paths.Node",
             "links":[{"id":"next","target":"paths.Node","cardinality":{"to":if many {"many"} else {"one"},"from":"many"}}]},
             "extensions":{"norn.path-equations/1.0.0":equations}}
-    })).unwrap()
+    }))
 }
 
 #[test]
 fn path_equation_valid_identity_lowers_and_retains_origin() {
     let concept = path_concept(
-        serde_json::json!([{"id":"identity","left":[],"right":["next"]}]),
+        &serde_json::json!([{"id":"identity","left":[],"right":["next"]}]),
         false,
+    )
+    .unwrap();
+    let findings = norn_checker::check_entity_artifacts(
+        std::slice::from_ref(&concept),
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
     );
-    let theory =
-        norn_checker::consistency::lower_path_equations(&[concept], &Default::default()).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+    let theory = norn_checker::consistency::lower_path_equations(
+        &[concept],
+        &std::collections::BTreeSet::new(),
+    )
+    .unwrap();
     assert!(theory.validate().is_ok());
     let Dependency::Egd(equation) = &theory.dependencies[0] else {
         panic!("expected EGD")
@@ -608,8 +624,8 @@ fn path_equation_unknown_link_many_and_duplicate_id_refuse() {
         ),
     ] {
         let findings = norn_checker::consistency::lower_path_equations(
-            &[path_concept(equations, many)],
-            &Default::default(),
+            &[path_concept(&equations, many).unwrap()],
+            &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
         assert_eq!(
@@ -623,12 +639,12 @@ proptest::proptest! {
     #[test]
     fn path_equation_functional_cycles_keep_the_shared_root(length in 0usize..32) {
         let path = vec!["next"; length];
-        let concept = path_concept(serde_json::json!([{"id":"cycle","left":[],"right":path}]), false);
-        let theory = norn_checker::consistency::lower_path_equations(&[concept], &Default::default()).unwrap();
+        let concept = path_concept(&serde_json::json!([{"id":"cycle","left":[],"right":path}]), false).unwrap();
+        let theory = norn_checker::consistency::lower_path_equations(&[concept], &std::collections::BTreeSet::new()).unwrap();
         let mut facts = vec![Fact { relation:"concept:paths.Node".into(), values:vec![Value::Const("0".into())] }];
         for index in 0..length {
             facts.push(Fact { relation:"link:paths.Node:next".into(), values:vec![
-                Value::Const(index.to_string()), Value::Const((index + 1).to_string())] });
+                Value::Const(index.to_string()), Value::Const(index.checked_add(1).unwrap().to_string())] });
         }
         let conflict = matches!(chase(&theory, &facts, ChaseBudget::default()), Ok(ChaseOutcome::Conflict(_)));
         proptest::prop_assert_eq!(conflict, length > 0);
@@ -637,15 +653,19 @@ proptest::proptest! {
 
 #[test]
 fn path_equation_endpoint_mismatch_refuses_artifact_admission() {
-    let mut node = serde_json::to_value(path_concept(
-        serde_json::json!([{
-            "id":"bad_endpoint","left":["next"],"right":[]
-        }]),
-        false,
-    ))
+    let mut node = serde_json::to_value(
+        path_concept(
+            &serde_json::json!([{
+                "id":"bad_endpoint","left":["next"],"right":[]
+            }]),
+            false,
+        )
+        .unwrap(),
+    )
     .unwrap();
     node["payload"]["objectType"]["links"][0]["target"] = serde_json::json!("paths.Other");
-    let mut other = serde_json::to_value(path_concept(serde_json::json!([]), false)).unwrap();
+    let mut other =
+        serde_json::to_value(path_concept(&serde_json::json!([]), false).unwrap()).unwrap();
     other["artifactId"] = serde_json::json!("paths.Other.entity");
     other["payload"]["objectType"]["name"] = serde_json::json!("paths.Other");
     other["payload"]["objectType"]["links"] = serde_json::json!([]);
@@ -656,7 +676,7 @@ fn path_equation_endpoint_mismatch_refuses_artifact_admission() {
     let findings = norn_checker::check_entity_artifacts(
         &artifacts,
         &norn_checker::EntityArtifactSetContext {
-            registry: &Default::default(),
+            registry: &std::collections::BTreeSet::new(),
             base: &[],
             tenant: None,
         },
