@@ -472,9 +472,10 @@ fn validate_action_parameter_slice(
     let time_ok = action_input_field_type(payload.get("inputSchema"), effective_at.as_str())
         .is_some_and(|ty| is_string_key_type(&ty))
         && action_input_key_is_guaranteed(payload, effective_at.as_str(), derivations);
-    let scopes_unique = precedence.iter().enumerate().all(|(index, scope)| {
-        !precedence.iter().take(index).any(|prior| prior == scope)
-    });
+    let scopes_unique = precedence
+        .iter()
+        .enumerate()
+        .all(|(index, scope)| !precedence.iter().take(index).any(|prior| prior == scope));
     if !source_ok || !default_ok || !time_ok || !scopes_unique {
         diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a guaranteed string effective instant, distinct precedence scopes and an optional earlier same-type default", format!("{path}.key"), artifact_id));
     }

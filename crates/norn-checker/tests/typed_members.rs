@@ -299,14 +299,19 @@ fn parameter_malformed_literals_have_invalid_payload_diagnostics() {
         let mut setting = fixture(SETTING_FIXTURE);
         setting["payload"]["value"] = json!(literal);
         let errors = findings(setting);
-        assert!(errors.iter().any(|(code, path, _)| {
-            code == "setting.validation.invalid_payload" && path == "payload.value"
-        }), "{errors:?}");
+        assert!(
+            errors.iter().any(|(code, path, _)| {
+                code == "setting.validation.invalid_payload" && path == "payload.value"
+            }),
+            "{errors:?}"
+        );
     }
 }
 
 fn parameter_action() -> Value {
-    let mut action = fixture(include_str!("../../../fixtures/ir/retail-reorder.action.json"));
+    let mut action = fixture(include_str!(
+        "../../../fixtures/ir/retail-reorder.action.json"
+    ));
     action["payload"]["inputSchema"]["properties"]["effectiveAt"] = json!({"type":"string"});
     action["payload"]["inputSchema"]["required"] =
         json!(["requestId", "skuId", "quantity", "effectiveAt"]);
@@ -323,7 +328,11 @@ fn parameter_effective_input_is_guaranteed_before_admission() {
     let mut action = parameter_action();
     assert_eq!(findings(action.clone()), []);
     action["payload"]["inputSchema"]["required"] = json!(["requestId", "skuId", "quantity"]);
-    assert!(findings(action).iter().any(|(code, _, _)| code == "action.validation.invalid_payload"));
+    assert!(
+        findings(action)
+            .iter()
+            .any(|(code, _, _)| code == "action.validation.invalid_payload")
+    );
 }
 
 #[test]
@@ -332,6 +341,10 @@ fn parameter_precedence_refuses_duplicate_decoded_scopes() {
     for scopes in [json!([{}, {}]), json!([{}, {"orgId":null}])] {
         let mut action = parameter_action();
         action["payload"]["slice"][2]["key"]["parameter"]["precedence"] = scopes;
-        assert!(findings(action).iter().any(|(code, _, _)| code == "action.validation.invalid_payload"));
+        assert!(
+            findings(action)
+                .iter()
+                .any(|(code, _, _)| code == "action.validation.invalid_payload")
+        );
     }
 }
