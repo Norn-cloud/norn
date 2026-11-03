@@ -11,7 +11,7 @@ struct CheckInput {
     artifacts: String,
     context: String,
 }
-pub struct Checker;
+pub(crate) struct Checker;
 impl Backend for Checker {
     fn call(
         &mut self,
@@ -32,7 +32,7 @@ impl Backend for Checker {
         })
     }
 }
-pub fn host(
+pub(crate) fn host(
     org_id: String,
     environment_id: String,
     origin: String,
