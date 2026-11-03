@@ -299,7 +299,8 @@ fn main() -> Result<()> {
     println!(
         "{}",
         serde_json::to_string(
-            &json!({"scenario":"MVP-CONSTITUTION/T4-C2","assurance":"bounded runtime only; generated solver/inductive proof unknown",
+            &json!({"scenario":"MVP-CONSTITUTION/T4-C2","complete":false,"runtimeProfileStatus":"passed","generatedProofStatus":"unknown",
+        "assurance":"bounded runtime only; generated solver/inductive proof unknown",
         "withLoss":original_records,"lossRemoved":bad_records,"restored":restored_records,"staleOriginalForMutation":"PROOF-STALE/unknown",
         "openProofGoals":good.body()["obligations"]})
         )?
