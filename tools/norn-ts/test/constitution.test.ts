@@ -5,7 +5,7 @@ import { join, relative, sep } from "node:path"
 import { compileDefinitions } from "../src/compiler/definitions.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
-import { checkPack } from "../src/pack.ts"
+import { artifactId, checkPack } from "../src/pack.ts"
 import { checker } from "./checker.ts"
 
 if (process.env.CI && !checker) throw new Error("MVP-CONSTITUTION requires the real Wasm checker in CI")
@@ -32,6 +32,8 @@ test("MVP-CONSTITUTION compiles removal and restoration of the loss writer", () 
     }
     const withLoss = compile(join(root, sourcePath))
     const withoutLoss = compile(mutant)
+    const contracts = (artifacts: typeof withLoss) => artifacts.filter(a => artifactId(a) !== "constitution.melt.convert.action")
+    expect(canonicalJson(contracts(withoutLoss))).toBe(canonicalJson(contracts(withLoss)))
     expect(canonicalJson(withLoss)).not.toBe(canonicalJson(withoutLoss))
     expect(canonicalJson(compile(join(root, sourcePath)))).toBe(canonicalJson(withLoss))
     const generated = { withLoss, withoutLoss }
