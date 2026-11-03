@@ -9,6 +9,7 @@ const Masses = Schema.Struct({
 
 export const ConservedFineMass = Norn.interfaceType({
   name: "demo.ConservedFineMass", title: "Conserved fine mass", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", kind: "entity", version: "1.0.0", required: true }],
   properties: Masses,
   invariants: [{
     id: "fine_mass_conservation", classification: "integrity",
@@ -21,6 +22,7 @@ export const ConservedFineMass = Norn.interfaceType({
 
 export const MeltMeasurement = Norn.type({
   name: "demo.MeltMeasurement", title: "Melt measurement", version: "0.1.0",
+  dependencies: [{ artifactId: "core.units", kind: "entity", version: "1.0.0", required: true }],
   implements: [ConservedFineMass], immutable: true,
   properties: Schema.Struct({
     id: Schema.String,

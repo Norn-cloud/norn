@@ -8,6 +8,7 @@ scratch=$(mktemp -d "$scratch_root/surfaces.XXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)
 bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/melt-surfaces --org org_surfaces --env dev --out "$scratch/melt.json"
+bun -e 'const path = process.argv[1]; const artifacts = await Bun.file(path).json(); const units = await Bun.file("registry/core/artifacts/core.units.json").json(); await Bun.write(path, JSON.stringify([units, ...artifacts]) + "\n");' "$scratch/melt.json"
 (cd packages/norn-surface-acceptance && bun install --frozen-lockfile --backend copyfile)
 cargo build --locked -p norn-cli
 export NORN_CLI="$(cd "${CARGO_TARGET_DIR:-target}" && pwd)/debug/norn"
