@@ -61,6 +61,14 @@ fn payload_root_schemas_are_checked_in_and_current() {
     );
 
     for (filename, schema) in [
+        (
+            "structured_requirement.schema.json",
+            norn_ir::deontic::structured_requirement_schema(),
+        ),
+        (
+            "requirement_view.schema.json",
+            norn_ir::requirement_display::requirement_view_schema(),
+        ),
         ("metric_ir.schema.json", norn_ir::metric_ir_schema()),
         ("question_ir.schema.json", norn_ir::question_ir_schema()),
     ] {

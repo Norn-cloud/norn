@@ -8,38 +8,47 @@ use std::{
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::deontic::{
-    DeonticModality, DeonticRule, RequirementText, RequirementTiming, RequirementWording,
-    RuleSourceSpan, StructuredRequirement,
+    DeonticModality, DeonticRule, RequirementTiming, RequirementWording, RuleSourceSpan,
+    StructuredRequirement,
 };
-use norn_ir::requirement_display::{RequirementLocale, RequirementView};
+use norn_ir::requirement_display::RequirementView;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse};
 use serde_json::json;
 
 type DemoResult<T> = Result<T, Box<dyn Error>>;
 
 // TARGET: the profile lacks structured bilingual authoring; https://github.com/Norn-cloud/norn/issues/58
-fn target_wording() -> RequirementWording {
-    let text = |en: &str, ar: &str| RequirementText {
-        en: en.into(),
-        ar: ar.into(),
-    };
-    RequirementWording {
-        scope: text("Each melt in this app", "كل عملية صهر في هذا التطبيق"),
-        activation: text("When the melt is posted", "عندما تكون عملية الصهر مُرحَّلة"),
-        component: text(
+fn target_wording() -> DemoResult<RequirementWording> {
+    let mut wording: RequirementWording =
+        serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))?;
+    for (tag, scope, activation, component, response) in [
+        (
+            "en",
+            "Each melt in this app",
+            "When the melt is posted",
             "Its fine-metal mass measurements",
-            "قياسات كتلة المعدن الخالص للعملية",
-        ),
-        response: text(
             "Input fine mass equals output fine mass plus recorded fine-metal loss",
+        ),
+        (
+            "ar",
+            "كل عملية صهر في هذا التطبيق",
+            "عندما تكون عملية الصهر مُرحَّلة",
+            "قياسات كتلة المعدن الخالص للعملية",
             "كتلة المعدن الخالص الداخلة تساوي مجموع كتلته الخارجة وكتلة الفاقد المُسجَّل منه",
         ),
+    ] {
+        let entry = wording.0.get_mut(tag).ok_or("missing declared locale")?;
+        entry.scope = scope.into();
+        entry.activation = activation.into();
+        entry.component = component.into();
+        entry.response = response.into();
     }
+    Ok(wording)
 }
 
 // TARGET #58: structured bilingual authoring still needs a Rust adapter to the compiled TS law.
-fn target_requirement(law: LawIR) -> StructuredRequirement {
-    StructuredRequirement {
+fn target_requirement(law: LawIR) -> DemoResult<StructuredRequirement> {
+    Ok(StructuredRequirement {
         norm: DeonticRule {
             source: RuleSourceSpan {
                 artifact_id: format!("{}.law", law.id),
@@ -54,8 +63,8 @@ fn target_requirement(law: LawIR) -> StructuredRequirement {
             defeated_by: vec![],
         },
         timing: RequirementTiming::EveryCommittedState,
-        wording: target_wording(),
-    }
+        wording: target_wording()?,
+    })
 }
 
 fn authored_law(artifacts: &[ArtifactEnvelope]) -> DemoResult<LawIR> {
@@ -130,13 +139,13 @@ fn main() -> DemoResult<()> {
         "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
         law.id
     )?;
-    let requirement = target_requirement(law);
-    for locale in [RequirementLocale::En, RequirementLocale::Ar] {
+    let requirement = target_requirement(law)?;
+    for locale in ["en", "ar"] {
         let view = RequirementView {
             requirement: requirement.clone(),
-            locale,
+            locale: locale.into(),
         };
-        writeln!(stdout, "{locale:?} direction={}", view.direction())?;
+        writeln!(stdout, "{locale:?} direction={}", view.direction()?)?;
         for slot in view.slots()? {
             writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
         }
