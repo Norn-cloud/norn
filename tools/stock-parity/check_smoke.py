@@ -41,16 +41,27 @@ def check_fifo(dump):
         assert case['initial'] == dict(step=-1, attempts=[], stock=[], gl=[], documents=[])
     case = cases['cross-layer-fifo']
     assert case['status'] == 'complete' and len(case['checkpoints']) == 3
-    for cp, qty, value in zip(case['checkpoints'], ('2', '5', '1'), ('20', '80', '20')):
-        assert cp['attempts'][0]['outcome'] == 'accepted'
-        assert all(d['status'] == 1 for d in cp['documents'])
+    fields = ('requestId', 'line', 'warehouse', 'quantityDelta', 'valueDelta',
+              'quantity', 'value', 'incomingRate', 'valuationRate', 'cancelled', 'fifo')
+    stock = [
+        ('receive', 'receive:1', 'a', '2', '20', '2', '20', '10', '10', False, [['2', '10']]),
+        ('receive-two', 'receive-two:1', 'a', '3', '60', '5', '80', '20', '16', False, [['2', '10'], ['3', '20']]),
+        ('deliver', 'deliver:1', 'a', '-4', '-60', '1', '20', '15', '20', False, [['1', '20']]),
+    ]
+    gl = [
+        ('receive', 'stock-a', 'USD', '20', '0', False), ('receive', 'srbnb', 'USD', '0', '20', False),
+        ('receive-two', 'stock-a', 'USD', '60', '0', False), ('receive-two', 'srbnb', 'USD', '0', '60', False),
+        ('deliver', 'cogs', 'USD', '60', '0', False), ('deliver', 'stock-a', 'USD', '0', '60', False),
+    ]
+    for index, cp in enumerate(case['checkpoints']):
+        assert cp['step'] == index and cp['attempts'][0]['outcome'] == 'accepted'
+        assert [(r['requestId'], r['status']) for r in cp['documents']] == [(r[0], 1) for r in stock[:index+1]]
+        assert [tuple(r[k] for k in fields) for r in cp['stock']] == stock[:index+1]
+        assert len(cp['gl']) == 2 * (index + 1)
+        assert {tuple(r[k] for k in ('requestId', 'account', 'currency', 'debit', 'credit', 'cancelled'))
+                for r in cp['gl']} == set(gl[:2 * (index + 1)])
         assert sum(Decimal(r['debit']) - Decimal(r['credit']) for r in cp['gl']) == 0
-        assert (cp['stock'][-1]['quantity'], cp['stock'][-1]['value']) == (qty, value)
-    final = case['checkpoints'][-1]
-    assert len(final['stock']) == 3 and len(final['gl']) == 6
-    assert final['stock'][-1]['fifo'] == [['1', '20']]
-    assert {(r['account'], r['debit'], r['credit']) for r in final['gl'] if r['requestId'] == 'deliver'} == {
-        ('cogs', '60', '0'), ('stock-a', '0', '60')}
+
 
 
 if __name__ == '__main__':
@@ -60,4 +71,4 @@ if __name__ == '__main__':
     parser.add_argument('--fifo', action='store_true', help='Require the frozen seven-checkpoint corpus')
     args = parser.parse_args()
     (check_fifo if args.fifo else check)(json.loads(args.dump.read_text()))
-    print('Live oracle checkpoint assertions passed; no Norn parity claimed')
+    print('Dump checkpoint assertions passed; no Norn parity claimed')

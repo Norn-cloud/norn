@@ -27,3 +27,16 @@ class FrozenCorpus(unittest.TestCase):
         next(c for c in bad['cases'] if c['case'] == 'cross-layer-fifo')['checkpoints'][-1]['stock'][-1]['value'] = '21'
         with self.assertRaises(AssertionError):
             check_fifo(bad)
+
+    def test_wrong_intermediate_queue_receipt_account_or_history_refuse(self):
+        for change in ('queue', 'account', 'history'):
+            bad = deepcopy(self.dump)
+            case = next(c for c in bad['cases'] if c['case'] == 'cross-layer-fifo')
+            if change == 'queue':
+                case['checkpoints'][1]['stock'][-1]['fifo'] = [['5', '16']]
+            elif change == 'account':
+                next(r for r in case['checkpoints'][1]['gl'] if r['requestId'] == 'receive-two' and r['credit'] == '60')['account'] = 'stock-a'
+            else:
+                case['checkpoints'][2]['stock'][0]['value'] = '19'
+            with self.assertRaises(AssertionError):
+                check_fifo(bad)
