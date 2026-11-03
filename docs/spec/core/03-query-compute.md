@@ -89,8 +89,8 @@ findings under their retained governing definitions. Recovery evaluates the
 selected record incarnation; historical selection admits only findings committed
 by its authenticated knowledge frontier. The existing observation findings read
 returns the evidence document (rule, source, offending values and reason).
-Callers supplying nonempty `QueryContext.exclusions` refuse with
-`core.compute.caller_exclusions`; the field is engine-owned in answer documents.
+`QueryContext` cannot represent exclusions; unknown wire fields refuse decoding.
+Only `QueryResult.exclusions` carries engine-derived finding pins.
 Visible candidates only disclose exclusion pins. Incremental maintenance retracts
 changes in finding disposition even when the aggregate input is unchanged.
 Historical source-dispute overlays remain refused as

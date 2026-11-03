@@ -128,7 +128,6 @@ fn context() -> QueryContext {
                 },
             )]),
         )]),
-        exclusions: BTreeMap::new(),
     }
 }
 

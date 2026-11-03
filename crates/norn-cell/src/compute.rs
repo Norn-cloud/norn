@@ -55,16 +55,15 @@ pub struct QueryContext {
     pub source_cursors: Frontier,
     /// Watermarks for required dependencies.
     pub watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
-    /// Engine-owned excluded identity → finding ID. Nonempty caller input refuses.
-    pub exclusions: BTreeMap<String, String>,
 }
 impl QueryContext {
     // DATA-QUARANTINE: shared cell/IVM population selection pins retained evidence.
     fn include_record<E: SqlEngine>(
-        &mut self,
+        &self,
         reader: &crate::StoreReader<'_, E>,
         record: &ObjectRecord,
         frontier: Option<u64>,
+        exclusions: &mut BTreeMap<String, String>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<bool, CellError> {
         if record.scope != self.scope {
@@ -77,8 +76,7 @@ impl QueryContext {
             .question_findings(&self.world, record, frontier)?
             .first()
         {
-            self.exclusions
-                .insert(record.id.clone(), finding.id.clone());
+            exclusions.insert(record.id.clone(), finding.id.clone());
             return Ok(false);
         }
         Ok(true)
@@ -157,7 +155,18 @@ pub struct QueryResult {
     /// Server-resolved scope, mappings, frontier and watermarks.
     #[serde(flatten)]
     pub context: QueryContext,
+    /// DATA-QUARANTINE: engine-resolved identity → durable finding ID.
+    pub exclusions: BTreeMap<String, String>,
 }
+
+#[derive(Serialize)]
+struct FindingEvidence<'a> {
+    #[serde(flatten)]
+    context: &'a QueryContext,
+    exclusions: &'a BTreeMap<String, String>,
+}
+
+pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
 
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
 /// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
@@ -224,10 +233,7 @@ impl<E: SqlEngine> CellStore<E> {
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
         self.conn.transaction(|| {
-            let mut context = context;
-            if !context.exclusions.is_empty() {
-                return Err(refused("core.compute.caller_exclusions"));
-            }
+            let mut exclusions = BTreeMap::new();
             self.check_question_scope(&context.scope)?;
             if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
                 let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
@@ -300,7 +306,13 @@ impl<E: SqlEngine> CellStore<E> {
                     }
                 };
                 members.insert(id.clone());
-                if !context.include_record(&reader, &record, cutoff.map(|c| c.frontier), visible)? {
+                if !context.include_record(
+                    &reader,
+                    &record,
+                    cutoff.map(|c| c.frontier),
+                    &mut exclusions,
+                    visible,
+                )? {
                     continue;
                 }
                 if let Some(value) = project(plan, &record.values).map_err(refused)? {
@@ -310,7 +322,7 @@ impl<E: SqlEngine> CellStore<E> {
             let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
             let result = materialize(
                 plan,
-                context,
+                (context, exclusions),
                 revision,
                 query_pin,
                 definition_pin,
@@ -394,7 +406,7 @@ fn bucket_key(value: &Contribution) -> Result<String, CellError> {
 
 pub(crate) fn materialize(
     plan: &QuestionPlan,
-    context: QueryContext,
+    population: QuestionPopulation,
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
@@ -406,7 +418,7 @@ pub(crate) fn materialize(
     }
     finish(
         plan,
-        context,
+        population,
         revision,
         query_pin,
         definition_pin,
@@ -417,13 +429,14 @@ pub(crate) fn materialize(
 
 pub(crate) fn finish(
     plan: &QuestionPlan,
-    context: QueryContext,
+    population: QuestionPopulation,
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
+    let (context, exclusions) = population;
     type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
@@ -470,7 +483,7 @@ pub(crate) fn finish(
             ))
         })
         .collect::<Result<_, CellError>>()?;
-    let mut complete = context.exclusions.is_empty();
+    let mut complete = exclusions.is_empty();
     let (mut stale, mut aged) = (false, false);
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
@@ -496,7 +509,11 @@ pub(crate) fn finish(
             }
         }
     }
-    let lineage_ref = crate::codec::hash_json(&(&query_pin, &revision, &context, &rows))?;
+    let evidence = FindingEvidence {
+        context: &context,
+        exclusions: &exclusions,
+    };
+    let lineage_ref = crate::codec::hash_json(&(&query_pin, &revision, evidence, &rows))?;
     Ok(QueryResult {
         query_pin,
         definition_pin,
@@ -518,6 +535,7 @@ pub(crate) fn finish(
         },
         complete,
         context,
+        exclusions,
     })
 }
 

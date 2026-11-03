@@ -228,12 +228,10 @@ impl IncrementalQuestion {
     fn apply<E: SqlEngine>(
         &mut self,
         store: &CellStore<E>,
-        mut context: QueryContext,
+        context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
-        if !context.exclusions.is_empty() {
-            return Err(refused("core.compute.caller_exclusions"));
-        }
+        let mut exclusions = BTreeMap::new();
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
@@ -274,6 +272,7 @@ impl IncrementalQuestion {
                         &reader,
                         &record,
                         self.knowledge.map(|c| c.frontier),
+                        &mut exclusions,
                         visible,
                     )?;
                     records.insert(id, (record, authorized));
@@ -282,11 +281,11 @@ impl IncrementalQuestion {
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
-        let old = &self.result.context.exclusions;
+        let old = &self.result.exclusions;
         changed.extend(
             old.keys()
-                .chain(context.exclusions.keys())
-                .filter(|id| old.get(*id) != context.exclusions.get(*id))
+                .chain(exclusions.keys())
+                .filter(|id| old.get(*id) != exclusions.get(*id))
                 .cloned(),
         );
         for id in changed {
@@ -313,7 +312,7 @@ impl IncrementalQuestion {
         }
         let mut result = finish(
             &self.plan,
-            context,
+            (context, exclusions),
             head,
             super::historical::query_pin(
                 store.model().model_hash(),

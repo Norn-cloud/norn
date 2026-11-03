@@ -68,14 +68,9 @@ fn scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier() 
 fn query_eligibility_and_visibility_do_not_change_the_quarantine_authority() {
     let (mut store, plan, mut context) = fixture();
     load(&mut store);
-    context
-        .exclusions
-        .insert("SYN-MELT-15-1".into(), "caller-forged-finding".into());
-    assert!(matches!(
-        store.evaluate_question(&plan, context.clone(), |_| Ok(true)),
-        Err(CellError::ComputeRefused("core.compute.caller_exclusions"))
-    ));
-    context.exclusions.clear();
+    let mut wire = serde_json::to_value(&context).expect("context wire");
+    wire["exclusions"] = serde_json::json!({"SYN-MELT-15-1":"caller-forged-finding"});
+    assert!(serde_json::from_value::<norn_cell::compute::QueryContext>(wire).is_err());
     context.population_pin = "fixture-without-G2".into();
     context.authorization_epoch = 2;
     let hidden = store
@@ -182,7 +177,7 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .observation_findings(&context.world, TYPE, "SYN-MELT-15-1")
         .expect("finding")
         .remove(0);
-    assert_eq!(excluded.context.exclusions["SYN-MELT-15-1"], finding.id);
+    assert_eq!(excluded.exclusions["SYN-MELT-15-1"], finding.id);
     assert_eq!(excluded.freshness, Freshness::Incomplete);
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -204,7 +199,6 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
             .evaluate_question_known_at(&plan, context.clone(), before, |_| Ok(true))
             .expect("before finding")
             .result
-            .context
             .exclusions
             .is_empty()
     );
@@ -220,7 +214,7 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .store()
         .evaluate_question(&plan, context.clone(), |_| Ok(true))
         .expect("corrected");
-    assert!(corrected.context.exclusions.is_empty());
+    assert!(corrected.exclusions.is_empty());
     reference = corrected;
     reference.engine = Engine::Ivm;
     assert_eq!(
@@ -232,9 +226,6 @@ fn data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm() {
         .store()
         .evaluate_question_known_at(&plan, context, cutoff, |_| Ok(true))
         .expect("historical");
-    assert_eq!(
-        historical.result.context.exclusions,
-        excluded.context.exclusions
-    );
+    assert_eq!(historical.result.exclusions, excluded.exclusions);
     assert_eq!(historical.result.rows, excluded.rows);
 }

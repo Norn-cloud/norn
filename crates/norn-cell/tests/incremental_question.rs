@@ -26,8 +26,7 @@ proptest::proptest! {
         proptest::prop_assert!(view.was_rebuilt());
         for (step, (kind, id, amount, day, restart)) in changes.into_iter().enumerate() {
             let key = format!("SYN-MELT-15-{id}");
-            match kind {
-                0..=3 => {
+            if kind <= 3 {
                     let write = if kind == 3 {
                         FactWriteRow::Delete { object_type: TYPE.into(), key }
                     } else {
@@ -37,13 +36,6 @@ proptest::proptest! {
                         idempotency_key: Some(format!("generated-{step}")), writes: vec![write], ..CommitBatch::default() };
                     store.commit(&batch).expect("change");
                     proptest::prop_assert!(matches!(store.commit(&batch).expect("redelivery"), CommitOutcome::Replayed(_)));
-                }
-                4 => {
-                    let mut forged = context.clone();
-                    forged.exclusions.insert(key, "caller-forged-finding".into());
-                    proptest::prop_assert!(matches!(view.advance(&store, forged, |_| Ok(true)), Err(CellError::ComputeRefused("core.compute.caller_exclusions"))));
-                }
-                _ => {}
             }
             let cursor = format!("fixture/{}", store.verified_head().expect("head").commits);
             context.source_cursors.get_mut("erp").expect("source").insert("measurements".into(), cursor.clone());
