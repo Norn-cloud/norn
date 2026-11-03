@@ -76,7 +76,7 @@ mod tests {
         action.action_id = "known.action".into();
         action
     }
-    fn policy(actions: Vec<String>) -> PolicyRoot {
+    fn policy(actions: &[String]) -> PolicyRoot {
         serde_json::from_value(
             json!({"accessVersion":"0.1","policyId":"test.access","rules":[{
                 "ruleId":"grant","actions":actions,"resourceType":"test.Order",
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn declared_policy_actions_project_their_grants() {
         let graph =
-            project(&[action()], &[policy(vec!["known.action".into()])]).expect("complete graph");
+            project(&[action()], &[policy(&["known.action".into()])]).expect("complete graph");
         assert_eq!(
             graph.grants["known.action"],
             BTreeSet::from(["reviewer".into()])
@@ -100,7 +100,7 @@ mod tests {
         assert!(
             project(
                 &[action()],
-                &[policy(vec!["known.action".into(), "missing.action".into()])]
+                &[policy(&["known.action".into(), "missing.action".into()])]
             )
             .is_none()
         );
@@ -111,7 +111,7 @@ mod tests {
         assert!(
             project(
                 &[known.clone(), known],
-                &[policy(vec!["known.action".into()])]
+                &[policy(&["known.action".into()])]
             )
             .is_none()
         );
@@ -121,7 +121,7 @@ mod tests {
         #[test]
         fn any_undeclared_policy_action_closes_the_projection(suffix in "[a-z]{1,12}") {
             let missing = format!("missing.{suffix}");
-            proptest::prop_assert!(project(&[action()], &[policy(vec!["known.action".into(), missing])]).is_none());
+            proptest::prop_assert!(project(&[action()], &[policy(&["known.action".into(), missing])]).is_none());
         }
     }
 }
