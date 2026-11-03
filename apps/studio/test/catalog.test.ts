@@ -32,6 +32,7 @@ test("a concept states its facts, relationships and parents as declared", () => 
 
 test("laws attach to the concepts they govern", () => {
   expect(catalog.byName.get("core.analytics.Restatement")?.rules.length).toBeGreaterThan(0)
+  expect(catalog.byName.get("core.analytics.RestatementEvidence")?.rules.length).toBeGreaterThan(0)
 })
 
 test("names read as plain words", () => {

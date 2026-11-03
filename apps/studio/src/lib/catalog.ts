@@ -116,15 +116,14 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     const payload = artifact.payload
     let def: Schemas["NornIrObjectTypeDef"] | Schemas["NornIrInterfaceDef"]
     let parents: string[]
-    let invariants: string[] = []
     if ("objectType" in payload) {
       def = payload.objectType
       parents = [...def.extends ? [def.extends] : [], ...def.implements ?? []]
-      invariants = (def.invariants ?? []).map(({ description, message }) => description ?? message)
     } else if ("interface" in payload) {
       def = payload.interface
       parents = def.extends ?? []
     } else continue
+    const invariants = (def.invariants ?? []).map(({ description, message }) => description ?? message)
     const title = conceptTitle(def.name)
     const fed = feeds.get(def.name) ?? []
     concepts.push({
