@@ -32,11 +32,13 @@
 pub mod catalog;
 pub mod classification;
 mod codec;
+pub mod compute;
 pub mod engine;
 pub mod error;
 pub mod export;
 mod export_journal;
 mod history;
+mod history_selection;
 pub mod host;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
@@ -63,7 +65,7 @@ pub mod system;
 mod write;
 
 pub use error::CellError;
-pub use history::{FactSnapshot, FactVersionEvidence};
+pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{

@@ -65,6 +65,17 @@ ANALYSIS-PUBLISH-1 activation binds only an authenticated, unconsumed Function r
 
 HOST-CONFORMANCE-1 cross-boundary perform/receipt and authenticated publication fixtures live in the non-publishing, tests-only host-conformance crate. Its declared Norn edges are development-only; metrics retains its existing IR/checker boundary and the violation baseline cannot grow.
 
+ASOF-KNOWLEDGE-1 incarnation selection reads authenticated immutable version evidence under an aggregate row/byte budget. It selects the highest eligible version at an inclusive knowledge cutoff and immutable source commit frontier (including equal-clock corrections), preserves tombstones and source receipts, and returns explicit exhaustion without a partial answer. Effective-time interpretation, query projection, authorization and restatement publication remain the declared question/host boundaries; this lookup alone is not DATA-ASOF acceptance.
+
+ASOF-KNOWLEDGE-1 discovers bounded retained root identities independently of the current type hierarchy, authenticates each root’s newest eligible version before checking stored lineage, and chooses the latest matching emitting commit across roots. Removal/reparenting and unrelated roots sharing a key cannot hide retained evidence.
+
+ASOF-KNOWLEDGE-1 historical revisions derive event sequence, ledger hash and commit count from the authenticated frontier receipt, including event-free commits. Receipt bytes/rows are admitted before decode; a frontier recorded after the requested knowledge clock refuses temporal leakage. An empty frontier is the real genesis prefix.
+
+ASOF-KNOWLEDGE-1 native historical questions retain the existing admitted exact query algebra, explicit effective window, authenticated knowledge clock/frontier, historical World and exact member versions. Visibility uses current host authorization. The bounded profile requires unchanged retained model/definition interpretation and evaluates existing live/delayed freshness at the selected source clock; the separate AsOf freshness-policy mode remains refused. This read-only query does not authorize a restatement or publish a projection generation.
+
+ASOF-KNOWLEDGE-1 reader-bound historical evidence caches admit and authenticate each immutable receipt once per read; all facts still verify their snapshot commitment and exact emitting write. The cache cannot be deserialized or rebound to another reader. Shared receipt bytes are charged when decoded, rather than charging a nonexistent repeated decode for each fact in the same commit.
+
+RESTATE-HISTORY-1 native private-cache maintenance consumes the next authenticated source receipt, retracts/replaces its changed canonical members through Core 03 arithmetic, and compares with a rebuild at the same T/K slice. Backward/skipped points and source/authorization refusals retain the prior complete generation. This is query maintenance; governed restatement activation, durable output switching and posted-book reconciliation remain separate authorities.
 ## Receipt-bound incarnation evidence
 
 **SNAPSHOT-RECEIPT-1:** every new `WrittenRow` commits its complete canonical incarnation snapshot digest before the producing receipt is hashed, including tombstones and intermediate versions in one atomic batch. Historical reads verify that digest against the authenticated emitting receipt; changing both the snapshot and its co-located hash cannot replace it. Legacy/unbound entries refuse as unproven; no migration derives a trusted commitment from their current mutable contents. Only a private writer can inspect its own not-yet-receipted incarnation inside the atomic commit; it cannot export it as evidence. Named scenarios cover joint snapshot/hash tampering, unbound commitments, receipt substitution, restart and repeated writes/tombstones.
@@ -74,3 +85,44 @@ The cell is the trusted committer: receipt rewriting by a party with cell-store 
 Store format `norn.cell.store/8` requires these receipt commitments. Pre-change `/7` stores, like formats `/2` through `/6`, must be recreated; opening them refuses before history verification. Never derive commitments from mutable legacy rows.
 
 ANALYSIS-PUBLISH-1 correspondence uses the pinned scrap-yield K1 CSV and the real configured host Function. The timed synthetic world authenticates each feature/outcome knowledge time through its producing receipt; the bulk world records all 240 observations at October 26 in one receipt. PUBLISH binds the Function's independent `fresh` flag as well as frontier age. It must accept the timed world, refuse `fresh=false` even with zero age, refuse the bulk world with `core.projection.publication_guard` and temporal detail, retain its unconsumed Function receipt, and leave no partial effects. Exported incarnation digests must match their producing WrittenRow commitments. The fixture preregisters the threshold, diagnostic remedy and explicit independence/confounding limitations; a descriptive result does not establish inference or a causal claim.
+## Native restatement activation
+
+**RESTATE-HISTORY-1 / OUTPUT-ATOMIC:** `core.analytics.Restatement` retains the
+previous complete bundle while its host rebuilds every declared question slice.
+The host stages a content-addressed candidate with reason, old/new question and
+mapping pins, effective windows, knowledge frontiers and exact retraction and
+replacement contributions. Missing, duplicate, incomplete or unauthorized slices
+refuse with `core.world.invalid_restatement`; same-interpretation deltas must
+match a full exact recompute before staging. Changed interpretations are explicit
+complete rebuilds over retained authenticated inputs; unsupported historical
+model changes still refuse.
+
+The declared `approve` and `activate` actions use the existing kernel authorizer,
+lifecycle checks and commit read guards. Approval is not a host boolean. Activation
+changes a single receipt-bound slot incarnation selecting the entire bundle.
+Readers authenticate that incarnation and return either all old outputs or all
+new outputs. A building/ready/approved slot exposes the old complete generation
+labelled stale, including after interruption and restart. Prior active versions
+remain reproducible under current population authorization. The view label is
+`restated`; no posted events or books are rewritten.
+
+Named runtime scenarios cover the scrap-yield K1/K2 correction, exact loss and
+ratio deltas, multi-slice selection, denied/premature approval and activation,
+interrupted staging, stale tokens, current authorization and reproducible old
+answers. Generated change sequences include source redelivery and restart.
+
+RESTATE-HISTORY-1 replay retains at least the prior selected knowledge clock
+while advancing each authenticated receipt frontier. A query clock ahead of
+commit clocks cannot move backward during maintenance; retaining that already
+selected ceiling never admits a version beyond the pinned frontier. Named and
+generated clock-lead scenarios include a later excluded version below the clock
+ceiling, an injected preparation refusal, reopen/resume and exact correspondence.
+Preparation itself writes no slot or candidate. Its refusal leaves the ledger
+and old complete answer unchanged; the separately committed building slot stays
+stale and resumable across restart, as required for interrupted rebuilds.
+Private slot writes choose a time no earlier than the observed cell commit-clock
+floor, preserving the candidate's independently pinned knowledge coordinates.
+Earlier source commits do not invalidate the captured staging time; transactional
+version and clock guards still refuse actual concurrent conflicts.
+
+RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.

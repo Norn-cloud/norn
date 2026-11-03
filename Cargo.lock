@@ -1576,6 +1576,7 @@ dependencies = [
  "norn-projections",
  "norn-testkit",
  "object_store",
+ "proptest",
  "rusqlite",
  "serde",
  "serde_json",

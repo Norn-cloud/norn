@@ -15,6 +15,7 @@ const lawFixtures = JSON.parse(readFileSync(join(root, "fixtures/law-ir/laws.jso
 const compiled = [...core, ...measurements, ...lawFixtures]
 const laws = compiled.filter((artifact) => artifact.kind === "law")
 const html = renderCatalogDocument({ artifacts: compiled })
+const declaredLaws = compiled.filter((artifact) => artifact.kind === "law")
 
 const declaredTypes = compiled.flatMap((artifact) => {
   if (artifact.kind !== "entity") return []
@@ -53,12 +54,12 @@ test("decimal properties show their declared scale and unit", () => {
 })
 
 test("laws show their subject, modality and declaration without inventing wording or origin", () => {
-  for (const law of laws) expect(html).toContain(law.name)
+  for (const law of declaredLaws) expect(html).toContain(law.name)
   expect(html).toContain("<code>self.status == &#39;shipped&#39; and self.paid == false</code>")
   expect(html).toContain('<span class="chip">never</span>')
   expect(html).toContain("app <code>erpnext</code>")
-  expect(html.match(/The inherited origin chain is not exposed by the server\./g)?.length).toBe(laws.length)
-  expect(html.match(/<div lang="ar" dir="rtl">/g)?.length).toBe(laws.length)
+  expect(html.match(/The inherited origin chain is not exposed by the server\./g)?.length).toBe(declaredLaws.length)
+  expect(html.match(/<div lang="ar" dir="rtl">/g)?.length).toBe(declaredLaws.length)
   expect(html).not.toMatch(/\bproved\b/)
 })
 
