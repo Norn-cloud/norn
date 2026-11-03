@@ -15,6 +15,8 @@ if len(paths) != 1: raise SystemExit("expected exactly one native question test 
 print(paths[0])')
 sha256sum "$binary"
 scenarios=(
+  clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart
+  generated_clock_leads_preserve_pinned_restatement_and_recovery
   governed_activation_switches_all_slices_and_preserves_old_answers
   missing_incomplete_and_stale_candidates_never_replace_the_complete_output
   activated_deltas_equal_full_recompute_through_redelivery_and_restart
