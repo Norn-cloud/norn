@@ -275,3 +275,27 @@ fn admission_refuses_sqlite_equivalent_internal_type_names() {
     let model = Model::from_definitions(&[object], &[]).unwrap();
     assert_eq!(prepare_action_model(&model).err().unwrap().status, 400);
 }
+
+#[test]
+fn host_permission_does_not_replace_kernel_authority() {
+    struct HostOnly;
+    impl Authorizer for HostOnly {
+        fn authorize(&self, _request: &AccessRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+    }
+    let host = stock_host().with_authorizer(HostOnly);
+    let before = host.cell().unwrap().store().read().dump().unwrap();
+    let refused = call(
+        &host,
+        "createexchange",
+        "no-kernel-grant",
+        json!({"id":"DENIED"}),
+        Some("principal:operator"),
+        1,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(refused.status, 403);
+    assert_eq!(host.cell().unwrap().store().read().dump().unwrap(), before);
+}
