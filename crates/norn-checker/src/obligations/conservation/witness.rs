@@ -117,9 +117,9 @@ mod tests {
         let Delta::Affine(rows) = &mut w[0].delta else {
             unreachable!()
         };
-        rows[0][1] = q(3);
+        *rows[0].last_mut().unwrap() = q(1);
         let witness = render(&c, &w).unwrap().unwrap();
         assert_eq!(witness["parameters"], json!([["0", "1"], ["0", "1"]]));
-        assert_eq!(witness["weightedChange"], json!(["3", "1"]));
+        assert_eq!(witness["weightedChange"], json!(["1", "1"]));
     }
 }
