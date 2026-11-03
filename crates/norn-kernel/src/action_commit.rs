@@ -905,6 +905,9 @@ where
     H::Input: From<JsonObject>,
 {
     let action = call.action;
+    let unsupported = || ActionRefusal::UnsupportedEffect {
+        action_id: action.action_id.clone(),
+    };
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
     crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     if (action.quantity_effect.is_some() || !action.create_links.is_empty())
@@ -921,9 +924,7 @@ where
                 })
             ))
     {
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        });
+        return Err(unsupported());
     }
     check_scope(call)?;
     let prepared_input = match preparation {
@@ -939,9 +940,7 @@ where
         )?,
     };
     match action.effect_program.as_ref() {
-        None => Err(ActionRefusal::UnsupportedEffect {
-            action_id: action.action_id.clone(),
-        }),
+        None => Err(unsupported()),
         Some(ActionEffectProgram::FireTransition {
             object_id_field,
             object_kind,
