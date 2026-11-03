@@ -266,3 +266,17 @@ fn registry_generation_refuses_invalid_entries() {
         assert_eq!(result.is_ok(), change == "valid", "{change}: {result:?}");
     }
 }
+
+#[test]
+fn registry_is_strictly_ordered_for_binary_search() {
+    assert!(
+        REGISTRY
+            .windows(2)
+            .all(|pair| matches!(pair, [a, b] if a.code < b.code))
+    );
+    assert!(
+        REGISTRY
+            .iter()
+            .all(|entry| codes::lookup(entry.code).is_some())
+    );
+}
