@@ -440,16 +440,23 @@ mod tests {
         path: &std::path::Path,
         pin_absence: bool,
     ) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
+        setup_with_destination(path, pin_absence, true)
+    }
+    fn setup_with_destination(
+        path: &std::path::Path,
+        pin_absence: bool,
+        has_destination: bool,
+    ) -> (Cell, DispatchedCommand, FunctionReceipt, Checks, Model) {
         let manifest: FunctionManifest = fixture("manifest");
         let checks =
             Checks(norn_checker::function::admit_function_manifest(&manifest).expect("manifest"));
         let mut invocation: FunctionInvocation = fixture("invocation");
-        invocation.freshness = if pin_absence {
+        invocation.freshness = if pin_absence || !has_destination {
             norn_ir::function::FreshnessMode::RelevantState
         } else {
             norn_ir::function::FreshnessMode::DestinationCas
         };
-        invocation.destination = Some(norn_ir::function::Destination {
+        invocation.destination = has_destination.then(|| norn_ir::function::Destination {
             object_type: "test.ReceiptTarget".into(),
             key: "target-1".into(),
             expected_owner_version: 1,
@@ -726,11 +733,15 @@ mod tests {
         }
     }
     fn exercise_receipt_action(member: &str, accepts: bool) {
+        exercise_receipt_action_with_destination(member, accepts, true);
+    }
+    fn exercise_receipt_action_with_destination(member: &str, accepts: bool, has_destination: bool) {
         use norn_kernel::{
             ActionCall, ActionOutcome, DecisionTurn, TypeCatalog, World, commit_action,
         };
         let dir = tempfile::tempdir().expect("dir");
-        let (mut cell, dispatched, receipt, checks, model) = setup(&dir.path().join("cell.sqlite"));
+        let (mut cell, dispatched, receipt, checks, model) =
+            setup_with_destination(&dir.path().join("cell.sqlite"), false, has_destination);
         let digest = retain(&mut cell, &dispatched, &receipt, &checks, true).expect("retain");
         let action: norn_ir::ActionRoot = serde_json::from_value(json!({
             "actionId":"test.accept", "title":"Accept", "scopeRequired":["orgId"], "idempotent":false,"ledgered":true,"ledgerCategory":"test",
@@ -774,7 +785,9 @@ mod tests {
         if !accepts {
             let error =
                 commit_action(&mut cell, &catalog, &request, &ActionAllow).expect_err("refusal");
-            if member == "confidence" {
+            if !has_destination {
+                assert!(matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "receipt"));
+            } else if member == "confidence" {
                 assert!(
                     matches!(error, norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::InvalidOutput { ref reason }) if reason.contains("receipt result property confidence"))
                 );
@@ -836,6 +849,10 @@ mod tests {
         request.idempotency_key = "accept-2".into();
         assert!(commit_action(cell, catalog, request, &ActionAllow).is_err());
         assert_eq!(cell.store().verified_head().expect("head"), published);
+    }
+    #[test]
+    fn destinationless_authenticated_receipt_refuses_without_consumption() {
+        exercise_receipt_action_with_destination("intent", false, false);
     }
     #[test]
     fn receipt_action_binds_before_guard_and_exact_retry_reproduces_answer() {
