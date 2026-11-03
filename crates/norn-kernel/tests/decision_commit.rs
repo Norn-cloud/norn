@@ -2441,7 +2441,7 @@ impl CellHost for PagedFoldHost {
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
     ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
-        self.commits += 1;
+        self.commits = self.commits.checked_add(1).unwrap();
         self.cell.commit(commit)
     }
     fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
@@ -2546,7 +2546,7 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
             .unwrap();
         let before = visible(&host.cell, &keys);
         let ledger_before = host.cell.ledger().len();
-        let prepared = (|| -> Result<_, DecisionRefusal<Infallible>> {
+        let prepared = (|| -> Result<_, Box<DecisionRefusal<Infallible>>> {
             let slice = load_partition_slice(
                 &host,
                 &catalog,
@@ -2567,7 +2567,7 @@ fn fold_membership_refuses_paginated_prefix_and_fences_empty_and_populated_sets(
                 json!({"items":items,"initial":{"total":0,"count":0,"ids":[],"segments":[]}}),
             )
             .unwrap();
-            host.evaluations += 1;
+            host.evaluations = host.evaluations.checked_add(1).unwrap();
             let evaluated = evaluate(
                 &decision,
                 &decision
