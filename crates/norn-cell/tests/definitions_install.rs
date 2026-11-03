@@ -7167,7 +7167,8 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
         if identity {
             raw.insert("source_id".into(), Value::from("é"));
         }
-        let (correction_id, _) = cell.store_mut().inject_mapping_bundle(&correction, &bundle_input()).expect("new source event");
+        let mut capture = CellStore::open(&path, cell.store().model().clone(), StoreOptions::default()).expect("correction connection");
+        let (correction_id, _) = capture.inject_mapping_bundle(&correction, &bundle_input()).expect("new source event");
         assert!(cell.process_mapping_bundle(&correction_id).expect("capture a correction under a different event"));
     }
 }
