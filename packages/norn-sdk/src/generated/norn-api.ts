@@ -4439,7 +4439,7 @@ export interface components {
         };
         /**
          * @description The only IR `0.1` version literal of the connector, widget, customization,
-         *     policy, derived, and setting roots and of ontology business packs.
+         *     policy and derived roots and of ontology business packs.
          * @enum {string}
          */
         NornIrRequirementIrVersion01: "0.1";

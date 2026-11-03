@@ -11016,7 +11016,7 @@
       },
       "NornIrRequirementIrVersion01": {
         "type": "string",
-        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy, derived, and setting roots and of ontology business packs.",
+        "description": "The only IR `0.1` version literal of the connector, widget, customization,\npolicy and derived roots and of ontology business packs.",
         "enum": [
           "0.1"
         ]
