@@ -75,7 +75,7 @@ jobs:
               const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: pullHead });
               for (const pr of pulls.filter((pr) => pr.head.sha === pullHead)) {
                 const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
-                  .filter(status => status.context === 'rights-revocation')
+                  .filter(status => status.context.toLowerCase() === 'rights-revocation')
                   .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
                 const comments = [];
                 for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {

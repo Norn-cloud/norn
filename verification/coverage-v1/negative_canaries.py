@@ -1818,10 +1818,10 @@ def rights_workflow_canaries() -> None:
             except coverage_validator.InvalidCoverage:
                 continue
             raise AssertionError(f"accepted {which} {mutation}")
-    for mutation in ("cancel", "disabled", "failure-bypass", "deleted-body"):
+    for mutation in ("cancel", "pending-cancel", "disabled", "failure-bypass", "deleted-body"):
         public = yaml.safe_load(source)
         writer = public["jobs"]["rights-revocation"]
-        if mutation == "cancel": writer["concurrency"]["cancel-in-progress"] = True
+        if mutation in {"cancel", "pending-cancel"}: writer["concurrency"] = {"group": "shared", "cancel-in-progress": mutation == "cancel"}
         elif mutation == "disabled": writer["if"] = "false"
         elif mutation == "failure-bypass": public["jobs"]["trusted-policy"]["steps"][0]["run"] = "true"
         elif mutation == "deleted-body": writer["steps"][0]["with"]["script"] = writer["steps"][0]["with"]["script"].replace("context.payload.changes?.body?.from", "undefined")

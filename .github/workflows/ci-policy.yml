@@ -222,9 +222,6 @@ jobs:
     permissions:
       contents: read
       statuses: write
-    concurrency:
-      group: rights-revocation-${{ github.event.issue.number }}
-      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -337,7 +334,7 @@ jobs:
               return permissions.get(username);
             };
             const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
-              .filter(status => status.context === 'rights-revocation')
+              .filter(status => status.context.toLowerCase() === 'rights-revocation')
               .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
             const comments = [];
             for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {

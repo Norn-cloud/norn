@@ -835,6 +835,10 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         .get("revocations")
         .and_then(serde_json::Value::as_array)
         .ok_or("missing durable revocation history")?;
+    // GitHub caps statuses per SHA/context at 1000. A full ledger requires a new head.
+    if revocations.len() >= 1000 {
+        return Err("durable revocation history exhausted; use a new head".into());
+    }
     let mut boundary = None;
     let mut status_ids = BTreeSet::new();
     for status in revocations {
@@ -848,8 +852,10 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
             .filter(|at| rights_timestamp(at))
             .ok_or("invalid revocation timestamp")?;
         if !status_ids.insert(id)
-            || status.get("context").and_then(serde_json::Value::as_str)
-                != Some("rights-revocation")
+            || status
+                .get("context")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|context| !context.eq_ignore_ascii_case("rights-revocation"))
             || status.get("state").and_then(serde_json::Value::as_str) != Some("success")
         {
             return Err("invalid durable revocation status".into());

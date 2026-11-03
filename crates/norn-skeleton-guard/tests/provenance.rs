@@ -1837,3 +1837,20 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
         assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
     }
 }
+
+#[test]
+fn durable_revocation_history_cannot_be_hidden_by_context_case_or_saturation() {
+    let head = "1".repeat(40);
+    let mut doc = rights_document(&head, &"2".repeat(40));
+    doc["revocations"] = json!([{"id":10,"context":"RIGHTS-REVOCATION","state":"success","created_at":"2026-11-03T00:01:00Z"}]);
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
+    doc["comments"][0]["created_at"] = json!("2026-11-03T00:01:01Z");
+    doc["comments"][0]["updated_at"] = doc["comments"][0]["created_at"].clone();
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_ok());
+    doc["revocations"] = json!((0..1000).map(|id| json!({"id":id,"context":"rights-revocation","state":"success","created_at":"2026-11-03T00:01:00Z"})).collect::<Vec<_>>());
+    assert!(
+        norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head)
+            .unwrap_err()
+            .contains("exhausted")
+    );
+}

@@ -642,9 +642,9 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     # and fail-closed publishers; substring matches cannot establish execution.
     programs = {
         'Persist the rights revocation boundary': ('90167cc951cb021f4540c1cbc695a96061b8ea5d95f54b059795893637cb4dd3', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('4d0f195b0af388bc465cf06787c72438f136bc8ccd9e8641d8814c7aa8963353', ['script'], True, None),
+        'Record admin approvals of the exact PR head': ('9bb5580dbcfba692875168ea96f875b0621661898949100b067e596781bbe8f6', ['script'], True, None),
         'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('685caef4348d52cb8db996db04146f97c0fcfaceed9cabc61e23bcdad5fa409c', ['script'], True, None),
+        'Record admin approvals of the queued heads': ('8a3f74e3ded7517aa9db20c511cf4a59a4cd9a1385e41090bef22dccbf2a74b9', ['script'], True, None),
         'Report trusted policy on the group head': ('006a4ebe5ab690da267c9b0665a11c68b979fd4f9d53b73aac2054642c53cb27', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
@@ -666,7 +666,6 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                "(contains(github.event.comment.body, '/revoke-rights') || "
                "(github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))"),
         "permissions": {"contents": "read", "statuses": "write"},
-        "concurrency": {"group": "rights-revocation-${{ github.event.issue.number }}", "cancel-in-progress": False},
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
     }
     require({k: v for k, v in ledger.items() if k != "steps"} == expected_ledger,

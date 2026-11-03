@@ -34,7 +34,8 @@ status history before policy evaluation. Later comment events do not cancel that
 writer. Deleting or editing a revocation cannot erase this boundary: PR and group
 checks read the complete history and require a new, unedited acknowledgment
 created strictly after the latest recorded revocation. Same-second review fails
-closed. Missing history or failed recording cannot admit a head.
+closed. Missing history or failed recording cannot admit a head. A saturated
+status ledger requires a new head rather than losing later revocations.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits
