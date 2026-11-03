@@ -117,8 +117,8 @@ pub struct GuaranteeScenario {
 }
 
 /// One generated obligation, including every unsupported goal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(remote = "Self", rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(transform = ineligible_is_unknown)]
 pub struct GoalGuarantee {
     /// Index in the retained Challenge.
@@ -138,6 +138,18 @@ pub struct GoalGuarantee {
     pub scenario: Option<GuaranteeScenario>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "GoalGuarantee", rename_all = "camelCase", deny_unknown_fields)]
+struct GoalGuaranteeWire {
+    index: u32,
+    goal_kind: String,
+    eligible: bool,
+    verdict: GuaranteeVerdict,
+    level: GuaranteeLevel,
+    evidence: Option<EvidenceRecord>,
+    scenario: Option<GuaranteeScenario>,
+}
+
 impl GoalGuarantee {
     fn eligibility_valid(&self) -> bool {
         self.eligible || (matches!(self.verdict, GuaranteeVerdict::Unknown { .. })
@@ -149,12 +161,12 @@ impl Serialize for GoalGuarantee {
         if !self.eligibility_valid() {
             return Err(serde::ser::Error::custom("ineligible goals require Unknown verdict and level"));
         }
-        Self::serialize(self, serializer)
+        GoalGuaranteeWire::serialize(self, serializer)
     }
 }
 impl<'de> Deserialize<'de> for GoalGuarantee {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let goal = Self::deserialize(deserializer)?;
+        let goal = GoalGuaranteeWire::deserialize(deserializer)?;
         if !goal.eligibility_valid() {
             return Err(serde::de::Error::custom("ineligible goals require Unknown verdict and level"));
         }
