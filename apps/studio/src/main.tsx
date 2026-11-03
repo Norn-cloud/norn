@@ -77,7 +77,7 @@ function Navigation() {
           <SidebarTrigger />
           <span className="text-meta text-muted-foreground">{SECTIONS.find(({ path }) => path === pathname)?.label}</span>
         </header>
-        <main className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></main>
+        <div className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></div>
       </SidebarInset>
     </>
   )
