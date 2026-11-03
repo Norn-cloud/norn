@@ -14,12 +14,13 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
+/// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod finite;
 mod induction;
 /// Host-selected retained normative authority, outside candidate control.
 pub mod normative;
 /// Source-bound Core 06 overlay obligation generation.
 pub mod overlay;
-/// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;

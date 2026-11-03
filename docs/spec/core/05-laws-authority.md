@@ -53,6 +53,8 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 **LAW-COMMIT-1 (severity):** Only Error-severity law violations enter refusal journaling and delivery consumption; Warning violations remain quality findings and do not enter that refusal path.
 
+**PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and the exact retained property-domain declaration digest, including inherited, referenced-type and interface constraints; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
+
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
@@ -162,6 +164,21 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
 
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
