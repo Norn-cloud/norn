@@ -26,3 +26,12 @@ transaction callback. Transactions reject nesting; the platform rejects SQL
 transaction control. Cursors are drained before returning. Large exact values
 use the shared store's text representation. See the `workers_sql` example for
 real-runtime checks; it is an adapter probe, not a governed action endpoint.
+
+Build the example with `cargo rustc --locked -p norn-cell --no-default-features
+--example workers_sql --target wasm32-unknown-unknown --profile wasm-release`,
+then run matching `wasm-bindgen --target web --out-name workers_sql --out-dir
+crates/norn-cell/examples/workers-sql/pkg` on the resulting example Wasm.
+With esbuild and the pinned celld on PATH, run `celld dev --port 9876` from
+`examples/workers-sql`. `/` exercises the adapter; `/state` returns semantic
+SQLite/alarm state; `/alarm-refusal` must return 422 with identical state.
+Restart without `--clean` and compare `/state` before rerunning `/`.

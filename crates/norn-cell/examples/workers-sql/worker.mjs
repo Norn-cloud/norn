@@ -10,7 +10,7 @@ export class Probe {
       try {
         await this.ctx.storage.transaction(async txn => {
           txn.sql.exec("INSERT INTO probe VALUES (4,'alarm-refused',NULL)").toArray();
-          await txn.setAlarm(Date.now() + 120000);
+          await txn.setAlarm(Date.now() + 7200000);
           throw new Error("refuse after alarm");
         });
       } catch (error) {
@@ -26,7 +26,7 @@ export class Probe {
     // The alarm write and synchronous Rust transaction share the outer commit.
     return this.ctx.storage.transaction(async txn => {
       const result = exercise(txn);
-      await txn.setAlarm(Date.now() + 60000);
+      await txn.setAlarm(Date.now() + 3600000);
       return new Response(result);
     });
   }

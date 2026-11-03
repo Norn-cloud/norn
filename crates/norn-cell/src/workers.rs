@@ -132,10 +132,10 @@ impl SqlEngine for WorkersEngine {
             transact(&self.storage, closure.as_js_value())
         };
         match (result, output) {
-            (_, Some(Err(error))) => Err(error),
+            (Err(error), Some(Err(refusal))) if error.as_string().as_deref() == Some("norn:rollback") => Err(refusal),
             (Err(error), _) => Err(backend(error).into()),
             (Ok(_), Some(Ok(value))) => Ok(value),
-            (Ok(_), None) => Err(CellError::Engine("transaction callback missing".into()).into()),
+            (Ok(_), None | Some(Err(_))) => Err(CellError::Engine("transaction callback/rollback missing".into()).into()),
         }
     }
 }
