@@ -28,6 +28,7 @@ fn fixture() -> Vec<Value> {
             } else {
                 norn_ir::PropertyType::Decimal {
                     scale: norn_ir::WholeNumber(0),
+                    additivity: norn_ir::PropertyAdditivity::default(),
                     rounding: None,
                     unit: None,
                     currency_source: None,
