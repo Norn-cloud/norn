@@ -162,7 +162,7 @@ mod tests {
             let (a, b) = (q(n, d), q(m, e));
             prop_assert_eq!(a.checked_add(b).unwrap().checked_sub(b), Some(a));
             prop_assert_eq!(a.checked_neg().unwrap().checked_neg(), Some(a));
-            prop_assert_eq!(a.cmp(b), Some((i128::from(n) * i128::from(e)).cmp(&(i128::from(m) * i128::from(d)))));
+            prop_assert_eq!(a.cmp(b), Some(n.checked_mul(e).unwrap().cmp(&m.checked_mul(d).unwrap())));
             if m != 0 { prop_assert_eq!(a.checked_div(b).unwrap().checked_mul(b), Some(a)); }
         }
     }
