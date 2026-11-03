@@ -1,0 +1,92 @@
+{
+  "artifactId": "core.analytics.RestatementEvidence.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Complete analytical restatement evidence",
+  "namespace": "core.analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "invariants": [
+        {
+          "expression": "(self.status == 'building') or ((((self.reason != '') and (self.slice_ids != '')) and (self.candidate != '')) and (self.candidate_digest != ''))",
+          "id": "complete_candidate",
+          "message": "Approval requires a complete staged analytical generation."
+        }
+      ],
+      "name": "core.analytics.RestatementEvidence",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "building"
+              },
+              {
+                "value": "ready"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "active"
+              }
+            ]
+          }
+        },
+        {
+          "id": "reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "slice_ids",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "active",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "active_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "candidate",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "candidate_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

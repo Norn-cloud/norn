@@ -1,0 +1,152 @@
+{
+  "artifactId": "core.analytics.Restatement.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Analytical restatement",
+  "namespace": "core.analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.analytics.RestatementEvidence"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "ready",
+            "approved"
+          ],
+          "initial": [
+            "building"
+          ],
+          "property": "status",
+          "transitions": [
+            {
+              "from": [
+                "building"
+              ],
+              "guards": [
+                "(self.candidate != '') and (self.candidate_digest != '')"
+              ],
+              "id": "stage",
+              "to": "ready"
+            },
+            {
+              "from": [
+                "active"
+              ],
+              "id": "rebuild",
+              "to": "building"
+            },
+            {
+              "from": [
+                "ready"
+              ],
+              "guards": [
+                "(((self.reason != '') and (self.slice_ids != '')) and (self.candidate != '')) and (self.candidate_digest != '')"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "guards": [
+                "(self.candidate != '') and (self.candidate_digest != '')"
+              ],
+              "id": "activate",
+              "to": "active"
+            }
+          ]
+        }
+      ],
+      "name": "core.analytics.Restatement",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "building",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "building"
+              },
+              {
+                "value": "ready"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "active"
+              }
+            ]
+          }
+        },
+        {
+          "id": "reason",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "slice_ids",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "",
+          "id": "active",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "",
+          "id": "active_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "",
+          "id": "candidate",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "",
+          "id": "candidate_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.analytics.Restatement.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

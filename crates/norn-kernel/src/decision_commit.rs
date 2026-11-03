@@ -1403,6 +1403,18 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// Complete atomic closure includes foreign or unknown ownership.
+    #[error("core.txn.atomic_boundary: dependency {key} is outside the local profile")]
+    AtomicBoundary {
+        /// Non-local or unresolved dependency.
+        key: FactKey,
+    },
+    /// A consumed delivery has foreign or unresolved ownership.
+    #[error("core.txn.atomic_boundary: consumed delivery {consumed} is outside the local profile")]
+    AtomicDeliveryBoundary {
+        /// Complete local delivery identity, including generation or incarnation.
+        consumed: Consumed,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1663,6 +1675,9 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
+                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
+            }
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
@@ -1718,11 +1733,13 @@ impl<X> DecisionRefusal<X> {
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
-            | Self::TraversalLimitExceeded { key, .. } => Some(key),
+            | Self::TraversalLimitExceeded { key, .. }
+            | Self::AtomicBoundary { key } => Some(key),
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::ReadOnlyWorld
+            Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -1738,6 +1755,10 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
+            CommitError::AtomicDeliveryBoundary { consumed } => {
+                Self::AtomicDeliveryBoundary { consumed }
+            }
             CommitError::Law { key, reason } => Self::Law { key, reason },
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
