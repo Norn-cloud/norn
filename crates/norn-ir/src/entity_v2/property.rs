@@ -2,7 +2,7 @@
 //! v2 (ruling 2026-09-09 §5: "value types with units, formats, enums, and
 //! constraints").
 //!
-//! A [`PropertyType`] is one of eleven kinds. A [`PropertyTypeDef`] gives a type
+//! A [`PropertyType`] is one of twelve kinds. A [`PropertyTypeDef`] gives a type
 //! and its [`PropertyConstraints`] a [`PropertyTypeName`], so object types
 //! (T1-ONT-1b..d) reuse it by name through the `ref` kind instead of
 //! restating it.
@@ -173,6 +173,11 @@ pub enum PropertyType {
         #[schemars(with = "UnitRef")]
         per_unit: Option<UnitRef>,
     },
+    /// VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.
+    DecimalBinding {
+        /// Same-name members in one interface bind identically.
+        group: String,
+    },
     /// `true` or `false`.
     Boolean {},
     /// An instant in time with an explicit timezone policy.
@@ -212,6 +217,31 @@ pub enum PropertyType {
 }
 
 impl PropertyType {
+    /// Whether this type contains an interface-only Decimal binding.
+    #[must_use]
+    pub fn contains_decimal_binding(&self) -> bool {
+        let mut pending = vec![self];
+        while let Some(kind) = pending.pop() {
+            match kind {
+                Self::DecimalBinding { .. } => return true,
+                Self::Record { members } => {
+                    pending.extend(members.iter().map(|m| &m.property_type))
+                }
+                Self::Text { .. }
+                | Self::Integer { .. }
+                | Self::Decimal { .. }
+                | Self::Boolean { .. }
+                | Self::Timestamp { .. }
+                | Self::Date { .. }
+                | Self::Duration { .. }
+                | Self::Enum { .. }
+                | Self::JsonExt { .. }
+                | Self::Ref { .. } => {}
+            }
+        }
+        false
+    }
+
     /// The wire `kind` tag.
     #[must_use]
     pub const fn kind(&self) -> PropertyKind {
@@ -219,6 +249,7 @@ impl PropertyType {
             Self::Text { .. } => PropertyKind::Text,
             Self::Integer {} => PropertyKind::Integer,
             Self::Decimal { .. } => PropertyKind::Decimal,
+            Self::DecimalBinding { .. } => PropertyKind::DecimalBinding,
             Self::Boolean {} => PropertyKind::Boolean,
             Self::Timestamp { .. } => PropertyKind::Timestamp,
             Self::Date {} => PropertyKind::Date,
@@ -238,6 +269,7 @@ pub enum PropertyKind {
     Text,
     Integer,
     Decimal,
+    DecimalBinding,
     Boolean,
     Timestamp,
     Date,
@@ -250,10 +282,11 @@ pub enum PropertyKind {
 
 impl PropertyKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Text,
         Self::Integer,
         Self::Decimal,
+        Self::DecimalBinding,
         Self::Boolean,
         Self::Timestamp,
         Self::Date,
@@ -271,6 +304,7 @@ impl PropertyKind {
             Self::Text => "text",
             Self::Integer => "integer",
             Self::Decimal => "decimal",
+            Self::DecimalBinding => "decimal-binding",
             Self::Boolean => "boolean",
             Self::Timestamp => "timestamp",
             Self::Date => "date",

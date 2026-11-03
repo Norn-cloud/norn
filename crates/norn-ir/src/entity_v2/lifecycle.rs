@@ -322,6 +322,7 @@ pub fn effective_lifecycles<'a>(
                     | PropertyType::Duration { .. }
                     | PropertyType::Record { .. }
                     | PropertyType::JsonExt { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Ref { .. } => None,
                 })
         };

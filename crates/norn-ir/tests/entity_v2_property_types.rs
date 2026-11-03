@@ -30,7 +30,7 @@ macro_rules! fixture {
     };
 }
 
-const FIXTURES: [(&str, &str); 11] = [
+const FIXTURES: [(&str, &str); 12] = [
     fixture!("text"),
     fixture!("integer"),
     fixture!("decimal"),
@@ -42,6 +42,10 @@ const FIXTURES: [(&str, &str); 11] = [
     fixture!("json-ext"),
     fixture!("ref"),
     fixture!("record"),
+    (
+        "decimal-binding",
+        r#"{"name":"a.quantity","type":{"kind":"decimal-binding","group":"quantity"}}"#,
+    ),
 ];
 
 fn canonical(source: &str) -> String {

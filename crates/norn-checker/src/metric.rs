@@ -814,6 +814,7 @@ impl<'a> Checker<'a> {
                     | PropertyType::Duration {}
                     | PropertyType::Record { .. }
                     | PropertyType::JsonExt { .. }
+                    | PropertyType::DecimalBinding { .. }
                     | PropertyType::Ref { .. },
                 )
                 | EffectiveKind::Unresolved => false,

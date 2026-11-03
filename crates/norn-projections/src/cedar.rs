@@ -935,11 +935,11 @@ fn project_value_type(
             );
             None
         }
-        PropertyType::Ref { .. } => {
+        PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. } => {
             add_loss(
                 losses,
                 subject.to_owned(),
-                "property type reference did not resolve to a concrete value type",
+                "property type is not bound to a concrete value type",
             );
             None
         }

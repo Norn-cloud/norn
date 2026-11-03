@@ -495,7 +495,7 @@ fn snapshot_property_schema_error(
         EffectiveKind::Base(PropertyType::Boolean {}) => Some("boolean"),
         EffectiveKind::Base(PropertyType::Record { .. }) => Some("object"),
         EffectiveKind::Base(PropertyType::JsonExt { .. }) => None,
-        EffectiveKind::Base(PropertyType::Ref { .. })
+        EffectiveKind::Base(PropertyType::Ref { .. } | PropertyType::DecimalBinding { .. })
         | EffectiveKind::Registry(_)
         | EffectiveKind::Unresolved => {
             return Some(format!(
