@@ -21,7 +21,7 @@ export class Cell {
       crypto.randomUUID(), BigInt(Date.now())));
     const headers = { 'Content-Type': 'application/json' };
     if (reply.session) headers['Mcp-Session-Id'] = reply.session;
-    if (reply.status === 405) headers.Allow = 'POST';
+    if (reply.status === 405) headers.Allow = new URL(request.url).pathname === '/catalog' ? 'GET' : 'POST';
     return new Response(reply.status === 202 ? null : reply.body, { status: reply.status, headers });
   }
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real celld HTTP versus the identical native Rust request-value service."""
 import json
+from contextlib import closing
 import os
 from pathlib import Path
 import subprocess
@@ -28,7 +29,7 @@ def start():
         for _ in range(100):
             assert child.poll() is None, 'celld exited'
             try:
-                with HTTPConnection('127.0.0.1', 9876, timeout=1) as connection:
+                with closing(HTTPConnection('127.0.0.1', 9876, timeout=1)) as connection:
                     connection.request('GET', '/')
                     connection.getresponse().read()
                 return child
@@ -42,18 +43,17 @@ child = start()
 session = None
 def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     global session
-    headers = dict(headers or {})
-    headers.setdefault('Norn-Org', 'demo')
-    headers.setdefault('Norn-Environment', 'dev')
-    headers.setdefault('MCP-Protocol-Version', '2025-11-25')
-    headers['Content-Type'] = 'application/json'
+    headers = {'Norn-Org': 'demo', 'Norn-Environment': 'dev',
+               'MCP-Protocol-Version': '2025-11-25', 'Content-Type': 'application/json'} | (headers or {})
     if session:
         headers.setdefault('Mcp-Session-Id', session)
     body = '' if message is None else json.dumps(message)
-    with HTTPConnection('127.0.0.1', 9876, timeout=15) as connection:
+    with closing(HTTPConnection('127.0.0.1', 9876, timeout=15)) as connection:
         connection.request(method, path, body=body if method == 'POST' else None, headers=headers)
         response = connection.getresponse()
         raw = response.read().decode()
+        if status == 405:
+            assert response.getheader('Allow') == ('GET' if path == '/catalog' else 'POST')
         actual = {'status': response.status, 'body': raw, 'session': response.getheader('Mcp-Session-Id')}
     envelope = dict(method=method, path=path, headers={k.lower(): v for k, v in headers.items()}, body=body)
     transcript.append([envelope, actual['session'] or 'unused', 1])
@@ -61,7 +61,6 @@ def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     assert actual['status'] == status, actual
     session = actual['session'] or session
     return json.loads(raw) if raw else None
-
 def rpc(method, params=None):
     return dict(jsonrpc='2.0', id=1, method=method, params=params or {})
 
@@ -89,6 +88,7 @@ try:
     assert refused['result']['structuredContent']['code'] == 'request.invalid'
     send(message={'jsonrpc': '2.0', 'method': 'notifications/initialized'}, status=202)
     send('GET', '/mcp', status=405)
+    send('POST', '/catalog', status=405)
     send('GET', '/schema', status=404)
     for method in ['tables/list', 'columns/list', 'schema/browse', 'sql/execute', 'resources/list']:
         assert 'error' in send(message=rpc(method))
