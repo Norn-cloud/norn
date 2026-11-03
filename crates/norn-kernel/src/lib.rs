@@ -62,6 +62,7 @@ mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
+pub mod flow_identity;
 pub mod governing_laws;
 pub mod limits;
 pub mod naming_series;
@@ -77,6 +78,7 @@ pub mod receipt_binding;
 pub mod refusal;
 pub mod result_reconciliation;
 pub mod snapshot_observe;
+pub mod timer_schedule;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
