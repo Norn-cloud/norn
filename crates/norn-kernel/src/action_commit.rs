@@ -1812,7 +1812,6 @@ fn validate_stored_patch<X>(
             });
         };
         if declared.computed
-            || declared.protected()
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -2314,7 +2313,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed || candidate.protected())
+                            .is_none_or(|candidate| candidate.computed)
                 })
             })
         })
@@ -2636,9 +2635,7 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed
-                    || property.protected()
-                    || lifecycle_properties.contains(&property.id)
+                if property.computed || lifecycle_properties.contains(&property.id)
                 {
                     None
                 } else {
