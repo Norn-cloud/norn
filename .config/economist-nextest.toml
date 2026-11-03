@@ -6,55 +6,55 @@
 # Every test filter has one required name: an empty selection must fail.
 # All current phases are native runs; Studio replaces a phase only after landing.
 
-[scripts.setup."Beat 1 | native run | three systems"]
+[scripts.setup."beat-1-native-run-three-systems"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_aliases_roles_and_one_economic_identity)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 1 | native run | ambiguous identity refuses"]
+[scripts.setup."beat-1-native-run-ambiguous-identity-refuses"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_ambiguous_identity_refuses_without_sku_guessing)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 1 | native run | sales price is not stock cost"]
+[scripts.setup."beat-1-native-run-sales-price-is-not-stock-cost"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_gap_shopify_price_is_never_stock_cost_or_gl)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 1 | native run | quarantine reason"]
+[scripts.setup."beat-1-native-run-quarantine-reason"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "definitions_install", "-E", "test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 2 | native run | exact question and contributions"]
+[scripts.setup."beat-2-native-run-exact-question-and-contributions"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "exact_question", "-E", "test(=scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 2 | native run | incremental equals recompute"]
+[scripts.setup."beat-2-native-run-incremental-equals-recompute"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "incremental_question", "-E", "test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 2 | native run | restatement and old as-of answer"]
+[scripts.setup."beat-2-native-run-restatement-and-old-as-of-answer"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "restatement_activation", "-E", "test(=governed_activation_switches_all_slices_and_preserves_old_answers)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 3 | native run | allocation plans"]
+[scripts.setup."beat-3-native-run-allocation-plans"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-decisions", "--test", "evaluate", "-E", "test(=cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 3 | native run | committed pricing"]
+[scripts.setup."beat-3-native-run-committed-pricing"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "jewelry_pricing", "-E", "test(=jewel_price_sell_and_scrap_commit_exactly_once_and_reopen)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 4 | native run | refused conservation transaction"]
+[scripts.setup."beat-4-native-run-refused-conservation-transaction"]
 command = ["cargo", "run", "--locked", "-p", "norn-cell", "--example", "constitution"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 4 | native run | retained invariant responses"]
+[scripts.setup."beat-4-native-run-retained-invariant-responses"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-kernel", "--test", "invariant_commit", "-E", "test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 4 | native run | build generated proof backend"]
+[scripts.setup."beat-4-native-run-build-generated-proof-backend"]
 command = ["cargo", "build", "--locked", "-p", "norn-checker", "--example", "quint"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."Beat 4 | native run | generated bounded counterexample"]
+[scripts.setup."beat-4-native-run-generated-bounded-counterexample"]
 command = ["bun", "test", "./tools/norn-proofs/check.test.ts", "--test-name-pattern", "^tla_ts_apalache_parity$"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
@@ -68,17 +68,17 @@ success-output = "immediate"
 [[profile.economist-rehearsal.scripts]]
 filter = "all()"
 setup = [
-  "Beat 1 | native run | three systems",
-  "Beat 1 | native run | ambiguous identity refuses",
-  "Beat 1 | native run | sales price is not stock cost",
-  "Beat 1 | native run | quarantine reason",
-  "Beat 2 | native run | exact question and contributions",
-  "Beat 2 | native run | incremental equals recompute",
-  "Beat 2 | native run | restatement and old as-of answer",
-  "Beat 3 | native run | allocation plans",
-  "Beat 3 | native run | committed pricing",
-  "Beat 4 | native run | refused conservation transaction",
-  "Beat 4 | native run | retained invariant responses",
-  "Beat 4 | native run | build generated proof backend",
-  "Beat 4 | native run | generated bounded counterexample",
+  "beat-1-native-run-three-systems",
+  "beat-1-native-run-ambiguous-identity-refuses",
+  "beat-1-native-run-sales-price-is-not-stock-cost",
+  "beat-1-native-run-quarantine-reason",
+  "beat-2-native-run-exact-question-and-contributions",
+  "beat-2-native-run-incremental-equals-recompute",
+  "beat-2-native-run-restatement-and-old-as-of-answer",
+  "beat-3-native-run-allocation-plans",
+  "beat-3-native-run-committed-pricing",
+  "beat-4-native-run-refused-conservation-transaction",
+  "beat-4-native-run-retained-invariant-responses",
+  "beat-4-native-run-build-generated-proof-backend",
+  "beat-4-native-run-generated-bounded-counterexample",
 ]
