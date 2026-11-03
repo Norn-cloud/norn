@@ -127,6 +127,21 @@ fn original_mutant_restore_and_visible_unknown_inventory() {
         .expect("mutant");
     assert_ne!(bad.challenge.sha256(), good.challenge.sha256());
     assert_ne!(bad.goals, good.goals);
+    if let Some(directory) = std::env::var_os("NORN_GENERATED_QUINT_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).expect("generated model directory");
+        for (name, batch) in [("original.qnt", &good), ("mutant.qnt", &bad)] {
+            std::fs::write(
+                directory.join(name),
+                batch
+                    .goals
+                    .iter()
+                    .find_map(|goal| goal.as_ref().ok())
+                    .expect("supported model"),
+            )
+            .expect("generated model");
+        }
+    }
     assert_eq!(
         authority
             .quint(&original, &registry, &profile)
