@@ -25,7 +25,7 @@ def main():
     package = Path("tools/norn-proofs")
     if json.loads((package / "node_modules/tla-ts/package.json").read_text())["version"] != "0.0.7":
         raise ValueError("tla-ts version mismatch")
-    assets = [Path(sys.executable), Path(bun), quint, tools / "bin/java", tools / "quint-home/apalache-dist-0.56.1/apalache/lib/apalache.jar",
+    assets = [Path(sys.executable), Path(bun), quint, tools / "bin/java", tools / "quint-home/apalache-dist-0.56.1/apalache/bin/apalache-mc", tools / "quint-home/apalache-dist-0.56.1/apalache/lib/apalache.jar",
               Path(__file__), Path("scripts/check-generated-quint.py"), Path("scripts/quint_apalache.py"), package / "check.ts", package / "bun.lock", package / "node_modules/tla-ts/package.json", package / "node_modules/fflate/package.json"]
     assets += sorted((package / "node_modules/tla-ts/dist").rglob("*.js"))
     assets += sorted(p for p in (package / "node_modules/fflate").rglob("*") if p.is_file() and p.suffix in {".js", ".mjs", ".cjs"})
