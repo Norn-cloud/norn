@@ -1,20 +1,25 @@
 # Demo UI
 
-The first independent slice of #218 is a read-only definitions inspector.
-`renderDefinitionsDocument({ entries })` returns a self-contained HTML document.
-Each entry contains metadata typed from the generated SDK and the exact JSON
-source returned by an authorized server read. The caller must supply both from
-the same read. The inspector preserves source bytes as escaped text, including
-decimal and integer literals outside JavaScript's numeric precision.
+The one renderer for the #218 demo shell: pure functions from authorized
+server documents to self-contained HTML. They don't fetch, admit, authorize,
+execute or infer. Whatever supplies a document (today a caller of the
+server's generic routes; later a client-cell runtime) must pass the exact
+authorized read, never an unfiltered registry dump. Every page states what the
+read says about its frontier and freshness, and nothing more.
 
-It does not fetch definitions, admit artifacts, infer permissions, execute
-actions or claim that supplied definitions have been installed. Do not pass an
-unfiltered registry dump in place of the server's authorized document.
+- `renderShell` (`src/shell.ts`): the shared frame. No script and no remote
+  resources; light and dark themes follow the platform preference; responsive.
+- `renderCatalogDocument({ artifacts })` (`@norn/demo-ui/catalog`): concepts,
+  their declared `extends`/`implements` graph, relations, laws and value types
+  over `NornArtifactEnvelope[]`. It shows only what each artifact declares, in
+  server order. Inheritance, effective laws, the inherited origin chain and the
+  reviewed EN/AR wording are server projections; until the document carries
+  them the page says "not exposed by the server" rather than computing them.
+- `renderDefinitionsDocument({ entries })`: the source inspector. Each entry is
+  metadata typed from the generated SDK plus the exact JSON source returned by
+  the same read; source bytes are preserved as escaped text, including numeric
+  literals outside JavaScript's precision.
 
 Run `bun install --frozen-lockfile --ignore-scripts --backend copyfile`,
-`bun run typecheck` and `bun test` from this package on Boat.
-
-The operational shell remains dependent on the public host/binding export and
-the admitted alpha fixture. It will use the existing WidgetIR renderer for
-lists, forms and actions. The five-beat fresh-cell demo also needs executable
-stock, jewelry and evidence adapters; this inspector is not that demo.
+`bun run typecheck` and `bun test` from this package on Boat. The tests render
+the compiled registry and law fixtures, not hand-written definitions.
