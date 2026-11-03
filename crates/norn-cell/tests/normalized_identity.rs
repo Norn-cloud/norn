@@ -94,7 +94,7 @@ fn id_collision_between_sibling_types_rolls_back_the_complete_commit() {
         ))
         .expect_err("normalized collision");
     assert!(
-        matches!(error, CellError::IdentityCollision { ref owner, ref key } if owner == "identity.Root" && key == "primary")
+        matches!(error, CellError::IdentityCollision { ref owner, ref key, .. } if owner == "identity.Root" && key == "primary")
     );
     assert_eq!(store.read().dump().expect("after"), before);
     let value = store
@@ -204,6 +204,37 @@ fn normalized_scan_row_limit_refuses_atomically() {
         CellError::OutOfRange("normalized identity scan rows")
     ));
     assert_eq!(store.read().dump().expect("after"), before);
+}
+
+#[test]
+fn unrelated_key_domains_cannot_commit_beyond_the_reopen_budget() {
+    let mut defs = definitions();
+    let mut other = defs[0].clone();
+    other.name = ObjectTypeName("identity.Other".into());
+    defs.push(other);
+    let model = Model::from_definitions(&defs, &[]).expect("two identity domains");
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("budget.sqlite");
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("store");
+    let writes = (0..3000)
+        .map(|n| put("identity.Root", &format!("a{n}"), &format!("A{n}")))
+        .collect();
+    store
+        .commit(&batch("org_a", "main", writes))
+        .expect("first domain");
+    let before = store.read().dump().expect("before");
+    let writes = (0..1100)
+        .map(|n| put("identity.Other", &format!("b{n}"), &format!("B{n}")))
+        .collect();
+    assert!(matches!(
+        store.commit(&batch("org_a", "main", writes)),
+        Err(CellError::OutOfRange("normalized identity scan rows"))
+    ));
+    assert_eq!(store.read().dump().expect("after"), before);
+    drop(store);
+    let store = CellStore::open(&path, model, StoreOptions::default())
+        .expect("accepted commits always reopen");
+    assert_eq!(store.read().dump().expect("reopen"), before);
 }
 #[test]
 fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {

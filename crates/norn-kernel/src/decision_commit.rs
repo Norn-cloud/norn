@@ -1747,7 +1747,9 @@ impl<X> DecisionRefusal<X> {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
             CommitError::Law { key, reason } => Self::Law { key, reason },
-            CommitError::IdentityCollision { owner, key } => Self::IdentityCollision { owner, key },
+            CommitError::IdentityCollision { owner, key, .. } => {
+                Self::IdentityCollision { owner, key }
+            }
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },

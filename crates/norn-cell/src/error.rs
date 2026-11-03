@@ -27,6 +27,8 @@ pub enum CellError {
         owner: String,
         /// The declared key name.
         key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: [String; 2],
     },
     /// OBS-DISPUTE-LOOKUP-1: retry after three unstable source-evidence snapshots.
     #[error("core.boundary.source_evidence_changed")]

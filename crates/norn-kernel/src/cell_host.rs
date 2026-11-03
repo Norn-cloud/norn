@@ -606,6 +606,8 @@ pub enum CommitError<X> {
         owner: String,
         /// Declared business-key name.
         key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: Box<[FactKey; 2]>,
     },
     /// An owned child or manifest was changed without the trusted atomic
     /// parent-and-rows action, or a parent delete omitted that action.

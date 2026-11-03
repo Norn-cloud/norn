@@ -1917,7 +1917,15 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
 
     Ok(match error {
         Error::Law { key, reason } => Error::Law { key, reason },
-        Error::IdentityCollision { owner, key } => Error::IdentityCollision { owner, key },
+        Error::IdentityCollision {
+            owner,
+            key,
+            conflicts,
+        } => Error::IdentityCollision {
+            owner,
+            key,
+            conflicts,
+        },
         Error::OwnedRowsProtected { key } => Error::OwnedRowsProtected { key },
         Error::DuplicateKey { key } => Error::DuplicateKey { key },
         Error::NotPending { consumed } => Error::NotPending { consumed },

@@ -1,9 +1,11 @@
 //! ID-UNIQUE-1: bounded normalized-key equality in the shared store transaction.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use norn_checker::{EffectiveKey, EffectiveKind, EffectiveObjectType};
 use norn_ir::PropertyType;
-use norn_projections::sqlite_ddl::{SCOPE_COLUMN, ValueEncoding, WORLD_COLUMN, quote_identifier};
+use norn_projections::sqlite_ddl::{
+    ID_COLUMN, SCOPE_COLUMN, ValueEncoding, WORLD_COLUMN, quote_identifier,
+};
 
 use crate::codec::decode;
 use crate::engine::{SqlEngine, SqlValue, params};
@@ -59,10 +61,7 @@ pub(crate) fn validate_model(
 }
 
 /// A complete scan is required. Scope/world belong to stored rows, never business fields.
-pub(crate) fn validate<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    changed: Option<&[crate::WrittenRow]>,
-) -> Result<(), CellError> {
+pub(crate) fn validate<E: SqlEngine>(reader: &StoreReader<'_, E>) -> Result<(), CellError> {
     let mut rows = MAX_ROWS;
     let mut keys_left = MAX_ROWS;
     let mut bytes = MAX_BYTES;
@@ -72,15 +71,6 @@ pub(crate) fn validate<E: SqlEngine>(
             .iter()
             .filter(|key| key.declared_by == object.name && !key.normalize.is_empty())
         {
-            if changed.is_some_and(|writes| {
-                !writes.iter().any(|row| {
-                    reader
-                        .model()
-                        .is_a(&row.object_type, key.declared_by.as_str())
-                })
-            }) {
-                continue;
-            }
             keys_left = keys_left
                 .checked_sub(1)
                 .ok_or(CellError::OutOfRange("normalized identity scan keys"))?;
@@ -101,9 +91,7 @@ pub(crate) fn preflight<E: SqlEngine>(
     let mut bytes = MAX_BYTES;
     let mut keys_left = MAX_ROWS;
     for object in candidate.identity_objects() {
-        let Some(old) = previous.schema().object_table(object.name.as_str()) else {
-            continue;
-        };
+        let old = previous.schema().object_table(object.name.as_str());
         for key in object
             .keys
             .iter()
@@ -112,6 +100,7 @@ pub(crate) fn preflight<E: SqlEngine>(
             keys_left = keys_left
                 .checked_sub(1)
                 .ok_or(CellError::OutOfRange("normalized identity scan keys"))?;
+            let Some(old) = old else { continue };
             if key.components.iter().any(|component| {
                 !old.columns
                     .iter()
@@ -160,6 +149,7 @@ fn check_key<E: SqlEngine>(
     let selected = [
         quote_identifier(WORLD_COLUMN),
         quote_identifier(SCOPE_COLUMN),
+        quote_identifier(ID_COLUMN),
     ]
     .into_iter()
     .chain(columns.iter().map(|(_, name)| quote_identifier(name)))
@@ -167,20 +157,24 @@ fn check_key<E: SqlEngine>(
     let table_name = quote_identifier(&table.table);
     let count = scan_count(reader.conn, &table_name, &selected, rows_left, bytes_left)?;
     let projection = read_projection(
-        &[(WORLD_COLUMN, false), (SCOPE_COLUMN, false)]
-            .into_iter()
-            .chain(
-                columns
-                    .iter()
-                    .map(|(column, name)| (*name, column.encoding == ValueEncoding::Integer)),
-            )
-            .collect::<Vec<_>>(),
+        &[
+            (WORLD_COLUMN, false),
+            (SCOPE_COLUMN, false),
+            (ID_COLUMN, false),
+        ]
+        .into_iter()
+        .chain(
+            columns
+                .iter()
+                .map(|(column, name)| (*name, column.encoding == ValueEncoding::Integer)),
+        )
+        .collect::<Vec<_>>(),
     );
     let sql = format!(
         "SELECT {} FROM {table_name} LIMIT {count}",
         projection.join(", ")
     );
-    let mut seen = BTreeSet::new();
+    let mut seen = BTreeMap::new();
     for raw in reader.conn.query(&sql, params![])? {
         let (Some(SqlValue::Text(world)), Some(SqlValue::Text(scope))) = (raw.first(), raw.get(1))
         else {
@@ -188,10 +182,13 @@ fn check_key<E: SqlEngine>(
                 "invalid identity world or scope".into(),
             ));
         };
+        let Some(SqlValue::Text(id)) = raw.get(2) else {
+            return Err(CellError::Encoding("invalid identity row ID".into()));
+        };
         let mut payload = serde_json::Map::new();
         for (index, (column, _)) in columns.iter().enumerate() {
             let offset = index
-                .checked_add(2)
+                .checked_add(3)
                 .ok_or(CellError::OutOfRange("identity columns"))?;
             let value = raw
                 .get(offset)
@@ -214,10 +211,11 @@ fn check_key<E: SqlEngine>(
                 .checked_sub(size)
                 .ok_or(CellError::OutOfRange("normalized identity scan bytes"))?;
         }
-        if !seen.insert((world.clone(), scope.clone(), tuple)) {
+        if let Some(previous) = seen.insert((world.clone(), scope.clone(), tuple), id.clone()) {
             return Err(CellError::IdentityCollision {
                 owner: key.declared_by.as_str().to_owned(),
                 key: key.name.as_str().to_owned(),
+                conflicts: [previous, id.clone()],
             });
         }
     }
@@ -233,7 +231,7 @@ fn scan_count<E: SqlEngine>(
 ) -> Result<usize, CellError> {
     let size = columns
         .iter()
-        .map(|name| format!("COALESCE(length(CAST({name} AS BLOB)), 0)"))
+        .map(|name| format!("COALESCE(octet_length({name}), 0)"))
         .collect::<Vec<_>>()
         .join(" + ");
     let bound = rows_left

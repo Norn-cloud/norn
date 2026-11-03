@@ -3184,6 +3184,15 @@ where
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => {
+            authorize_identity_collision(
+                host,
+                catalog,
+                call,
+                &preparation.effective_input,
+                authorizer,
+                &target,
+                &error,
+            )?;
             if matches!(
                 &error,
                 CommitError::Conflict { .. }
@@ -3838,6 +3847,7 @@ where
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -4132,6 +4142,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -4144,6 +4155,15 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         precondition_reads,
         generated_key,
     } = *state;
+    authorize_identity_collision(
+        host,
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        &record.object,
+        &error,
+    )?;
     if generated_key {
         // A generated candidate may lose the counter CAS to a different key.
         // The allocation loop reloads the call record and revalidates replay
@@ -4171,6 +4191,57 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
     }
     Err(precondition_read_refusal(&error, precondition_reads)
         .unwrap_or_else(|| ActionRefusal::Decision(DecisionRefusal::from_commit(error))))
+}
+
+/// ID-UNIQUE-1: conflict details require ordinary collection/object read authority.
+fn authorize_identity_collision<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    authorizer: &dyn ActionAuthorizer,
+    target: &FactKey,
+    error: &CommitError<H::Error>,
+) -> Result<(), ActionRefusal<H::Error>> {
+    let CommitError::IdentityCollision { conflicts, .. } = error else {
+        return Ok(());
+    };
+    for key in conflicts.iter() {
+        authorize_slice_type(call, input, authorizer, &key.object_type)?;
+        let bounded = host
+            .load_bounded(key, crate::SliceLimits::default().max_canonical_bytes)
+            .map_err(host_failure)?
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        if bounded.state.values.is_none() {
+            if key.key == target.key
+                && catalog
+                    .lineage(&target.object_type)
+                    .contains(&key.object_type)
+            {
+                continue;
+            }
+            return Err(ActionRefusal::TargetNotFound);
+        }
+        let concrete = bounded.concrete_type.as_ref().map_or_else(
+            || key.clone(),
+            |kind| FactKey::new(kind.as_str(), key.key.clone()),
+        );
+        if authorizer
+            .authorize_read(&ActionReadAuthzRequest {
+                action: call.action,
+                scope: &call.scope,
+                actor: &call.actor,
+                input,
+                declared_type: &key.object_type,
+                target: &concrete,
+                target_values: bounded.state.values.as_ref(),
+            })
+            .is_err()
+        {
+            return Err(ActionRefusal::TargetNotFound);
+        }
+    }
+    Ok(())
 }
 
 fn precondition_read_refusal<X>(
