@@ -311,13 +311,19 @@ impl<F: FnOnce(&mut Cell)> CellHost for DeliveryRace<'_, F> {
 #[test]
 fn two_deliveries_of_four_against_five_commit_exactly_one_stock_and_books() {
     let documents: Vec<Value> = serde_json::from_str(include_str!("fixtures/delivery-race.json")).unwrap();
+    let sources: Vec<_> = documents.iter().cloned().map(norn_ir::RuntimeValue::from_json).collect::<Result<_, _>>().unwrap();
+    let sources = norn_checker::receipt::ReceiptSources::new(&sources, &[]).unwrap();
+    let checked = norn_checker::receipt::check_artifact_set_with_receipt(&sources,
+        &norn_checker::EntityArtifactSetContext {registry: &std::collections::BTreeSet::default(), base: &[], tenant: None},
+        &norn_ir::ResourceLimitProfile::norn_limits_v1()).unwrap();
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let mut definitions: Vec<ObjectTypeDef> = documents.iter().filter_map(|d| d["payload"].get("objectType"))
         .map(|d| serde_json::from_value(d.clone()).unwrap()).collect();
     definitions.push(types().pop().unwrap());
     let action: ActionRoot = serde_json::from_value(documents.iter().find(|d| d["kind"] == "action").unwrap()["payload"].clone()).unwrap();
     let rule = SynchronousRule::admit(action.synchronous_rule.clone().unwrap(),
         &serde_json::from_value(documents.iter().find(|d| d["kind"] == "rule").unwrap()["payload"].clone()).unwrap(),
-        &BTreeMap::new(), norn_kernel::DecisionBinding {profile_id: "norn-zen/6".into(), environment_hash: "delivery-race".into()}).unwrap();
+        &BTreeMap::new(), norn_kernel::DecisionBinding {profile_id: checked.receipt.expr_profile, environment_hash: checked.receipt.type_env.unwrap().sha256}).unwrap();
     let rules = [rule];
     let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
     let directory = tempfile::tempdir().unwrap();
