@@ -133,3 +133,19 @@ witness. Neither a generated module nor structural correspondence discharges a
 goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
+
+
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
