@@ -6,11 +6,11 @@ for await (const chunk of process.stdin) input += chunk
 const request = JSON.parse(input)
 assert(["http", "mcp", "ui"].includes(request.surface))
 if (request.surface !== "ui") {
-  const args = { actionId: request.actionId, input: request.input, idempotencyKey: request.idempotencyKey, version: 1 }
+  const args = { actionId: request.actionId, input: request.input, idempotencyKey: request.idempotencyKey, version: request.version }
   const mcp = request.surface === "mcp"
   const response = await fetch(`${request.url}${mcp ? "/mcp" : "/v1/actions"}`, {
     method: "POST", signal: AbortSignal.timeout(30_000),
-    headers: { "content-type": "application/json", "x-norn-org-id": "org_surfaces", "x-norn-environment-id": "dev", "x-norn-actor": request.actor },
+    headers: { "content-type": "application/json", "x-norn-org-id": request.org, "x-norn-environment-id": request.environment, "x-norn-actor": request.actor },
     body: JSON.stringify(mcp ? { jsonrpc: "2.0", id: 1, method: "tools/call", params: {
       name: "call_action", arguments: args, _meta: { "norn/idempotencyKey": request.idempotencyKey },
     } } : args),

@@ -256,3 +256,18 @@ and its operands, and prove that an already-redacted refusal stays redacted.
 JSON-RPC parameter refusals preserve the validated request ID and use -32602;
 malformed-parameter notifications stay silent. Ping returns an empty result
 before or after initialization and does not unlock tool access.
+
+
+SURFACE-METADATA-RETRY: `transport_metadata_and_refusal_key_conformance` runs
+HTTP, MCP and the real remote CLI on three fresh admitted melt tenants. Wrong
+organization/environment (`scope.denied`), stale revision (`defs.stale`) and
+forbidden actor (`authz.denied`) preserve every persisted table before success;
+the same retry key then commits under the authorized actor. After success,
+forbidden retries, a different authorized actor and changed input disclose no
+success record and change no table; stale revision still refuses before replay.
+Authorized identical retries through all three transports retain the original
+complete record. Exact decimal strings, action pin and authenticated actor are
+asserted in that record; complete receipts, refusals and tenant dumps agree.
+The two explicitly allowed fixture principals exercise server policy and do not
+qualify a production authentication adapter. `scripts/demo/equivalent-surfaces.sh`
+runs this matrix and the separate four-surface Chromium acceptance.

@@ -21,3 +21,6 @@ export NORN_SURFACE_DEFINITIONS="$scratch/melt.json"
 export NORN_NODE=${NORN_NODE:-node}
 cargo test --locked -p norn-api --lib host::four_surfaces::equivalent_governed_surfaces -- --ignored --exact --nocapture | tee "$scratch/acceptance.log"
 grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$scratch/acceptance.log"
+
+cargo test --locked -p norn-api --lib host::four_surfaces::transport_metadata_and_refusal_key_conformance -- --ignored --exact --nocapture | tee "$scratch/metadata.log"
+grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$scratch/metadata.log"
