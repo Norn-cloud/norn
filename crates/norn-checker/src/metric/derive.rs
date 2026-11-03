@@ -389,6 +389,7 @@ fn applies(law: &LawIR, object: &EffectiveObjectType) -> bool {
     matches(&law.subject) && law.scope.object_types.iter().any(|name| matches(name))
 }
 
+/// METRIC-RATE-UNKNOWN: rate terms never supply quantity-additivity evidence.
 fn compatible_terms(object: &EffectiveObjectType, source: &ConservationSource) -> bool {
     let Some(input) = object.property(source.input.as_str()) else {
         return false;
