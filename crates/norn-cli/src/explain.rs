@@ -188,56 +188,58 @@ fn render(report: &ExplainReport) -> String {
         lines.push(format!("Interpretation {}@{}: {}@{} -> {}@{}; law transport unknown", interpretation.declaration.artifact_id, interpretation.declaration.version, interpretation.link.from_pack.pack_id, interpretation.link.from_pack.version, interpretation.link.to_pack.pack_id, interpretation.link.to_pack.version));
         for edge in &interpretation.link.correspondences { lines.push(format!("  {} -> {}", edge.from_term_id, edge.to_term_ids.join(", "))); }
     }
-    for law in &report.laws {
+    for law in &report.laws { render_law(&mut lines, law); }
+    lines.join("\n")
+}
+
+fn render_law(lines: &mut Vec<String>, law: &norn_ir::explain::ExplainedLaw) {
+    lines.push(format!(
+        "Law {}: proof unknown; enforcement {}",
+        law.law.id,
+        if law.enforcement.is_some() {
+            "declared invariant at commit"
+        } else {
+            "not established"
+        }
+    ));
+    if let Some(source) = &law.source_path {
+        lines.push(format!("  authored source: {source}"));
+    }
+    for path in &law.inheritance_paths {
         lines.push(format!(
-            "Law {}: proof unknown; enforcement {}",
-            law.law.id,
-            if law.enforcement.is_some() {
-                "declared invariant at commit"
-            } else {
-                "not established"
-            }
+            "  inheritance: {}",
+            path.iter()
+                .map(|at| at.member.id())
+                .collect::<Vec<_>>()
+                .join(" -> ")
         ));
-        if let Some(source) = &law.source_path {
-            lines.push(format!("  authored source: {source}"));
-        }
-        for path in &law.inheritance_paths {
-            lines.push(format!(
-                "  inheritance: {}",
-                path.iter()
-                    .map(|at| at.member.id())
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
-            ));
-        }
-        for path in &law.containment_paths {
-            lines.push(format!(
-                "  containment: {}",
-                path.iter()
-                    .map(|at| format!("{}@{}", at.artifact_id, at.version))
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
-            ));
-        }
-        if let Some(wording) = &law.wording {
-            for slot in &wording.slots {
-                lines.push(format!("  {}: {}", slot.label, slot.text));
-            }
-        }
-        for unknown in &law.why_unknown {
-            lines.push(format!(
-                "  unknown {} {}: {} Fix: {}",
-                unknown
-                    .writer
-                    .as_ref()
-                    .map_or_else(String::new, |writer| writer.to_json().to_string()),
-                unknown.footprint,
-                unknown.reason,
-                unknown.fix
-            ));
+    }
+    for path in &law.containment_paths {
+        lines.push(format!(
+            "  containment: {}",
+            path.iter()
+                .map(|at| format!("{}@{}", at.artifact_id, at.version))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        ));
+    }
+    if let Some(wording) = &law.wording {
+        for slot in &wording.slots {
+            lines.push(format!("  {}: {}", slot.label, slot.text));
         }
     }
-    lines.join("\n")
+    for unknown in &law.why_unknown {
+        lines.push(format!(
+            "  unknown {} {}: {} Fix: {}",
+            unknown
+                .writer
+                .as_ref()
+                .map_or_else(String::new, |writer| writer.to_json().to_string()),
+            unknown.footprint,
+            unknown.reason,
+            unknown.fix
+        ));
+    }
 }
 
 #[cfg(test)]
