@@ -115,3 +115,45 @@ proptest::proptest! {
         proptest::prop_assert_ne!(first, diagnose_attempt(&attempt).digests);
     }
 }
+
+#[test]
+fn invalid_member_identity_and_protected_indices_are_unknown() {
+    let schema = Schema::Boolean;
+    let none = BTreeSet::new();
+    for (ids, protected) in [
+        (vec![(Some("a"), "/p"), (Some("a"), "/p")], none.clone()),
+        (vec![(None, "/p")], none.clone()),
+        (vec![(Some(""), "/p")], none.clone()),
+        (vec![(Some("a"), "p")], none.clone()),
+        (vec![(Some("a"), "/p")], BTreeSet::from([1])),
+    ] {
+        let members: Vec<_> = ids
+            .into_iter()
+            .map(|(id, p)| {
+                (
+                    RuleOrigin {
+                        artifact_id: id.map(str::to_owned),
+                        pointer: p.into(),
+                    },
+                    "true".into(),
+                )
+            })
+            .collect();
+        let report = diagnose_attempt(&Attempt {
+            source: b"source",
+            base: b"base",
+            profile: b"profile",
+            assumptions: "Boolean universe",
+            schema: &schema,
+            members: &members,
+            editable: &none,
+            protected: &protected,
+            max_calls: 100,
+        });
+        assert!(report.diagnosis.is_err());
+        assert_eq!(
+            report.diagnostics.first().unwrap().code.as_str(),
+            "consistency.diagnosis.unknown"
+        );
+    }
+}

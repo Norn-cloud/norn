@@ -174,7 +174,9 @@ impl Type {
         Self::List(Box::new(self))
     }
 
-    fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
+    /// Stable type encoding in the explicitly selected environment format.
+    #[must_use]
+    pub fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
         match self {
             Self::Bool => kind("bool", []),
             Self::Text { format } => match format {

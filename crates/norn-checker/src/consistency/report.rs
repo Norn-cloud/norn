@@ -153,7 +153,10 @@ fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
         env!("CARGO_PKG_VERSION"),
         crate::receipt::EXPR_PROFILE,
         attempt.profile,
-        format!("{:?}", attempt.schema),
+        [
+            serde_json::json!("norn.diagnosis-schema/1"),
+            schema_pin(attempt.schema)
+        ],
         members,
         attempt.assumptions,
         attempt.editable,
@@ -186,4 +189,82 @@ fn correction_message(
         "One independently checked minimal editable correction set: {}.",
         locations.join(", ")
     )
+}
+
+fn schema_pin(schema: &Schema) -> serde_json::Value {
+    use serde_json::json;
+    match schema {
+        Schema::Object {
+            properties,
+            required,
+        } => json!([
+            "object",
+            properties
+                .iter()
+                .map(|(k, v)| (k, schema_pin(v)))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+            required
+        ]),
+        Schema::Array(item) => json!(["array", schema_pin(item)]),
+        Schema::String(values) => json!(["string", values]),
+        Schema::Integer => json!(["integer"]),
+        Schema::Number => json!(["number"]),
+        Schema::Decimal(ty) => json!([
+            "decimal",
+            type_pin(&ty.to_canonical_value(norn_expr::env::TypeEnvVersion::V2))
+        ]),
+        Schema::Boolean => json!(["boolean"]),
+        Schema::Null => json!(["null"]),
+        Schema::Json => json!(["json"]),
+        Schema::Nullable(item) => json!(["nullable", schema_pin(item)]),
+    }
+}
+
+// Tag exact canonical numbers rather than converting them through floating point.
+fn type_pin(value: &norn_canonical::JsonValue) -> serde_json::Value {
+    use norn_canonical::JsonValue as V;
+    use serde_json::json;
+    match value {
+        V::Null => json!(["null"]),
+        V::Bool(v) => json!(["bool", v]),
+        V::Number(v) => json!(["number", v]),
+        V::String(v) => json!(["string", v]),
+        V::Array(v) => json!(["array", v.iter().map(type_pin).collect::<Vec<_>>()]),
+        V::Object(v) => json!([
+            "object",
+            v.iter()
+                .map(|(k, v)| (k, type_pin(v)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        ]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn schema_pin_bytes_are_versioned_and_stable() {
+        use norn_expr::{Type, schema::Schema};
+        let decimal = Schema::Decimal(Type::Decimal {
+            scale: 2,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+            rounding: norn_ir::Rounding::HalfEven,
+        });
+        let schema = Schema::Object {
+            properties: [
+                ("z".into(), Schema::Nullable(Box::new(decimal))),
+                (
+                    "a".into(),
+                    Schema::String(Some(["b".into(), "a".into()].into())),
+                ),
+            ]
+            .into(),
+            required: ["z".into(), "a".into()].into(),
+        };
+        assert_eq!(
+            super::schema_pin(&schema).to_string(),
+            r#"["object",{"a":["string",["a","b"]],"z":["nullable",["decimal",["object",{"kind":["string","decimal"],"rounding":["string","half_even"],"scale":["number","2"]}]]]},["a","z"]]"#
+        );
+    }
 }
