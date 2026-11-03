@@ -748,6 +748,24 @@ fn authored_host_refused() {
     );
 }
 
+/// ENGINE-BUILTIN-AVAILABLE remains unsupported: no public Host admission exists.
+#[test]
+fn engine_builtin_availability_is_unsupported() {
+    for profile in PROFILES {
+        let mut host = manifest(profile);
+        host.implementation.format = ImplementationFormat::Host;
+        host.function_id = "norn.builtin.fixture".to_owned();
+        host.implementation.locator = Some(format!(
+            "{}/{}@{}",
+            host.runtime.id, host.runtime.version, host.implementation.digest
+        ));
+        assert!(
+            found_codes(&manifest_findings(&host)).contains(codes::AUTHORED_HOST),
+            "{profile} cannot claim builtin availability"
+        );
+    }
+}
+
 /// BUILTIN-NAMESPACE-NO-BYPASS: copied identities are data, never authority.
 #[test]
 fn builtin_namespace_no_bypass() {
