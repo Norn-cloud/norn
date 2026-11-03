@@ -1223,9 +1223,10 @@ fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
         "../../../registry/core/artifacts/std.value_types.entity.json"
     ))
     .expect("shared unit vocabulary");
-    let units: ArtifactEnvelope =
-        serde_json::from_str(include_str!("../../../registry/core/artifacts/core.units.json"))
-            .expect("pinned unit catalog");
+    let units: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))
+    .expect("pinned unit catalog");
     let mut melt = interface.clone();
     melt.dependencies.push(norn_ir::ArtifactDependency {
         artifact_id: units.artifact_id.clone(),
