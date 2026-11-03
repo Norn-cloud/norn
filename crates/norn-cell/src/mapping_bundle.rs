@@ -1,5 +1,9 @@
 //! OBS-EVIDENCE-1: retained mapping output is evidence, never write authority.
-use crate::{CellError, CellStore, StoreReader, engine::SqlEngine};
+use crate::{
+    CellError, CellStore, StoreReader,
+    engine::{SqlEngine, params},
+    system::INBOX,
+};
 use norn_checker::mapping::{SourceDocument, compile_mapping_artifact};
 use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
 use norn_kernel::{ObservationId, Observed};
@@ -54,6 +58,66 @@ fn digest(value: &impl Serialize) -> Result<String, CellError> {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// Captured, rechecked mapping evidence for one source event, including consumed inputs.
+    /// Callers enforce source disclosure; these records confer no mutation authority.
+    ///
+    /// # Errors
+    /// Corrupt identity, missing historical pins, recomputation mismatch or storage failure.
+    pub fn source_event_mapping_bundles(
+        &self,
+        connector_instance: &str,
+        partition: &str,
+        source: &str,
+        source_id: &str,
+        event_id: &str,
+    ) -> Result<Vec<MappingBundle>, CellError> {
+        let [connector_instance, partition, source, source_id, event_id]: [String; 5] =
+            serde_json::from_slice(&norn_ir::canonical::canonical_json_of(&(
+                connector_instance,
+                partition,
+                source,
+                source_id,
+                event_id,
+            ))?)?;
+        let rows = self.conn.query(
+            &format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND json_extract(observed, '$.input.input.connectorInstance') = ?1 AND json_extract(observed, '$.input.input.partition') = ?2 AND json_extract(observed, '$.input.raw.source') = ?3 AND json_extract(observed, '$.input.raw.source_id') = ?4 AND json_extract(observed, '$.input.raw.event_id') = ?5 ORDER BY position"),
+            params![&connector_instance, &partition, &source, &source_id, &event_id],
+        )?;
+        let mut bundles = Vec::new();
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let stored_id: String = row.get(0)?;
+            let captured: String = row.get(1)?;
+            let observed: Observed<RuntimeValue> = serde_json::from_str(&captured)?;
+            let bundle: MappingBundle =
+                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+            self.recheck_mapping_bundle(&bundle)?;
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-bundle:{}", bundle.digest)
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
+            bundles.push(bundle);
+        }
+        Ok(bundles)
+    }
+
+    /// Resolve a mapped subject's identity root under its retained definition version.
+    ///
+    /// # Errors
+    /// Missing/corrupt retained definitions or an unknown subject type.
+    pub fn retained_mapping_root(
+        &self,
+        version: u64,
+        object_type: &str,
+    ) -> Result<String, CellError> {
+        self.retained_definition_model(version)?
+            .chain(object_type)?
+            .first()
+            .cloned()
+            .ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
+    }
+
     fn mapping_bundle(
         &self,
         raw: &RuntimeValue,
