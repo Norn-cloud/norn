@@ -19,18 +19,16 @@ Correspondence: `definitions_install::host_provision_atomic_at_every_storage_bou
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
 
-The `workers::WorkersEngine` adapter (wasm32 only) uses DO SQLite on celld
-and workerd. Its storage handle is trusted host configuration, never request
-input. TXN-ATOMIC-1 rolls back typed Rust errors by throwing through the platform
-transaction callback. Transactions reject nesting; the platform rejects SQL
-transaction control. Cursors are drained before returning. Large exact values
-use the shared store's text representation. See the `workers_sql` example for
-real-runtime checks; it is an adapter probe, not a governed action endpoint.
+The wasm32 `workers::WorkersEngine` uses DO SQLite on celld and workerd.
+The storage handle is trusted host configuration. TXN-ATOMIC-1 throws typed
+Rust refusals through the platform callback to roll back. Nested/SQL transaction
+control is refused, cursors are drained, and exact wide values use text.
+The `workers_sql` example probes the adapter rather than governed actions.
 
 Build and run with generated files and durable state outside the checkout:
 
 ```sh
-export NORN_WORKERS_SQL_PROJECT="$CARGO_TARGET_DIR/workers-sql"
+export NORN_WORKERS_SQL_PROJECT="${CARGO_TARGET_DIR:?set a build directory outside the checkout}/workers-sql"
 mkdir -p "$NORN_WORKERS_SQL_PROJECT"
 cp crates/norn-cell/examples/workers-sql/{worker.mjs,wrangler.json} "$NORN_WORKERS_SQL_PROJECT/"
 cargo rustc --locked -p norn-cell --no-default-features --example workers_sql \

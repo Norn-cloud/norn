@@ -35,7 +35,7 @@ def start():
             try:
                 request("/state")  # May be 500 before the first schema creation.
                 return child
-            except urllib.error.URLError:
+            except OSError:
                 time.sleep(0.2)
         raise RuntimeError("runtime startup deadline exceeded")
     except BaseException:
@@ -44,11 +44,17 @@ def start():
 
 
 def stop(child):
-    if child.poll() is None:
-        if Path(os.readlink(f"/proc/{child.pid}/cwd")) != ROOT:
-            raise RuntimeError("daemon working directory changed")
-        os.killpg(child.pid, signal.SIGTERM)
-    child.wait(timeout=15)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if child.poll() is None:
+            if Path(os.readlink(f"/proc/{child.pid}/cwd")) != ROOT:
+                raise RuntimeError("daemon working directory changed")
+            os.killpg(child.pid, sig)
+        try:
+            child.wait(timeout=15)
+            return
+        except subprocess.TimeoutExpired:
+            if sig == signal.SIGKILL:
+                raise
 
 
 def state():
