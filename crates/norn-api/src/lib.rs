@@ -15,3 +15,6 @@ pub use clock::{Clock, ManualClock};
 
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+
+/// Scoped PDP authority for complete refusal diagnostics.
+pub mod refusal_disclosure;
