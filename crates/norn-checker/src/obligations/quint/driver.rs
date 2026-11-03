@@ -315,7 +315,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
         version: "quint-0.32.0/tla-ts-0.0.7/apalache-0.56.1".into(),
         implementation_sha256: format!(
             "{:x}",
-            Sha256::digest(serde_json::to_vec(&implementation)?)
+            Sha256::digest(norn_canonical::serialize_json_verbatim(&implementation)?)
         ),
     };
     let mut cases = Vec::new();
