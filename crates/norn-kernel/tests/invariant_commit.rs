@@ -64,6 +64,121 @@ const TEMPORAL_ITEM: &str = "invariant.TemporalItem";
 const SEASON_ITEM: &str = "invariant.SeasonWindow";
 
 type CommandCell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+
+fn link_domain_type(scale: u32, nested: bool, default: Option<Value>) -> ObjectTypeDef {
+    let decimal = json!({"kind":"decimal", "scale":scale});
+    let domain = if nested {
+        json!({"kind":"record", "members":[{"id":"amount", "type":decimal}]})
+    } else {
+        decimal
+    };
+    let mut property = json!({"id":"reading", "type":domain});
+    if let Some(default) = default {
+        property["default"] = default;
+    }
+    serde_json::from_value(json!({"name":"demo.LinkDomain", "links":[{
+        "id":"related", "target":"demo.LinkDomain",
+        "cardinality":{"to":"many", "from":"many"}, "properties":[property]
+    }]}))
+    .unwrap()
+}
+
+#[test]
+fn decimal_and_record_link_values_and_defaults_refuse_atomically() {
+    for nested in [false, true] {
+        for use_default in [false, true] {
+            for (number, valid) in [(json!(1.234), true), (json!(1.2345), false)] {
+                let value = if nested {
+                    json!({"amount":number})
+                } else {
+                    number
+                };
+                let definition = link_domain_type(3, nested, use_default.then(|| value.clone()));
+                let mut cell = CommandCell::new(|command| command.payload.clone())
+                    .with_types(vec![definition]);
+                let source = FactKey::new("demo.LinkDomain", "source");
+                let target = FactKey::new("demo.LinkDomain", "target");
+                cell.commit(CellCommit {
+                    writes: [source.clone(), target.clone()]
+                        .into_iter()
+                        .map(|key| FactWrite {
+                            key,
+                            expected: FactVersion::ABSENT,
+                            mutation: FactMutation::Put {
+                                values: JsonObject::new(),
+                            },
+                        })
+                        .collect(),
+                    ..CellCommit::empty()
+                })
+                .unwrap();
+                let link = LinkKey::new(source.clone(), "related", target.clone());
+                let side = FactKey::new("demo.LinkDomain", "side-effect");
+                let before = (
+                    cell.load(&source).unwrap(),
+                    cell.load(&target).unwrap(),
+                    cell.ledger().len(),
+                );
+                let values = if use_default {
+                    JsonObject::new()
+                } else {
+                    object(json!({"reading":value}))
+                };
+                let result = cell.commit(CellCommit {
+                    writes: vec![FactWrite {
+                        key: side.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: FactMutation::Put {
+                            values: JsonObject::new(),
+                        },
+                    }],
+                    links: vec![LinkWrite {
+                        key: link.clone(),
+                        expected: FactVersion::ABSENT,
+                        mutation: LinkMutation::Add { values },
+                    }],
+                    ..CellCommit::empty()
+                });
+                if valid {
+                    result.expect("representable link domain admits");
+                    assert!(cell.load_link(&link).unwrap().exists());
+                } else {
+                    assert_eq!(
+                        result.expect_err("excess scale refuses").code(),
+                        "commit.effective_values"
+                    );
+                    assert!(!cell.load_link(&link).unwrap().exists());
+                    assert!(!cell.load(&side).unwrap().exists());
+                    assert_eq!(
+                        before,
+                        (
+                            cell.load(&source).unwrap(),
+                            cell.load(&target).unwrap(),
+                            cell.ledger().len()
+                        )
+                    );
+                    assert!(cell.outbox().is_empty());
+                }
+            }
+        }
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn generated_link_decimal_domains_enforce_declared_scale(scale in 0_u32..9, mantissa in 1_i64..10000, nested in norn_testkit::proptest::bool::ANY) {
+        let definitions = [link_domain_type(scale, nested, None)];
+        let catalog = TypeCatalog::new(&definitions);
+        let source = ObjectTypeName("demo.LinkDomain".into());
+        let value = |scale| {
+            let number = RuntimeValue::Number(norn_ir::Decimal::new(mantissa * 10 + 1, scale));
+            let reading = if nested { RuntimeValue::Object(BTreeMap::from([("amount".into(), number)])) } else { number };
+            BTreeMap::from([("reading".into(), reading)])
+        };
+        norn_testkit::proptest::prop_assert!(catalog.effective_link_values(&source, "related", &value(scale)).is_ok());
+        norn_testkit::proptest::prop_assert!(catalog.effective_link_values(&source, "related", &value(scale + 1)).is_err());
+    }
+}
 type ObservationCell = MemoryCell<ObservationEvent, JsonObject, JsonObject>;
 
 fn definitions() -> (Vec<ObjectTypeDef>, Vec<InterfaceDef>) {
