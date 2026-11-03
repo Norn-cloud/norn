@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Run the compiled adapter on pinned celld, including a daemon restart."""
+"""Run the compiled adapter on pinned runtimes, including a daemon restart."""
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 
 ROOT = Path(os.environ["NORN_WORKERS_SQL_PROJECT"]).resolve()
 URL = "http://127.0.0.1:9876"
+RUNTIME = sys.argv[1] if len(sys.argv) > 1 else "celld"
+COMMAND = {"celld": ["celld", "dev", "--port", "9876"],
+           "wrangler": ["wrangler", "dev", "--local", "--port", "9876"]}[RUNTIME]
 
 
 def request(path):
@@ -22,18 +26,18 @@ def request(path):
 
 
 def start():
-    child = subprocess.Popen(["celld", "dev", "--port", "9876"], cwd=ROOT,
+    child = subprocess.Popen(COMMAND, cwd=ROOT,
                              start_new_session=True)
     try:
         for _ in range(100):
             if child.poll() is not None:
-                raise RuntimeError("celld exited during startup")
+                raise RuntimeError("runtime exited during startup")
             try:
                 request("/state")  # May be 500 before the first schema creation.
                 return child
             except urllib.error.URLError:
                 time.sleep(0.2)
-        raise RuntimeError("celld startup deadline exceeded")
+        raise RuntimeError("runtime startup deadline exceeded")
     except BaseException:
         stop(child)
         raise
@@ -53,7 +57,9 @@ def state():
     return json.loads(body)
 
 
-assert subprocess.check_output(["celld", "--version"], text=True).strip() == "celld 0.6.3"
+version = subprocess.check_output([RUNTIME, "--version"], text=True).strip()
+assert version == {"celld": "celld 0.6.3", "wrangler": "4.157.0"}[RUNTIME], version
+print("Runtime:", version)
 child = start()
 try:
     status, body = request("/")

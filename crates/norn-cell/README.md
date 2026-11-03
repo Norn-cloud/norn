@@ -43,3 +43,4 @@ python3 crates/norn-cell/examples/workers-sql/check.py
 Use matching wasm-bindgen, esbuild on PATH, and celld v0.6.3 (pin/checksum in
 [#728](https://github.com/Norn-cloud/norn/issues/728#issuecomment-6604974784)).
 The probe compares semantic SQLite/alarm state after refusal and restart.
+Pass `wrangler` to the probe for parity with Wrangler 4.157.0 on PATH.
