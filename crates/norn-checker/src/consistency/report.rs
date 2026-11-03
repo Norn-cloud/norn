@@ -153,10 +153,7 @@ fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
         env!("CARGO_PKG_VERSION"),
         crate::receipt::EXPR_PROFILE,
         attempt.profile,
-        [
-            serde_json::json!("norn.diagnosis-schema/1"),
-            schema_pin(attempt.schema)
-        ],
+        schema_pin(attempt.schema),
         members,
         attempt.assumptions,
         attempt.editable,
