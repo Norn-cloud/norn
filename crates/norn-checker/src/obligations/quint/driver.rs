@@ -10,6 +10,32 @@ use std::{
     path::Path,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+/// Native driver operation; unrecognized command-line values never enter the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverMode {
+    /// Generate deterministic checker-owned backend jobs.
+    Prepare,
+    /// Bind independently checked result bytes.
+    Bind,
+}
+
+/// Native input paths, parsed by the binary rather than the trusted binder.
+#[derive(Debug)]
+pub struct DriverRequest<'a> {
+    /// Requested operation.
+    pub mode: DriverMode,
+    /// Original declarations.
+    pub original: &'a Path,
+    /// Mutated declarations.
+    pub mutant: &'a Path,
+    /// Independent retained base.
+    pub base: &'a Path,
+    /// Complete bounds profile.
+    pub profile: &'a Path,
+    /// Generated models and actual result bytes.
+    pub work: &'a Path,
+}
 fn digest(path: &Path) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(std::fs::read(path)?)))
 }
@@ -71,12 +97,8 @@ fn assessment(kind: &str, status: &str) -> (&'static str, &'static str) {
 /// Prepare generated jobs or bind independently checked results on a native host.
 /// # Errors
 /// Refuses invalid inputs, stale pins, changed models/results or failed acceptance.
-pub fn run(args: &[String]) -> Result<()> {
-    let [mode, original, mutant, base, profile, work, _tools] = args else {
-        return Err(
-            "usage: quint prepare|bind ORIGINAL MUTANT BASE BOUNDS OUTPUT_DIR TOOL_ROOT".into(),
-        );
-    };
+pub fn run(request: DriverRequest<'_>) -> Result<()> {
+    let DriverRequest { mode, original, mutant, base, profile, work } = request;
     let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile)?)?;
     let bounds = Bounds {
         action: field(&profile, "action")?.into(),
@@ -98,9 +120,6 @@ pub fn run(args: &[String]) -> Result<()> {
         json!({"level":"exhaustive-finite/bounded"}),
     )?;
     std::fs::create_dir_all(work)?;
-    if mode != "prepare" && mode != "bind" {
-        return Err("invalid driver mode".into());
-    }
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let control: Value = serde_json::from_str(&input)?;
@@ -169,7 +188,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 "step"
             };
             let model_sha = format!("{:x}", Sha256::digest(model.as_bytes()));
-            if mode == "prepare" {
+            if mode == DriverMode::Prepare {
                 std::fs::write(&path, model)?;
                 jobs.push(json!({"key":key,"model":path,"result":result,"modelSha":model_sha,"challenge":batch.challenge.sha256(),"invariant":invariant,"step":step,"seed":bounds.seed,"expectedStates":profile.get("expectedStates").ok_or("expected states")?}));
                 continue;
@@ -231,7 +250,7 @@ pub fn run(args: &[String]) -> Result<()> {
         let expected = if label == "mutant" { 2 } else { 3 };
         cases.push(json!({"case":label,"challenge":batch.challenge.sha256(),"total":batch.goals.len(),"eligible":eligible,"discharged":discharged,"acceptancePassed":eligible==3 && batch.goals.len()==10 && discharged==expected && counterexample,"goals":goals}));
     }
-    if mode == "prepare" {
+    if mode == DriverMode::Prepare {
         writeln!(
             std::io::stdout().lock(),
             "{}",
