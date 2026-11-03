@@ -1,0 +1,881 @@
+{
+  "artifactId": "erpnext.three.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic erpnext snapshot and incremental profile",
+  "namespace": "erpnext",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-record-replay",
+      "version": "0.1.0"
+    },
+    "codeSets": [
+      {
+        "dataset": "Warehouse Lot Balance",
+        "field": "unit",
+        "id": "holding_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Sales Order Item",
+        "field": "unit",
+        "id": "order_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "field": "unit",
+        "id": "delivery_unit",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "g"
+          }
+        ]
+      },
+      {
+        "dataset": "Payment Entry",
+        "field": "kind",
+        "id": "settlement_kind",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "payment"
+          },
+          {
+            "value": "refund"
+          }
+        ]
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "field": "valuation_method",
+        "id": "holding_valuation_method",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "moving_average"
+          }
+        ]
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "field": "posting_state",
+        "id": "delivery_posting_state",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "posted"
+          }
+        ]
+      },
+      {
+        "dataset": "GL Entry",
+        "field": "posting_state",
+        "id": "posting_posting_state",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "posted"
+          }
+        ]
+      },
+      {
+        "dataset": "GL Entry",
+        "field": "currency",
+        "id": "posting_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      },
+      {
+        "dataset": "GL Entry",
+        "field": "account_role",
+        "id": "posting_account_role",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "cogs"
+          },
+          {
+            "value": "inventory"
+          }
+        ]
+      },
+      {
+        "dataset": "GL Entry",
+        "field": "book",
+        "id": "posting_book",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "demo/stock-usd"
+          }
+        ]
+      },
+      {
+        "dataset": "Payment Entry",
+        "field": "currency",
+        "id": "settlement_currency",
+        "origin": "declared",
+        "values": [
+          {
+            "value": "USD"
+          }
+        ]
+      }
+    ],
+    "constraints": [
+      {
+        "dataset": "Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_0",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_1",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Party",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_2",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Sales Order Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_3",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_4",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "GL Entry",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_5",
+        "kind": "primary_key",
+        "origin": "declared"
+      },
+      {
+        "dataset": "Payment Entry",
+        "fields": [
+          "name"
+        ],
+        "id": "source_id_6",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Item",
+        "kind": "document",
+        "nativeName": "Synthetic Item"
+      },
+      {
+        "id": "Warehouse Lot Balance",
+        "kind": "document",
+        "nativeName": "Synthetic Warehouse Lot Balance"
+      },
+      {
+        "id": "Party",
+        "kind": "document",
+        "nativeName": "Synthetic Party"
+      },
+      {
+        "id": "Sales Order Item",
+        "kind": "document",
+        "nativeName": "Synthetic Sales Order Item"
+      },
+      {
+        "id": "Delivery Note Item",
+        "kind": "document",
+        "nativeName": "Synthetic Delivery Note Item"
+      },
+      {
+        "id": "GL Entry",
+        "kind": "document",
+        "nativeName": "Synthetic GL Entry"
+      },
+      {
+        "id": "Payment Entry",
+        "kind": "document",
+        "nativeName": "Synthetic Payment Entry"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Item",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "sku",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Item",
+        "name": "price",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "resource_code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "location",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "item_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "owner_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "custodian_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "stock_cost",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "cost_currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 10,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "label",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Party",
+        "name": "role",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "due_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Sales Order Item",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "quantity",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "unit",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "occurred_at",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "provider_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "receiver_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "holding_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "order_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "account_code",
+        "nativeType": "SyntheticText",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "amount",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "book",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "account_role",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "event_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "name",
+        "nativeType": "SyntheticText",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "custom_norn_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "amount",
+        "nativeType": "SyntheticDecimal",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "currency",
+        "nativeType": "SyntheticText",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "kind",
+        "nativeType": "SyntheticText",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "payer_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Payment Entry",
+        "name": "payee_ref",
+        "nativeType": "SyntheticText",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Warehouse Lot Balance",
+        "name": "valuation_method",
+        "nativeType": "SyntheticText",
+        "ordinal": 11,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Delivery Note Item",
+        "name": "posting_state",
+        "nativeType": "SyntheticText",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "GL Entry",
+        "name": "posting_state",
+        "nativeType": "SyntheticText",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-02T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4",
+      "uri": "registry/packs/erpnext/synthetic.json"
+    },
+    "source": {
+      "instance": "demo",
+      "system": "synthetic-erpnext",
+      "version": "erpnext-three/1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/erpnext/artifacts/erpnext.three.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
