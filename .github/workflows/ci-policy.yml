@@ -232,7 +232,8 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const comment = context.payload.comment;
-            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login });
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login })
+              .catch(error => { if (error.status === 404) return { data: { permission: 'none' } }; throw error; });
             if (permission.permission !== 'admin') return;
             const bodies = [comment.body, context.payload.changes?.body?.from];
             const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));

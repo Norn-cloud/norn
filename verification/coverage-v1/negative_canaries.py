@@ -1721,11 +1721,11 @@ def durable_rights_history_canaries(source: str, merge: str) -> None:
     harness = """const assert = require('assert');
 const head = '1'.repeat(40), history = [];
 const context = {repo: {owner:'Norn-cloud',repo:'norn'},payload:{}};
-let admin = true;
+let admin = true, missing = false, unavailable = false;
 const pr = {number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:'base'}};
 const comments = [{id:1,user:{login:'owner'},body:'/ack-rights '+head,created_at:'2026-11-03T00:00:00Z',updated_at:'2026-11-03T00:00:00Z'}];
 const github = {rest:{repos:{
-  getCollaboratorPermissionLevel: async () => ({data:{permission:admin?'admin':'read'}}),
+  getCollaboratorPermissionLevel: async () => {if(missing) throw {status:404}; if(unavailable) throw {status:503}; return {data:{permission:admin?'admin':'read'}};},
   createCommitStatus: async value => { history.push({...value,id:history.length+1,created_at:'2026-11-03T00:01:00Z'}); },
   listCommitStatusesForRef: function statuses(){},
   getCommit: async () => ({data:{parents:[{sha:'base'},{sha:head}]}}),
@@ -1754,6 +1754,10 @@ async function collectGroup() {
  const groupEvidence = await collectGroup();
  assert.deepEqual(groupEvidence.pull_requests[0].revocations,evidence.revocations);
  admin=false; await record({comment:revoke}); assert.equal(history.length,6);
+ missing=true; await record({comment:revoke}); assert.equal(history.length,6);
+ missing=false; unavailable=true; let failed=false;
+ try {await record({comment:revoke});} catch(error) {failed=true;}
+ assert(failed); assert.equal(history.length,6);
  console.log('durable revocation: created, edited, deleted and group history passed');
 })().catch(error=>{console.error(error);process.exit(1)});
 """
