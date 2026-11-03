@@ -110,8 +110,14 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
   const feeds = new Map<string, Feed[]>()
   const systems: SourceSystem[] = []
   const sourceSystem = new Map<string, string>()
+  const entityName = new Map<string, string>()
   for (const artifact of artifacts) {
     if (artifact.kind === "entity" && "propertyTypes" in artifact.payload) for (const def of artifact.payload.propertyTypes) types.set(def.name, def)
+    if (artifact.kind === "entity") {
+      const payload = artifact.payload
+      const name = "objectType" in payload ? payload.objectType.name : "interface" in payload ? payload.interface.name : undefined
+      if (name) entityName.set(artifact.artifactId, name)
+    }
     if (artifact.kind === "source_schema") sourceSystem.set(artifact.artifactId, artifact.payload.source.system)
     if (artifact.kind === "law") {
       const law = artifact.payload
@@ -123,7 +129,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     const system = systemName(sourceSystem.get(artifact.payload.source.schemaId) ?? artifact.payload.source.schemaId)
     const targets = new Set<string>()
     for (const map of artifact.payload.maps) {
-      const target = map.target.entity.replace(/\.entity$/, "")
+      const target = entityName.get(map.target.entity) ?? map.target.entity
       targets.add(target)
       const facts = new Map<string, Source>((map.properties ?? []).map(({ property, value }) => [property, sourceOf(value)]))
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, { kind: "gap", note: note ?? reason.replaceAll("_", " ") })
