@@ -83,7 +83,7 @@ impl Host {
     /// Dispatch a request value to the existing Rust Session and checker service.
     /// `nonce` comes from platform cryptographic randomness; `now` is host time.
     #[must_use]
-    pub fn handle(&mut self, request: Request, nonce: &str, now: u64) -> Response {
+    pub fn handle(&mut self, request: &Request, nonce: &str, now: u64) -> Response {
         match self.serve(request, nonce, now) {
             Ok(reply) => reply,
             Err(refusal) => Response {
@@ -93,7 +93,7 @@ impl Host {
             },
         }
     }
-    fn serve(&mut self, r: Request, nonce: &str, now: u64) -> Result<Response, Refusal> {
+    fn serve(&mut self, r: &Request, nonce: &str, now: u64) -> Result<Response, Refusal> {
         let reply = |status, body, session| {
             Ok(Response {
                 status,
@@ -131,10 +131,11 @@ impl Host {
             return reply(400, String::new(), None);
         }
         self.sessions.retain(|_, (_, expiry)| now < *expiry);
-        let source =
-            serde_json::from_str::<serde_json::Value>(&r.body).map_err(|e| Refusal::invalid(e.to_string()))?;
         let id = header("mcp-session-id").unwrap_or(nonce).to_owned();
         if header("mcp-session-id").is_none() {
+            let source =
+            serde_json::from_str::<serde_json::Value>(&r.body).map_err(|e| Refusal::invalid(e.to_string()))?;
+
             if source.get("method").and_then(serde_json::Value::as_str) != Some("initialize") {
                 return reply(400, String::new(), None);
             }

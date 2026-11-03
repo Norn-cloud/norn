@@ -28,7 +28,7 @@ impl McpHost {
     pub fn fetch(&mut self, source: &str, nonce: &str, now: u64) -> Result<String, JsValue> {
         let request: Request =
             serde_json::from_str(source).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&self.0.handle(request, nonce, now))
+        serde_json::to_string(&self.0.handle(&request, nonce, now))
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }

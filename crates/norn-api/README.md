@@ -70,13 +70,10 @@ JSON-RPC parameter refusals preserve the validated request ID and use -32602;
 malformed-parameter notifications stay silent. Ping returns an empty result
 before or after initialization and does not unlock tool access.
 
-The `mcp_workers` example serves `/mcp` and `/catalog` through Rust `mcp_host`.
-Only checker content is accepted, using the human command's checker ABI.
-Raw tables, columns, physical schemas and SQL are absent; governed typed
-bindings remain allowed when available. Actions await #500, documents follow later.
-Trusted ORG/ENVIRONMENT/ORIGIN bindings configure the cell; Norn-Org and
-Norn-Environment headers select scope, never grant authentication. Sessions
-expire after five minutes or eviction. Build like the cell's `workers_sql`
-example; copy `mcp-workers` config/glue outside the checkout to `$NORN_MCP_PROJECT`.
-Set `NORN_MCP_REFERENCE` to built `mcp_reference`, then run `mcp-workers/check.py`
-for byte-exact native/celld v0.6.3 HTTP correspondence and negative-catalog tests.
+`mcp_workers` serves `/mcp` and `/catalog` through the shared Rust Session/checker.
+Only artifact/context content is checked: no file paths, raw tables/columns,
+physical schema browsing or SQL. Governed bindings remain allowed when available;
+actions await #500. Trusted ORG/ENVIRONMENT/ORIGIN configure scope, not user grants.
+Build like `workers_sql`, copy the `mcp-workers` config outside the checkout to
+`$NORN_MCP_PROJECT`, set `NORN_MCP_REFERENCE` to built `mcp_reference`, and run
+`mcp-workers/check.py` for native/celld correspondence, refusals and session restart.

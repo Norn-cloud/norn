@@ -14,7 +14,6 @@ URL = 'http://127.0.0.1:9876'
 assert subprocess.check_output(['celld', '--version'], text=True).strip() == 'celld 0.6.3'
 transcript, observed = [], []
 
-
 def stop(child):
     for sig in (signal.SIGTERM, signal.SIGKILL):
         if child.poll() is None:
@@ -26,7 +25,6 @@ def stop(child):
         except subprocess.TimeoutExpired:
             if sig == signal.SIGKILL:
                 raise
-
 
 def start():
     child = subprocess.Popen(['celld', 'dev', '--port', '9876'], cwd=project, start_new_session=True)
@@ -49,7 +47,6 @@ def start():
 child = start()
 session = None
 count = 0
-
 
 def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     global session, count
@@ -77,13 +74,10 @@ def send(method='POST', path='/mcp', message=None, headers=None, status=200):
     count += 1
     return json.loads(raw) if raw else None
 
-
 def rpc(method, params=None):
     return dict(jsonrpc='2.0', id=1, method=method, params=params or {})
 
-
 def host_catalog_excludes_raw_storage(catalog):
-    # Closed capability + complete typed argument schema, not a name blacklist.
     assert len(catalog['tools']) == 1
     tool = catalog['tools'][0]
     assert tool['name'] == 'norn.check'
@@ -108,6 +102,8 @@ try:
     send(message={'jsonrpc': '2.0', 'method': 'notifications/initialized'}, status=202)
     send('GET', '/mcp', status=405)
     send('GET', '/schema', status=404)
+    for method in ['tables/list', 'columns/list', 'schema/browse', 'sql/execute', 'resources/list']:
+        assert 'error' in send(message=rpc(method))
     send(message=rpc('tools/list'), headers={'Origin': 'https://invalid.example'}, status=403)
     send(message=rpc('tools/list'), headers={'Norn-Org': 'other'}, status=403)
     send(message=rpc('tools/list'), headers={'Norn-Org': ''}, status=400)
@@ -119,7 +115,6 @@ try:
     expected = json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
     assert observed == expected, (observed, expected)
     transcript, observed = [], []
-    # Protocol sessions are ephemeral; they must not survive DO eviction/restart.
     send(message=rpc('tools/list'), status=404)
     session = None
     assert observed == json.loads(subprocess.check_output([os.environ['NORN_MCP_REFERENCE']], input=json.dumps(transcript).encode()))
