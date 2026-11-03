@@ -52,13 +52,14 @@ the compiler removes the writer's loss derivation, then restores it.
   Challenge is PROOF-STALE/unknown.
 
 Results consume existing checker-generated initialization, preservation and
-non-vacuity goals and H's identity binding. Identity matching grants no verdict.
+non-vacuity goals and the checker's evidence identity binding. Identity matching
+grants no verdict.
 The executable driver supplies bounded runtime conformance, not solver proof:
 generated action-to-backend relations, induction over arbitrary states/writers,
 inherited-law instantiation and full REA stock/value effects remain unknown.
 All generated proof goals remain open; linked observations are bounded runtime
-evidence only. This
-qualified subset does not by itself complete MVP-CONSTITUTION or thesis T4-C2.
+evidence only. This qualified subset does not by itself complete
+MVP-CONSTITUTION or thesis T4-C2.
 - **MVP-ROUNDTRIP:** Given one admitted action, when invoked through UI/API/MCP/CLI, then equivalent authorization, exact inputs, consequences and refusals hold; discovery catalog matches the admitted definitions.
 - **MVP-DATA:** Given the ERPNext/Shopify feed fixture, when analytical outputs are produced, then freshness/lineage/quarantine/as-of/statistical guards pass all beat-6 cases.
 
