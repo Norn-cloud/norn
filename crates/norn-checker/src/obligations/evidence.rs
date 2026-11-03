@@ -53,9 +53,9 @@ pub struct EvidenceRecord {
     /// Exact serialized challenge, retaining all law/writer/unit/mapping pins.
     pub challenge_json: String,
     /// Exact UTF-8 JSON result bytes, including whitespace and number spelling.
-    /// F's checked driver owns their meaning and assurance level.
+    /// The checked driver owns their meaning and assurance level.
     pub result_json: String,
-    /// Raw SHA-256 of result_json's UTF-8 bytes.
+    /// Raw SHA-256 of `result_json`'s UTF-8 bytes.
     pub result_sha256: String,
 }
 
@@ -108,12 +108,14 @@ fn json(text: &str, limit: usize) -> Result<JsonValue, EvidenceError> {
     if text.len() > limit {
         return Err(EvidenceError::Limit);
     }
-    norn_canonical::parse_json_verbatim(text.as_bytes()).map_err(|_| EvidenceError::Malformed)
+    norn_canonical::parse_json_verbatim(text.as_bytes()).map_err(|_error| EvidenceError::Malformed)
 }
 
 fn digest_valid(digest: &str) -> bool {
     digest.len() == 64
-        && digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn tool_valid(tool: &EvidenceTool) -> bool {
@@ -141,15 +143,27 @@ impl Challenge {
         {
             return Err(EvidenceError::Malformed);
         }
-        let goal = self.body().get("obligations")
+        let goal = self
+            .body()
+            .get("obligations")
             .and_then(serde_json::Value::as_array)
-            .and_then(|goals| usize::try_from(goal_index).ok().and_then(|index| goals.get(index)))
+            .and_then(|goals| {
+                usize::try_from(goal_index)
+                    .ok()
+                    .and_then(|index| goals.get(index))
+            })
             .ok_or(EvidenceError::MissingGoal)?;
-        let bytes = norn_canonical::serialize_json_verbatim(goal).map_err(|_| EvidenceError::Malformed)?;
-        let goal_sha256 = exact_commitment(b"evidence-goal", &[&bytes]).map_err(|_| EvidenceError::Limit)?;
+        let bytes = norn_canonical::serialize_json_verbatim(goal)
+            .map_err(|_error| EvidenceError::Malformed)?;
+        let goal_sha256 =
+            exact_commitment(b"evidence-goal", &[&bytes]).map_err(|_error| EvidenceError::Limit)?;
         Ok(EvidencePins {
-            challenge_sha256: self.sha256().to_owned(), goal_index, goal_sha256,
-            tool, bounds_json: bounds_json.to_owned(), seed,
+            challenge_sha256: self.sha256().to_owned(),
+            goal_index,
+            goal_sha256,
+            tool,
+            bounds_json: bounds_json.to_owned(),
+            seed,
         })
     }
 
@@ -164,14 +178,23 @@ impl Challenge {
         if !tool_valid(&pins.tool) {
             return Err(EvidenceError::Malformed);
         }
-        if self.evidence_pins(pins.goal_index, pins.tool.clone(), &pins.bounds_json, pins.seed)? != *pins {
+        if self.evidence_pins(
+            pins.goal_index,
+            pins.tool.clone(),
+            &pins.bounds_json,
+            pins.seed,
+        )? != *pins
+        {
             return Err(EvidenceError::Stale);
         }
         json(result_json, RESULT_LIMIT)?;
-        let bytes = norn_canonical::serialize_json_verbatim(self.body()).map_err(|_| EvidenceError::Malformed)?;
-        let challenge_json = String::from_utf8(bytes).map_err(|_| EvidenceError::Malformed)?;
+        let bytes = norn_canonical::serialize_json_verbatim(self.body())
+            .map_err(|_error| EvidenceError::Malformed)?;
+        let challenge_json = String::from_utf8(bytes).map_err(|_error| EvidenceError::Malformed)?;
         Ok(EvidenceRecord {
-            pins: pins.clone(), challenge_json, result_json: result_json.to_owned(),
+            pins: pins.clone(),
+            challenge_json,
+            result_json: result_json.to_owned(),
             result_sha256: format!("{:x}", Sha256::digest(result_json.as_bytes())),
         })
     }
@@ -182,13 +205,24 @@ impl Challenge {
     /// driver, never from the untrusted record being inspected. Even Current
     /// authenticates neither the runner nor its claimed result.
     #[must_use]
-    pub fn evidence_identity(&self, current: &EvidencePins, expected_result_sha256: &str, record: &EvidenceRecord) -> EvidenceIdentity {
+    pub fn evidence_identity(
+        &self,
+        current: &EvidencePins,
+        expected_result_sha256: &str,
+        record: &EvidenceRecord,
+    ) -> EvidenceIdentity {
         if !tool_valid(&current.tool)
             || !digest_valid(expected_result_sha256)
-            || record.result_sha256 != expected_result_sha256 {
+            || record.result_sha256 != expected_result_sha256
+        {
             return EvidenceIdentity::Unknown;
         }
-        let Ok(expected) = self.evidence_pins(current.goal_index, current.tool.clone(), &current.bounds_json, current.seed) else {
+        let Ok(expected) = self.evidence_pins(
+            current.goal_index,
+            current.tool.clone(),
+            &current.bounds_json,
+            current.seed,
+        ) else {
             return EvidenceIdentity::Unknown;
         };
         if expected != *current || record.pins != expected {
@@ -197,6 +231,10 @@ impl Challenge {
         let Ok(rebuilt) = self.record_evidence(current, &record.result_json) else {
             return EvidenceIdentity::Unknown;
         };
-        if rebuilt == *record { EvidenceIdentity::Current } else { EvidenceIdentity::Unknown }
+        if rebuilt == *record {
+            EvidenceIdentity::Current
+        } else {
+            EvidenceIdentity::Unknown
+        }
     }
 }
