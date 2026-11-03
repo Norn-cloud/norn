@@ -1060,7 +1060,7 @@ fn invoice_totals_require_their_authoritative_currency() {
     let metric: MetricDefinition = decode(&metric);
     assert_code(
         &check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)),
-        codes::CURRENCY_SOURCE_MISMATCH,
+        codes::MIXED_CURRENCY,
     );
 }
 
