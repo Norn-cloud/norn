@@ -49,4 +49,3 @@ pub struct EvidenceRecord {
     /// Raw SHA-256 of `result_json`'s UTF-8 bytes.
     pub result_sha256: String,
 }
-
