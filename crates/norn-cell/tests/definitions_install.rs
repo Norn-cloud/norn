@@ -7143,7 +7143,8 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
             "the dispute arrives after preparation, before BEGIN"
         );
         assert!(
-            matches!(result, Err(CellError::ObservationCommit(error)) if matches!(error.as_ref(), norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile)))
+            matches!(&result, Err(CellError::ObservationCommit(error)) if matches!(error.as_ref(), norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile))),
+            "identity={identity}; result={result:?}"
         );
         assert!(
             cell.store()
@@ -7160,5 +7161,13 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
                 .iter()
                 .any(|row| row.observation_id == id)
         );
+        let mut correction = bundle_raw("MEAS-1", "0.95");
+        let raw = correction.input.as_object_mut().expect("raw");
+        raw.insert("event_id".into(), Value::from("next-event"));
+        if identity {
+            raw.insert("source_id".into(), Value::from("é"));
+        }
+        let (correction_id, _) = cell.store_mut().inject_mapping_bundle(&correction, &bundle_input()).expect("new source event");
+        assert!(cell.process_mapping_bundle(&correction_id).expect("capture a correction under a different event"));
     }
 }

@@ -193,11 +193,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// OBS-EVIDENCE-1: an ambiguous NFC bucket grants no convergence authority.
-    pub(crate) fn identity_is_disputed(&self, bundle: &MappingBundle) -> Result<bool, CellError> {
-        let key = keys(&bundle.raw, &bundle.input)?.map(|s| norn_ir::canonical::nfc(&s));
-        self.indexed_identity_dispute(&key)
-    }
-
     pub(crate) fn identity_findings(
         &self,
         object_type: &str,

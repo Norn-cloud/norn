@@ -48,7 +48,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             return Err(CellError::MappingBundleMismatch);
         }
         if self.store().read().mapping_conflict(&bundle)?.is_some()
-            || self.store().read().identity_is_disputed(&bundle)?
+            || self.store().read().mapping_event_is_disputed(&bundle)?
         {
             return Err(CellError::UnsupportedMappingProfile);
         }

@@ -1433,7 +1433,7 @@ where
                     .map_err(CommitError::Host)?
                     .is_some()
                     || reader
-                        .identity_is_disputed(bundle)
+                        .mapping_event_is_disputed(bundle)
                         .map_err(CommitError::Host)?
                 {
                     return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
