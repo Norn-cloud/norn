@@ -13,7 +13,7 @@ import tempfile
 import time
 import zipfile
 
-from quint_apalache import HarnessError, kill_group, run_quint_apalache, scrubbed_environment
+from quint_apalache import HarnessError, kill_group, scrubbed_environment
 
 
 def verdict(primary, oracle, returncode, timed_out, expected):
@@ -22,32 +22,61 @@ def verdict(primary, oracle, returncode, timed_out, expected):
         return "unknown"
     if returncode == 0 and primary.get("status") == "success" and primary.get("distinctStates") == expected and oracle.get("status") == "ok":
         return "ok"
-    if returncode == 1 and primary.get("status") == "invariant-violation" and primary.get("violation", {}).get("trace") and oracle.get("status") == "violation" and oracle.get("trace"):
+    primary_shape = trace_shape(primary.get("violation", {}).get("trace"))
+    if returncode == 12 and primary.get("status") == "invariant-violation" and primary_shape and oracle.get("status") == "violation" and primary_shape == trace_shape(oracle.get("trace")):
         return "violation"
     return "unknown"
 
 
 def oracle_trace(trace):
-    """Decode the qualified Quint record/scalar trace without numeric coercion."""
-    if not isinstance(trace, list) or not trace:
-        raise ValueError("missing Apalache trace")
+    """Decode the pinned CLI's ITF scalar trace without numeric coercion."""
+    if not isinstance(trace, dict):
+        raise ValueError("missing Apalache ITF trace")
+    variables, raw_states = trace.get("vars"), trace.get("states")
+    if not isinstance(variables, list) or not variables or any(not isinstance(v, str) for v in variables) or len(set(variables)) != len(variables) or not isinstance(raw_states, list) or not raw_states:
+        raise ValueError("malformed Apalache ITF trace")
     states = []
-    for record in trace:
-        if not isinstance(record, dict) or record.get("kind") != "app" or record.get("opcode") != "Rec":
-            raise ValueError("unsupported Apalache trace record")
-        args = record.get("args")
-        if not isinstance(args, list) or len(args) % 2:
-            raise ValueError("malformed Apalache trace fields")
+    for index, state in enumerate(raw_states):
+        metadata = state.get("#meta") if isinstance(state, dict) else None
+        if not isinstance(state, dict) or set(state) - {"#meta"} != set(variables) or not isinstance(metadata, dict) or type(metadata.get("index")) is not int or metadata["index"] != index:
+            raise ValueError("malformed Apalache ITF state")
         values = {}
-        for key, value in zip(args[::2], args[1::2]):
-            if not isinstance(key, dict) or key.get("kind") != "str" or not isinstance(key.get("value"), str) or key["value"] in values or not isinstance(value, dict):
-                raise ValueError("malformed Apalache trace field")
-            scalar = value.get("value")
-            if not ((value.get("kind") == "int" and type(scalar) is int and -2_147_483_648 <= scalar <= 2_147_483_647) or (value.get("kind") == "bool" and type(scalar) is bool)):
-                raise ValueError("unsupported or inexact Apalache trace scalar")
-            values[key["value"]] = scalar
+        for name in variables:
+            value = state[name]
+            if type(value) is bool:
+                values[name] = value
+            elif isinstance(value, dict) and set(value) == {"#bigint"} and isinstance(value["#bigint"], str):
+                text = value["#bigint"]
+                if len(text) > 11 or not re.fullmatch(r"0|-?[1-9][0-9]*", text) or not -2_147_483_648 <= int(text) <= 2_147_483_647:
+                    raise ValueError("inexact or out-of-profile Apalache ITF integer")
+                values[name] = int(text)
+            else:
+                raise ValueError("unsupported Apalache ITF scalar")
         states.append({"state": values})
     return states
+
+
+def trace_shape(trace):
+    if not isinstance(trace, list) or not trace:
+        return None
+    result = []
+    for entry in trace:
+        state = entry.get("state") if isinstance(entry, dict) else None
+        if not isinstance(state, dict) or not state or type(state.get("present")) is not bool:
+            return None
+        if any(type(v) not in (int, bool) for v in state.values()):
+            return None
+        result.append((state["present"], sorted((k, type(v).__name__) for k, v in state.items())))
+    return result
+
+
+def oracle_verdict(returncode, stdout):
+    outcomes = re.findall(r"^The outcome is: (\w+)\b", stdout, re.MULTILINE)
+    if returncode == 0 and outcomes == ["NoError"]:
+        return "ok"
+    if returncode == 12 and outcomes == ["Error"] and re.search(r"State \d+: state invariant \d+ violated\.", stdout):
+        return "violation"
+    return "unknown"
 
 
 def arithmetic_qualified(model):
@@ -167,19 +196,22 @@ def run(args):
                        env=environment, capture_output=True, check=True, timeout=120)
         primary_raw = primary_path.read_text()
         primary = json.loads(primary_raw)
-        oracle_path = work / "oracle.json"
-        oracle_run = run_quint_apalache([
-            str(root / "bin/quint"), "verify", str(args.model), "--main", "generated", "--backend", "apalache",
-            "--step", args.step, "--invariants", args.invariant, "--max-steps", "1", "--out", str(oracle_path),
-        ], environment=environment, timeout_seconds=120, result_root=work, emit=lambda line: print(line, file=sys.stderr, flush=True))
-        oracle_raw = oracle_path.read_text()
-        oracle = json.loads(oracle_raw)
+        oracle_directory = work / "oracle-run"
+        checked = compile_process([
+            str(root / "quint-home/apalache-dist-0.56.1/apalache/bin/apalache-mc"),
+            "--out-dir=" + str(work / "oracle-output"), "--run-dir=" + str(oracle_directory),
+            "check", "--init=q_init", "--next=q_step", "--inv=q_inv", "--length=1", "--output-traces=true", str(tla),
+        ], environment, work, time.monotonic() + 120)
+        status = oracle_verdict(checked.returncode, checked.stdout.decode())
+        trace_raw = (oracle_directory / "violation.itf.json").read_text() if status == "violation" else None
+        oracle = {"status": status, "errors": [], "trace": oracle_trace(json.loads(trace_raw)) if trace_raw else None}
+        oracle_raw = json.dumps({"stdout": checked.stdout.decode(), "stderr": checked.stderr.decode(), "traceRaw": trace_raw}, separators=(",", ":"))
         expected = 1 if args.step == "idle" else args.expected_states
-        status = verdict(primary, oracle, oracle_run.returncode, oracle_run.timed_out, expected)
+        status = verdict(primary, oracle, checked.returncode, False, expected)
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",
                 "compilation": compilation, "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
-                "oracleRun": {"exitCode": oracle_run.returncode, "timedOut": oracle_run.timed_out},
-                "tlaSha256": hashlib.sha256(tla_bytes).hexdigest(), "traceBackend": "apalache", "trace": oracle_trace(oracle.get("trace")) if status == "violation" else None}
+                "oracleRun": {"exitCode": checked.returncode, "timedOut": False},
+                "tlaSha256": hashlib.sha256(tla_bytes).hexdigest(), "traceBackend": "apalache", "trace": oracle.get("trace") if status == "violation" else None}
 
 
 def main():

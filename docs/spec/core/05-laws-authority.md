@@ -176,7 +176,11 @@ The initializer conversion accepts only a complete constant assignment to each
 state variable, with no initializer reuse; it changes assignment to equality
 only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
 as Unknown. Both compilation stages share the existing 120-second budget and
-own their process groups. Named scenario: `constant_initializer_predicate`;
+own their process groups. The independent Apalache CLI checks the same emitted
+TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
+exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
+an exact typed ITF trace and agreement with the primary trace shape. Other exits,
+missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
 real generated output must match the prior RPC compiler bytes.
 
 Qualification is restricted to integer/Boolean states and one worker. Raw

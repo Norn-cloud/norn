@@ -21,13 +21,14 @@ class VerdictPolicy(unittest.TestCase):
         self.assertEqual(runner.verdict(primary, {**oracle, "errors": ["failure"]}, 0, False, 78), "unknown")
 
     def test_violation_requires_both_traces_and_the_verdict_exit(self):
-        primary = {"status": "invariant-violation", "violation": {"trace": [{"state": {}}]}}
-        oracle = {"status": "violation", "errors": [], "trace": [{"state": {}}]}
-        self.assertEqual(runner.verdict(primary, oracle, 1, False, 78), "violation")
-        for code in [-9, 0, 2, 124, 125]:
+        trace = [{"state": {"present": False, "v": 0}}, {"state": {"present": True, "v": 1}}]
+        primary = {"status": "invariant-violation", "violation": {"trace": trace}}
+        oracle = {"status": "violation", "errors": [], "trace": trace}
+        self.assertEqual(runner.verdict(primary, oracle, 12, False, 78), "violation")
+        for code in [-9, 0, 1, 2, 75, 120, 124, 125, 150, 255]:
             self.assertEqual(runner.verdict(primary, oracle, code, False, 78), "unknown")
-        self.assertEqual(runner.verdict(primary, {**oracle, "trace": []}, 1, False, 78), "unknown")
-        self.assertEqual(runner.verdict({**primary, "violation": {}}, oracle, 1, False, 78), "unknown")
+        self.assertEqual(runner.verdict(primary, {**oracle, "trace": []}, 12, False, 78), "unknown")
+        self.assertEqual(runner.verdict({**primary, "violation": {}}, oracle, 12, False, 78), "unknown")
 
     def test_timeout_dominates_success_and_counterexample_files(self):
         for primary, oracle in [
@@ -39,17 +40,26 @@ class VerdictPolicy(unittest.TestCase):
 
     def test_oracle_trace_decodes_exact_scalars_and_refuses_other_values(self):
         def record(value):
-            return [{"kind": "app", "opcode": "Rec", "args": [{"kind": "str", "value": "v1"}, value]}]
-        for kind, value in [("int", 2), ("bool", False)]:
-            self.assertEqual(runner.oracle_trace(record({"kind": kind, "value": value})), [{"state": {"v1": value}}])
-        for value in [{"kind": "int", "value": 0.5}, {"kind": "int", "value": True}, {"kind": "int", "value": 2**31}, {"kind": "str", "value": "2"}, {"kind": "bool", "value": 0}]:
+            return {"vars": ["v"], "states": [{"#meta": {"index": 0}, "v": value}]}
+        for value, expected in [({"#bigint": "2"}, 2), (False, False)]:
+            self.assertEqual(runner.oracle_trace(record(value)), [{"state": {"v": expected}}])
+        for value in [0.5, 2, "2", {"#bigint": "1.25"}, {"#bigint": "+1"}, {"#bigint": "01"}, {"#bigint": "-0"}, {"#bigint": str(2**31)}]:
             with self.assertRaises(ValueError):
                 runner.oracle_trace(record(value))
-        duplicate = record({"kind": "int", "value": 2})
-        duplicate[0]["args"] *= 2
-        for trace in [None, [], [None], [{"kind": "app", "opcode": "Rec", "args": [1]}], duplicate]:
+        for trace in [None, {}, {"vars": ["v", "v"], "states": []}, {"vars": ["v"], "states": [{"#meta": {"index": False}, "v": True}]}]:
             with self.assertRaises(ValueError):
                 runner.oracle_trace(trace)
+
+    def test_cli_outcome_exit_and_trace_shape_must_agree(self):
+        success = "The outcome is: NoError I@00:00\n"
+        violation = "State 1: state invariant 0 violated. I@00:00\nThe outcome is: Error I@00:00\n"
+        self.assertEqual(runner.oracle_verdict(0, success), "ok")
+        self.assertEqual(runner.oracle_verdict(12, violation), "violation")
+        for code, output in [(1, violation), (12, success), (0, violation), (75, success), (255, success), (12, "The outcome is: Error"), (0, success + success)]:
+            self.assertEqual(runner.oracle_verdict(code, output), "unknown")
+        primary = {"status": "invariant-violation", "violation": {"trace": [{"state": {"present": True, "v": 2}}]}}
+        for trace in [[{"state": {"present": True, "other": 2}}], [{"state": {"present": False, "v": 2}}], [{"state": {"present": True, "v": False}}]]:
+            self.assertEqual(runner.verdict(primary, {"status": "violation", "errors": [], "trace": trace}, 12, False, 78), "unknown")
 
     def test_arithmetic_qualification_covers_both_expression_layers(self):
         self.assertTrue(runner.arithmetic_qualified("(2).to(12).oneOf()"))
