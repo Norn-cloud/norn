@@ -1,4 +1,5 @@
 //! ID-COLLISION / ID-UNIQUE-1: original values stay stored; normalized tuples are unique.
+#![cfg(feature = "native")]
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -320,4 +321,57 @@ fn normalized_key_refusal_keeps_its_machine_code_through_the_cell_host() {
     assert_eq!(error.code(), "core.identity.collision");
     assert!(!error.refusal().retryable);
     assert_eq!(cell.store().read().dump().expect("after"), before);
+}
+
+#[test]
+fn raw_duplicate_keeps_its_existing_refusal_and_is_atomic() {
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    store
+        .commit(&batch(
+            "org_a",
+            "main",
+            vec![put("identity.Child", "a", "ABC")],
+        ))
+        .expect("first");
+    let before = store.read().dump().expect("before");
+    assert!(
+        store
+            .commit(&batch(
+                "org_a",
+                "main",
+                vec![put("identity.Sibling", "b", "ABC")]
+            ))
+            .is_err()
+    );
+    assert_eq!(store.read().dump().expect("after"), before);
+}
+#[test]
+fn normalized_composite_integer_key_keeps_values_beyond_binary64_precision() {
+    let mut defs = definitions();
+    let mut ordinal = defs[0].properties[0].clone();
+    ordinal.id = PropertyId("ordinal".into());
+    ordinal.property_type = PropertyType::Integer {};
+    defs[0].properties.push(ordinal);
+    defs[0].identity[0]
+        .properties
+        .push(PropertyId("ordinal".into()));
+    let mut store = CellStore::open_in_memory(Model::from_definitions(&defs, &[]).expect("model"))
+        .expect("store");
+    let row = |id: &str, code: &str| {
+        let mut row = put("identity.Child", id, code);
+        if let FactWriteRow::Put { values, .. } = &mut row {
+            values.insert(
+                "ordinal".into(),
+                RuntimeValue::from_json_text(i64::MAX.to_string()).expect("exact integer"),
+            );
+        }
+        row
+    };
+    store
+        .commit(&batch("org_a", "main", vec![row("a", " abc ")]))
+        .expect("first");
+    assert!(matches!(
+        store.commit(&batch("org_a", "main", vec![row("b", "ABC")])),
+        Err(CellError::IdentityCollision { .. })
+    ));
 }

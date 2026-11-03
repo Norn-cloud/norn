@@ -111,3 +111,5 @@ ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared norm
 This cut's evidence is native runtime conformance and generated ASCII input sampling. The unchanged pure normalization helper is reused directly; the new transaction scan depends on SQL and is not a pure bounded Kani target. These tests do not establish alias history, tombstone restoration, arbitrary Unicode normalization correctness or general identity proofs.
 
 The normalized native profile checks candidate activation with reads only as well as inside the install transaction. A normalized key over a newly added component on an occupied table refuses until backfill-aware identity admission exists; an empty new type is permitted. Candidate checks cover all worlds, including worlds other than the install request's world.
+
+Raw-byte duplicates may refuse earlier through the existing physical unique index and retain its existing transport error; the new canonical collision code covers raw-distinct normalized duplicates. Both paths preserve atomicity. This cut does not qualify a new SQL-constraint error taxonomy.
