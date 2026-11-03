@@ -304,17 +304,40 @@ fn affine_relation_retains_derivation_order_and_profile_default_origin() {
     let mut artifacts = fixture();
     let original = source(&artifacts);
     let registry = BTreeSet::new();
-    let authority = ApprovedContract::approve(&original, &registry,
-        json!({"expr":"norn-zen/6"}), json!({"store":"empty"}), json!({"level":"bounded"}))
-        .expect("admitted");
+    let authority = ApprovedContract::approve(
+        &original,
+        &registry,
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("admitted");
     let profile = bounds(&artifacts);
-    let relation = |artifacts: &[Value]| authority.finite(&source(artifacts), &registry, &profile)
-        .expect("lower").goals.into_iter().find_map(Result::ok).expect("eligible");
+    let relation = |artifacts: &[Value]| {
+        authority
+            .finite(&source(artifacts), &registry, &profile)
+            .expect("lower")
+            .goals
+            .into_iter()
+            .find_map(Result::ok)
+            .expect("eligible")
+    };
     let original = relation(&artifacts);
-    let difference = original.state.iter().find(|field| field.property.as_str() == "difference")
-        .expect("property").symbol.clone();
-    assert_eq!(original.origins[&difference], AssignmentOrigin::Derivation(0));
-    assert_eq!(original.absent_inputs, vec![norn_ir::PropertyId("difference".into())]);
+    let difference = original
+        .state
+        .iter()
+        .find(|field| field.property.as_str() == "difference")
+        .expect("property")
+        .symbol
+        .clone();
+    assert_eq!(
+        original.origins[&difference],
+        AssignmentOrigin::Derivation(0)
+    );
+    assert_eq!(
+        original.absent_inputs,
+        vec![norn_ir::PropertyId("difference".into())]
+    );
     assert_eq!(original.derivations.len(), 1);
     assert!(!original.derivations[0].input_required);
     let symbolic = project(&original);
@@ -323,16 +346,25 @@ fn affine_relation_retains_derivation_order_and_profile_default_origin() {
     for (symbol, delta) in &symbolic.deltas {
         let delta = delta.as_ref().expect("affine delta");
         for (input, value) in &delta.coefficients {
-            *coefficients.entry(input.clone()).or_default() += residual.coefficients[symbol] * value;
+            *coefficients.entry(input.clone()).or_default() +=
+                residual.coefficients[symbol] * value;
         }
     }
     assert!(coefficients.values().all(|value| *value == 0));
     artifacts[2]["payload"]["derive"] = json!([]);
     let mutant = relation(&artifacts);
     assert_eq!(mutant.absent_inputs, original.absent_inputs);
-    assert_eq!(mutant.origins[&difference], AssignmentOrigin::DefaultAbsentInput);
-    let mutant_delta = project(&mutant).deltas.into_iter()
-        .find(|(symbol, _)| symbol == &difference).expect("delta").1.expect("exact zero");
+    assert_eq!(
+        mutant.origins[&difference],
+        AssignmentOrigin::DefaultAbsentInput
+    );
+    let mutant_delta = project(&mutant)
+        .deltas
+        .into_iter()
+        .find(|(symbol, _)| symbol == &difference)
+        .expect("delta")
+        .1
+        .expect("exact zero");
     assert_eq!(mutant_delta, super::transition::Affine::default());
     artifacts[2]["payload"]["derive"] = json!([
         {"field":"difference","inputRequired":false,"expression":"input.amount - input.remaining"},
@@ -341,23 +373,45 @@ fn affine_relation_retains_derivation_order_and_profile_default_origin() {
     let sequential = relation(&artifacts);
     assert_eq!(sequential.derivations.len(), 2);
     assert!(sequential.derivations[1].input_required);
-    assert_eq!(project(&sequential).derivations[0], project(&sequential).derivations[1]);
-    let remaining = sequential.state.iter().find(|field| field.property.as_str() == "remaining")
+    assert_eq!(
+        project(&sequential).derivations[0],
+        project(&sequential).derivations[1]
+    );
+    let remaining = sequential
+        .state
+        .iter()
+        .find(|field| field.property.as_str() == "remaining")
         .expect("target");
-    assert_eq!(sequential.origins[&remaining.symbol], AssignmentOrigin::Derivation(1));
+    assert_eq!(
+        sequential.origins[&remaining.symbol],
+        AssignmentOrigin::Derivation(1)
+    );
 }
 
 #[test]
 fn affine_unknown_is_explicit_for_opaque_nonlinear_and_non_equality_parts() {
     use super::transition::{affine, equality};
     let symbols = BTreeSet::from(["x".into(), "y".into()]);
-    for source in ["x * y", "x / 2", "x + z", "x + 0.1", "f(x)", "x y", "(x", "x == y"] {
+    for source in [
+        "x * y", "x / 2", "x + z", "x + 0.1", "f(x)", "x y", "(x", "x == y",
+    ] {
         assert!(affine(source, &symbols).is_err(), "{source}");
     }
-    for source in ["x < y", "x == y and x == 0", "not(x == y)", "x == y == 0", "true"] {
+    for source in [
+        "x < y",
+        "x == y and x == 0",
+        "not(x == y)",
+        "x == y == 0",
+        "true",
+    ] {
         assert!(equality(source, &symbols).is_err(), "{source}");
     }
-    assert_eq!(equality("((x == (y + 2)))", &symbols).expect("equality").constant, -2);
+    assert_eq!(
+        equality("((x == (y + 2)))", &symbols)
+            .expect("equality")
+            .constant,
+        -2
+    );
     assert!(affine(&format!("{} + 1", i128::MAX), &symbols).is_err());
     assert!(affine(&format!("{}x{}", "(".repeat(65), ")".repeat(65)), &symbols).is_err());
 }

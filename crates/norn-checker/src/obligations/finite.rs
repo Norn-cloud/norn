@@ -352,7 +352,10 @@ fn lower(
             input_required: derivation.input_required,
         });
         origins.insert(
-            assignments.get(&derivation.field).ok_or("derivation target")?.clone(),
+            assignments
+                .get(&derivation.field)
+                .ok_or("derivation target")?
+                .clone(),
             AssignmentOrigin::Derivation(index),
         );
         fields.insert(derivation.field.clone(), format!("({value})"));
