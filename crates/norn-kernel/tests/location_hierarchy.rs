@@ -928,3 +928,64 @@ fn obs_link_authored_subtype_claims_refuse_at_identity_root() {
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
 }
+
+/// Generic observations confer no content-addressed claim authority.
+fn generic_claim_attempt(
+    catalog: &norn_kernel::TypeCatalog<'_>,
+    cell: &ClaimCell,
+    key: &FactKey,
+    claim: &norn_ir::mapping::ObservedLinkClaim,
+) -> (
+    CellCommit<norn_kernel::ObservationEvent, JsonObject, JsonObject>,
+    norn_kernel::ObservationAuthorization,
+) {
+    let slice = norn_kernel::load_slice(cell, [key.clone()]).expect("claim state");
+    let turn = norn_kernel::DecisionTurn {
+        id: claim.observation_id.clone(),
+        now: norn_kernel::LogicalTime::EPOCH,
+        world: norn_kernel::World::Main,
+        consumes: None,
+    };
+    norn_kernel::snapshot_observe::prepare_observed_snapshot(
+        catalog,
+        &slice,
+        &turn,
+        norn_kernel::snapshot_observe::ObservedSnapshot {
+            key,
+            values: &claim.values().expect("values"),
+            lifecycles: &[],
+            provenance: &claim.provenance,
+        },
+    )
+    .expect("generic snapshot")
+    .into_parts()
+}
+
+#[test]
+fn obs_link_generic_claim_creation_and_existing_claim_rewrite_refuse() {
+    let (types, mut cell, claim) = claim_fixture();
+    let catalog = norn_kernel::TypeCatalog::new(types.iter());
+    let actual = claim.id().expect("id");
+    for identity in ["forged-identity".to_owned(), actual.clone()] {
+        let key = FactKey::new(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE, identity);
+        let (commit, authority) = generic_claim_attempt(&catalog, &cell, &key, &claim);
+        assert!(matches!(
+            cell.commit_observed(commit, authority),
+            Err(norn_kernel::CommitError::ObservationAuthorization)
+        ));
+        assert!(cell.load(&key).expect("unchanged").values.is_none());
+    }
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    cell.commit_observed(commit, authority)
+        .expect("sealed claim");
+    let key = FactKey::new(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE, actual);
+    let original = cell.load(&key).expect("original");
+    let mut changed = claim;
+    changed.observation_id = "different-evidence".into();
+    let (commit, authority) = generic_claim_attempt(&catalog, &cell, &key, &changed);
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    assert_eq!(cell.load(&key).expect("retained"), original);
+}

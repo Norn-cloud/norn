@@ -132,8 +132,7 @@ fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
         .or_else(|| record.get("id"))
         .expect("source alias")
         .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| record["id"].to_string());
+        .map_or_else(|| record["id"].to_string(), str::to_owned);
     let payload = RuntimeValue::from_json(record.clone()).expect("payload");
     let digest = norn_ir::canonical::HashProfile::Norn1
         .hash_json(serde_json::to_string(&payload).expect("json"))
@@ -149,7 +148,11 @@ fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
             source: source.clone(),
             source_id: alias.clone(),
             mapping_version: "synthetic/1".into(),
-            observed_at: norn_kernel::LogicalTime::from_millis(1_793_702_400_000 + delivery),
+            observed_at: norn_kernel::LogicalTime::from_millis(
+                1_793_702_400_000u64
+                    .checked_add(delivery)
+                    .expect("test clock"),
+            ),
         },
         input: norn_ir::runtime_object! {
             "contract"=>"norn.raw_observation/v1", "source"=>source, "source_id"=>alias,
@@ -189,8 +192,8 @@ fn graph(cell: &Cell) -> BTreeSet<(String, String, String, String, String)> {
     graph
 }
 fn count_snapshot(cell: &Cell) -> (usize, usize) {
-    let mut captured = 0;
-    let mut quarantined = 0;
+    let mut captured = 0usize;
+    let mut quarantined = 0usize;
     for ty in [
         "canon.Item",
         "canon.Party",
@@ -203,8 +206,12 @@ fn count_snapshot(cell: &Cell) -> (usize, usize) {
             .read()
             .authoritative_page(MAIN_WORLD, ty, None, 100)
             .expect("page");
-        captured += page.records.len();
-        quarantined += page.quarantine_count;
+        captured = captured
+            .checked_add(page.records.len())
+            .expect("record count");
+        quarantined = quarantined
+            .checked_add(page.quarantine_count)
+            .expect("quarantine count");
     }
     (captured, quarantined)
 }

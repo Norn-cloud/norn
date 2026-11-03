@@ -192,7 +192,10 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   `ObservedLinkClaim` per non-null output or explicit nullable-role clear.
   Claim identity includes its retaining observation and complete provenance;
   delivery order and redelivery do not establish identity. Source aliases
-  remain provenance; they never replace canonical endpoint keys.
+  remain provenance; they never replace canonical endpoint keys. Only typed claim
+  preparation seals claim metadata at its computed identity. Generic observation
+  authority cannot create claim metadata or rewrite a retained claim; claim
+  identities remain immutable across observation preparation and authorization merges.
 - **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
   all source claims remain individually addressable provenance. Observation
   authority is confined to recomputed declared claims. The existing authored
