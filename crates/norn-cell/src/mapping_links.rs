@@ -48,6 +48,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                       claim: ObservedLinkClaim|
          -> Result<(), CellError> {
             let id = if latest {
+                let mapping = claim.provenance.mapping_version.as_str();
+                let mapping_id = mapping.split_once('@').map_or(mapping, |(id, _)| id);
                 norn_ir::canonical::domain_hash_hex(
                     b"norn.link.contribution.v1\0",
                     &(
@@ -55,12 +57,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         &claim.source_key,
                         &claim.role,
                         &claim.provenance.source,
-                        claim
-                            .provenance
-                            .mapping_version
-                            .as_str()
-                            .split_once('@')
-                            .map_or(claim.provenance.mapping_version.as_str(), |(id, _)| id),
+                        mapping_id,
                     ),
                 )?
             } else {
@@ -116,8 +113,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         key: &LinkKey,
     ) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let catalog =
-            TypeCatalog::new(self.model.object_types()).with_interfaces(self.model.interfaces());
+        let catalog = TypeCatalog::new(self.model().object_types())
+            .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let key = model.canonical_link(key);
         Ok(self
@@ -140,9 +137,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         bundle: &MappingBundle,
         commit: &CellCommit<E, C, T>,
     ) -> Result<(Vec<LinkWrite>, Vec<ObservedLinkClaim>), CellError> {
-        let catalog = TypeCatalog::new(self.model.object_types())
-            .with_interfaces(self.model.interfaces())
-            .with_property_types(self.model.property_types());
+        let catalog = TypeCatalog::new(self.model().object_types())
+            .with_interfaces(self.model().interfaces())
+            .with_property_types(self.model().property_types());
         let claims = self.retained_link_claims(Some(bundle), true)?;
         let model = CommitModel::new(&catalog);
         let mut intents = BTreeMap::<_, BTreeSet<_>>::new();
