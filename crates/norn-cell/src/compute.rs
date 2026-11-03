@@ -251,11 +251,9 @@ impl<E: SqlEngine> CellStore<E> {
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
-                let (head, receipt) =
+                (revision, frontier_receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                revision = head;
-                historical_receipt = receipt.as_ref().map(|r| r.hash.clone());
-                frontier_receipt = receipt;
+                historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
                 historical::history_ids(
                     &reader,
                     &context.world,
