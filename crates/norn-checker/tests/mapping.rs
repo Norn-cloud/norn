@@ -18,7 +18,7 @@
 //! artifact-set check, coverage for every map, and, applied to `ERPNext`
 //! documents, action invocations, link patches, and provenance.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path};
 
 use norn_checker::lint::coverage::{MemberRef, MemberStatus};
@@ -227,6 +227,344 @@ fn map_members_total_contract_leaves_semantic_preservation_unsupported() {
 }
 
 /// LAYERS-EDGE-CHAIN-1: each layer is checked before its receipt supplies authority.
+fn edge_layered_retained(base: Vec<ArtifactEnvelope>) -> norn_checker::obligations::RetainedLayers {
+    use norn_checker::obligations::{DefinitionSource, RetainedLayer, RetainedLayers};
+    let extension = |namespace: &str| {
+        envelope(
+            &format!("{namespace}.Customer.extension"),
+            "entity",
+            &json!({"entityVersion":"2.0", "objectTypeExtension":{
+                "namespace":namespace, "target":"party.Customer",
+                "properties":[{"id":format!("{namespace}__checked"), "type":{"kind":"boolean"}}]
+            }}),
+        )
+    };
+    let mut installed = Vec::new();
+    let mut sources = Vec::new();
+    let mut receipts = Vec::new();
+    for artifacts in [base, vec![extension("toy")], vec![extension("other")]] {
+        let source =
+            DefinitionSource::parse(&json!(artifacts).to_string(), &json!(installed).to_string())
+                .expect("exact layer");
+        let checked = norn_checker::check_artifact_set_with_receipt(
+            &norn_checker::ReceiptSources::new(
+                &artifacts
+                    .iter()
+                    .map(|a| norn_ir::runtime::encode(a).expect("native source"))
+                    .collect::<Vec<_>>(),
+                &installed
+                    .iter()
+                    .map(|a| norn_ir::runtime::encode(a).expect("native base"))
+                    .collect::<Vec<_>>(),
+            )
+            .expect("receipt sources"),
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &installed,
+                tenant: None,
+            },
+            &ResourceLimitProfile::norn_limits_v1(),
+        )
+        .expect("receipt");
+        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+        receipts.push((
+            String::from_utf8(checked.receipt.canonical_json().expect("canonical")).expect("UTF-8"),
+            checked.receipt.content_sha256().expect("hash"),
+        ));
+        sources.push(source);
+        installed.extend(artifacts);
+    }
+    let layers: Vec<_> = sources
+        .iter()
+        .zip(&receipts)
+        .map(|(source, (receipt, hash))| RetainedLayer {
+            source,
+            source_sha256: source.exact_digest(),
+            receipt,
+            receipt_sha256: hash,
+        })
+        .collect();
+    assert_eq!(layers.len(), 3);
+    RetainedLayers::verify(&layers, &BTreeSet::new()).expect("three independently checked layers")
+}
+
+fn edge_fixture() -> (
+    norn_checker::obligations::ApprovedContract,
+    norn_checker::obligations::RetainedLayers,
+    Vec<ArtifactEnvelope>,
+) {
+    use norn_checker::obligations::{ApprovedContract, DefinitionSource};
+    let (_, base) = complete_member_interpretation();
+    let retained = edge_layered_retained(base);
+    let raw = serde_json::to_string(retained.artifacts()).expect("base");
+    let fixture: Vec<Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("fixture");
+    let mut law: norn_ir::LawIR = serde_json::from_value(
+        fixture
+            .first()
+            .and_then(|a| a.get("payload"))
+            .expect("law payload")
+            .clone(),
+    )
+    .expect("law");
+    "toy.conservation".clone_into(&mut law.id);
+    "commerce.SalesOrder".clone_into(&mut law.subject);
+    law.scope.root = norn_ir::LawRoot::Company("org_demo".to_owned());
+    law.scope.object_types = vec![law.subject.clone()];
+    law.modality = norn_ir::LawModality::Always {};
+    law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("self.total_amount >= 0".to_owned()),
+    };
+    let mut law = envelope(
+        "toy.conservation.law",
+        "law",
+        &serde_json::to_value(law).expect("law"),
+    );
+    law.dependencies = vec![norn_ir::ArtifactDependency {
+        artifact_id: "commerce.SalesOrder.entity".to_owned(),
+        kind: norn_ir::ArtifactKind::Entity,
+        version: Some("0.1.0".to_owned()),
+        required: true,
+    }];
+    let source = DefinitionSource::parse(&json!([law]).to_string(), &raw).expect("law source");
+    let approved = ApprovedContract::approve_retained(
+        &source,
+        &retained,
+        json!({"semantics":"identity"}),
+        json!({"assumptions":[]}),
+        json!({"required":"checked-proof"}),
+    )
+    .expect("law approval");
+    (approved, retained, vec![law])
+}
+
+fn edge_source(
+    candidate: &[ArtifactEnvelope],
+    retained: &norn_checker::obligations::RetainedLayers,
+) -> norn_checker::obligations::DefinitionSource {
+    norn_checker::obligations::DefinitionSource::parse(
+        &json!(candidate).to_string(),
+        &json!(retained.artifacts()).to_string(),
+    )
+    .expect("source")
+}
+
+#[test]
+fn edge_new_omit_noproof_generate_complete_unknown_proposals() {
+    use norn_checker::obligations::ChallengeError;
+    let (approved, retained, mut candidate) = edge_fixture();
+    let (document, _) = complete_member_interpretation();
+    let (mut edge, _) = pinned_interpretation();
+    edge.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+    )
+    .expect("payload");
+    edge.name = "reviewed mapping evidence".to_owned();
+    candidate.push(edge.clone());
+    let source = edge_source(&candidate, &retained);
+    assert!(
+        approved.challenge_retained(&source, &retained).is_err(),
+        "proposal is not admission"
+    );
+    let plan = approved
+        .interpretation_challenge(&source, &retained)
+        .expect("unknown goals");
+    assert_eq!(plan.body()["admitted"], json!(false));
+    assert_eq!(plan.body()["assessment"], json!("unknown"));
+    let edges: Vec<_> = plan.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .filter(|g| {
+            g["goal"]["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("mapping_"))
+        })
+        .collect();
+    assert_eq!(edges.len(), 6);
+    assert!(edges.iter().all(|goal| {
+        goal["assessment"] == "unknown"
+            && goal["statement"]["laws"]
+                .as_object()
+                .is_some_and(|laws| !laws.is_empty())
+    }));
+    edge.artifact_id = "toy.second_edge".to_owned();
+    candidate.push(edge);
+    let changed = approved
+        .interpretation_challenge(&edge_source(&candidate, &retained), &retained)
+        .expect("new edge");
+    assert_ne!(plan.sha256(), changed.sha256());
+    assert_eq!(
+        changed.bind_submission(plan.body()),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    let mut forged = changed.body().clone();
+    forged["assessment"] = json!("proved");
+    assert_eq!(
+        changed.bind_submission(&forged),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    for index in 0..changed.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .len()
+    {
+        let mut omitted = changed.body().clone();
+        omitted["obligations"]
+            .as_array_mut()
+            .expect("goals")
+            .remove(index);
+        assert_eq!(
+            changed.bind_submission(&omitted),
+            Err(ChallengeError::InvalidSubmission)
+        );
+    }
+}
+
+#[test]
+fn layers_edge_unknown_retained_roots_cannot_obtain_or_reuse_approval() {
+    use norn_checker::obligations::{ApprovedContract, ChallengeError};
+    let (approved, retained, candidate) = edge_fixture();
+    for root in [
+        norn_ir::LawRoot::App("missing-app".to_owned()),
+        norn_ir::LawRoot::Pack("missing-pack".to_owned()),
+    ] {
+        let mut law = candidate.first().expect("law").clone();
+        let mut declaration: norn_ir::LawIR = serde_json::from_value(
+            serde_json::to_value(law.payload.to_json_value()).expect("wire"),
+        )
+        .expect("law");
+        declaration.scope.root = root;
+        law.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Law,
+            serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+        )
+        .expect("payload");
+        let mut artifacts = vec![law];
+        let source = edge_source(&artifacts, &retained);
+        assert_eq!(
+            ApprovedContract::approve_retained(
+                &source,
+                &retained,
+                json!({"semantics":"identity"}),
+                json!({"assumptions":[]}),
+                json!({"required":"checked-proof"}),
+            )
+            .err(),
+            Some(ChallengeError::NotAdmitted)
+        );
+        let (document, _) = complete_member_interpretation();
+        let (mut edge, _) = pinned_interpretation();
+        edge.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Mapping,
+            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+        )
+        .expect("payload");
+        artifacts.push(edge);
+        assert_eq!(
+            approved
+                .interpretation_challenge(&edge_source(&artifacts, &retained), &retained)
+                .err(),
+            Some(ChallengeError::InvalidSubmission)
+        );
+    }
+}
+
+#[test]
+fn layers_edge_complete_chain_refuses_changed_units_and_inherited_conditions() {
+    use norn_checker::obligations::{ChallengeError, DefinitionSource};
+    let (approved, retained, mut candidate) = edge_fixture();
+    let (document, _) = complete_member_interpretation();
+    let (mut edge, _) = pinned_interpretation();
+    edge.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Mapping,
+        serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree"),
+    )
+    .expect("payload");
+    candidate.push(edge);
+    let good = edge_source(&candidate, &retained);
+    approved
+        .interpretation_challenge(&good, &retained)
+        .expect("layered proposal");
+    assert_eq!(
+        norn_checker::obligations::ApprovedContract::approve(
+            &good,
+            &BTreeSet::new(),
+            json!({"semantics":"identity"}),
+            json!({"assumptions":[]}),
+            json!({"required":"checked-proof"}),
+        )
+        .err(),
+        Some(ChallengeError::MultiLayerBaseRequiresRetainedInput)
+    );
+    let mut stale_base = retained.artifacts().to_vec();
+    let order = stale_base
+        .iter_mut()
+        .find(|a| a.artifact_id == "commerce.SalesOrder.entity")
+        .expect("order");
+    let mut root: norn_ir::EntityRootV2 =
+        serde_json::from_value(serde_json::to_value(order.payload.to_json_value()).expect("wire"))
+            .expect("entity");
+    let amount = root
+        .object_type
+        .properties
+        .iter_mut()
+        .find(|p| p.id.as_str() == "total_amount")
+        .expect("amount");
+    let norn_ir::PropertyType::Decimal { unit, .. } = &mut amount.property_type else {
+        panic!("decimal")
+    };
+    *unit = Some(norn_ir::UnitRef {
+        system: norn_ir::UnitSystem::Ucum,
+        code: "kg".to_owned(),
+    });
+    order.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(serde_json::to_value(root).expect("entity")).expect("tree"),
+    )
+    .expect("payload");
+    let stale = DefinitionSource::parse(
+        &json!(candidate).to_string(),
+        &json!(stale_base).to_string(),
+    )
+    .expect("source");
+    assert_eq!(
+        approved.interpretation_challenge(&stale, &retained).err(),
+        Some(ChallengeError::InvalidSubmission)
+    );
+    let law = candidate.first_mut().expect("law");
+    let mut declaration: norn_ir::LawIR =
+        serde_json::from_value(serde_json::to_value(law.payload.to_json_value()).expect("wire"))
+            .expect("law");
+    declaration.condition = Some(norn_ir::ZenExpression("self.total_amount >= 1".to_owned()));
+    law.payload = norn_ir::ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Law,
+        serde_json::from_value(serde_json::to_value(declaration).expect("law")).expect("tree"),
+    )
+    .expect("payload");
+    assert_eq!(
+        approved
+            .interpretation_challenge(&edge_source(&candidate, &retained), &retained)
+            .err(),
+        Some(ChallengeError::InvalidSubmission)
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn edge_generated_required_member_omissions_refuse_planning(index in 0usize..12) {
+        let (approved, retained, mut candidate) = edge_fixture();
+        let (mut document, _) = complete_member_interpretation(); document.members.remove(index);
+        let (mut edge, _) = pinned_interpretation();
+        edge.payload = norn_ir::ArtifactPayload::from_kind_json(&norn_ir::ArtifactKind::Mapping,
+            serde_json::from_value(serde_json::to_value(document).expect("edge")).expect("tree")).expect("payload");
+        candidate.push(edge);
+        proptest::prop_assert!(approved.interpretation_challenge(&edge_source(&candidate, &retained), &retained).is_err());
+    }
+}
+
 fn distinct_target_contract(
     document: &mut norn_ir::mapping::LawInterpretationIr,
     base: &mut Vec<ArtifactEnvelope>,
@@ -2633,4 +2971,18 @@ fn temporal_enum_mapping_runtime_rejects_invalid_values_and_preserves_nulls() {
             }
         }
     }
+}
+
+#[test]
+fn mapping_decode_reports_the_missing_maps_member() {
+    let mut source = serde_json::to_value(erpnext_mapping()).expect("mapping");
+    source["payload"]
+        .as_object_mut()
+        .expect("payload")
+        .remove("maps");
+    let artifact: ArtifactEnvelope = serde_json::from_value(source).expect("lenient envelope");
+    let diagnostics = norn_checker::validate_artifact(&artifact).expect_err("maps required");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.code
+        == "mapping.validation.invalid_document"
+        && diagnostic.message.contains("missing field `maps`")));
 }
