@@ -133,3 +133,14 @@ its result can discharge a preservation goal. Initialization, non-vacuity and
 open boundaries remain separate obligations. Named kernel scenarios: valid affine
 balance, omitted loss, unit mismatch, cross-book cancellation, substituted/zero
 weights, unsupported writer, malformed shape and exact fractional balance.
+
+### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
+
+The chase-backed diagnosis profile enumerates irreducible declaration conflicts
+and correction proposals relative to fixed open-world facts. Every core is
+unsatisfiable and each one-member deletion is satisfiable. Every correction
+relaxes only explicitly editable declarations and is independently checked on
+the complete remaining input; restoring any member makes it unsatisfiable.
+These proposals grant no authority: concrete edits require ordinary admission.
+Protected laws are never repair candidates. Whole-search and per-chase ceilings
+are disclosed; an exhausted or refused subset query makes the diagnosis unknown.
