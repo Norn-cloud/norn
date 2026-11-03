@@ -100,16 +100,11 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
           </button>
         )}
         <ChartContainer config={{ value: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
-          <LineChart data={rows.map(({ label, value }) => ({ label, value: Number(value), exact: value }))} margin={{ left: 8, right: 8 }}>
+          <LineChart data={rows.map(({ label, value }) => ({ label, value: Number(value) }))} margin={{ left: 8, right: 8 }}>
             <CartesianGrid vertical={false} />
             <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
             <YAxis domain={["auto", "auto"]} tickLine={false} axisLine={false} width={56} tickFormatter={(tick: number) => tick.toFixed(4)} />
-            <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
-              <div className="flex w-full justify-between gap-4">
-                <span className="text-muted-foreground">{headline(question)}</span>
-                <span className="font-mono tabular-nums">{String(item.payload?.exact)}</span>
-              </div>
-            )} />} />
+            <ChartTooltip content={<ChartTooltipContent />} />
             <Line dataKey="value" stroke="var(--color-value)" strokeWidth={2} dot={false} isAnimationActive={false} />
           </LineChart>
         </ChartContainer>
@@ -118,11 +113,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
           <TableBody>
             {rows.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
-                <TableCell>
-                  <button type="button" className="rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); setOpen(bucket) }}>
-                    {bucket.label}
-                  </button>
-                </TableCell>
+                <TableCell>{bucket.label}</TableCell>
                 <TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell>
                 <TableCell className="text-right tabular-nums">{bucket.members.length}</TableCell>
               </TableRow>
