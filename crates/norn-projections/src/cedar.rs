@@ -576,6 +576,8 @@ fn cedar_principal_attribute_type(attribute: CedarPrincipalAttribute) -> &'stati
     }
 }
 
+/// AUTH-SYNC-WRITER-1: authorization schema includes the declared writer footprint;
+/// catalog invocation entry points remain tied to the primary effect.
 fn render_actions(
     schema: &mut String,
     types: &CedarObjectTypes<'_>,
@@ -617,6 +619,13 @@ fn render_actions(
         };
         let kind = program.target().object_kind;
         let mut resource_kinds = BTreeSet::from([kind]);
+        // AUTH-SYNC-WRITER-1: commit authorizes every declared writer target.
+        // Catalog invocation targets stay tied to the primary effect.
+        if action.synchronous_rule.is_some()
+            && matches!(program, ActionEffectProgram::FireTransition { .. })
+        {
+            resource_kinds.extend(action.writes.iter().map(|write| write.entity_kind.as_str()));
+        }
         if let ActionEffectProgram::MutateParentWithRows { collections, .. } = program {
             let lineage = types.lineages.get(kind).cloned().unwrap_or_default();
             for collection in collections {
