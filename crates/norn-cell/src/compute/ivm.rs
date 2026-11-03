@@ -228,10 +228,9 @@ impl IncrementalQuestion {
     fn apply<E: SqlEngine>(
         &mut self,
         store: &CellStore<E>,
-        context: QueryContext,
+        mut context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
-        let mut context = context;
         if !context.exclusions.is_empty() {
             return Err(refused("core.compute.caller_exclusions"));
         }
@@ -283,13 +282,11 @@ impl IncrementalQuestion {
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
+        let old = &self.result.context.exclusions;
         changed.extend(
-            self.result
-                .context
-                .exclusions
-                .keys()
+            old.keys()
                 .chain(context.exclusions.keys())
-                .filter(|id| self.result.context.exclusions.get(*id) != context.exclusions.get(*id))
+                .filter(|id| old.get(*id) != context.exclusions.get(*id))
                 .cloned(),
         );
         for id in changed {
@@ -300,7 +297,6 @@ impl IncrementalQuestion {
                 Some((record, authorized)) => {
                     self.members.insert(id.clone());
                     if authorized
-                        && !context.exclusions.contains_key(&id)
                         && let Some(value) = project(&self.plan, &record.values).map_err(refused)?
                     {
                         self.totals.adjust(&value, false)?;
