@@ -7,6 +7,7 @@
 use norn_checker::obligations::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use norn_checker::verification::LawWriter;
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 fn pool() -> Vec<Value> {
@@ -1115,4 +1116,152 @@ fn transition_frames_only_assess_conditional_preservation() {
         }
     }
     assert!(preservation);
+}
+
+struct LayerFixture {
+    source: DefinitionSource,
+    source_sha256: String,
+    receipt: String,
+    receipt_sha256: String,
+}
+
+fn retained_fixture() -> Vec<LayerFixture> {
+    let mut base = Vec::new();
+    let original = pool();
+    let mut candidates = vec![vec![original[0].clone()]];
+    for namespace in ["acme", "other"] {
+        let mut extension = original[0].clone();
+        extension["artifactId"] = json!(format!("{namespace}.SalesOrder.extension"));
+        extension["namespace"] = json!(namespace);
+        extension["payload"] = json!({"entityVersion":"2.0", "objectTypeExtension":{
+            "namespace":namespace, "target":"erpnext.SalesOrder",
+            "properties":[{"id":format!("{namespace}__flag"), "type":{"kind":"boolean"}}]
+        }});
+        candidates.push(vec![extension]);
+    }
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+                serde_json::from_value(json!(candidate)).expect("typed");
+            let source =
+                DefinitionSource::parse(&json!(candidate).to_string(), &json!(base).to_string())
+                    .expect("exact");
+            let checked = norn_checker::check_artifact_set_with_receipt(
+                &norn_checker::ReceiptSources::new(
+                    &artifacts
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native source"))
+                        .collect::<Vec<_>>(),
+                    &base
+                        .iter()
+                        .map(|a| norn_ir::runtime::encode(a).expect("native base"))
+                        .collect::<Vec<_>>(),
+                )
+                .expect("receipt sources"),
+                &norn_checker::EntityArtifactSetContext {
+                    registry: &BTreeSet::new(),
+                    base: &base,
+                    tenant: None,
+                },
+                &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+            )
+            .expect("receipt");
+            assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+            base.extend(artifacts);
+            LayerFixture {
+                source_sha256: source.exact_digest().to_owned(),
+                source,
+                receipt: String::from_utf8(checked.receipt.canonical_json().expect("canonical"))
+                    .expect("UTF-8"),
+                receipt_sha256: checked.receipt.content_sha256().expect("hash"),
+            }
+        })
+        .collect()
+}
+
+fn verify_layers(
+    layers: &[LayerFixture],
+) -> Result<norn_checker::obligations::RetainedLayers, ChallengeError> {
+    let retained: Vec<_> = layers
+        .iter()
+        .map(|layer| norn_checker::obligations::RetainedLayer {
+            source: &layer.source,
+            source_sha256: &layer.source_sha256,
+            receipt: &layer.receipt,
+            receipt_sha256: &layer.receipt_sha256,
+        })
+        .collect();
+    norn_checker::obligations::RetainedLayers::verify(&retained, &BTreeSet::new())
+}
+
+#[test]
+fn layers_chain_retains_exact_order_without_enabling_flat_challenges() {
+    let layers = retained_fixture();
+    let checked = verify_layers(&layers).expect("three retained layers");
+    assert_eq!(checked.artifacts().len(), 3);
+    assert!(checked.registry().is_empty());
+    assert_eq!(checked.exact_digest().len(), 64);
+    assert_eq!(
+        checked.exact_digest(),
+        verify_layers(&layers).expect("repeat").exact_digest()
+    );
+    let source =
+        DefinitionSource::parse("[]", &json!(checked.artifacts()).to_string()).expect("source");
+    assert_eq!(
+        ApprovedContract::approve(
+            &source,
+            &BTreeSet::new(),
+            json!({"semantics":1}),
+            json!({"assumptions":1}),
+            json!({"assurance":1})
+        )
+        .err(),
+        Some(ChallengeError::MultiLayerBaseRequiresRetainedInput)
+    );
+}
+
+#[test]
+fn layers_exact_source_bytes_are_retained_separately_from_receipt_semantics() {
+    let mut layers = retained_fixture();
+    let original = verify_layers(&layers)
+        .expect("original")
+        .exact_digest()
+        .to_owned();
+    let candidate = format!(" {}", json!([pool()[0].clone()]));
+    layers[0].source = DefinitionSource::parse(&candidate, "[]").expect("whitespace source");
+    assert!(
+        verify_layers(&layers).is_err(),
+        "old exact commitment refuses byte edit"
+    );
+    layers[0].source_sha256 = layers[0].source.exact_digest().to_owned();
+    assert_ne!(
+        verify_layers(&layers)
+            .expect("new authority retains source edit")
+            .exact_digest(),
+        original
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn layers_forged_reordered_missing_receipts_never_construct_authority(index in 0usize..3, mutation in 0u8..5) {
+        let mut layers = retained_fixture();
+        match mutation {
+            0 => layers[index].receipt.clear(),
+            1 => { layers.swap(0, if index == 0 { 1 } else { 2 }); }
+            2 => { layers[index].receipt_sha256 = "0".repeat(64); }
+            3 => {
+                let mut receipt: Value = serde_json::from_str(&layers[index].receipt).expect("receipt");
+                receipt["admitted"] = json!(false);
+                let bytes = norn_canonical::canonical_json_of(&receipt).expect("canonical");
+                layers[index].receipt_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+                layers[index].receipt = String::from_utf8(bytes).expect("UTF-8");
+            }
+            4 => { layers.remove(0); }
+            _ => unreachable!(),
+        }
+        proptest::prop_assert!(verify_layers(&layers).is_err());
+    }
 }
