@@ -1148,6 +1148,9 @@ pub fn check_bound(root: &Path, binding: &BoundSource<'_>, distribution: bool) -
                     return Err(format!("bound byte drift: {path}"));
                 }
             }
+            if !distribution {
+                super::git::clean_index(root, binding.head)?;
+            }
             Ok(())
         };
         verify()?;
@@ -1172,7 +1175,7 @@ pub fn check_bound(root: &Path, binding: &BoundSource<'_>, distribution: bool) -
             base: super::git::head(binding.base)?,
             head: binding.head.into(),
             policy: super::git::head(binding.base)?,
-            inventory_sha256: digest(&serde_json::to_vec(&expected).map_err(|e| e.to_string())?),
+            inventory_sha256: inventory_digest(&expected)?,
         });
         Ok(report)
     };
@@ -1205,6 +1208,22 @@ impl Snapshot {
 }
 impl Drop for Snapshot {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _cleanup = std::fs::remove_dir_all(&self.0);
     }
+}
+
+fn inventory_digest(entries: &BTreeMap<String, super::git::TreeEntry>) -> Result<String, String> {
+    let mut hash = Sha256::new();
+    hash.update(b"norn.provenance.inventory.v1\0");
+    for (path, entry) in entries {
+        hash.update(
+            u64::try_from(path.len())
+                .map_err(|e| e.to_string())?
+                .to_be_bytes(),
+        );
+        hash.update(path.as_bytes());
+        hash.update(entry.mode.as_bytes());
+        hash.update(entry.sha256.as_bytes());
+    }
+    Ok(hex::encode(hash.finalize()))
 }

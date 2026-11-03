@@ -1215,6 +1215,18 @@ fn immutable_binding_refuses_post_commit_payload_record_and_staged_inventory_cha
                 .any(|e| e.contains("bound byte drift"))
         );
     }
+    let mut staged = Fixture::new();
+    staged.add("payload", b"authored input", "code");
+    let head = bind_fixture(&staged);
+    staged.write("payload", b"staged bytes");
+    git_in(&staged, &["add", "."]);
+    staged.write("payload", b"authored input");
+    assert!(
+        bound_report(&staged, &head)
+            .errors()
+            .iter()
+            .any(|e| e.contains("index differs"))
+    );
     let mut f = Fixture::new();
     f.add("payload", b"authored input", "code");
     let head = bind_fixture(&f);

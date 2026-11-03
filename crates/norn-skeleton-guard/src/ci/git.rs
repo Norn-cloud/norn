@@ -148,6 +148,7 @@ pub fn tree(
         .args([
             "ls-tree",
             "-r",
+            "-l",
             "-z",
             "--full-tree",
             &format!("{commit}^{{tree}}"),
@@ -161,12 +162,15 @@ pub fn tree(
     for entry in out.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
         let entry = std::str::from_utf8(entry).map_err(|e| e.to_string())?;
         let (header, path) = entry.split_once('\t').ok_or("malformed Git tree entry")?;
-        let fields: Vec<_> = header.split(' ').collect();
-        let [mode, "blob", oid] = fields.as_slice() else {
+        let fields: Vec<_> = header.split_whitespace().collect();
+        let [mode, "blob", oid, size] = fields.as_slice() else {
             return Err("non-blob tree member".into());
         };
         if !matches!(*mode, "100644" | "100755") || !super::provenance::safe_path(path) {
             return Err(format!("unsafe tree member {path}"));
+        }
+        if size.parse::<usize>().map_err(|e| e.to_string())? > 32 * 1024 * 1024 {
+            return Err(format!("oversized bound blob {path}"));
         }
         members.push(((*mode).to_owned(), path.to_owned(), (*oid).to_owned()));
     }
@@ -182,10 +186,11 @@ pub fn tree(
         .spawn()
         .map_err(|e| e.to_string())?;
     let mut input = child.stdin.take().ok_or("missing Git input")?;
-    let ids = members
-        .iter()
-        .map(|(_, _, oid)| format!("{oid}\n"))
-        .collect::<String>();
+    let mut ids = String::new();
+    for (_, _, oid) in &members {
+        ids.push_str(oid);
+        ids.push('\n');
+    }
     let writer = std::thread::spawn(move || input.write_all(ids.as_bytes()));
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
     writer
@@ -195,7 +200,14 @@ pub fn tree(
     if !output.status.success() {
         return Err("cannot read bound blobs".into());
     }
-    let mut remainder = output.stdout.as_slice();
+    parse_blobs(&output.stdout, members)
+}
+
+fn parse_blobs(
+    output: &[u8],
+    members: Vec<(String, String, String)>,
+) -> Result<std::collections::BTreeMap<String, TreeEntry>, String> {
+    let mut remainder = output;
     let mut entries = std::collections::BTreeMap::new();
     for (mode, path, oid) in members {
         let end = remainder
@@ -212,7 +224,9 @@ pub fn tree(
         if size > 32 * 1024 * 1024 {
             return Err(format!("oversized bound blob {path}"));
         }
-        remainder = remainder.get(end + 1..).ok_or("missing blob content")?;
+        remainder = remainder
+            .get(end.checked_add(1).ok_or("blob offset overflow")?..)
+            .ok_or("missing blob content")?;
         let data = remainder.get(..size).ok_or("truncated blob")?;
         entries.insert(
             path,
@@ -225,7 +239,9 @@ pub fn tree(
         if remainder.get(size) != Some(&b'\n') {
             return Err("bad blob terminator".into());
         }
-        remainder = remainder.get(size + 1..).ok_or("truncated blob stream")?;
+        remainder = remainder
+            .get(size.checked_add(1).ok_or("blob offset overflow")?..)
+            .ok_or("truncated blob stream")?;
     }
     if !remainder.is_empty() {
         return Err("extra bound blob data".into());
@@ -309,6 +325,36 @@ pub fn clean_merge(root: &Path, previous: &str, pull: &str, merged: &str) -> Res
         return Err(
             "integration-only content or metadata change requires renewed rights review".into(),
         );
+    }
+    Ok(())
+}
+
+/// Verify the writable index against the independently bound commit, never use it as authority.
+///
+/// # Errors
+/// Refuses staged changes, even when working bytes have been restored.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fixed Git index comparison against immutable commit"
+)]
+pub fn clean_index(root: &Path, head: &str) -> Result<(), String> {
+    let status = Command::new("git")
+        .arg("--no-replace-objects")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "diff",
+            "--cached",
+            "--quiet",
+            "--no-ext-diff",
+            "--no-textconv",
+            head,
+            "--",
+        ])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("index differs from the bound candidate commit".into());
     }
     Ok(())
 }
