@@ -92,7 +92,7 @@ loading and external access are disabled. Unsupported kinds/scales refuse
 The obligation is complete equality with exact cell envelopes, totals, member
 amounts, versioned contribution IDs, lineage and frontier, normalizing only the
 engine label. `duckdb_question.rs` covers the unchanged scrap-yield fixture,
-correction/deletion, signed rounding, zero denominators, large coefficients,
+correction/deletion with receipt-maintained IVM equality, signed rounding, zero denominators, large coefficients,
 hidden contributions, unsupported precision and native feature selection.
 Unequal-declared-scale scenarios exercise correction/retraction at scale pairs
 0/3, 6/0 and 0/6, including zero input. A generated property varies distinct

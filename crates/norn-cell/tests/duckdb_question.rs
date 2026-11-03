@@ -8,7 +8,7 @@
 mod query_support;
 use norn_cell::{
     CellError, CellStore, CommitBatch, FactWriteRow, Model,
-    compute::{Engine, QueryContext},
+    compute::{Engine, QueryContext, QueryResult, ivm::IncrementalQuestion},
 };
 use norn_checker::{
     EffectiveCatalog,
@@ -37,7 +37,7 @@ fn commit(store: &mut CellStore, writes: Vec<FactWriteRow>) {
     store.commit(&batch).expect("native changes");
 }
 
-fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) {
+fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) -> QueryResult {
     let exact = store
         .evaluate_question(plan, context.clone(), |row| Ok(row.id != "G0"))
         .expect("cell");
@@ -47,6 +47,7 @@ fn compare(store: &CellStore, plan: &QuestionPlan, context: QueryContext) {
     assert_eq!(sql.engine, Engine::Duckdb);
     sql.engine = Engine::Cell;
     assert_eq!(sql, exact);
+    exact
 }
 
 fn rebind(
@@ -103,7 +104,11 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
 {
     let (mut store, plan, context) = fixture();
     load(&mut store);
-    compare(&store, &plan, context.clone());
+    let mut maintained =
+        IncrementalQuestion::rebuild(&store, &plan, context.clone(), |_| Ok(true)).expect("IVM");
+    let mut expected = compare(&store, &plan, context.clone());
+    expected.engine = Engine::Ivm;
+    assert_eq!(maintained.result(), &expected);
     for write in [
         row("SYN-MELT-15-1", 75_000, 72_000),
         FactWriteRow::Delete {
@@ -112,7 +117,13 @@ fn query_three_scrap_yield_sql_matches_exact_frontier_and_lineage_after_correcti
         },
     ] {
         commit(&mut store, vec![write]);
-        compare(&store, &plan, context.clone());
+        maintained
+            .advance(&store, context.clone(), |_| Ok(true))
+            .expect("receipt delta");
+        assert!(!maintained.was_rebuilt());
+        let mut expected = compare(&store, &plan, context.clone());
+        expected.engine = Engine::Ivm;
+        assert_eq!(maintained.result(), &expected);
     }
 }
 
