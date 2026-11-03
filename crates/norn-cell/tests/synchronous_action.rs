@@ -4,6 +4,7 @@
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "atomic action correspondence fixtures"
 )]
