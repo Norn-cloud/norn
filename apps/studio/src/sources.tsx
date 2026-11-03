@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowRight, Database } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -8,6 +8,18 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
+
+/** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
+function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <Table className="text-[13px] tabular-nums">
+        <TableHeader className="bg-muted">{head}</TableHeader>
+        <TableBody>{children}</TableBody>
+      </Table>
+    </div>
+  )
+}
 
 const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
 
@@ -73,17 +85,14 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
           <div className="space-y-6 px-4 pb-6">
             <section>
               <h3 className="pb-2 font-medium">Facts recorded</h3>
-              <Table>
-                <TableHeader><TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {concept.fields.map((field) => (
-                    <TableRow key={field.id}>
-                      <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
-                      <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
+                {concept.fields.map((field) => (
+                  <TableRow key={field.id}>
+                    <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
+                    <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
+                  </TableRow>
+                ))}
+              </DenseTable>
             </section>
             {concept.relationships.length > 0 && (
               <section>
