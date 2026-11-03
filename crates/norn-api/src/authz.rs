@@ -65,6 +65,24 @@ pub trait Authorizer: Send + Sync {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal>;
 }
 
+/// The server policy adapted to the kernel action boundary.
+pub struct KernelAuthorizer<'a>(
+    /// The same trusted policy used for host operations.
+    pub &'a dyn Authorizer,
+);
+
+impl norn_kernel::ActionAuthorizer for KernelAuthorizer<'_> {
+    fn authorize(&self, request: &norn_kernel::ActionAuthzRequest<'_>) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action(request)
+    }
+    fn authorize_read(&self, request: &norn_kernel::ActionReadAuthzRequest<'_>) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read(request)
+    }
+    fn authorize_read_type(&self, request: &norn_kernel::ActionReadTypeAuthzRequest<'_>) -> Result<(), norn_kernel::ActionDenial> {
+        self.0.action_read_type(request)
+    }
+}
+
 /// Default policy: every request refuses.
 pub struct DenyAll;
 
@@ -117,6 +135,9 @@ mod tests {
                 Ok(())
             }
         }
+        let cell_scope = CellScope { org_id: "org_demo".into(), environment_id: "dev".into() };
+        assert!(ReadMetadata.authorize(&AccessRequest { scope: &cell_scope, actor: Some("viewer"), operation: Operation::ReadDefinitions }).is_ok());
+        let kernel = KernelAuthorizer(&ReadMetadata);
         let envelope: serde_json::Value = serde_json::from_str(include_str!(
             "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
         ))
@@ -139,6 +160,7 @@ mod tests {
                 reason: "authz.denied".into()
             })
         );
+        assert_eq!(norn_kernel::ActionAuthorizer::authorize(&kernel, &request), ReadMetadata.action(&request));
         let read = norn_kernel::ActionReadAuthzRequest {
             action: &action,
             scope: &scope,
@@ -152,6 +174,7 @@ mod tests {
             ReadMetadata.action_read(&read),
             Err(norn_kernel::ActionDenial::Invisible)
         );
+        assert_eq!(norn_kernel::ActionAuthorizer::authorize_read(&kernel, &read), ReadMetadata.action_read(&read));
         let read_type = norn_kernel::ActionReadTypeAuthzRequest {
             action: &action,
             scope: &scope,
@@ -163,5 +186,6 @@ mod tests {
             ReadMetadata.action_read_type(&read_type),
             Err(norn_kernel::ActionDenial::Invisible)
         );
+        assert_eq!(norn_kernel::ActionAuthorizer::authorize_read_type(&kernel, &read_type), ReadMetadata.action_read_type(&read_type));
     }
 }
