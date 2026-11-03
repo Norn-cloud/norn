@@ -194,17 +194,19 @@ mod integer_text {
         fn magnitude(maximum: u64) -> String {
             let digits = maximum.to_string();
             let mut alternatives = vec!["[1-9][0-9]{0,17}".to_owned(), digits.clone()];
+            let mut prefix = String::new();
             for (index, digit) in digits.bytes().enumerate() {
                 let lower = if index == 0 { b'1' } else { b'0' };
                 if digit > lower {
                     alternatives.push(format!(
                         "{}[{}-{}][0-9]{{{}}}",
-                        &digits[..index],
+                        prefix,
                         char::from(lower),
-                        char::from(digit - 1),
-                        digits.len() - index - 1
+                        char::from(digit.saturating_sub(1)),
+                        digits.len().saturating_sub(index).saturating_sub(1)
                     ));
                 }
+                prefix.push(char::from(digit));
             }
             format!("({})", alternatives.join("|"))
         }
