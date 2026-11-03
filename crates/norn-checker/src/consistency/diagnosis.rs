@@ -48,6 +48,8 @@ pub struct Diagnosis {
     /// Every irreducible unsatisfiable declaration subset, in deterministic order.
     pub cores: BTreeSet<BTreeSet<usize>>,
     /// All irreducible corrections using only explicitly editable declarations.
+    /// Complete only after the entire hitting-set tree finishes. Exhaustion
+    /// returns unknown, never partial core/correction lists.
     /// These are relaxation proposals; exact edits require ordinary admission.
     pub corrections: BTreeSet<BTreeSet<usize>>,
     /// Actual oracle queries (including independent final checks).
