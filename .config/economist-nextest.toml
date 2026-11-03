@@ -1,7 +1,6 @@
 # Native fallback for the four-beat economist rehearsal (#213).
 # Setup phases run in declaration order; Nextest owns execution and failure.
 # A phase's label describes its actual surface, not a product-completion claim.
-experimental = ["setup-scripts"]
 
 [scripts.setup."Prepare required drop inventory"]
 command = ["python3", "scripts/check_demo_scenarios.py"]
