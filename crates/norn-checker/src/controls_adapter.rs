@@ -108,13 +108,7 @@ mod tests {
     #[test]
     fn duplicate_action_roots_make_the_projection_unknown() {
         let known = action();
-        assert!(
-            project(
-                &[known.clone(), known],
-                &[policy(&["known.action".into()])]
-            )
-            .is_none()
-        );
+        assert!(project(&[known.clone(), known], &[policy(&["known.action".into()])]).is_none());
     }
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(64))]
