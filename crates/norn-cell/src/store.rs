@@ -3145,6 +3145,54 @@ mod identity_history_tests {
         }
     }
 
+    fn definition_input(model: &Model) -> InstalledDefinitionInput {
+        let root = norn_ir::entity::EntityRootV2 {
+            entity_version: Default::default(),
+            object_type: model.object_types().next().expect("type").clone(),
+            mutation_authority: None,
+            extensions: None,
+        };
+        let artifact = norn_ir::ArtifactEnvelope {
+            ir_version: "0.1".into(),
+            artifact_id: "identity.Legacy.entity".into(),
+            namespace: "identity".into(),
+            name: "Legacy".into(),
+            version: "0.1.0".into(),
+            lifecycle: norn_ir::ArtifactLifecycle::Draft,
+            scope: norn_ir::ScopeRef {
+                org_id: Some("org_demo".into()),
+                environment_id: Some("dev".into()),
+                ..Default::default()
+            },
+            dependencies: vec![],
+            provenance: norn_ir::ArtifactProvenance {
+                source: norn_ir::ProvenanceSource::AuthoringSdk,
+                source_path: None,
+                actor_id: None,
+                created_at: None,
+            },
+            payload: norn_ir::ArtifactPayload::from_kind_json(
+                &norn_ir::ArtifactKind::Entity,
+                serde_json::from_value(serde_json::to_value(root).expect("typed entity"))
+                    .expect("IR value"),
+            )
+            .expect("typed payload"),
+        };
+        InstalledDefinitionInput {
+            canonical_set: String::from_utf8(
+                norn_ir::canonical::canonical_json_of(&[artifact]).expect("artifact set"),
+            )
+            .expect("UTF-8"),
+            registry: vec![],
+            receipt_sha256: "identity-fixture".into(),
+            admission_receipt: None,
+            readmission: None,
+            diff: serde_json::Value::Null,
+            installed_at: 0,
+            layout: None,
+        }
+    }
+
     // Reproduce the pre-profile writer's accepted states through the shared
     // writer, then test the PUBLIC verified-prefix boundaries with real records.
     fn legacy_fixture(path: &Path, steps: usize) -> (CellStore, Model) {
@@ -3179,22 +3227,7 @@ mod identity_history_tests {
                 .expect("legacy-shaped fixture");
         }
         store
-            .install_definitions(
-                current.clone(),
-                InstalledDefinitionInput {
-                    canonical_set: serde_json::to_string(&Vec::<norn_ir::ArtifactEnvelope>::new())
-                        .expect("typed artifact set"),
-                    registry: vec![],
-                    receipt_sha256: "identity-fixture".into(),
-                    admission_receipt: None,
-                    readmission: None,
-                    diff: serde_json::Value::Null,
-                    installed_at: 0,
-                    layout: None,
-                },
-                Some(0),
-                "s",
-            )
+            .install_definitions(current.clone(), definition_input(&current), Some(0), "s")
             .expect("current admission after removing the collision");
         (store, current)
     }
