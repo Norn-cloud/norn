@@ -241,7 +241,7 @@ pub enum ConstitutionLayer {
 pub struct DeclaredOrderReport {
     /// Exact rule-index cores; all declarations are protected from repair.
     pub diagnosis: crate::consistency::diagnosis::Diagnosis,
-    /// Source-located errors and legacy-policy discrepancy notes (#767).
+    /// Source-located errors and constitutional-policy gap notes (#767).
     pub diagnostics: Vec<crate::Diagnostic>,
 }
 
@@ -300,13 +300,15 @@ fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet
 }
 
 /// LAW-RETAIN-1 / OVERLAY-MONOTONE-1: diagnose cross-layer clashes, even when
-/// legacy superior/posterior/specificity would silently resolve them. Within a
+/// legacy precedence records only a defeat. Superior already wins first; within a
 /// layer only declared edges (winner, loser), including their transitive closure,
 /// resolve opposing rules. An absent edge never acquires an implicit tie-break.
 ///
 /// This first cut checks trusted exhaustive masks for one common action/subject,
 /// not `DeonticIR` lowering. Preserve scope and explicit exceptions when grounding;
 /// CTD, temporal and Datalog applicability remain unknown. Layers/edges are trusted.
+/// Protected laws accept no incoming defeat. Select effective versions before
+/// grounding; recorded recency is not enactment. Exceptions belong to their own rule.
 ///
 /// # Errors
 /// Returns unknown on malformed grounding, missing/duplicate sources, invalid
@@ -316,6 +318,7 @@ pub fn diagnose_declared_order(
     origins: &[crate::consistency::RuleOrigin],
     layers: &[ConstitutionLayer],
     edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
     contexts: usize,
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, DeclaredOrderUnknown> {
@@ -338,6 +341,7 @@ pub fn diagnose_declared_order(
             .any(|(a, b)| *a >= norms.len() || *b >= norms.len())
         || edges.iter().collect::<BTreeSet<_>>().len() != edges.len()
         || norms.iter().any(|n| !n.excepted.is_subset(&n.applicable))
+        || protected.iter().any(|i| *i >= norms.len())
     {
         return Err(DeclaredOrderUnknown::InvalidBinding);
     }
@@ -346,7 +350,7 @@ pub fn diagnose_declared_order(
     let mut conflicts = Vec::new();
     // Reject even inactive or exception-masked lower-to-higher override declarations.
     for &(high, low) in edges {
-        if layers.get(high) > layers.get(low) {
+        if layers.get(high) > layers.get(low) || protected.contains(&low) {
             conflicts.push(BTreeSet::from([high, low]));
         }
     }
@@ -405,7 +409,7 @@ fn legacy_notes(
                     && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
                 {
                     diagnostics.extend(core_findings("consistency.normative.legacy_resolution", &crate::DiagnosticSeverity::Info,
-                        &format!("Legacy norm_precedence resolves {} over {} by {:?}; declared-only/layer analysis diagnoses these rules. See #767; admission behaviour is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
+                        &format!("Legacy norm_precedence records {} over {} by {:?} in defeats; the constitutional clash remains diagnosed here. Superior wins first; posterior/specialis require identical authority/version/level. See #767; admission is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
                         &[origins.get(defeat.winner), origins.get(defeat.loser)].into_iter().flatten().collect::<Vec<_>>()));
                 }
             }

@@ -167,37 +167,47 @@ fn invalid_models_and_other_source_versions_never_silently_resolve() -> Result<(
     Ok(())
 }
 
+use norn_checker::consistency::RuleOrigin;
+use norn_checker::norm_precedence::{
+    ConstitutionLayer::{self, Company, Legal, Religious},
+    DeclaredOrderReport, diagnose_declared_order,
+};
+
 #[allow(
     clippy::unwrap_used,
     reason = "test helper asserts successful finite diagnosis"
 )]
 fn declared(
     norms: &[GroundedNorm],
-    layers: &[norn_checker::norm_precedence::ConstitutionLayer],
+    layers: &[ConstitutionLayer],
     edges: &[(usize, usize)],
-) -> norn_checker::norm_precedence::DeclaredOrderReport {
+    protected: &[usize],
+) -> DeclaredOrderReport {
     let origins: Vec<_> = norms
         .iter()
-        .map(|n| norn_checker::consistency::RuleOrigin {
+        .map(|n| RuleOrigin {
             artifact_id: Some("synthetic.rules".into()),
             pointer: format!("/rules/{}", n.id),
         })
         .collect();
-    norn_checker::norm_precedence::diagnose_declared_order(norms, &origins, layers, edges, 2, 1000)
-        .unwrap()
+    diagnose_declared_order(
+        norms,
+        &origins,
+        layers,
+        edges,
+        &protected.iter().copied().collect(),
+        2,
+        1000,
+    )
+    .unwrap()
 }
 
 #[test]
-fn declared_priority_deletion_refuses_and_layers_never_silently_defeat() {
-    use norn_checker::norm_precedence::ConstitutionLayer::{Company, Legal, Religious};
+fn declared_only_priorities_and_constitution_layers() {
     let norms = [norm(2, Obligation), norm(1, Prohibition)];
-    assert!(
-        declared(&norms, &[Company; 2], &[(0, 1)])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
-    let refused = declared(&norms, &[Company; 2], &[]);
+    let resolved = declared(&norms, &[Company; 2], &[(0, 1)], &[]);
+    assert!(resolved.diagnosis.cores.is_empty());
+    let refused = declared(&norms, &[Company; 2], &[], &[]);
     assert_eq!(
         refused.diagnosis.cores,
         BTreeSet::from([BTreeSet::from([0, 1])])
@@ -214,117 +224,94 @@ fn declared_priority_deletion_refuses_and_layers_never_silently_defeat() {
             .iter()
             .all(|d| d.artifact_id.as_deref() == Some("synthetic.rules") && d.span.is_some())
     );
-    assert!(
-        !declared(&norms, &[Religious, Company], &[(0, 1)])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
+    let clash = declared(&norms, &[Religious, Company], &[(0, 1)], &[]);
+    assert!(!clash.diagnosis.cores.is_empty());
     let mut inactive = [norm(0, Prohibition), norm(1, Permission)];
     if let Some(n) = inactive.get_mut(1) {
         n.excepted.insert(0);
     }
-    assert!(
-        !declared(&inactive, &[Religious, Company], &[(1, 0)])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
-    assert!(
-        declared(
-            &[
-                norm(0, Obligation),
-                norm(1, Obligation),
-                norm(2, Permission)
-            ],
-            &[Religious, Legal, Company],
-            &[]
-        )
-        .diagnosis
-        .cores
-        .is_empty()
-    );
+    let masked = declared(&inactive, &[Religious, Company], &[(1, 0)], &[]);
+    assert!(!masked.diagnosis.cores.is_empty());
+    let stack = [
+        norm(0, Obligation),
+        norm(1, Obligation),
+        norm(2, Permission),
+    ];
+    let valid = declared(&stack, &[Religious, Legal, Company], &[], &[]);
+    assert!(valid.diagnosis.cores.is_empty());
 }
 
 #[test]
-fn exact_cycle_cores_include_same_modality_rules_and_ignore_unrelated_rules() {
-    use norn_checker::norm_precedence::ConstitutionLayer::Company;
+fn exact_cycles_transitivity_and_protected_laws() {
     let norms = [
         norm(0, Obligation),
         norm(1, Obligation),
         norm(2, Obligation),
         norm(3, Obligation),
     ];
-    let result = declared(&norms, &[Company; 4], &[(0, 1), (1, 2), (2, 0)]);
+    let cyclic = declared(&norms, &[Company; 4], &[(0, 1), (1, 2), (2, 0)], &[]);
     assert_eq!(
-        result.diagnosis.cores,
+        cyclic.diagnosis.cores,
         BTreeSet::from([BTreeSet::from([0, 1, 2])])
     );
-    assert!(
-        declared(&norms, &[Company; 4], &[(0, 1), (1, 2)])
-            .diagnosis
-            .cores
-            .is_empty()
-    );
+    let reflexive = declared(&norms, &[Company; 4], &[(0, 0)], &[]);
     assert_eq!(
-        declared(&norms, &[Company; 4], &[(0, 0)]).diagnosis.cores,
+        reflexive.diagnosis.cores,
         BTreeSet::from([BTreeSet::from([0])])
     );
-}
-
-#[test]
-fn explicit_transitivity_resolves_opposing_endpoints() {
-    use norn_checker::norm_precedence::ConstitutionLayer::Company;
-    let norms = [
+    let endpoints = [
         norm(0, Obligation),
         norm(1, Obligation),
         norm(2, Prohibition),
     ];
-    assert!(
-        declared(&norms, &[Company; 3], &[(0, 1), (1, 2)])
-            .diagnosis
-            .cores
-            .is_empty()
+    let transitive = declared(&endpoints, &[Company; 3], &[(0, 1), (1, 2)], &[]);
+    assert!(transitive.diagnosis.cores.is_empty());
+    let protected = declared(&endpoints, &[Company; 3], &[(0, 1), (1, 2)], &[2]);
+    assert_eq!(
+        protected.diagnosis.cores,
+        BTreeSet::from([BTreeSet::from([1, 2])])
     );
 }
 
 proptest::proptest! {
     #[test]
     fn declared_order_is_independent_of_catalog_permutation(swap in proptest::bool::ANY, reverse in proptest::bool::ANY) {
-        use norn_checker::norm_precedence::ConstitutionLayer::Company;
         let mut norms = [norm(0, Obligation), norm(1, Prohibition)];
+        for n in &mut norms { n.authority = ("board".into(), "1".into()); n.authority_level = Some(0); }
+        if let Some(n) = norms.get_mut(1) { n.applicable.insert(1); n.enacted = u64::from(reverse); }
         let mut edge = if reverse { (1, 0) } else { (0, 1) };
         if swap { norms.swap(0, 1); edge = (1_usize.saturating_sub(edge.0), 1_usize.saturating_sub(edge.1)); }
-        proptest::prop_assert!(declared(&norms, &[Company; 2], &[edge]).diagnosis.cores.is_empty());
-        proptest::prop_assert_eq!(declared(&norms, &[Company; 2], &[]).diagnosis.cores.len(), 1);
+        proptest::prop_assert!(declared(&norms, &[Company; 2], &[edge], &[]).diagnosis.cores.is_empty());
+        let refusal = declared(&norms, &[Company; 2], &[], &[]);
+        proptest::prop_assert_eq!(refusal.diagnosis.cores.len(), 1);
+        proptest::prop_assert!(refusal.diagnostics.iter().any(|d| d.code.as_str() == "consistency.normative.legacy_resolution"));
+        proptest::prop_assert_eq!(declared(&norms, &[Company; 2], &[edge], &[edge.1]).diagnosis.cores.len(), 1);
     }
 }
 
 #[test]
 fn malformed_binding_and_budget_exhaustion_remain_unknown() {
-    use norn_checker::consistency::RuleOrigin;
-    use norn_checker::norm_precedence::{ConstitutionLayer::Company, diagnose_declared_order};
     let norms = [norm(0, Obligation), norm(1, Prohibition)];
-    let origins = [
-        RuleOrigin {
-            artifact_id: Some("rules".into()),
-            pointer: "/0".into(),
-        },
-        RuleOrigin {
-            artifact_id: Some("rules".into()),
-            pointer: "/1".into(),
-        },
-    ];
-    for (edges, budget) in [
-        (vec![(0, 2)], 100),
-        (vec![(0, 1), (0, 1)], 100),
-        (vec![], 0),
+    let origins: [RuleOrigin; 2] = std::array::from_fn(|i| RuleOrigin {
+        artifact_id: Some("rules".into()),
+        pointer: format!("/{i}"),
+    });
+    for (edges, protected, budget) in [
+        (vec![(0, 2)], BTreeSet::new(), 100),
+        (vec![], BTreeSet::from([2]), 100),
+        (vec![], BTreeSet::new(), 0),
     ] {
         assert!(
-            diagnose_declared_order(&norms, &origins, &[Company; 2], &edges, 2, budget).is_err()
+            diagnose_declared_order(
+                &norms,
+                &origins,
+                &[Company; 2],
+                &edges,
+                &protected,
+                2,
+                budget
+            )
+            .is_err()
         );
     }
-    let duplicate: [RuleOrigin; 2] =
-        std::array::from_fn(|_| origins.first().cloned().unwrap_or_default());
-    assert!(diagnose_declared_order(&norms, &duplicate, &[Company; 2], &[], 2, 100).is_err());
 }
