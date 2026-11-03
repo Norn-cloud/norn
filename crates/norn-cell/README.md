@@ -18,3 +18,11 @@ freshness check, so competing requests cannot both initialize the cell.
 Correspondence: `definitions_install::host_provision_atomic_at_every_storage_boundary`
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
+
+The `workers::WorkersEngine` adapter (wasm32 only) uses DO SQLite on celld
+and workerd. Its storage handle is trusted host configuration, never request
+input. TXN-ATOMIC-1 rolls back typed Rust errors by throwing through the platform
+transaction callback. Transactions reject nesting; the platform rejects SQL
+transaction control. Cursors are drained before returning. Large exact values
+use the shared store's text representation. See the `workers_sql` example for
+real-runtime checks; it is an adapter probe, not a governed action endpoint.
