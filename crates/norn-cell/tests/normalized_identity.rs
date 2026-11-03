@@ -275,14 +275,20 @@ fn post_identity_reference(cell: &mut IdentityCell) -> norn_cell::export::Export
             values: JsonObject::new(),
         },
     });
+    let link = LinkKey::new(event, "subject", target);
     commit.links.push(LinkWrite {
-        key: LinkKey::new(event, "subject", target),
+        key: link.clone(),
         expected: FactVersion::ABSENT,
         mutation: LinkMutation::Add {
             values: JsonObject::new(),
         },
     });
     cell.commit(commit).expect("post typed reference");
+    assert!(
+        cell.load_link(&link)
+            .expect("committed typed link")
+            .exists()
+    );
     cell.store()
         .export_record(2)
         .expect("export")
@@ -391,6 +397,18 @@ fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
     });
     cell.commit(rename)
         .expect("rename A and release its business key to B");
+    let replacement = cell
+        .store()
+        .read()
+        .object("main", "identity.Sibling", "replacement")
+        .expect("read B")
+        .expect("B exists");
+    assert_eq!(replacement.id, "replacement");
+    assert_eq!(replacement.scope, "org_a");
+    assert_eq!(
+        replacement.values.get("code"),
+        Some(&RuntimeValue::from("original"))
+    );
     let key = FactKey::new("identity.Child", "stable");
     assert_eq!(
         cell.load(&key)
