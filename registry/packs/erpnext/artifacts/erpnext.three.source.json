@@ -863,7 +863,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-02T00:00:00Z",
     "rawMetadata": {
-      "sha256": "86fadb460f3dd7d40b79b926ae9426c364eff8cae261e5a96ca318ad4176c65c",
+      "sha256": "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4",
       "uri": "registry/packs/erpnext/synthetic.json"
     },
     "source": {

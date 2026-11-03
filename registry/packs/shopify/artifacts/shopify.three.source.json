@@ -659,7 +659,7 @@
     "format": "norn.source-schema/1",
     "observedAt": "2026-11-02T00:00:00Z",
     "rawMetadata": {
-      "sha256": "a733feec8115eb2a25be4e6d33a8f36869f963d0951948d4196ef31657bc19e1",
+      "sha256": "d4be1ecbf98bc011894cb0fd51cfda8a015275dd26af659d01dafa5d6e14f0a6",
       "uri": "registry/packs/shopify/synthetic.json"
     },
     "source": {

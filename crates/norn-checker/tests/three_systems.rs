@@ -352,10 +352,17 @@ fn mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic() {
             })
             .collect();
         let first = apply(&mapping, &incremental);
-        let updated=first.iter().find(|r|r.map=="holding").expect("balance increment");
-        let values=serde_json::to_value(&updated.invocations[0].input).expect("updated holding");
-        assert_eq!(updated.key,"demo/holding/owner/north/gold"); assert_eq!(values["quantity"],json!(180));
-        if system!="shopify" {assert_eq!(values["stock_cost"],json!(8100)); assert_eq!(values["cost_currency"],json!("USD"));}
+        let updated = first
+            .iter()
+            .find(|r| r.map == "holding")
+            .expect("balance increment");
+        let values = serde_json::to_value(&updated.invocations[0].input).expect("updated holding");
+        assert_eq!(updated.key, "demo/holding/owner/north/gold");
+        assert_eq!(values["quantity"], json!(180));
+        if system != "shopify" {
+            assert_eq!(values["stock_cost"], json!(8100));
+            assert_eq!(values["cost_currency"], json!("USD"));
+        }
 
         assert_eq!(first, apply(&mapping, &incremental), "deterministic replay");
         let keys: BTreeSet<_> = first.iter().map(|r| (&r.object_type, &r.key)).collect();

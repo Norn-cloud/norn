@@ -519,7 +519,7 @@
     ],
     "source": {
       "schemaId": "erpnext.three.source",
-      "sha256": "5493a3f662c855a2040cc04940b046d6688abe0caa82fc759181634aa7f7a4bb",
+      "sha256": "3297994eee3f6f10c0541dc8b25b0c0c92e91c718c52a681e7b97ba8d2539cdc",
       "version": "0.1.0"
     }
   },
