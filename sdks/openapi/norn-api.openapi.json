@@ -4555,6 +4555,76 @@
         },
         "additionalProperties": false
       },
+      "NornIrEffectiveLawInstance": {
+        "type": "object",
+        "title": "EffectiveLawInstance",
+        "description": "LAW-INSTANCE-CONTRACT-1: an application of a law retains its original\nidentity, concrete subject, attachment and complete origin paths.\nThis projection is not a new law or evidence of preservation.",
+        "required": [
+          "law",
+          "lawDigest",
+          "subject",
+          "subjectDigest",
+          "attachment",
+          "origin",
+          "paths",
+          "instancePaths",
+          "bindings"
+        ],
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/NornIrLawRoot",
+            "description": "Declared governing boundary, including retained pack/app attachments."
+          },
+          "bindings": {
+            "type": "object",
+            "description": "Explicit typed member substitutions; no rewritten child LawIR.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            }
+          },
+          "instancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrPackInstanceRef"
+              }
+            },
+            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original law artifact/version and stable law member ID."
+          },
+          "lawDigest": {
+            "type": "string",
+            "description": "Norn1 identity of the unchanged law artifact."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original governed concept/interface/container identity."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "description": "Every inheritance, containment or mapping path; a diamond retains all."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Concrete implementing type, independently pinned."
+          },
+          "subjectDigest": {
+            "type": "string",
+            "description": "Norn1 identity of that concrete type artifact."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrEntitlementActionMap": {
         "type": "object",
         "description": "A recognized source action and the checked predicate that admits it.",
@@ -7661,6 +7731,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrLawRootOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawRootOneOf4"
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -7740,6 +7813,26 @@
             "type": "string",
             "enum": [
               "entity"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawRootOneOf4": {
+        "type": "object",
+        "description": "Exact retained composition-pack boundary.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pack"
             ]
           }
         },
@@ -11488,6 +11581,26 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Exact retained composition-pack boundary.",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pack"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -11766,6 +11879,14 @@
           },
           "obligation": {
             "type": "string",
+            "pattern": "\\S"
+          },
+          "pack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a pack-rooted law; other roots never read it.",
             "pattern": "\\S"
           },
           "permission": {
