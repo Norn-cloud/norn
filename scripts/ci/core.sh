@@ -254,7 +254,8 @@ target_seconds = 11 * 60
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 candidates = []
-for count in range(1, min(6, len(tasks)) + 1):
+maximum = min(6, max(1, len(tasks) // 2)) if tasks else 0
+for count in range(1, maximum + 1):
     bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
     for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
         def added_cost(index):

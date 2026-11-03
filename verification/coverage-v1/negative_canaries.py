@@ -582,15 +582,22 @@ def workflow_verdict_canaries(source: str) -> None:
     merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}
     merge_affected = packed(merge_affected)
     cases.append(("merge_group", merge_affected, passed, True))
-    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance"]}, passed, False))
-    cases.append(("merge_group", {**merge_affected, "phase": ["guards", "provenance", "clippy-extra"]}, passed, False))
+    cases.append(("merge_group", packed({**merge_affected, "phase": ["guards", "provenance"]}), passed, False))
+    extra = copy.deepcopy(merge_affected)
+    extra["phase"] = ["guards", "provenance", "clippy-extra"]
+    for bundle in extra["bundle"]:
+        bundle["tasks"] = ["phase/clippy-extra" if task == "phase/clippy" else task for task in bundle["tasks"]]
+    cases.append(("merge_group", extra, passed, False))
     cases.append(("pull_request", full_plan, {**passed, "DRAFT": "true"}, False))
     cases.append(("pull_request", full_plan, passed, True))
     for plan in ({}, None, [], {**affected, "mode": "unknown"},
                  {**affected, "shard": "rest-1"}, {**affected, "phase": None},
-                 {**affected, "shard": ["rest-1", "rest-1"]},
                  {**affected, "base_sha": "old-base"}, {**affected, "head_sha": "old-head"}):
         cases.append(("pull_request", plan, passed, False))
+    duplicate = copy.deepcopy(affected)
+    duplicate["shard"] = ["rest-1", "rest-1"]
+    duplicate["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "test/rest-1"]}]
+    cases.append(("pull_request", duplicate, passed, False))
     cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
     for mutate in (
         lambda p: p.pop("bundle"),
