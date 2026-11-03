@@ -59,6 +59,13 @@ fn fixture() -> Vec<Value> {
     let mut envelope = entities[0].clone();
     envelope["artifactId"] = json!("test.conservation.law");
     envelope["kind"] = json!("law");
+    envelope["dependencies"] = serde_json::to_value(vec![norn_ir::ArtifactDependency {
+        artifact_id: "erpnext.SalesOrder.entity".into(),
+        kind: norn_ir::ArtifactKind::Entity,
+        version: Some("0.1.0".into()),
+        required: true,
+    }])
+    .expect("law dependency");
     envelope["payload"] = serde_json::to_value(law).expect("typed law");
     let mut action: Value = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/retail-reorder.action.json"
