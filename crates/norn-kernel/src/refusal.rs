@@ -171,7 +171,9 @@ impl<X> CommitError<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::DuplicateKey { .. }
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
@@ -185,7 +187,8 @@ impl<X> CommitError<X> {
             | Self::Conflict { .. }
             | Self::LinkConflict { .. }
             | Self::LinkReadConflict { .. } => RefusalCategory::Conflict,
-            Self::DanglingLink { .. }
+            Self::IdentityCollision { .. }
+            | Self::DanglingLink { .. }
             | Self::LinkCardinality { .. }
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }
@@ -288,7 +291,8 @@ impl<X> DecisionRefusal<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::GuardFalse { .. }
+            Self::IdentityCollision { .. }
+            | Self::GuardFalse { .. }
             | Self::GuardError { .. }
             | Self::NotFromState { .. }
             | Self::ObjectMissing { .. }
@@ -363,7 +367,9 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }
@@ -539,7 +545,10 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::ReadOnlyWorld
+            Self::IdentityCollision { .. }
+            | Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }

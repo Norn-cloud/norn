@@ -180,6 +180,33 @@ pub trait CommitView {
     /// Host failure.
     type Error;
 
+    /// Ownership of a fact and its complete outgoing membership partition.
+    /// Local-only stores resolve every key within their one bound cell. A host
+    /// with external or unresolved dependencies must override this method;
+    /// applicability labels and caller hints are not ownership evidence.
+    ///
+    /// # Errors
+    /// The host cannot resolve ownership under the commit's read snapshot.
+    fn atomic_ownership(
+        &self,
+        _key: &FactKey,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
+    /// Ownership of the complete consumed timer, result or observation identity.
+    /// Bound local-only stores own their delivery queues. Hosts that can resolve
+    /// external or unknown queues must override this using snapshot evidence.
+    ///
+    /// # Errors
+    /// Ownership cannot be resolved under the commit's read snapshot.
+    fn consumed_ownership(
+        &self,
+        _consumed: &Consumed,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        Ok(crate::execution_profile::AtomicOwnership::Local)
+    }
+
     /// Whether the consumed delivery is pending.
     ///
     /// # Errors
@@ -428,6 +455,20 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
     trusted_owned_rows: bool,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
+    let profile = crate::execution_profile::ProfileView::new(view);
+    profile.validate_consumed(commit.consumes.as_ref())?;
+    let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
+    profile.validate(commit, model)?;
+    result
+}
+
+fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+    trusted_owned_rows: bool,
+) -> Result<CommitVersions, CommitError<V::Error>> {
     if let Some(authorization) = authorization
         && commit.events.len() > authorization.event_limit()
     {
@@ -459,6 +500,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     check_required_links(commit, model, view, authorization)?;
     check_acyclic_links(commit, model, view)?;
     check_invariants(commit, model.catalog, authorization).map_err(|error| match error {
+        InvariantAdmissionError::Law { key, reason } => CommitError::Law { key, reason },
         InvariantAdmissionError::EffectiveValues { key, reason } => {
             CommitError::EffectiveValues { key, reason }
         }
@@ -502,7 +544,7 @@ fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
         if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
             return Err(CommitError::Law {
                 key: write.key.clone(),
-                reason: crate::governing_laws::LawEvaluationError::Violated(failure.message),
+                reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
             });
         }
     }
@@ -739,7 +781,19 @@ pub fn evaluate_invariants(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
-    evaluate_invariants_for_class(catalog, key, values, remaining, None)
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, None)
+}
+
+/// LAW-COMMIT-1: evaluate a resolved invariant response with the shared value,
+/// expression and fuel semantics, excluding unrelated declarations.
+pub(crate) fn evaluate_named_invariant(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+    id: &str,
+) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
+    evaluate_invariants_for_class(catalog, key, values, remaining, None, Some(id))
 }
 
 /// Evaluate only integrity invariants and intrinsic temporal property checks.
@@ -759,6 +813,7 @@ fn evaluate_integrity_invariants(
         values,
         remaining,
         Some(ConstraintClass::Integrity),
+        None,
     )
 }
 
@@ -772,6 +827,7 @@ fn evaluate_invariants_for_class(
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
     class: Option<ConstraintClass>,
+    selected: Option<&str>,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     let values = catalog
         .effective_object_values(&key.object_type, values)
@@ -782,8 +838,15 @@ fn evaluate_invariants_for_class(
     if let Some(class) = class {
         invariants.retain(|effective| effective.invariant.classification == class);
     }
+    if let Some(id) = selected {
+        invariants.retain(|effective| effective.id.as_str() == id);
+    }
 
-    let mut failures = evaluate_temporal_properties(catalog, key, &values, remaining)?;
+    let mut failures = if selected.is_none() {
+        evaluate_temporal_properties(catalog, key, &values, remaining)?
+    } else {
+        Vec::new()
+    };
     if invariants.is_empty() {
         return Ok(failures);
     }
@@ -978,6 +1041,10 @@ fn expression_type_name(value: &ExprValue) -> &'static str {
 }
 
 enum InvariantAdmissionError {
+    Law {
+        key: FactKey,
+        reason: crate::governing_laws::LawEvaluationError,
+    },
     EffectiveValues {
         key: FactKey,
         reason: String,
@@ -1064,6 +1131,20 @@ fn check_invariants<E, C, T>(
             .into_iter()
             .find(|failure| failure.classification == ConstraintClass::Integrity)
         {
+            if let Some(law_failure) =
+                crate::governing_laws::invariant_failure(catalog, &write.key.object_type, &failure)
+                    .map_err(|reason| InvariantAdmissionError::Law {
+                        key: write.key.clone(),
+                        reason,
+                    })?
+            {
+                return Err(InvariantAdmissionError::Law {
+                    key: write.key.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(
+                        law_failure,
+                    )),
+                });
+            }
             return Err(InvariantAdmissionError::Violation {
                 key: Box::new(write.key.clone()),
                 version: catalog

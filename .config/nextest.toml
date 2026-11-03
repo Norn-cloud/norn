@@ -1,3 +1,5 @@
+experimental = ["setup-scripts", "wrapper-scripts"]
+
 # Pinned gate file: CI runs the `ci` profile and ignores any default filter.
 [profile.ci]
 fail-fast = false
@@ -6,3 +8,25 @@ slow-timeout = { period = "120s" }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+[scripts.wrapper.retained-invariant-evidence]
+command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc", PROPTEST_CASES = "256" } }
+
+[profile.drop-11]
+default-filter = '''binary_id(norn-kernel::invariant_commit) & (
+  test(=law_invariant_runtime_valid_response_admits) |
+  test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin) |
+  test(=law_invariant_runtime_other_responses_still_refuse_before_activation) |
+  test(=law_invariant_runtime_misbound_missing_and_negated_references_refuse) |
+  test(=law_invariant_runtime_resolves_the_retained_subjects_interface_member) |
+  test(=law_invariant_runtime_exhausted_budget_refuses) |
+  test(=law_invariant_runtime_decision_and_action_refusals_journal_and_consume) |
+  test(=law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin) |
+  test(=law_invariant_runtime_matches_the_existing_evaluator) |
+  test(=law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin) |
+  test(=law_interface_mixed_scopes_and_misowned_invariants_refuse) |
+  test(=law_interface_runtime_matches_the_shared_evaluator_for_implementors))'''
+
+[[profile.drop-11.scripts]]
+filter = "all()"
+run-wrapper = "retained-invariant-evidence"

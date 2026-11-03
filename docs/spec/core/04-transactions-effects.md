@@ -70,6 +70,29 @@ Execution stays closed until consumption and effects commit atomically, with no 
 
 The cell is the trusted committer: receipt rewriting by a party with cell-store write access is out of scope until external receipt anchoring.
 
+### TXN-CELL-1 — single-cell execution profile
+
+Every supported proposal key and actual admission read belongs to the bound
+host's cell, including link endpoints, membership/absence partitions, and keys
+discovered during graph traversal. Ownership is host evidence under the commit
+snapshot, never a law applicability label or request hint. Foreign or unknown
+ownership refuses `core.txn.atomic_boundary` before the host applies any effect.
+Outbound commands are local outbox enqueues, not remote atomic writes.
+Consumed timer incarnations, command generations and observations also require
+local ownership before any pending-delivery read or effect.
+
+The current supported immediate laws are pointwise; inherited/effective or
+otherwise unresolved dependencies retain their existing unsupported refusal.
+This profile produces no splittability label or distributed guarantee. A host
+supporting external dependencies must resolve ownership for both facts and
+complete membership partitions; unknown is not local.
+
+Named scenarios: **TXN-CELL-CROSS** refuses a foreign immediate-law read with
+unchanged facts, ledger, outbox and timers; **TXN-CELL-UNKNOWN** refuses unknown
+inherited ownership; **TXN-CELL-LOCAL** retains ordinary local admission.
+**TXN-CELL-DELIVERY** refuses foreign/unknown timer, result and observation
+consumption before pending lookup, leaving facts, ledger, outbox and timers unchanged.
+
 ### Durable flow scheduling and identity (#515)
 
 Flows remain compiled lifecycle/rule declarations. The pure kernel helpers in
@@ -193,3 +216,32 @@ SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
 
+`txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen`
+composes the same catalog in typed Rust with the existing `ActionQuantityEffect`.
+Full artifact-set admission precedes execution. A final link-cardinality refusal
+leaves every SQLite table unchanged, including quantity heads, postings, outbox
+and the reservation timer, before and after reopen. Success commits the facts,
+both links, quantity posting, command intent and reservation-timer cancellation;
+an exact retry after reopen preserves the action record and original retained
+receipt, while changing the posting identity refuses. This is runtime-enforced
+correspondence for that local effect composition, not universal writer closure
+or application laws.
+
+
+### Literal patch target correspondence
+
+**RULE-PATCH-SHAPE-1:** a closed, complete, duplicate-free literal patch is
+checked against the object type that its record actually targets. Optional
+shared-schema members owned by other declared targets do not become writes on
+that record. Actual members still obey that target's effective stored-property
+contract; a schema member declared by no target still refuses. Computed,
+non-literal, incomplete or duplicate-key shapes retain the full-schema check.
+The scanner must prove closure before applying this precision.
+
+Named correspondence scenarios cover the Exchange `eligible` patch alongside
+Ledger `account_code` and Conversion `output_gross`, invalid members/values on
+the actual target, and computed/incomplete fallbacks. Generated patch sets over
+two or three targets check that each record's errors depend on its own target.
+This is sampled checker correspondence; runtime stored-property checks remain
+mandatory. The allocating scanner and effective catalogs are outside the
+bounded Kani harness profile.

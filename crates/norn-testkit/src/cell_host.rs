@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
+
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1913,86 +1915,91 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
+    use norn_kernel::CommitError::{self as Error, IdentityCollision};
+
     Ok(match error {
-        CommitError::Law { key, reason } => CommitError::Law { key, reason },
-        CommitError::OwnedRowsProtected { key } => CommitError::OwnedRowsProtected { key },
-        CommitError::DuplicateKey { key } => CommitError::DuplicateKey { key },
-        CommitError::NotPending { consumed } => CommitError::NotPending { consumed },
-        CommitError::Conflict {
+        Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
+        AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
+        Error::Law { key, reason } => Error::Law { key, reason },
+        IdentityCollision {
+            owner,
+            key,
+            conflicts,
+        } => IdentityCollision {
+            owner,
+            key,
+            conflicts,
+        },
+        Error::OwnedRowsProtected { key } => Error::OwnedRowsProtected { key },
+        Error::DuplicateKey { key } => Error::DuplicateKey { key },
+        Error::NotPending { consumed } => Error::NotPending { consumed },
+        Error::Conflict {
             key,
             expected,
             current,
-        } => CommitError::Conflict {
+        } => Error::Conflict {
             key,
             expected,
             current,
         },
-        CommitError::DuplicateLink { key } => CommitError::DuplicateLink { key },
-        CommitError::IdentifierTooLong {
+        Error::DuplicateLink { key } => Error::DuplicateLink { key },
+        Error::IdentifierTooLong {
             field,
             actual_bytes,
             max_bytes,
-        } => CommitError::IdentifierTooLong {
+        } => Error::IdentifierTooLong {
             field,
             actual_bytes,
             max_bytes,
         },
-        CommitError::LinkConflict {
+        Error::LinkConflict {
             key,
             expected,
             current,
-        } => CommitError::LinkConflict {
+        } => Error::LinkConflict {
             key,
             expected,
             current,
         },
-        CommitError::LinkReadConflict { source_key, link } => {
-            CommitError::LinkReadConflict { source_key, link }
+        Error::LinkReadConflict { source_key, link } => {
+            Error::LinkReadConflict { source_key, link }
         }
-        CommitError::UnsupportedLinkRead { source_key, link } => {
-            CommitError::UnsupportedLinkRead { source_key, link }
+        Error::UnsupportedLinkRead { source_key, link } => {
+            Error::UnsupportedLinkRead { source_key, link }
         }
-        CommitError::DuplicateLinkRead { source_key, link } => {
-            CommitError::DuplicateLinkRead { source_key, link }
+        Error::DuplicateLinkRead { source_key, link } => {
+            Error::DuplicateLinkRead { source_key, link }
         }
-        CommitError::LinkReadTooLarge {
+        Error::LinkReadTooLarge {
             source_key,
             link,
             actual,
             max,
-        } => CommitError::LinkReadTooLarge {
+        } => Error::LinkReadTooLarge {
             source_key,
             link,
             actual,
             max,
         },
-        CommitError::InvalidLinkRead { source_key, link } => {
-            CommitError::InvalidLinkRead { source_key, link }
+        Error::InvalidLinkRead { source_key, link } => Error::InvalidLinkRead { source_key, link },
+        Error::DanglingLink { key, missing } => Error::DanglingLink { key, missing },
+        Error::LinkTarget { key } => Error::LinkTarget { key },
+        Error::LinkCardinality { key, endpoint } => Error::LinkCardinality { key, endpoint },
+        Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
+        Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
+        EffectiveValues { key, reason } => EffectiveValues { key, reason },
+        Error::TraversalLimitExceeded { key, reason } => {
+            Error::TraversalLimitExceeded { key, reason }
         }
-        CommitError::DanglingLink { key, missing } => CommitError::DanglingLink { key, missing },
-        CommitError::LinkTarget { key } => CommitError::LinkTarget { key },
-        CommitError::LinkCardinality { key, endpoint } => {
-            CommitError::LinkCardinality { key, endpoint }
-        }
-        CommitError::LinkRequired { parent, link } => CommitError::LinkRequired { parent, link },
-        CommitError::TypeMismatch { key, concrete } => CommitError::TypeMismatch { key, concrete },
-        CommitError::EffectiveValues { key, reason } => {
-            CommitError::EffectiveValues { key, reason }
-        }
-        CommitError::TraversalLimitExceeded { key, reason } => {
-            CommitError::TraversalLimitExceeded { key, reason }
-        }
-        CommitError::AccountingPosting { key, reason } => {
-            CommitError::AccountingPosting { key, reason }
-        }
-        CommitError::InvariantViolation {
+        AccountingPosting { key, reason } => AccountingPosting { key, reason },
+        Error::InvariantViolation {
             key,
             owner,
             version,
             id,
             message,
             outcome,
-        } => CommitError::InvariantViolation {
+        } => Error::InvariantViolation {
             key,
             owner,
             version,
@@ -2000,18 +2007,14 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
             message,
             outcome,
         },
-        CommitError::InvariantBudgetExceeded { key, limit } => {
-            CommitError::InvariantBudgetExceeded { key, limit }
+        Error::InvariantBudgetExceeded { key, limit } => {
+            Error::InvariantBudgetExceeded { key, limit }
         }
-        CommitError::InvariantModel { key, interface } => {
-            CommitError::InvariantModel { key, interface }
-        }
-        CommitError::ObservationAuthorization => CommitError::ObservationAuthorization,
-        CommitError::EventLimitExceeded { limit, actual } => {
-            CommitError::EventLimitExceeded { limit, actual }
-        }
-        CommitError::Overflow => CommitError::Overflow,
-        CommitError::Host(error) => return Err(error),
+        Error::InvariantModel { key, interface } => Error::InvariantModel { key, interface },
+        Error::ObservationAuthorization => Error::ObservationAuthorization,
+        Error::EventLimitExceeded { limit, actual } => Error::EventLimitExceeded { limit, actual },
+        Error::Overflow => Error::Overflow,
+        Error::Host(error) => return Err(error),
     })
 }
 

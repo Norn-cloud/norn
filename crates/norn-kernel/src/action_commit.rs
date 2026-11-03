@@ -3180,10 +3180,19 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => {
+            authorize_identity_collision(
+                host,
+                catalog,
+                call,
+                &preparation.effective_input,
+                authorizer,
+                &target,
+                &error,
+            )?;
             if matches!(
                 &error,
                 CommitError::Conflict { .. }
@@ -3833,11 +3842,12 @@ where
             }
             Ok(ActionOutcome::Committed { receipt, record })
         }
-        Err(error @ CommitError::InvariantViolation { .. }) => Err(ActionRefusal::Decision(
+        Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
         Err(error) => action_commit_conflict(
             host,
+            catalog,
             call,
             authorizer,
             error,
@@ -4132,6 +4142,7 @@ struct ActionReplayState<'a> {
 
 fn action_commit_conflict<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     error: CommitError<H::Error>,
@@ -4144,6 +4155,15 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         precondition_reads,
         generated_key,
     } = *state;
+    authorize_identity_collision(
+        host,
+        catalog,
+        call,
+        effective_input,
+        authorizer,
+        &record.object,
+        &error,
+    )?;
     if generated_key {
         // A generated candidate may lose the counter CAS to a different key.
         // The allocation loop reloads the call record and revalidates replay
@@ -4173,6 +4193,62 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         .unwrap_or_else(|| ActionRefusal::Decision(DecisionRefusal::from_commit(error))))
 }
 
+/// ID-UNIQUE-1: conflict details require ordinary collection/object read authority.
+fn authorize_identity_collision<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    input: &JsonObject,
+    authorizer: &dyn ActionAuthorizer,
+    target: &FactKey,
+    error: &CommitError<H::Error>,
+) -> Result<(), ActionRefusal<H::Error>> {
+    let CommitError::IdentityCollision { conflicts, .. } = error else {
+        return Ok(());
+    };
+    for key in conflicts.iter() {
+        authorize_slice_type(call, input, authorizer, &key.object_type)?;
+        let bounded = host
+            .load_bounded(
+                key,
+                norn_ir::ResourceLimitProfile::norn_limits_v1()
+                    .slice
+                    .max_canonical_bytes,
+            )
+            .map_err(host_failure)?
+            .ok_or(ActionRefusal::TargetNotFound)?;
+        if bounded.state.values.is_none() {
+            if key.key == target.key
+                && catalog
+                    .lineage(&target.object_type)
+                    .contains(&key.object_type)
+            {
+                continue;
+            }
+            return Err(ActionRefusal::TargetNotFound);
+        }
+        let concrete = bounded.concrete_type.as_ref().map_or_else(
+            || key.clone(),
+            |kind| FactKey::new(kind.as_str(), key.key.clone()),
+        );
+        if authorizer
+            .authorize_read(&ActionReadAuthzRequest {
+                action: call.action,
+                scope: &call.scope,
+                actor: &call.actor,
+                input,
+                declared_type: &key.object_type,
+                target: &concrete,
+                target_values: bounded.state.values.as_ref(),
+            })
+            .is_err()
+        {
+            return Err(ActionRefusal::TargetNotFound);
+        }
+    }
+    Ok(())
+}
+
 fn precondition_read_refusal<X>(
     error: &CommitError<X>,
     precondition_reads: &BTreeSet<FactKey>,
@@ -4183,7 +4259,10 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::DuplicateLink { .. }
@@ -4216,7 +4295,10 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::OwnedRowsProtected { .. }
+        CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::Conflict { .. }
@@ -4325,65 +4407,14 @@ where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
 {
-    let (key, owner, version, id, message, outcome) = match error {
-        CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        } => (key, owner, version, id, message, outcome),
-        error @ (CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::Conflict { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_)) => return DecisionRefusal::from_commit(error),
-    };
-    let refusal = DecisionRefusal::InvariantViolation {
-        key: key.clone(),
-        owner: owner.clone(),
-        version,
-        id: id.clone(),
-        message: message.clone(),
-        outcome: outcome.clone(),
-    };
     let attempt_id = format!("{}/{}", call.action.action_id, call.idempotency_key);
+    let Some(event) = error.invariant_refusal_event(attempt_id) else {
+        return DecisionRefusal::from_commit(error);
+    };
+    let refusal = DecisionRefusal::from_commit(error);
     let mut refusal_commit = CellCommit::empty();
     refusal_commit.consumes.clone_from(&call.turn.consumes);
-    refusal_commit.events.push(
-        FactEvent::InvariantRefused {
-            key: *key,
-            owner,
-            id,
-            message,
-            outcome: *outcome,
-            attempt_id,
-        }
-        .into(),
-    );
+    refusal_commit.events.push(event.into());
     match host.commit(refusal_commit) {
         Ok(_) => refusal,
         Err(error) => DecisionRefusal::from_commit(error),

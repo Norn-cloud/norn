@@ -164,8 +164,8 @@ pub use entity_artifacts::{
 };
 pub use entity_instance::{
     EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLifecycle, EffectiveLink,
-    EffectiveObjectType, EffectiveProperty, InstanceError, KeyComponent, Unsupported,
-    normalize_text,
+    EffectiveObjectType, EffectiveProperty, IDENTITY_COLLISION, InstanceError, KeyComponent,
+    Unsupported, normalize_text,
 };
 pub use entity_lowering::{
     EntityForm, EntityObjectType, LoweredRelation, entity_object_type, entity_v1_deprecation,
@@ -267,3 +267,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .collect(),
     }
 }
+
+/// Single-cell execution diagnostic shared with runtime admission.
+pub mod execution_profile;

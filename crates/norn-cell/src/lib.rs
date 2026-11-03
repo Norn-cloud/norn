@@ -32,11 +32,13 @@
 pub mod catalog;
 pub mod classification;
 mod codec;
+pub mod compute;
 pub mod engine;
 pub mod error;
 pub mod export;
 mod export_journal;
 mod history;
+mod history_selection;
 pub mod host;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
@@ -45,6 +47,7 @@ mod mapping_process;
 mod migration;
 mod observation_quality;
 pub use observation_quality::AuthoritativePage;
+mod identity;
 pub mod model;
 mod payload_storage;
 pub mod quantity;
@@ -60,7 +63,7 @@ pub mod system;
 mod write;
 
 pub use error::CellError;
-pub use history::{FactSnapshot, FactVersionEvidence};
+pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
@@ -76,3 +79,7 @@ pub use store::{
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
+
+/// Workers/Durable Objects SQLite adapter (celld and workerd).
+#[cfg(target_arch = "wasm32")]
+pub mod workers;

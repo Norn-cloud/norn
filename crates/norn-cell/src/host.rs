@@ -135,6 +135,37 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
+    /// Begin a private rebuild in this native host's world and tenant scope.
+    /// # Errors
+    /// Refuses foreign scope, stale slot versions or invalid rebuild declarations.
+    pub fn begin_restatement(
+        &mut self,
+        id: &str,
+        context: crate::compute::QueryContext,
+        expected_version: u64,
+        reason: &str,
+        slices: &std::collections::BTreeSet<String>,
+    ) -> Result<crate::compute::restatement::RestatementBuild, CellError> {
+        if context.world != MAIN_WORLD || context.scope != self.scope {
+            return Err(CellError::ComputeRefused("core.compute.stale_input"));
+        }
+        self.store
+            .begin_restatement(id, context, expected_version, reason, slices)
+    }
+
+    /// Stage a complete candidate; declared native actions still own approval/activation.
+    /// # Errors
+    /// Foreign host/scope, a stale rebuild token or transactional failure.
+    pub fn stage_restatement(
+        &mut self,
+        prepared: crate::compute::restatement::PreparedRestatement,
+    ) -> Result<(), CellError> {
+        if !prepared.matches_context(MAIN_WORLD, &self.scope) {
+            return Err(CellError::ComputeRefused("core.compute.stale_input"));
+        }
+        self.store.stage_restatement(prepared)
+    }
+
     /// Atomically append host-owned events under a durable idempotency key.
     ///
     /// This boundary intentionally accepts events only: it cannot write
@@ -1528,6 +1559,18 @@ where
                 },
             }),
             Err(GuardedError::Guard(refusal)) => Err(refusal),
+            Err(GuardedError::Store(CellError::IdentityCollision {
+                owner,
+                key,
+                conflicts,
+            })) => {
+                let conflicts = Box::new(conflicts.map(|id| FactKey::new(owner.clone(), id)));
+                Err(CommitError::IdentityCollision {
+                    owner,
+                    key,
+                    conflicts,
+                })
+            }
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }
