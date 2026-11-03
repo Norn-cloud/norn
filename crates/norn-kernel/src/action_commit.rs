@@ -4784,15 +4784,12 @@ fn action_derivation_destination(
     declared
 }
 
-fn prepare_action_derivation<X>(
-    action: &ActionRoot,
-    completed: usize,
-    derivation: &norn_ir::ActionInputDerivation,
+/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+fn action_derivation_context<X>(
     effective_input: &JsonObject,
     actor: Option<&str>,
-    remaining_fuel: &mut u64,
-    receipt_evidence_bytes: usize,
-) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
+    derivation: &norn_ir::ActionInputDerivation,
+) -> Result<ExprValue, ActionRefusal<X>> {
     let mut context =
         action_expression_context(effective_input, &JsonObject::new()).map_err(|reason| {
             ActionRefusal::DerivationFailed {
@@ -4815,6 +4812,19 @@ fn prepare_action_derivation<X>(
             )])),
         );
     }
+    Ok(context)
+}
+
+fn prepare_action_derivation<X>(
+    action: &ActionRoot,
+    completed: usize,
+    derivation: &norn_ir::ActionInputDerivation,
+    effective_input: &JsonObject,
+    actor: Option<&str>,
+    remaining_fuel: &mut u64,
+    receipt_evidence_bytes: usize,
+) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
+    let context = action_derivation_context(effective_input, actor, derivation)?;
     let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
         ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
