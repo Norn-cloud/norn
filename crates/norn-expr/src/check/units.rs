@@ -106,4 +106,21 @@ mod tests {
             Some(grams())
         );
     }
+
+    proptest::proptest! {
+        #[test]
+        fn val_money_ratio_preserves_currency_and_refuses_other_dimensions(currency in proptest::prelude::any::<u8>(), unit in proptest::prelude::any::<u8>()) {
+            let money = algebra::Operand::<u8, u8>::Money(currency);
+            for scalar in [algebra::Operand::Dimensionless, algebra::Operand::Literal] {
+                proptest::prop_assert_eq!(admit(Operation::Multiply, &money, &scalar), Some((money.clone(), None)));
+                proptest::prop_assert_eq!(admit(Operation::Multiply, &scalar, &money), Some((money.clone(), None)));
+                proptest::prop_assert!(admit(Operation::Add, &money, &scalar).is_none());
+            }
+            let foreign = algebra::Operand::Money(currency.wrapping_add(1));
+            proptest::prop_assert!(admit(Operation::Add, &money, &foreign).is_none());
+            proptest::prop_assert!(admit(Operation::Multiply, &money, &foreign).is_none());
+            proptest::prop_assert!(admit(Operation::Multiply, &money, &algebra::Operand::Quantity(unit)).is_none());
+            proptest::prop_assert!(admit(Operation::Multiply, &money, &algebra::Operand::Legacy).is_none());
+        }
+    }
 }

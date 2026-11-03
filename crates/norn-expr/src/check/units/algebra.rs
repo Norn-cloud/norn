@@ -19,6 +19,7 @@ pub(crate) enum Operation {
 }
 
 /// VAL-RATE: only matching currency and denominator identities cancel.
+/// VAL-UNIT-1: multiplying Money by a dimensionless scalar preserves its currency.
 pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
     op: Operation,
     left: &Operand<U, C>,
@@ -62,6 +63,8 @@ pub(crate) fn admit<U: Clone + Eq, C: Clone + Eq>(
             }
             (Quantity(unit), Literal | Dimensionless)
             | (Literal | Dimensionless, Quantity(unit)) => Quantity(unit.clone()),
+            (Money(currency), Literal | Dimensionless)
+            | (Literal | Dimensionless, Money(currency)) => Money(currency.clone()),
             (Literal | Dimensionless, Literal | Dimensionless) => Dimensionless,
             _ => return None,
         },
