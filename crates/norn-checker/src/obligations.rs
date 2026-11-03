@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 
+/// Exact result identity for generated goals; not proof checking.
+pub mod evidence;
 mod induction;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
