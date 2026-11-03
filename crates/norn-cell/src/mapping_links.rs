@@ -195,20 +195,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     )?
                     .is_none()
                 {
-                    let expected = FactVersion(self.link_version(
-                        MAIN_WORLD,
-                        key.source.object_type.as_str(),
-                        &key.link,
-                        &key.source.key,
-                        key.target.object_type.as_str(),
-                        &key.target.key,
-                    )?);
                     links.insert(
                         model.canonical_link(&key),
-                        LinkWrite {
+                        self.mapping_link_write(
                             key,
-                            expected,
-                            mutation: LinkMutation::Add {
+                            LinkMutation::Add {
                                 values: catalog
                                     .effective_link_values(
                                         &claim.source_type,
@@ -217,7 +208,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                                     )
                                     .map_err(|e| CellError::Encoding(e.to_string()))?,
                             },
-                        },
+                        )?,
                     );
                 }
             } else {
@@ -235,26 +226,33 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         claim.role.as_str(),
                         FactKey::new(old.target_type, old.target),
                     );
-                    let expected = FactVersion(self.link_version(
-                        MAIN_WORLD,
-                        key.source.object_type.as_str(),
-                        &key.link,
-                        &key.source.key,
-                        key.target.object_type.as_str(),
-                        &key.target.key,
-                    )?);
                     links.insert(
                         model.canonical_link(&key),
-                        LinkWrite {
-                            key,
-                            expected,
-                            mutation: LinkMutation::Remove,
-                        },
+                        self.mapping_link_write(key, LinkMutation::Remove)?,
                     );
                 }
             }
         }
         Ok((links.into_values().collect(), claims))
+    }
+
+    fn mapping_link_write(
+        &self,
+        key: LinkKey,
+        mutation: LinkMutation,
+    ) -> Result<LinkWrite, CellError> {
+        Ok(LinkWrite {
+            expected: FactVersion(self.link_version(
+                MAIN_WORLD,
+                key.source.object_type.as_str(),
+                &key.link,
+                &key.source.key,
+                key.target.object_type.as_str(),
+                &key.target.key,
+            )?),
+            key,
+            mutation,
+        })
     }
 
     pub(crate) fn prepare_mapping_links(
