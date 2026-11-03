@@ -436,8 +436,8 @@ pub(crate) fn finish(
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
-    let (context, exclusions) = population;
     type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
+    let (context, exclusions) = population;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
         let key = bucket_key(contribution)?;
