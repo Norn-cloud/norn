@@ -220,3 +220,200 @@ fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> 
     }
     Ok(())
 }
+
+/// Trusted constitution layers, highest first; no domain laws live in the checker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConstitutionLayer {
+    /// Highest declared normative layer.
+    Religious,
+    /// National or jurisdictional law.
+    Legal,
+    /// Industry standards.
+    Industry,
+    /// Company policy.
+    Company,
+    /// Lowest declared preference layer.
+    Preference,
+}
+
+/// Diagnostic-only result for a supplied grounding of one action/subject.
+/// This is not source lowering, admission, fulfilment or Datalog evidence.
+pub struct DeclaredOrderReport {
+    /// Exact rule-index cores; all declarations are protected from repair.
+    pub diagnosis: crate::consistency::diagnosis::Diagnosis,
+    /// Source-located errors and constitutional-policy gap notes (#767).
+    pub diagnostics: Vec<crate::Diagnostic>,
+}
+
+/// No normative conclusion was established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredOrderUnknown {
+    /// Finite analysis ceiling exceeded.
+    Limit,
+    /// Grounding is malformed or unsupported.
+    Grounding(NormUnknown),
+    /// Layer, edge or exact source binding is invalid.
+    InvalidBinding,
+    /// CD diagnosis did not complete; no partial cores.
+    Diagnosis(crate::consistency::diagnosis::Unknown<std::convert::Infallible>),
+}
+
+struct OrderOracle<'a> {
+    edges: &'a [(usize, usize)],
+    conflicts: Vec<BTreeSet<usize>>,
+}
+
+impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
+    type Unknown = std::convert::Infallible;
+    fn check(
+        &mut self,
+        active: &BTreeSet<usize>,
+    ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+        use crate::consistency::diagnosis::Verdict;
+        let reach = order_closure(self.edges, active);
+        if active.iter().any(|i| reach.contains(&(*i, *i)))
+            || self.conflicts.iter().any(|pair| pair.is_subset(active))
+        {
+            Verdict::Unsat
+        } else {
+            Verdict::Sat
+        }
+    }
+}
+
+fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet<(usize, usize)> {
+    let mut reach: BTreeSet<_> = edges
+        .iter()
+        .copied()
+        .filter(|(a, b)| active.contains(a) && active.contains(b))
+        .collect();
+    for k in active {
+        for i in active {
+            for j in active {
+                if reach.contains(&(*i, *k)) && reach.contains(&(*k, *j)) {
+                    reach.insert((*i, *j));
+                }
+            }
+        }
+    }
+    reach
+}
+
+/// LAW-RETAIN-1 / OVERLAY-MONOTONE-1: diagnose cross-layer clashes, even when
+/// legacy precedence records only a defeat. Superior already wins first; within a
+/// layer only declared edges (winner, loser), including their transitive closure,
+/// resolve opposing rules. An absent edge never acquires an implicit tie-break.
+///
+/// This first cut checks trusted exhaustive masks for one common action/subject,
+/// not `DeonticIR` lowering. Preserve scope and explicit exceptions when grounding;
+/// CTD, temporal and Datalog applicability remain unknown. Layers/edges are trusted.
+/// Protected laws accept no incoming defeat. Select effective versions before
+/// grounding; recorded recency is not enactment. Exceptions belong to their own rule.
+///
+/// # Errors
+/// Returns unknown on malformed grounding, missing/duplicate sources, invalid
+/// edges, or exhausted CD diagnosis budget. No partial result is returned.
+pub fn diagnose_declared_order(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    max_calls: usize,
+) -> Result<DeclaredOrderReport, DeclaredOrderUnknown> {
+    use crate::consistency::{diagnosis, report::core_findings};
+    if norms.len() > diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
+        return Err(DeclaredOrderUnknown::Limit);
+    }
+    validate(norms, contexts).map_err(DeclaredOrderUnknown::Grounding)?;
+    if origins.len() != norms.len()
+        || layers.len() != norms.len()
+        || origins.iter().collect::<BTreeSet<_>>().len() != origins.len()
+        || origins.iter().any(|o| {
+            o.artifact_id
+                .as_deref()
+                .is_none_or(|id| id.trim().is_empty())
+                || (!o.pointer.is_empty() && !o.pointer.starts_with('/'))
+        })
+        || edges
+            .iter()
+            .any(|(a, b)| *a >= norms.len() || *b >= norms.len())
+        || edges.iter().collect::<BTreeSet<_>>().len() != edges.len()
+        || norms.iter().any(|n| !n.excepted.is_subset(&n.applicable))
+        || protected.iter().any(|i| *i >= norms.len())
+    {
+        return Err(DeclaredOrderUnknown::InvalidBinding);
+    }
+    let all: BTreeSet<_> = (0..norms.len()).collect();
+    let reach = order_closure(edges, &all);
+    let mut conflicts = Vec::new();
+    // Reject even inactive or exception-masked lower-to-higher override declarations.
+    for &(high, low) in edges {
+        if layers.get(high) > layers.get(low) || protected.contains(&low) {
+            conflicts.push(BTreeSet::from([high, low]));
+        }
+    }
+    for (i, left) in norms.iter().enumerate() {
+        for (j, right) in norms.iter().enumerate().skip(i.saturating_add(1)) {
+            if opposed(left.modality, right.modality)
+                && (0..contexts).any(|c| {
+                    left.applicable.contains(&c)
+                        && right.applicable.contains(&c)
+                        && !left.excepted.contains(&c)
+                        && !right.excepted.contains(&c)
+                })
+                && (layers.get(i) != layers.get(j)
+                    || (!reach.contains(&(i, j)) && !reach.contains(&(j, i))))
+            {
+                conflicts.push(BTreeSet::from([i, j]));
+            }
+        }
+    }
+    let mut oracle = OrderOracle { edges, conflicts };
+    let diagnosis = diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), max_calls)
+        .map_err(DeclaredOrderUnknown::Diagnosis)?;
+    let mut diagnostics = Vec::new();
+    for core in &diagnosis.cores {
+        let ids: Vec<_> = core
+            .iter()
+            .map(|i| norms.get(*i).map_or("", |n| n.id.as_str()))
+            .collect();
+        let located: Vec<_> = core.iter().filter_map(|i| origins.get(*i)).collect();
+        diagnostics.extend(core_findings("consistency.normative.conflict", &crate::DiagnosticSeverity::Error,
+            &format!("Declared-order/layer conflict among rules: {}. Grounding is conditional; this is not admission or fulfilment evidence.", ids.join(", ")), &located));
+    }
+    diagnostics.extend(legacy_notes(norms, contexts, origins, &diagnosis));
+    Ok(DeclaredOrderReport {
+        diagnosis,
+        diagnostics,
+    })
+}
+
+fn legacy_notes(
+    norms: &[GroundedNorm],
+    contexts: usize,
+    origins: &[crate::consistency::RuleOrigin],
+    diagnosis: &crate::consistency::diagnosis::Diagnosis,
+) -> Vec<crate::Diagnostic> {
+    use crate::consistency::report::core_findings;
+    let mut diagnostics = Vec::new();
+    if let Ok(legacy) = check_norm_precedence(norms, contexts) {
+        let mut noted = BTreeSet::new();
+        for context in legacy {
+            for defeat in context.defeats {
+                if diagnosis
+                    .cores
+                    .iter()
+                    .any(|core| core.contains(&defeat.winner) && core.contains(&defeat.loser))
+                    && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
+                {
+                    diagnostics.extend(core_findings("consistency.normative.legacy_resolution", &crate::DiagnosticSeverity::Info,
+                        &format!("Legacy norm_precedence records {} over {} by {:?} in defeats; the constitutional clash remains diagnosed here. Superior wins first; posterior/specialis require identical authority/version/level. See #767; admission is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
+                        &[origins.get(defeat.winner), origins.get(defeat.loser)].into_iter().flatten().collect::<Vec<_>>()));
+                }
+            }
+        }
+    }
+    diagnostics
+}
