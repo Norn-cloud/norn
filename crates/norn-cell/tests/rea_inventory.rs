@@ -24,8 +24,7 @@ use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
     CellHost, Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite,
-    LinkKey, LogicalTime, SynchronousRule, TypeCatalog, World,
-    commit_action,
+    LinkKey, LogicalTime, SynchronousRule, TypeCatalog, World, commit_action,
 };
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -375,7 +374,11 @@ fn scope() -> ScopeKey {
     }
 }
 fn roles(actor: &str) -> Vec<String> {
-    if actor == "principal:operator" { vec!["Operator".into()] } else { vec![] }
+    if actor == "principal:operator" {
+        vec!["Operator".into()]
+    } else {
+        vec![]
+    }
 }
 impl Principals {
     fn new(
@@ -393,19 +396,22 @@ impl Principals {
         let schema =
             AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
                 .unwrap();
-        let grants = ["principal:operator"].into_iter().map(|actor| {
-            let mut capabilities: Vec<String> = actions.iter().map(|a| a.action_id.clone()).collect();
-            capabilities.push("norn.read".into());
-            CapabilityGrant {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                scope: Some(scope()),
-                capabilities,
-                binding: None,
-            }
-        })
-        .collect::<Vec<_>>();
+        let grants = ["principal:operator"]
+            .into_iter()
+            .map(|actor| {
+                let mut capabilities: Vec<String> =
+                    actions.iter().map(|a| a.action_id.clone()).collect();
+                capabilities.push("norn.read".into());
+                CapabilityGrant {
+                    subject_id: actor.into(),
+                    actor_kind: ActorKind::User,
+                    agent_session_id: None,
+                    scope: Some(scope()),
+                    capabilities,
+                    binding: None,
+                }
+            })
+            .collect::<Vec<_>>();
         Self {
             pdp: Pdp::new(authz::compile(&schema, access).unwrap(), &grants).unwrap(),
         }
@@ -551,11 +557,22 @@ fn exact(cell: &Cell, kind: &str, id: &str, field: &str, number: &str) {
 fn state(cell: &Cell, kind: &str, id: &str, expected: &str) {
     assert_eq!(values(cell, kind, id)["status"].as_str(), Some(expected));
 }
-fn refuses(fixture: &Fixture, cell: &mut Cell, name: &str, input: Value, actor: &str, operation: &str) -> norn_kernel::ActionRefusal<norn_cell::CellError> {
+fn refuses(
+    fixture: &Fixture,
+    cell: &mut Cell,
+    name: &str,
+    input: Value,
+    actor: &str,
+    operation: &str,
+) -> norn_kernel::ActionRefusal<norn_cell::CellError> {
     let before = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
-    let error = fixture.invoke(cell, name, input, actor, operation).unwrap_err();
-    if operation.contains("overdraw") { assert_eq!(error.code(), "decision.guard_false"); }
+    let error = fixture
+        .invoke(cell, name, input, actor, operation)
+        .unwrap_err();
+    if operation.contains("overdraw") {
+        assert_eq!(error.code(), "decision.guard_false");
+    }
     assert_eq!(cell.store().read().dump().unwrap(), before);
     assert_eq!(cell.store().read().verify_ledger().unwrap(), head);
     let reopened = open(&cell.path, fixture);
@@ -567,11 +584,25 @@ fn seed_book(cell: &mut Cell, opening: bool) {
     assert!(!opening, "inventory tests start from an empty book");
     let mut proposal = CellCommit::empty();
     for (kind, id, value) in [
-        ("Agent", "BUSINESS", json!({"id":"BUSINESS","display_name":"Synthetic business","kind":"organization"})),
-        ("Agent", "PARTY", json!({"id":"PARTY","display_name":"Synthetic counterparty","kind":"person"})),
+        (
+            "Agent",
+            "BUSINESS",
+            json!({"id":"BUSINESS","display_name":"Synthetic business","kind":"organization"}),
+        ),
+        (
+            "Agent",
+            "PARTY",
+            json!({"id":"PARTY","display_name":"Synthetic counterparty","kind":"person"}),
+        ),
         ("Vault", "VAULT", json!({"id":"VAULT"})),
     ] {
-        proposal.writes.push(FactWrite {key: key(kind,id), expected: FactVersion::ABSENT, mutation: FactMutation::Put {values: serde_json::from_value(value).unwrap()}});
+        proposal.writes.push(FactWrite {
+            key: key(kind, id),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(value).unwrap(),
+            },
+        });
     }
     cell.commit(proposal).unwrap();
 }
@@ -912,13 +943,35 @@ fn inv_one_lot_fifo_delivery_has_no_placeholder_and_reopens() {
 #[test]
 fn inv_stock_scope_and_principal_are_authoritative() {
     let fixture = Fixture::load();
-    assert!(fixture.laws.is_empty(), "stock closure does not import Conversion");
+    assert!(
+        fixture.laws.is_empty(),
+        "stock closure does not import Conversion"
+    );
     let directory = tempfile::tempdir().unwrap();
     let mut cell = open(&directory.path().join("scope.sqlite"), &fixture);
     seed_book(&mut cell, false);
     let before = cell.store().read().dump().unwrap();
-    refuses(&fixture, &mut cell, "createexchange", json!({"id":"FOREIGN"}), "principal:unprivileged", "unprivileged");
-    let error = fixture.invoke_scoped(&mut cell.host, "createexchange", json!({"id":"CROSS-SCOPE"}), "principal:operator", "cross-scope", BTreeMap::from([("orgId".into(), "other_org".into()), ("environmentId".into(), "dev".into())])).unwrap_err();
+    refuses(
+        &fixture,
+        &mut cell,
+        "createexchange",
+        json!({"id":"FOREIGN"}),
+        "principal:unprivileged",
+        "unprivileged",
+    );
+    let error = fixture
+        .invoke_scoped(
+            &mut cell.host,
+            "createexchange",
+            json!({"id":"CROSS-SCOPE"}),
+            "principal:operator",
+            "cross-scope",
+            BTreeMap::from([
+                ("orgId".into(), "other_org".into()),
+                ("environmentId".into(), "dev".into()),
+            ]),
+        )
+        .unwrap_err();
     assert_eq!(error.code(), "action.permission_denied");
     assert_eq!(cell.store().read().dump().unwrap(), before);
     let reopened = open(&cell.path, &fixture);
