@@ -501,7 +501,7 @@ impl<E: SqlEngine> CellStore<E> {
         let batch = CommitBatch {
             world: context.world.clone(),
             scope: context.scope.clone(),
-            logical_time: context.now_ms,
+            logical_time: context.now_ms.max(self.read().clock_floor()?),
             writes: vec![FactWriteRow::Put {
                 object_type: RESTATEMENT_TYPE.into(),
                 key: id.into(),
