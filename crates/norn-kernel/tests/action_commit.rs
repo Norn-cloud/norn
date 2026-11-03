@@ -388,6 +388,25 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
 }
 
 #[test]
+fn synchronous_rule_never_degrades_to_the_primary_effect() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut action = approve();
+    action.synchronous_rule = Some(norn_ir::ActionRuleRef {
+        artifact_id: "demo.effects.rule".to_owned(),
+        version: "1.0.0".to_owned(),
+    });
+    let refusal = commit_action(
+        &mut NoReadOrCommit,
+        &catalog,
+        &call(&action, "SO-1", "rule"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refusal.code(), "action.unsupported_effect");
+}
+
+#[test]
 fn overlong_idempotency_key_is_refused_before_any_host_read_or_commit() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
@@ -4087,6 +4106,144 @@ norn_testkit::proptest::proptest! {
         norn_testkit::proptest::prop_assert!(commit_action(&mut cell, &catalog, &request, &Allow).is_err());
         norn_testkit::proptest::prop_assert!(cell.ledger().is_empty());
 
+    }
+}
+
+fn synchronous_writer() -> norn_kernel::SynchronousRule {
+    let artifacts: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/action-writer.json")).unwrap();
+    let artifact = artifacts
+        .iter()
+        .find(|artifact| artifact["artifactId"] == "example.atomic.writer.rule")
+        .unwrap();
+    let root = serde_json::from_value(artifact["payload"].clone()).unwrap();
+    norn_kernel::SynchronousRule::admit(
+        norn_ir::ActionRuleRef {
+            artifact_id: "example.atomic.writer.rule".into(),
+            version: "1.0.0".into(),
+        },
+        &root,
+        &BTreeMap::new(),
+        norn_decisions::DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: "test".into(),
+        },
+    )
+    .unwrap()
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_writer_is_atomic_authorized_and_replay_bound(actor in "agent:[a-z]{1,20}") {
+        let types = order_types();
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
+        let mut action = approve_with_submit_command("input.so_number");
+        action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+        action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let order = seed(&mut cell, ORDER, "SO-1", "draft");
+        let mut request = call(&action, "SO-1", "atomic-rule"); request.actor = actor.clone();
+        commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+        assert_eq!(cell.ledger().len(), 2);
+        assert_eq!(cell.ledger().last().unwrap().written.len(), 3);
+        assert_eq!(status(&cell, &order), Some(JsonValue::String("approved".into())));
+        assert!(cell.load(&FactKey::new("commerce.Quote", actor)).unwrap().exists());
+        assert_eq!(cell.outbox().len(), 1);
+        assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        request.scope.insert("orgId".into(), "different".into());
+        assert_refused(&mut cell, &catalog, &request, &Allow, "action.idempotency_conflict");
+        request.scope = scope();
+        let mut denied = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut denied, ORDER, "SO-1", "draft");
+        struct DenyQuote;
+        impl ActionAuthorizer for DenyQuote {
+            fn authorize(&self, r: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+                if r.target.object_type.as_str() == "commerce.Quote" { Err(ActionDenial::Forbidden { reason:"fixture".into() }) } else { Ok(()) }
+            }
+        }
+        assert_refused(&mut denied, &catalog, &request, &DenyQuote, "action.permission_denied");
+        assert!(denied.outbox().is_empty());
+        action.writes.retain(|write| write.entity_kind == ORDER);
+        assert_refused(&mut denied, &catalog, &call(&action, "SO-1", "uncovered"), &Allow, "core.txn.unchecked_writer");
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn rule_receipts_preserve_optional_binding_metadata(binding in "[a-f0-9]{64}") {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        seed(&mut cell, ORDER, "SO-1", "draft");
+        let action = approve();
+        let ActionOutcome::Committed { mut record, .. } = commit_action(&mut cell, &catalog, &call(&action, "SO-1", "receipt"), &Allow).unwrap() else { unreachable!() };
+        assert!(record.rule_binding.is_none());
+        record.rule_binding = Some(binding);
+        let mut values: JsonObject = serde_json::from_value(serde_json::to_value(&record).unwrap()).unwrap();
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values), Some(record));
+        values.insert("ruleBinding".into(), JsonValue::Null);
+        assert_eq!(norn_kernel::ActionCallRecord::from_values(&values).map(|record| record.rule_binding), Some(None));
+        values.insert("ruleBinding".into(), JsonValue::Bool(true));
+        assert!(norn_kernel::ActionCallRecord::from_values(&values).is_none());
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_rule_fuel_errors_keep_the_limit_category(limit in norn_testkit::proptest::prelude::any::<u64>(), used in norn_testkit::proptest::prelude::any::<u64>()) {
+        let refusal: ActionRefusal<()> = norn_decisions::DecisionError::BudgetExhausted { limit, used }.into();
+        norn_testkit::proptest::prop_assert_eq!(refusal.code(), "action.expression_budget_exceeded");
+        norn_testkit::proptest::prop_assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
+        norn_testkit::proptest::prop_assert!(matches!(refusal, ActionRefusal::ExpressionBudgetExceeded { limit: actual } if actual == norn_kernel::limits::ResourceLimitProfile::norn_limits_v1().turn.fuel_units), "the full action fuel ceiling is preserved");
+    }
+}
+
+// TXN-ATOMIC-1 / TXN-CLOSED-1: both directions connect the same proposed objects.
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn synchronous_links_share_the_fact_commit_and_refuse_dangling_endpoints(id in "[A-Z]{1,12}") {
+        let mut types = order_types();
+        types[0] = types[1].clone();
+        types[0].name = norn_ir::ObjectTypeName(ORDER.to_owned());
+        for (index, link, target) in [(0, "quote", "commerce.Quote"), (1, "order", ORDER)] {
+            types[index].links.push(serde_json::from_value(json!({"id":link,"target":target,"cardinality":{"to":"one","from":"many"}})).unwrap());
+        }
+        let rules = [synchronous_writer()];
+        let catalog = TypeCatalog::new(&types).with_action_rules(&rules);
+        let mut action = approve();
+        action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
+        action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
+        action.create_links = serde_json::from_value(json!([
+            {"link":"quote","targetType":"commerce.Quote","targetIdField":"so_number"},
+            {"source":{"objectType":"commerce.Quote","idField":"so_number"},"link":"order","targetType":ORDER,"targetIdField":"so_number"}
+        ])).unwrap();
+        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        let order = seed(&mut cell, ORDER, &id, "draft");
+        let mut request = call(&action, &id, "atomic-links"); request.actor = id.clone();
+        commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
+        let quote = FactKey::new("commerce.Quote", &id);
+        assert!(cell.load_link(&LinkKey::new(order.clone(), "quote", quote.clone())).unwrap().exists());
+        assert!(cell.load_link(&LinkKey::new(quote, "order", order)).unwrap().exists());
+        assert_eq!(cell.ledger().len(), 2);
+        assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
+        action.create_links[0].target_type = "commerce.SalesOrder".into();
+        let mut refused = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        seed(&mut refused, ORDER, &id, "draft");
+        let mut request = call(&action, &id, "dangling-links"); request.actor = id;
+        assert_refused(&mut refused, &catalog, &request, &Allow, "core.txn.unchecked_writer");
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #[test]
+    fn excessive_link_closure_refuses_before_host_io(count in 17usize..65) {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let mut action = approve();
+        action.create_links = vec![norn_ir::ActionCreateLink {source: None, link:"quote".into(),target_type:"commerce.Quote".into(),target_id_field:"so_number".into()}; count];
+        let refusal = commit_action(&mut NoReadOrCommit, &catalog, &call(&action, "SO-1", "too-many-links"), &Allow).unwrap_err();
+        norn_testkit::proptest::prop_assert_eq!(refusal.code(), "core.txn.unchecked_writer");
     }
 }
 

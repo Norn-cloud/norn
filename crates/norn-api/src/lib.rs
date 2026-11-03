@@ -21,3 +21,6 @@ pub mod actions;
 #[cfg(all(feature = "http-host", not(target_arch = "wasm32")))]
 mod ui;
 pub use clock::{Clock, ManualClock};
+
+/// Generic MCP catalog and dispatch boundary.
+pub mod mcp;

@@ -62,11 +62,15 @@ mod decider;
 pub mod decision_commit;
 mod effect;
 mod envelope;
+pub mod flow_identity;
 pub mod governing_laws;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
+mod synchronous_rule;
+pub use norn_decisions::DecisionBinding;
+pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;
 pub mod receipt_binding;
@@ -74,6 +78,7 @@ pub mod refusal;
 pub mod result_reconciliation;
 mod rule_authority;
 pub mod snapshot_observe;
+pub mod timer_schedule;
 mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
@@ -131,3 +136,7 @@ pub use rule_authority::{
     AdmittedRule, RuleAdmissionError, RuleDecision, commit_rule_decision, evaluate_rule,
     prepare_rule_decision,
 };
+/// Conservative ownership boundary for cell-local atomic execution.
+pub mod execution_profile;
+
+mod profile_ownership;

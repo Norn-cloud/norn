@@ -10,14 +10,11 @@
  */
 import type { Json } from "../canonical.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
-import { type EnvelopeOptions, envelope } from "./envelope.ts"
+import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { ObjectSchema } from "./schema.ts"
 
 export type RuleContract = "decide" | "sub_decision"
-export interface DecisionDependencyPin {
-  readonly artifactId: string
-  readonly version: string
-}
+export type DecisionDependencyPin = DependencyPin
 
 /** A committed ledger event that triggers a `decide` rule. */
 export type RuleTrigger =
@@ -85,7 +82,7 @@ export function decision(
   const pins = dependencies.map((dependency): DecisionDependencyPin => (
     "_tag" in dependency
       ? { artifactId: dependency.artifactId ?? dependency.id + ".rule", version: dependency.version }
-      : { artifactId: dependency.artifactId, version: dependency.version }
+      : { ...dependency }
   ))
   return located({ _tag: "Decision" as const, ...rest, triggers: [...triggers], slice: [...slice], dependencies: pins }, at)
 }
@@ -121,12 +118,7 @@ export function lowerDecision(def: DecisionDef, options: EnvelopeOptions): Decis
       namespace: def.id.slice(0, def.id.indexOf(".")),
       name: def.title,
       version: def.version,
-      dependencies: def.dependencies.map((dependency): Json => ({
-        artifactId: dependency.artifactId,
-        kind: "rule",
-        version: dependency.version,
-        required: true,
-      })),
+      dependencies: pinnedDependencies(def.dependencies,"rule"),
     },
     payload,
     options,

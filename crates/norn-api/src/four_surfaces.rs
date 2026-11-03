@@ -283,7 +283,7 @@ async fn equivalent_governed_surfaces() {
         let (law, failed) = invoke( surface, &url, "demo",
             json!({"id":"melt-bad","input_fine_g":"100.000","output_fine_g":"99.200","loss_fine_g":"0.000"}), "omitted-loss").await;
         assert!(failed, "{surface}: {law}");
-        assert_eq!(law["code"], "decision.invariant_violation");
+        assert_eq!(law["code"], "core.laws.violated");
         assert_eq!(law["category"], "precondition");
         let after = dump(&host);
         assert_eq!(

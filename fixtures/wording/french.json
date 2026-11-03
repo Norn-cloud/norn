@@ -1,0 +1,33 @@
+{
+  "fr": {
+    "direction": "ltr",
+    "scope": "Chaque état déclaré",
+    "activation": "Lorsque la condition est satisfaite",
+    "component": "Le composant déclaré",
+    "response": "La quantité est positive ou nulle",
+    "labels": {
+      "scope": "Portée",
+      "condition": "Condition",
+      "component": "Composant",
+      "grade": "Modalité",
+      "timing": "Temporalité",
+      "response": "Réponse",
+      "source": "Source non vérifiée",
+      "preferences": "Préférences",
+      "exception": "Exception"
+    },
+    "terms": {
+      "company": "société",
+      "application": "application",
+      "cell": "cellule",
+      "entity": "entité",
+      "commitments": "engagements",
+      "obligation": "doit",
+      "permission": "peut (sans autorisation)",
+      "prohibition": "ne doit pas",
+      "sameCommit": "même validation",
+      "everyCommittedState": "chaque état",
+      "grounding": "nécessite un fondement"
+    }
+  }
+}

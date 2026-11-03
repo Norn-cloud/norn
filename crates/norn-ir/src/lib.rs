@@ -87,9 +87,9 @@ pub use access::{
 };
 pub use action::{
     AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
-    ActionCreateLink, ActionInputDerivation, ActionQuantityEffect, ActionQuantityOperation,
-    ActionQuantityParameter, ActionRoot, ActionUiEffect, ActionUiEffects, ActionWrite, McpTool,
-    McpToolAnnotations, WriteChange,
+    ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
+    ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
+    ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
 };
 pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
@@ -825,6 +825,16 @@ impl ActionEffectProgram {
 }
 
 impl JsonValue {
+    /// Decode definition metadata with this value's existing strict deserializer.
+    /// Runtime numeric data uses [`runtime::decode`] and [`RuntimeValue`].
+    ///
+    /// # Errors
+    /// Returns the target type's decoding error, including unknown fields.
+    pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T, String> {
+        T::deserialize(serde::de::IntoDeserializer::into_deserializer(self.clone()))
+            .map_err(|error: serde::de::value::Error| error.to_string())
+    }
+
     /// Return `Some(&str)` if this is a `JsonValue::String`, else `None`.
     pub fn as_string(&self) -> Option<&str> {
         match self {
@@ -1213,6 +1223,7 @@ define_payload_root!(ActionPayload {
         slice => "slice" as Vec<SliceDeclaration>,
         derive => "derive" as Vec<ActionInputDerivation>,
         commands => "commands" as Vec<ActionCommand>,
+        synchronous_rule => "synchronousRule" as action::ActionRuleRef,
         writes => "writes" as Vec<ActionWrite>,
         compensation => "compensation" as ActionCompensation,
         access => "access" as AccessRef,

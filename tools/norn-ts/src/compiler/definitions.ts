@@ -26,7 +26,8 @@ import * as M from "../builder/mapping.ts"
 import * as L from "../builder/law.ts"
 import * as R from "../builder/rule.ts"
 import * as X from "../builder/expr.ts"
-import type * as S from "../builder/schema.ts"
+import * as Q from "../builder/question.ts"
+import * as S from "../builder/schema.ts"
 import type { EnvelopeOptions } from "../builder/envelope.ts"
 import type { SourceLocation } from "../builder/diagnostics.ts"
 import { TOOL_ROOT } from "../profile.ts"
@@ -68,6 +69,7 @@ const CONNECTOR = "@norn/authoring#Norn.connector"
 const MAPPING = "@norn/authoring#Norn.mapping"
 const LAW = "@norn/authoring#Norn.law"
 const FLOW = "@norn/authoring#Norn.flow"
+const QUESTION = "@norn/authoring#Norn.question"
 const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
@@ -76,9 +78,28 @@ const ACTIONS: ReadonlySet<string> = new Set([ACTION])
 const DECISIONS: ReadonlySet<string> = new Set([DECISION])
 /** Nesting bound for literal JSON data (access conditions, graphs). */
 const MAX_DATA_DEPTH = 64
-const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
+const VALUE_TYPE_CALLS = new Set(["@norn/authoring#Norn.rate", "@norn/authoring#Norn.decimal", "@norn/authoring#Norn.ref", "@norn/authoring#Norn.timestamp", "@norn/authoring#Norn.date"])
 /** `DECIMAL_LITERAL_PATTERN` without the sign (the sign is a prefix `-`). */
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(\.[0-9]+)?$/
+
+/** VAL-EXACT-1: generated callbacks obey norn-expr/4's pre-parser bounds. */
+function checkExactSource(source: string, node: ts.Node): void {
+  const refuse = (): never => { throw new CompileError("NORN-FLOW-UNBOUNDED", "exact decision output exceeds norn-expr/4 source bounds (16384 UTF-8 bytes, 128 bracket levels, 512 recursion-opening tokens)", node) }
+  if (new TextEncoder().encode(source).length > 16_384) refuse()
+  // Match the engine's conservative raw-source scan, including literal contents.
+  let brackets = 0, levels = 0, word = ""
+  const digit = (c: string | undefined): boolean => c !== undefined && c >= "0" && c <= "9"
+  for (let i = 0; i <= source.length; i++) {
+    const c = source[i] ?? " "
+    if (/[A-Za-z0-9_]/.test(c)) { word += c; continue }
+    if (["and", "or", "not", "in"].includes(word)) levels++
+    word = ""
+    if ("([{".includes(c)) { brackets++; levels++ }
+    else if (")]}".includes(c)) { brackets = Math.max(0, brackets - 1); levels++ }
+    else if (c === "." ? !(digit(source[i - 1]) && digit(source[i + 1])) : "+-*/%^!<>=&|?:".includes(c)) levels++
+    if (brackets > 128 || levels > 512) refuse()
+  }
+}
 
 type Lowered<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
@@ -148,6 +169,14 @@ export function compileDefinitionFiles(
 
 export function compileDefinitions(file: string, options: EnvelopeOptions, limits: Partial<CompilerLimits> = {}, mode: { readonly allowEmpty?: boolean } = {}): DefinitionsResult {
   return compileDefinitionFiles([file], options, limits, mode)[0]!
+}
+
+/** Compile standalone question candidates; callers must use ordinary Rust compute admission. */
+export function compileQuestions(file: string, limits: Partial<CompilerLimits> = {}):
+  | { readonly ok: true; readonly questions: ReadonlyArray<Json> }
+  | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> } {
+  const result = lowerEach<ReadonlyArray<Json>>([file], limits, (compiler, source) => ({ ok: true, value: compiler.questions(source) }))[0]!
+  return result.ok ? { ok: true, questions: result.value } : result
 }
 
 export type ValueSchemasResult =
@@ -227,6 +256,7 @@ class DefinitionCompiler {
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
+        if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }
@@ -238,6 +268,7 @@ class DefinitionCompiler {
       for (const d of statement.declarationList.declarations) {
         const init = d.initializer && this.unwrap(d.initializer)
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
+        if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
         if (!init || !ts.isCallExpression(init) || id === undefined || !DEFINITION_CALLS.has(id)) continue
         const def =
           id === SOURCE_SCHEMA ? this.sourceSchema(init)
@@ -258,6 +289,70 @@ class DefinitionCompiler {
     }
     if (out.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, or Norn.connector definition", source)
     return { definitions: out, flows }
+  }
+
+  questions(source: ts.SourceFile): Json[] {
+    const questions: Json[] = []
+    const names = new Set<string>()
+    for (const statement of source.statements) {
+      if (ts.isExportAssignment(statement)) {
+        const call = this.unwrap(statement.expression)
+        if (ts.isCallExpression(call) && this.id(call) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings", call)
+      }
+      if (!ts.isVariableStatement(statement)) continue
+      for (const declaration of statement.declarationList.declarations) {
+        const call = declaration.initializer && this.unwrap(declaration.initializer)
+        if (!call || !ts.isCallExpression(call) || this.id(call) !== QUESTION) continue
+        const input = this.meta(call, ["name", "of", "where", "measure", "by", "asOf", "population"])
+        const required = (key: string): ts.Expression => this.member(input, key, call)
+        const name = this.string(required("name"))
+        if (names.has(name)) throw new CompileError("NORN-FLOW-LITERAL", `duplicate question ${name}`, call)
+        names.add(name)
+        const population = this.closedRecord(required("population"), ["kind"], ["kind"])
+        if (this.string(population.get("kind")!) !== "authorized_objects") {
+          throw new CompileError("core.compute.unsupported_engine", "this question profile requires the host-authorized exact cell population", required("population"))
+        }
+        const time = this.closedRecord(required("asOf"), ["basis", "from", "to", "freshness"], ["basis"])
+        if (this.string(time.get("basis")!) !== "effective") {
+          throw new CompileError("core.compute.unsupported_engine", "knowledge-time questions require authenticated cell history and qualified ASOF-KNOWLEDGE-1 policy admission (#497); a caller timestamp is not a cutoff", required("asOf"))
+        }
+        const timeMember = (key: string): ts.Expression => this.member(time, key, required("asOf"))
+        const freshness = this.closedRecord(timeMember("freshness"), ["kind", "maxAgeMs"], ["kind", "maxAgeMs"])
+        const kind = this.string(freshness.get("kind")!)
+        if (kind !== "live" && kind !== "delayed") throw new CompileError("NORN-FLOW-LITERAL", "effective questions declare live or delayed freshness", timeMember("freshness"))
+        const age = this.json(freshness.get("maxAgeMs")!)
+        if (typeof age !== "number" || !Number.isSafeInteger(age) || age <= 0) throw new CompileError("NORN-FLOW-LITERAL", "freshness requires a positive exact integer age", freshness.get("maxAgeMs")!)
+        const where = this.list(required("where")).map(node => {
+          const filter = this.closedRecord(node, ["property", "operator", "value"], ["property", "operator", "value"])
+          const operator = this.string(filter.get("operator")!)
+          if (operator !== "eq" && operator !== "ne") throw new CompileError("core.compute.unsupported_engine", "the qualified compute profile admits Eq/Ne predicates only", node)
+          const valueNode = filter.get("value")!
+          if (ts.isCallExpression(this.deref(valueNode))) throw new CompileError("NORN-FLOW-LITERAL", "question predicates use scalar literals, not expression escapes", valueNode)
+          const value = this.json(valueNode)
+          if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "a question filter requires a scalar literal", node)
+          return { property: this.string(filter.get("property")!), operator, value } satisfies Q.QuestionFilter
+        })
+        const by = this.list(required("by")).map(node => {
+          const dimension = this.closedRecord(node, ["property", "grain"], ["property"])
+          const property = this.string(dimension.get("property")!)
+          const grainNode = dimension.get("grain")
+          if (!grainNode) return { property }
+          const grain = this.string(grainNode)
+          if (grain !== "day" && grain !== "week" && grain !== "month" && grain !== "quarter" && grain !== "year") throw new CompileError("NORN-FLOW-LITERAL", "unknown calendar grain", grainNode)
+          return { property, grain } satisfies Q.QuestionDimension
+        })
+        const question = Q.lowerQuestion({
+          name, of: this.typeName(required("of"), OBJECT_TYPES), where,
+          measure: this.string(required("measure")), by,
+          asOf: { basis: "effective", from: this.string(timeMember("from")), to: this.string(timeMember("to")), freshness: { kind, maxAgeMs: age } },
+          population: { kind: "authorized_objects" },
+        })
+        this.expansion.assert(question)
+        questions.push(question)
+      }
+    }
+    if (questions.length === 0) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.question", source)
+    return questions
   }
 
   valueSchemas(source: ts.SourceFile): Record<string, S.ValueSchema> {
@@ -353,6 +448,7 @@ class DefinitionCompiler {
       ...(role === undefined ? {} : { role }),
       ...(description ? { description: this.string(description) } : {}),
       ...(markings ? { markings: this.strings(markings) } : {}),
+      ...(members.has("dependencies") ? {dependencies:this.list(members.get("dependencies")!).map(pin=>this.decisionDependency(pin))}:{}),
       projected,
     }
   }
@@ -444,7 +540,7 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings",
+      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
@@ -482,7 +578,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "controls", "lifecycles", "markings", "propertyMarkings"])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "identity", "defaults", "computed", "protected", "immutable", "controls", "lifecycles", "markings", "propertyMarkings", "dependencies"])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const defaults = new Map<string, E.DefaultValue>()
@@ -578,7 +674,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "writes", "effect", "compensation"])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "slice", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -593,6 +689,7 @@ class DefinitionCompiler {
       title: this.string(need("title")),
       version: this.string(need("version")),
       ...(description ? { description: this.string(description) } : {}),
+      ...(members.has("dependencies") ? {dependencies:this.list(members.get("dependencies")!).map(pin=>this.decisionDependency(pin))}:{}),
       scopeRequired: this.strings(need("scopeRequired")),
       idempotent: this.boolean(need("idempotent")),
       ledgered: this.boolean(need("ledgered")),
@@ -612,8 +709,9 @@ class DefinitionCompiler {
       preconditions: members.has("preconditions") ? this.list(need("preconditions")).map((e, index) => this.zenAt(e, this.string(need("id")) + ".action", `/payload/preconditions/${index}`, "")) : [],
       commands: members.has("commands") ? this.list(need("commands")).map((c) => this.command(c)) : [],
       createLinks: members.has("createLinks") ? this.list(need("createLinks")).map((entry) => {
-        const m = this.closedRecord(entry, ["link", "targetType", "targetIdField"], ["link", "targetType", "targetIdField"])
-        return { link: this.string(m.get("link")!), targetType: this.typeName(m.get("targetType")!, OBJECT_TYPES), targetIdField: this.string(m.get("targetIdField")!) }
+        const m = this.closedRecord(entry, ["link", "targetType", "targetIdField", "source"], ["link", "targetType", "targetIdField"])
+        const source = m.has("source") ? this.closedRecord(m.get("source")!, ["objectType", "idField"], ["objectType", "idField"]) : undefined
+        return { link: this.string(m.get("link")!), targetType: this.typeName(m.get("targetType")!, OBJECT_TYPES), targetIdField: this.string(m.get("targetIdField")!), ...(source ? { source: { objectType: this.typeName(source.get("objectType")!, OBJECT_TYPES), idField: this.string(source.get("idField")!) } } : {}) }
       }) : [],
       writes: members.has("writes")
         ? this.list(need("writes")).map((w) => {
@@ -623,6 +721,7 @@ class DefinitionCompiler {
             return { entityKind: this.typeName(m.get("type")!, OBJECT_TYPES), change }
           })
         : [],
+      ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(effectNode ? { effect: this.effect(effectNode) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       at: this.at(call),
@@ -807,13 +906,16 @@ class DefinitionCompiler {
       })
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
-      const outputs = Object.keys(schema("output").properties)
+      const outputSchema = schema("output")
+      const exact = S.hasExact(inputSchema) || S.hasExact(outputSchema)
+      if (exact && calls.length > 0) throw new CompileError("NORN-FLOW-EXPRESSION", "exact numeric schemas currently require a direct callback without sub-decisions", body)
+      const outputs = Object.keys(outputSchema.properties)
       const artifactId = members.get("artifactId") ? this.string(members.get("artifactId")!) : this.string(need("id")) + ".rule"
       const locate = (expr: X.Expr, pointer: string): void => {
         const node = syntax.expressionSources.get(expr) ?? body
         this.sourceMap.push({ artifactId, pointer, at: this.at(node) })
       }
-      const rules = rows.map((row, i): Json => {
+      const rules = rows.map((row, i): Record<string, Json> => {
         const project = (value: X.Expr, field: string): X.Expr | undefined => {
           if (value._tag === "Record") return value.fields.find(([key]) => key === field)?.[1]
           if (value._tag === "Ref") return X.ref(value.name, ...value.path, field)
@@ -825,12 +927,12 @@ class DefinitionCompiler {
         }
         try {
           if (row.condition && X.typeOf(row.condition, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "expected a boolean row condition")
-          if (row.condition) locate(row.condition, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/condition`)
+          if (row.condition && !exact) locate(row.condition, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/condition`)
           const cells: Record<string, Json> = { _id: `row_${i}`, condition: row.condition ? X.render(row.condition, scope) : "" }
           for (const field of outputs) {
             const value = project(row.value, field)
             if (!value) throw new X.ExprError("NORN-FLOW-RESULT", `expected output field ${field}; return every declared output`)
-            locate(value, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/out_${field.replace(/~/g, "~0").replace(/\//g, "~1")}`)
+            if (!exact) locate(value, `/payload/graph/nodes/${calls.length + 1}/content/rules/${i}/out_${field.replace(/~/g, "~0").replace(/\//g, "~1")}`)
             cells[`out_${field}`] = X.render(value, scope)
           }
           return cells
@@ -845,6 +947,25 @@ class DefinitionCompiler {
         { id: "decision", name: "decision", type: "decisionTableNode", content: { hitPolicy: "first", inputs: [{ id: "condition", name: "condition", type: "expression" }], outputs: outputs.map((field) => ({ id: `out_${field}`, name: field, field })), rules } },
         { id: "out", name: "output", type: "outputNode" },
       ], edges: ["in", ...calls.map((c) => (c as { id: string }).id), "decision", "out"].slice(1).map((targetId, index) => ({ id: `edge_${index}`, sourceId: ["in", ...calls.map((c) => (c as { id: string }).id), "decision"][index]!, targetId, type: "edge" })) }
+      if (exact) {
+        const expressions = outputs.map((key, index) => {
+          let value = String(rules[rules.length - 1]?.[`out_${key}`] ?? "null")
+          for (let row = rules.length - 2; row >= 0; row--) {
+            const cells = rules[row]
+            if (cells === null || typeof cells !== "object" || Array.isArray(cells)) throw new CompileError("NORN-FLOW-RESULT", "invalid decision row", body)
+            value = cells.condition === "" ? String(cells[`out_${key}`]) : `(${String(cells.condition)}) ? (${String(cells[`out_${key}`])}) : (${value})`
+          }
+          checkExactSource(value, body)
+          this.sourceMap.push({ artifactId, pointer: `/payload/graph/nodes/1/content/expressions/${index}/value`, at: this.at(body) })
+          return { id: `out_${key}`, key, value }
+        })
+        graph = { contentType: R.JDM_CONTENT_TYPE, nodes: [
+          { id: "in", name: "input", type: "inputNode" },
+          { id: "decision", name: "decision", type: "expressionNode", content: { expressions } },
+          { id: "out", name: "output", type: "outputNode" },
+        ], edges: [{ id: "edge_0", sourceId: "in", targetId: "decision" }, { id: "edge_1", sourceId: "decision", targetId: "out" }] }
+      }
+
     } else graph = this.json(need("graph"))
     if (graph === null || typeof graph !== "object" || Array.isArray(graph)) throw new CompileError("NORN-FLOW-LITERAL", "a decision graph is a JDM object { nodes, edges }", need("graph"))
     return R.decision({
@@ -866,19 +987,28 @@ class DefinitionCompiler {
   }
 
   /** Resolve a local Norn.decision reference or read an explicit artifact/version pin. */
-  private decisionDependency(input: ts.Expression): { readonly artifactId: string; readonly version: string } {
+  private synchronousRule(input: ts.Expression): NonNullable<A.ActionDef["synchronousRule"]> {
+    const pin = this.decisionDependency(input)
+    if (pin.kind !== undefined && pin.kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL", "synchronous writer must pin a rule", input)
+    return { artifactId: pin.artifactId, version: pin.version }
+  }
+
+  private decisionDependency(input: ts.Expression): R.DecisionDependencyPin {
     const referenced = this.deref(input)
     if (ts.isCallExpression(referenced)) {
       const { call, members } = this.referenced(input, DECISIONS, "a Norn.decision definition")
       const id = this.string(this.member(members, "id", call))
       const artifactId = members.get("artifactId")
       return {
+        kind: "rule",
         artifactId: artifactId ? this.string(artifactId) : id + ".rule",
         version: this.string(this.member(members, "version", call)),
       }
     }
-    const pin = this.closedRecord(input, ["artifactId", "version"], ["artifactId", "version"])
-    return { artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
+    const pin = this.closedRecord(input, ["artifactId", "version", "kind"], ["artifactId", "version"])
+    const kind = pin.has("kind") ? this.string(pin.get("kind")!) : undefined
+    if (kind !== undefined && kind !== "entity" && kind !== "rule") throw new CompileError("NORN-FLOW-LITERAL","dependency kind must be entity or rule",input)
+    return { ...(kind === undefined ? {} : {kind}), artifactId: this.string(pin.get("artifactId")!), version: this.string(pin.get("version")!) }
   }
 
   private law(call: ts.CallExpression): L.LawDef {

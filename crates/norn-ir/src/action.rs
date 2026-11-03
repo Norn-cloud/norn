@@ -61,6 +61,15 @@ pub struct ActionRoot {
     /// Outbound commands enqueued atomically with this action call.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<ActionCommand>,
+    /// TXN-RULE-1: one pinned synchronous, facts-only RuleIR writer in the
+    /// action's atomic closure. Hosts without this execution profile refuse.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ActionRuleRef")]
+    pub synchronous_rule: Option<ActionRuleRef>,
     /// The whitelisted effect program; the closed [`ActionEffectProgram`]
     /// enum is the effect whitelist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,7 +82,7 @@ pub struct ActionRoot {
     )]
     #[schemars(with = "ActionQuantityEffect")]
     pub quantity_effect: Option<ActionQuantityEffect>,
-    /// Declarative outgoing links to authorized records in the declared slice.
+    /// Typed links to captured or proposed objects in the same checked commit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub create_links: Vec<ActionCreateLink>,
     /// Declared write set (#2417): every entity kind the action may change and
@@ -123,6 +132,33 @@ pub struct ActionInputDerivation {
     /// Defaults to `true` and is omitted from the canonical representation.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub input_required: bool,
+}
+
+/// Closed reference to the admitted synchronous writer of an action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionRuleRef {
+    /// Exact RuleIR artifact identity.
+    pub artifact_id: String,
+    /// Exact artifact version; no latest-version resolution.
+    pub version: String,
+}
+
+impl<'de> Deserialize<'de> for ActionRuleRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Pin {
+            artifact_id: String,
+            version: String,
+        }
+        // TXN-RULE-1: schema and decoder agree on the object-only wire form.
+        let pin: Pin = crate::members::deserialize_object(deserializer)?;
+        Ok(Self {
+            artifact_id: pin.artifact_id,
+            version: pin.version,
+        })
+    }
 }
 
 fn default_true() -> bool {
@@ -447,14 +483,49 @@ pub struct ActionQuantityParameter {
     pub scale: crate::WholeNumber,
 }
 
-/// Add an outgoing link alongside an ordinary action's business write.
+/// Declare a typed link inside the action's checked proposal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionCreateLink {
-    /// Link declared on the effect's business object type.
+    /// Optional source written by the same synchronous proposal (TXN-ATOMIC-1).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::members::present_non_null"
+    )]
+    #[schemars(with = "ActionLinkSource")]
+    pub source: Option<ActionLinkSource>,
+    /// Link declared on the source object type.
     pub link: String,
     /// Fixed concrete target type.
     pub target_type: String,
-    /// Input field naming an existing authorized declared-slice object.
+    /// Required input field naming a captured or proposed target.
     pub target_id_field: String,
+}
+
+/// A declared input-key source for a link within one action proposal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionLinkSource {
+    /// Concrete type of an object written by the synchronous closure.
+    pub object_type: String,
+    /// Required string input field containing its identity.
+    pub id_field: String,
+}
+
+impl<'de> Deserialize<'de> for ActionLinkSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Source {
+            object_type: String,
+            id_field: String,
+        }
+        // TXN-CLOSED-1: the decoder retains the schema's object-only source binding.
+        let source: Source = crate::members::deserialize_object(deserializer)?;
+        Ok(Self {
+            object_type: source.object_type,
+            id_field: source.id_field,
+        })
+    }
 }

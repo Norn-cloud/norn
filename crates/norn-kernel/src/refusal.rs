@@ -171,7 +171,9 @@ impl<X> CommitError<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
-            Self::DuplicateKey { .. }
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
             | Self::LinkTarget { .. }
             | Self::InvariantModel { .. }
@@ -364,7 +366,9 @@ impl<X> DecisionRefusal<X> {
             | Self::EnvelopeExceeded { .. }
             | Self::TurnEnvelopeExceeded { .. } => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::UnknownType { .. }
             | Self::NotInSlice { .. }
@@ -540,7 +544,9 @@ impl<X> DecisionRefusal<X> {
                 key,
                 lifecycle_guard(transition, guard, Some(reason)),
             )),
-            Self::ReadOnlyWorld
+            Self::AtomicBoundary { .. }
+            | Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -610,6 +616,7 @@ impl<X> ActionRefusal<X> {
             Self::Command(rejection) => rejection.category(),
             Self::MissingScope { .. }
             | Self::UnsupportedEffect { .. }
+            | Self::UncheckedWriter { .. }
             | Self::InvalidInput { .. }
             | Self::DerivationFailed { .. }
             | Self::SliceUnavailable { .. }

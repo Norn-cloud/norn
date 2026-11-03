@@ -176,6 +176,17 @@ fn flow_source_map(
     }
 }
 
+fn historical_env(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> norn_expr::TypeEnvRef {
+    derive_type_env(artifacts, base, limits)
+        .expect("historical definitions")
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+        .expect("historical environment")
+}
+
 fn as_legacy_receipt(receipt: &CheckReceipt) -> (String, String) {
     let mut value: Value = serde_json::from_str(&compact(receipt)).expect("receipt JSON");
     value["format"] = json!("norn-checker/receipt@1");
@@ -226,7 +237,31 @@ fn pretty(bytes: &[u8]) -> String {
 
 #[test]
 fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
-    let receipt = receipt(&registry_layer());
+    let values = registry_layer();
+    let artifacts = envelopes(&values);
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let mut receipt = receipt(&values);
+    assert_eq!(receipt.type_env.as_ref().unwrap().version, 2);
+    receipt.type_env = Some(
+        derive_type_env(&artifacts, &[], &limits)
+            .unwrap()
+            .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+            .unwrap(),
+    );
+    let stored = compact(&receipt);
+    let hash = receipt.content_sha256().unwrap();
+    assert_eq!(
+        recover_legacy_admission_receipt(&hash, &artifacts, &[], &limits)
+            .expect("historical hash-only receipt recovery"),
+        stored
+    );
+    verify_admission_receipt(&stored, &hash, &artifacts, &[], &limits)
+        .expect("historical /1 receipt verifies");
+    let mut relabelled: Value = serde_json::from_str(&stored).unwrap();
+    relabelled["typeEnv"]["version"] = json!(2);
+    let relabelled = compact_value(&relabelled);
+    let hash = admission_receipt_sha256(&relabelled).unwrap();
+    assert!(verify_admission_receipt(&relabelled, &hash, &artifacts, &[], &limits).is_err());
     let actual = pretty(&receipt.canonical_json().expect("canonical"));
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
     if std::env::var_os(UPDATE_ENV).is_some() {
@@ -255,7 +290,7 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     assert_eq!(value["identifierProfile"], IDENTIFIER_ADMISSION_PROFILE);
     assert_eq!(EXPR_PROFILE, norn_expr::check::CHECKER_PROFILE);
     assert_eq!(value["typeEnv"]["id"], norn_expr::TYPE_ENV_ID);
-    assert_eq!(value["typeEnv"]["version"], norn_expr::TYPE_ENV_VERSION);
+    assert_eq!(value["typeEnv"]["version"], 1);
     assert_eq!(value["admitted"], true);
     assert_eq!(value["diagnostics"]["count"], 0);
     assert_eq!(
@@ -614,6 +649,7 @@ fn stored_receipts_verify_integrity_bindings_and_known_profiles() {
 
     for profile in ["norn-zen/3", "norn-zen/4", "norn-zen/5"] {
         let mut historical = current.clone();
+        historical.type_env = Some(historical_env(&stored_envelopes, &[], &limits));
         historical.checker_version = "0.1.0".to_owned();
         historical.expr_profile = profile.to_owned();
         historical.diagnostics = empty_diagnostics_for("0.1.0");
@@ -699,7 +735,7 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // reinterpret that historical attestation.
     let type_env = derive_type_env(&candidate_envelopes, &base_envelopes, &limits)
         .expect("the entity base still supplies its type environment")
-        .reference()
+        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
         .expect("environment hash");
     let historical = CheckReceipt {
         checker: CHECKER_NAME.to_owned(),
@@ -760,6 +796,7 @@ fn retained_warning_evidence_verifies_but_unreconstructable_legacy_hash_is_refus
         .expect("v1 deprecation is a registered advisory finding");
 
     let mut historical = checked.receipt;
+    historical.type_env = Some(historical_env(&artifacts, &base, &limits));
     historical.checker_version = "0.1.0".to_owned();
     historical.expr_profile = "norn-zen/4".to_owned();
     historical.diagnostics =
@@ -951,6 +988,7 @@ fn unresolved_pack_members_preserve_admission_and_legacy_recovery() {
         }
         assert!(checked.receipt.law_enrollment.is_empty());
         let mut historical = checked.receipt;
+        historical.type_env = Some(historical_env(&[], &envelopes(&base), &limits));
         historical.checker_version = "0.1.0".to_owned();
         historical.expr_profile = "norn-zen/4".to_owned();
         historical.diagnostics = empty_diagnostics_for("0.1.0");
@@ -994,6 +1032,27 @@ fn verify_admission_receipt(
         installed.as_array().expect("receipt fixture"),
         limits,
     )
+}
+
+#[test]
+fn val_env_action_json_leaf_and_exact_refinement_share_the_action_dialect() {
+    let mut action: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+    ))
+    .expect("action fixture");
+    action["payload"]["inputSchema"] = json!({"type":"object","properties":{
+        "payload":{"type":["null","boolean","number","string","array","object"]},
+        "amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}
+    },"required":["payload","amount"],"additionalProperties":false});
+    let artifacts = envelopes(&[action]);
+    let env = derive_type_env(&artifacts, &[], &ResourceLimitProfile::norn_limits_v1())
+        .expect("action dialect binds both leaves");
+    assert!(
+        env.records()
+            .keys()
+            .any(|name| name.ends_with("inputSchema"))
+    );
+    env.reference().expect("env/2 pin");
 }
 
 /// DIAG-HISTORY-1: transport projections cannot rehash historical receipt diagnostics.

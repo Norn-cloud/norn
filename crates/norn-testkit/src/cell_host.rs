@@ -42,6 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
+use norn_kernel::CommitError::{AccountingPosting, AtomicDeliveryBoundary, EffectiveValues};
+
 use norn_kernel::cell_host::{
     InterfaceDef, JsonObject, JsonValue, Link, LinkCardinality, LinkId, Multiplicity,
     ObjectTypeDef, ObjectTypeName, PropertyTypeDef, ResourceStatus,
@@ -1917,6 +1919,8 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     use norn_kernel::CommitError as Error;
     Ok(match error {
+        Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
+        Error::AtomicDeliveryBoundary { consumed } => Error::AtomicDeliveryBoundary { consumed },
         Error::ImmutableObject { key } => Error::ImmutableObject { key },
         Error::Law { key, reason } => Error::Law { key, reason },
         Error::OwnedRowsProtected { key } => Error::OwnedRowsProtected { key },

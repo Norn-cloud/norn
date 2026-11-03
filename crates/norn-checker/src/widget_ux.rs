@@ -2226,7 +2226,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
     }
 
     /// Find the table that physically stores a property and whether it is a
-    /// real SQLite column. Inherited properties stay on their oldest
+    /// real `SQLite` column. Inherited properties stay on their oldest
     /// declaration's table; computed and overflow properties are not columns.
     fn binding_property_column_owner(
         &self,
@@ -6315,6 +6315,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             Schema::String(Some(values)) => Type::enumeration(values.iter().cloned()),
             Schema::Integer => Type::Integer,
             Schema::Number => Type::Number,
+            Schema::Decimal(ty) => ty.clone(),
             Schema::Boolean => Type::Bool,
             Schema::Null | Schema::Json => Type::Json,
             Schema::Nullable(inner) => self.schema_type(inner, records).optional(),
@@ -6829,9 +6830,18 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
     let ty = match &property.kind {
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
         EffectiveKind::Base(PropertyType::Integer {}) => Type::Integer,
-        EffectiveKind::Base(PropertyType::Decimal { scale, unit, .. }) => Type::Decimal {
+        EffectiveKind::Base(PropertyType::Decimal {
+            scale,
+            unit,
+            rounding,
+            currency_source,
+            per_unit,
+        }) => Type::Decimal {
             scale: scale.0,
             unit: unit.clone(),
+            rounding: norn_ir::Rounding::effective(*rounding),
+            currency_source: currency_source.clone(),
+            per_unit: per_unit.clone(),
         },
         EffectiveKind::Base(PropertyType::Boolean {}) => Type::Bool,
         EffectiveKind::Base(PropertyType::Timestamp { timezone }) => Type::Timestamp {

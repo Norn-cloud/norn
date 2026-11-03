@@ -15,6 +15,8 @@ Reuse `LawIR`, `LawScope`, `LawRoot`, `LawModality` (temporal), `LawTiming`, `La
 | Evidence | generated goal/statement digest, full writer/mapping closure, semantics/compiler/tool pins, parameter assumptions, bounds/fairness, result and proof digests, assurance level. |
 | Delegation | authenticated principal, acting agent/session, accountable delegator, parent grant, scope/resources/actions/expiry/budget, revocation generation; every child is an attenuation. |
 
+Display wording is an ordered BCP 47 locale map, separate from executable semantics. Each locale declares direction, templates and the full renderer vocabulary; all declared locales must be complete. See [the wording contract](../../platform/structured-requirements.md#locale-wording-law-wording-locale-1).
+
 B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR without changing semantic IDs. Event occurrence, arbitrary temporal logic and progress are not implied by these PRs.
 
 ## Semantics and obligations
@@ -23,14 +25,29 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
+includes its primary target and the declared writer types, including effective
+subtypes. Catalog invocation entry points remain primary targets. Schema
+projection grants no permission: the actual policy, scope and capability grant
+still authorize every current/proposed resource, and the kernel still checks
+the closed writer footprint. Unbound or non-transition actions retain their
+existing target projection. The finite four-type writer domain is checked over
+all subsets with and without a synchronous binding; real PDP cases retain
+wrong-scope, wrong-role, absent-policy and absent-grant refusals.
+
 Generate initialization, non-vacuity, each-writer preservation, mapping totality/identity/unit/transition simulation/law preservation and open-boundary obligations from retained contracts. An empty implementor/domain is not non-vacuity evidence. Every writer introduced by rule, migration, connector or mapping changes the challenge. Missing/unsupported semantics remains unknown; runtime admission refuses safety predicates it cannot actually enforce.
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
+
+**LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
+
+**LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
 | Invariant / layer | Stable target diagnostic |
 |---|---|
+| LAW-WORDING-LOCALE-1: complete, unique well-formed locale entries; admission/render/inspection | `law.wording.invalid_locale` / `law.wording.duplicate_locale` / `law.wording.incomplete_locale` / `law.wording.unknown_locale` |
 | LAW-RETAIN-1: inherited law identity/domain unchanged; admission | `core.laws.weakening` |
 | LAW-COMPLETE-1: complete effective subject/writer/mapping closure; admission | `core.laws.unresolved_scope` |
 | LAW-SUPPORTED-1: exact predicate/timing supported, never omitted; admission | `core.laws.unsupported_semantics` |
@@ -40,8 +57,40 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 
 Evidence levels remain separate. Lean proof bodies must check the generated theorem with declared axioms and no admitted holes; bounded model results carry bounds. Admission receipts, source reviews and echoed challenges are structural evidence only. Report eligible auto-proof goals solved/total separately from all goals and unknown/refuted counts.
 
+### Exact result identity (PROOF-BIND-1)
+
+The checker-owned `Challenge` supplies `evidence_pins`, `record_evidence` and
+`evidence_identity`; there is no parallel goal type. Pins select an existing
+generated obligation by index and digest and retain the exact challenge digest.
+The record retains the complete challenge: generated statements, full definition
+and writer/mapping closure, unit interpretation, semantics/compiler profile,
+assumptions and assurance requirements. Any source change conservatively
+invalidates identity, including edits outside a narrower semantic dependency set.
+
+The controller supplies tool ID, version and lowercase implementation SHA-256,
+an exact nonempty bounds/fairness JSON object (at most 64 KiB), and a `u64` seed.
+The result is opaque UTF-8 JSON (at most 1 MiB) with its raw SHA-256. Whitespace,
+Unicode spelling and numeric spelling remain significant. The identity check
+also requires the independently retained result digest from the trusted checked
+driver; taking that expected digest from the record under inspection is invalid.
+
+`Current` establishes identity only. It authenticates no tool execution and
+confers no bounded-pass, counterexample, non-vacuity or proof status. The real
+checked driver supplies those results and actual bounds; unsupported generated
+proof assessments remain unknown. A mismatched current pin, malformed record or
+changed payload yields `Unknown` / `core.laws.stale_evidence` (PROOF-STALE), never
+a pass. Replacing both a stored result and its co-located hash still fails the
+independent result pin.
+
+Named identity scenarios: matching pass-shaped and counterexample-shaped payloads
+stay identity-only; writer, unit and mapping edits stale either result kind;
+tool/version/implementation, bounds, seed and goal edits stale evidence; joint
+payload/hash substitution fails; malformed or oversized profiles/results refuse.
+These scenarios do not simulate a solver or claim a completed constitution drop.
+
 ## Named acceptance scenarios
 
+- **LAW-LOCALE-DATA/INCOMPLETE/UNKNOWN:** A complete French entry admits and renders through data only; missing text, labels or terms in any declared locale refuse. An unavailable requested locale refuses without fallback, including during direction inspection. EN/AR retain their existing display bytes and semantic identities.
 - **LAW-INTERFACE/TRANSITIVE/DIAMOND:** Given direct and transitive implementors, when B2 resolves laws, then retain each origin and one instance per identical substitution; missing subject refuses.
 - **LAW-CONTAINED/EMPTY:** Given nested pack/app laws and zero implementors, when admitted, then validate bindings but leave non-vacuity unknown; an unknown app refuses.
 - **LAW-TIGHTEN/WEAKEN:** Given inherited conservation, when adding an additional loss bound, then conjunction is allowed; replacing conservation or excluding failing inputs refuses.
@@ -82,3 +131,21 @@ unchanged by transport projection versions. Historical receipts still verify.
 Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
+
+## Generated bounded creation profile (#565)
+
+**PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
+a selected create-only writer, ordered derivations, preconditions, stored defaults
+and a pointwise predicate law. One empty store, singleton object identity and
+explicit finite decimal input intervals bound the claim. Unsupported constructs
+leave each affected goal unknown with a reason. Exact scales and units come from
+effective declarations; unlike interpretations and inexact literals refuse.
+
+Initialization is vacuous over the empty store. Writer preservation checks the
+proposal before law enforcement; non-vacuity needs a reachable law-satisfying
+witness. Neither a generated module nor structural correspondence discharges a
+goal: only an independently pinned backend result supplies bounded evidence.
+Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
+decimal correspondence and unsupported expression/inexact literal refusal.
+
+**LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.

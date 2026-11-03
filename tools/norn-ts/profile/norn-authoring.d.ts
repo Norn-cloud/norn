@@ -63,7 +63,10 @@ declare module "@norn/authoring" {
      * decoded by the kernel. Stored entity values are exact number tokens and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: { readonly unit?: UnitRef } | { readonly currency: string }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+
+    /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
+    function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /**
      * A shared property type by name (EntityIR `ref`): a Norn Core registry
@@ -127,6 +130,22 @@ declare module "@norn/authoring" {
       readonly __types?: { readonly type: T }
     }
 
+    /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
+    interface QuestionDefinition { readonly _tag: "NornQuestion" }
+    interface QuestionMeta {
+      readonly name: string
+      readonly of: string | TypeDefinition<unknown>
+      readonly where: ReadonlyArray<{ readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      readonly measure: string
+      readonly by: ReadonlyArray<{ readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+      readonly asOf:
+        | { readonly basis: "effective"; readonly from: string; readonly to: string; readonly freshness: { readonly kind: "live" | "delayed"; readonly maxAgeMs: number } }
+        | { readonly basis: "knowledge" }
+      readonly population: { readonly kind: "authorized_objects" }
+    }
+    /** Syntax only: authored modules and callbacks never execute. */
+    function question(meta: QuestionMeta): QuestionDefinition
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}
@@ -156,6 +175,7 @@ declare module "@norn/authoring" {
 
     interface InterfaceMeta<S extends Schema.Top> {
       readonly role?: "thing" | "happening"
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
       readonly markings?: ReadonlyArray<string>
       /** Canonical property markings, keyed by a declared property. */
@@ -268,6 +288,7 @@ declare module "@norn/authoring" {
         }
 
     interface ActionMeta<I extends Schema.Top, O extends Schema.Top> {
+      readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
       readonly id: string
       readonly title: string
@@ -291,8 +312,9 @@ declare module "@norn/authoring" {
       }>
       /** Boolean ZEN Expressions over `input` and the declared `slice`. */
       readonly preconditions?: ReadonlyArray<Expression<boolean>>
-      /** Outgoing links to existing objects, each required in the declared slice. */
+      /** Atomic typed links to captured or proposed objects; explicit sources are written by the closure. */
       readonly createLinks?: ReadonlyArray<{
+        readonly source?: { readonly objectType: TypeDefinition<unknown> | string; readonly idField: keyof I["Type"] & string }
         readonly link: string
         readonly targetType: TypeDefinition<unknown> | string
         readonly targetIdField: keyof I["Type"] & string
@@ -305,6 +327,8 @@ declare module "@norn/authoring" {
         readonly name?: Expression<string>
         readonly fields?: { readonly [field: string]: Expression<unknown> }
       }>
+      /** Pinned facts-only synchronous RuleIR writer; execution requires the matching host profile. */
+      readonly synchronousRule?: DecisionDefinition | { readonly artifactId: string; readonly version: string }
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
@@ -422,7 +446,7 @@ declare module "@norn/authoring" {
       readonly version: string
       readonly contract: "decide" | "sub_decision"
       /** Required sub-decision references, either local definitions or explicit artifact/version pins. */
-      readonly dependencies?: ReadonlyArray<DecisionDefinition | { readonly artifactId: string; readonly version: string }>
+      readonly dependencies?: ReadonlyArray<DecisionDefinition | import("../src/builder/envelope.ts").DependencyPin>
       readonly triggers?: ReadonlyArray<RuleTriggerSpec>
       readonly slice?: ReadonlyArray<SliceSpec>
       /** The decision's input and output contracts: Effect Schema structs, lowered to closed schemas. */

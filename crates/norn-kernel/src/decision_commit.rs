@@ -74,6 +74,7 @@ use crate::observations::{LogicalTime, World};
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
+    pub(crate) action_rules: &'a [crate::SynchronousRule],
     pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     pub(crate) rules: BTreeMap<&'a str, &'a crate::AdmittedRule>,
@@ -108,6 +109,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
         Self {
+            action_rules: &[],
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -129,6 +131,12 @@ impl<'a> TypeCatalog<'a> {
                 .into_iter()
                 .map(|rule| (rule.decision().rule_id(), rule)),
         );
+    }
+
+    /// Admitted, immutable synchronous writers available to governed actions.
+    #[must_use]
+    pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
+        self.action_rules = rules;
         self
     }
 
@@ -227,6 +235,40 @@ impl<'a> TypeCatalog<'a> {
             values.insert(name.to_owned(), value);
         }
         Ok(values)
+    }
+
+    /// VAL-EXACT-1: derive invariant operand types from the same catalog as values.
+    pub(crate) fn expression_environment(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.base_expression_environment()?
+            .bind_self(object_type)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
+        let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
+        let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
+        let definitions = norn_expr::EntityDefinitions {
+            property_types: self.property_types.unwrap_or_default(),
+            object_types: &objects,
+            interfaces: &interfaces,
+            extensions: &extensions,
+        };
+        norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+            &definitions,
+            &BTreeSet::new(),
+            norn_expr::EnvOptions::default(),
+        )
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
     }
 
     /// Materialize declared defaults without filling other absent properties
@@ -551,6 +593,48 @@ impl<'a> TypeCatalog<'a> {
                 invariant,
             })
             .collect())
+    }
+
+    /// Owners of the invariants named `id` in the effective contract of the
+    /// object type or interface `name`.
+    ///
+    /// # Errors
+    /// Returns the name of an unknown type or of a missing interface.
+    pub(crate) fn contract_invariant_owners(
+        &self,
+        name: &str,
+        id: &str,
+    ) -> Result<Vec<InvariantOwner>, ObjectTypeName> {
+        if self.types.contains_key(name) {
+            return Ok(self
+                .invariants(&ObjectTypeName(name.to_owned()))?
+                .into_iter()
+                .filter(|item| item.id.as_str() == id)
+                .map(|item| item.owner)
+                .collect());
+        }
+        let interface = self
+            .interfaces
+            .get(name)
+            .copied()
+            .ok_or_else(|| ObjectTypeName(name.to_owned()))?;
+        let lineage = norn_expr::env::interface_lineage(interface, |parent| {
+            self.interfaces.get(parent.as_str()).copied()
+        })
+        .map_err(|missing| ObjectTypeName(missing.0))?;
+        Ok(lineage
+            .into_iter()
+            .filter(|owner| owner.invariants.iter().any(|item| item.id.as_str() == id))
+            .map(|owner| InvariantOwner::Interface(owner.name.clone()))
+            .collect())
+    }
+
+    /// Every retained object type name.
+    pub(crate) fn object_type_names(&self) -> Vec<ObjectTypeName> {
+        self.types
+            .keys()
+            .map(|name| ObjectTypeName((*name).to_owned()))
+            .collect()
     }
 
     /// Pin an invariant owner to its canonical `EntityIR` declaration content.
@@ -950,6 +1034,60 @@ pub enum FactEvent {
         /// Stable identity of the attempted turn or action call.
         attempt_id: String,
     },
+}
+
+impl<X> CommitError<X> {
+    pub(crate) fn is_invariant_refusal(&self) -> bool {
+        if matches!(self, Self::InvariantViolation { .. }) {
+            return true;
+        }
+        if let Self::Law {
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = self
+        {
+            return failure.invariant.is_some();
+        }
+        false
+    }
+
+    pub(crate) fn invariant_refusal_event(&self, attempt_id: String) -> Option<FactEvent> {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            id,
+            message,
+            outcome,
+            ..
+        } = self
+        {
+            return Some(FactEvent::InvariantRefused {
+                key: key.as_ref().clone(),
+                owner: owner.clone(),
+                id: id.clone(),
+                message: message.clone(),
+                outcome: outcome.as_ref().clone(),
+                attempt_id,
+            });
+        }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            let bound = failure.invariant.as_ref()?;
+            let invariant = &bound.failure;
+            return Some(FactEvent::InvariantRefused {
+                key: key.clone(),
+                owner: invariant.owner.clone(),
+                id: invariant.id.clone(),
+                message: invariant.message.clone(),
+                outcome: invariant.outcome.clone(),
+                attempt_id,
+            });
+        }
+        None
+    }
 }
 
 // Like FactChange, decode exact runtime values through a plain record. Serde's
@@ -1377,6 +1515,18 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// Complete atomic closure includes foreign or unknown ownership.
+    #[error("core.txn.atomic_boundary: dependency {key} is outside the local profile")]
+    AtomicBoundary {
+        /// Non-local or unresolved dependency.
+        key: FactKey,
+    },
+    /// A consumed delivery has foreign or unresolved ownership.
+    #[error("core.txn.atomic_boundary: consumed delivery {consumed} is outside the local profile")]
+    AtomicDeliveryBoundary {
+        /// Complete local delivery identity, including generation or incarnation.
+        consumed: Consumed,
+    },
     /// The turn targets a historical, read-only world.
     #[error("the turn targets a historical, read-only world; nothing can be committed there")]
     ReadOnlyWorld,
@@ -1637,6 +1787,9 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
+                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
+            }
             Self::ReadOnlyWorld => "decision.read_only_world",
             Self::PerformOutsideMain { .. } => "decision.perform_outside_main",
             Self::EnvelopeExceeded { .. } => "decision.envelope_exceeded",
@@ -1692,11 +1845,13 @@ impl<X> DecisionRefusal<X> {
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
-            | Self::TraversalLimitExceeded { key, .. } => Some(key),
+            | Self::TraversalLimitExceeded { key, .. }
+            | Self::AtomicBoundary { key } => Some(key),
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::ReadOnlyWorld
+            Self::AtomicDeliveryBoundary { .. }
+            | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
             | Self::IdentifierTooLong { .. }
@@ -1712,6 +1867,10 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
+            CommitError::AtomicDeliveryBoundary { consumed } => {
+                Self::AtomicDeliveryBoundary { consumed }
+            }
             CommitError::Law { key, reason } => Self::Law { key, reason },
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
@@ -2267,35 +2426,14 @@ where
             }
             Ok(receipt)
         }
-        Err(CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        }) => {
-            let refusal = DecisionRefusal::InvariantViolation {
-                key: key.clone(),
-                owner: owner.clone(),
-                version,
-                id: id.clone(),
-                message: message.clone(),
-                outcome: outcome.clone(),
+        Err(error) if error.is_invariant_refusal() => {
+            let Some(event) = error.invariant_refusal_event(turn.id.clone()) else {
+                return Err(DecisionRefusal::from_commit(error));
             };
+            let refusal = DecisionRefusal::from_commit(error);
             let mut refusal_commit = CellCommit::empty();
             refusal_commit.consumes.clone_from(&turn.consumes);
-            refusal_commit.events.push(
-                FactEvent::InvariantRefused {
-                    key: *key,
-                    owner,
-                    id,
-                    message,
-                    outcome: *outcome,
-                    attempt_id: turn.id.clone(),
-                }
-                .into(),
-            );
+            refusal_commit.events.push(event.into());
             match host.commit(refusal_commit) {
                 Ok(_) => Err(refusal),
                 Err(error) => Err(DecisionRefusal::from_commit(error)),
@@ -2326,7 +2464,7 @@ pub(crate) fn widen_effect<C: From<JsonObject>, T: From<JsonObject>>(
     }
 }
 
-fn fact_key(change: &FactChange) -> FactKey {
+pub(crate) fn fact_key(change: &FactChange) -> FactKey {
     let (object_type, key) = match change {
         FactChange::Create {
             object_type, key, ..

@@ -99,14 +99,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{
-    EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv, check_expression,
-};
+use norn_expr::{EntityDefinitions, EnvOptions, Expression, FieldSource, Type, ZenTypeEnv};
 use norn_ir::{
-    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactPayload,
-    DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority, JsonObject, JsonValue,
-    ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName, SliceKey, TransitionId,
-    UpsertWriteMode, WriteChange, ZenExpression,
+    ActionEffectProgram, ActionEffectTarget, ActionRoot, ArtifactEnvelope, ArtifactKind,
+    ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity, EntityMutationAuthority,
+    JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction, PropertyId, PropertyTypeName,
+    SliceKey, TransitionId, UpsertWriteMode, WriteChange, ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
@@ -160,6 +158,7 @@ pub mod codes {
 /// Check every candidate action's effect targets and declared write set over
 /// the resolved set of `artifacts` and the installed `base` (T3). See the
 /// module docs.
+/// Informational notes do not refuse admission; consumers check [`Diagnostic::is_error`].
 #[must_use]
 pub fn check_action_set(
     artifacts: &[ArtifactEnvelope],
@@ -276,6 +275,107 @@ pub fn check_action_firing(
     )
 }
 
+/// TXN-RULE-1: bind the exact admitted writer without an ambient latest lookup.
+fn synchronous_rule_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    if let Some(pin) = &root.synchronous_rule {
+        let matched: Vec<_> = artifacts
+            .iter()
+            .chain(base)
+            .filter(|candidate| {
+                candidate.artifact_id == pin.artifact_id
+                    && candidate.version == pin.version
+                    && candidate.kind() == ArtifactKind::Rule
+            })
+            .collect();
+        let valid = !pin.artifact_id.trim().is_empty()
+            && !pin.version.trim().is_empty()
+            && matches!(
+                root.effect_program.as_ref(),
+                Some(ActionEffectProgram::FireTransition { .. })
+            )
+            && matched.len() == 1
+            && artifact.dependencies.iter().any(|dependency| {
+                dependency.artifact_id == pin.artifact_id
+                    && dependency.kind == ArtifactKind::Rule
+                    && dependency.version.as_deref() == Some(pin.version.as_str())
+                    && dependency.required
+            })
+            && matched
+                .first()
+                .and_then(|candidate| serde_json::to_value(candidate.payload.to_json_value()).ok())
+                .and_then(|payload| serde_json::from_value::<norn_ir::RuleRoot>(payload).ok())
+                .is_some_and(|rule| {
+                    rule.contract == Some(norn_ir::RuleContractV2::Decide)
+                        && rule
+                            .scope_required
+                            .iter()
+                            .all(|scope| root.scope_required.contains(scope))
+                });
+        if valid {
+            if let Some(candidate) = matched.first() {
+                findings.extend(scope_finding(
+                    artifact,
+                    candidate,
+                    "/payload/synchronousRule",
+                ));
+            }
+        } else {
+            findings.push(finding("action.validation.invalid_payload",
+                "synchronousRule requires a transition action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
+                artifact, "/payload/synchronousRule"));
+        }
+    }
+    findings
+}
+
+/// TXN-CLOSED-1: every permitted fact writer contributes to admission's footprint.
+fn synchronous_writer_targets(
+    payload: &serde_json::Value,
+) -> Option<BTreeSet<(&str, WriteChange)>> {
+    let properties = payload.pointer("/outputSchema/properties/facts/items/properties")?;
+    let kinds = properties.get("objectType")?.get("enum")?.as_array()?;
+    let operations = properties.get("op")?.get("enum")?.as_array()?;
+    if kinds.is_empty() || operations.is_empty() {
+        return None;
+    }
+    let mut result = BTreeSet::new();
+    for kind in kinds {
+        let kind = kind.as_str().filter(|kind| !kind.trim().is_empty())?;
+        for operation in operations {
+            let change = match operation.as_str()? {
+                "create" => WriteChange::Created,
+                "set" | "patch" | "transition" => WriteChange::Modified,
+                _ => return None,
+            };
+            result.insert((kind, change));
+        }
+    }
+    Some(result)
+}
+
+fn synchronous_writer_payload(
+    root: &ActionRoot,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Option<serde_json::Value> {
+    root.synchronous_rule
+        .as_ref()
+        .and_then(|pin| {
+            artifacts.iter().chain(base).find(|candidate| {
+                candidate.artifact_id == pin.artifact_id
+                    && candidate.version == pin.version
+                    && candidate.kind() == ArtifactKind::Rule
+            })
+        })
+        .and_then(|artifact| serde_json::to_value(artifact.payload.to_json_value()).ok())
+}
+
 /// The findings of one action.
 fn check_action(
     artifact: &ArtifactEnvelope,
@@ -285,9 +385,18 @@ fn check_action(
     base: &[ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
     let mut findings = action_slice_findings(artifact, root, model);
+    findings.extend(synchronous_rule_findings(artifact, root, artifacts, base));
     findings.extend(quantity_effect_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
+    let writer = synchronous_writer_payload(root, artifacts, base);
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
+    if let Some(writer) = &writer {
+        if let Some(writes) = synchronous_writer_targets(writer) {
+            targets.extend(writes);
+        } else {
+            findings.push(finding(codes::UNDECLARED_EFFECT_WRITE, "synchronousRule requires finite objectType and supported op enums in its closed fact schema".to_owned(), artifact, "/payload/synchronousRule"));
+        }
+    }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
         targets.extend(program.changes().iter().map(|change| (kind, *change)));
@@ -326,24 +435,7 @@ fn check_action(
         ));
     }
 
-    for (index, write) in root.writes.iter().enumerate() {
-        let kind = write.entity_kind.as_str();
-        let pointer = format!("/payload/writes/{index}/entityKind");
-        match model.object_type(kind) {
-            None => findings.push(finding(
-                codes::UNKNOWN_WRITE_KIND,
-                format!(
-                    "the write set names {kind:?}, which is not an object type of the artifact set or the installed base"
-                ),
-                artifact,
-                &pointer,
-            )),
-            Some(defined) => {
-                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
-                findings.extend(defined.authority_finding(artifact, kind, &pointer));
-            }
-        }
-    }
+    findings.extend(declared_write_findings(artifact, root, model));
 
     if root.effect_program.is_some() {
         let declared: BTreeSet<(&str, WriteChange)> = root
@@ -374,6 +466,42 @@ fn check_action(
                     artifact,
                     &format!("/payload/writes/{index}"),
                 ));
+            }
+        }
+    }
+    findings
+}
+
+fn declared_write_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    model: &Model<'_>,
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    for (index, write) in root.writes.iter().enumerate() {
+        let kind = write.entity_kind.as_str();
+        let pointer = format!("/payload/writes/{index}/entityKind");
+        if root.synchronous_rule.is_some() && model.is_owned_child_target(kind) {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                "a synchronous writer cannot bypass the parent's owned-row authority".to_owned(),
+                artifact,
+                &pointer,
+            ));
+        }
+
+        match model.object_type(kind) {
+            None => findings.push(finding(
+                codes::UNKNOWN_WRITE_KIND,
+                format!(
+                    "the write set names {kind:?}, which is not an object type of the artifact set or the installed base"
+                ),
+                artifact,
+                &pointer,
+            )),
+            Some(defined) => {
+                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
+                findings.extend(defined.authority_finding(artifact, kind, &pointer));
             }
         }
     }
@@ -1518,7 +1646,7 @@ fn owned_row_precondition_findings(
     for precondition in preconditions {
         match Expression::compile(precondition.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, row_env, &Type::Bool) {
+                if let Err(errors) = expression.check_typed(row_env, &Type::Bool) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
@@ -1569,7 +1697,7 @@ fn owned_row_derivation_findings(
         };
         match Expression::compile(source.as_str()) {
             Ok(expression) => {
-                if let Err(errors) = check_expression(&expression, derive_env, &expected) {
+                if let Err(errors) = expression.check_typed(derive_env, &expected) {
                     findings.extend(errors.into_iter().map(|error| {
                         owned_row_expression_invalid(
                             artifact,
@@ -2198,19 +2326,30 @@ fn create_link_findings(
     let mut findings = Vec::new();
     let mut seen = BTreeSet::new();
     for binding in &root.create_links {
-        let source = root
-            .effect_program
+        let primary = root.effect_program.as_ref();
+        let composed = root.synchronous_rule.is_some()
+            && matches!(primary, Some(ActionEffectProgram::FireTransition { .. }));
+        let source_kind = binding
+            .source
             .as_ref()
-            .filter(|p| {
-                matches!(
-                    p,
-                    ActionEffectProgram::UpsertInputObject {
-                        write_mode: UpsertWriteMode::CreateOnly,
-                        ..
-                    }
-                )
+            .map(|s| s.object_type.as_str())
+            .or_else(|| primary.map(|p| p.target().object_kind));
+        let source = source_kind.and_then(|kind| model.object_type(kind));
+        let source_written = binding.source.as_ref().is_none_or(|source| {
+            composed
+                && input_schema_field_is_string(&root.input_schema, &source.id_field)
+                && root.writes.iter().any(|write| {
+                    write.entity_kind == source.object_type
+                        && matches!(write.change, WriteChange::Created | WriteChange::Modified)
+                })
+        });
+        let legacy_create = matches!(
+            primary,
+            Some(ActionEffectProgram::UpsertInputObject {
+                write_mode: UpsertWriteMode::CreateOnly,
+                ..
             })
-            .and_then(|p| model.object_type(p.target().object_kind));
+        );
         let declared = source.and_then(|s| {
             s.links
                 .iter()
@@ -2218,14 +2357,213 @@ fn create_link_findings(
                 .map(|(_, target)| target)
         });
         let in_slice = root.slice.iter().any(|entry| entry.object_type.as_str() == binding.target_type && !entry.optional && matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && property.as_str() == binding.target_id_field));
+        let created_target = composed
+            && root.writes.iter().any(|write| {
+                write.entity_kind == binding.target_type && write.change == WriteChange::Created
+            });
+        let primary_target = composed
+            && primary.is_some_and(|program| {
+                program.target().object_kind == binding.target_type
+                    && program.target().object_id_field == binding.target_id_field
+            });
+        let identity = (
+            source_kind,
+            binding.source.as_ref().map(|s| s.id_field.as_str()),
+            binding.link.as_str(),
+        );
         if root.create_links.len() > 16
-            || !seen.insert(&binding.link)
-            || !in_slice
+            || !seen.insert(identity)
+            || !(legacy_create || composed)
+            || !source_written
+            || !(in_slice || created_target || primary_target)
             || !input_schema_field_is_string(&root.input_schema, &binding.target_id_field)
             || declared.is_none_or(|target| target != &binding.target_type)
         {
-            findings.push(finding(codes::CREATE_LINK, "createLinks requires a create-only business effect, a unique declared link and a required authorized input-key slice of its exact target type".to_owned(), artifact, "/payload/createLinks"));
+            findings.push(finding(codes::CREATE_LINK, "createLinks requires a declared written source, unique source/link binding, and an authorized required slice target or a target created in the same proposal".to_owned(), artifact, "/payload/createLinks"));
         }
     }
     findings
+}
+
+#[cfg(test)]
+mod synchronous_rule_tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "pin conformance fixtures"
+    )]
+    use super::*;
+
+    fn fixture(version: &str) -> (ArtifactEnvelope, ActionRoot, ArtifactEnvelope) {
+        let mut action: ArtifactEnvelope = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+        ))
+        .expect("action fixture");
+        let mut rule: ArtifactEnvelope = serde_json::from_str(include_str!(
+            "../../../fixtures/ir/retail-reorder-routing.rule.json"
+        ))
+        .expect("rule fixture");
+        rule.version = version.to_owned();
+        let mut payload = rule.payload.to_json_value();
+        if let JsonValue::Object(ref mut object) = payload {
+            object.insert(
+                "contract".to_owned(),
+                JsonValue::String("decide".to_owned()),
+            );
+            object.insert(
+                "scopeRequired".to_owned(),
+                JsonValue::Array(vec![
+                    JsonValue::String("orgId".to_owned()),
+                    JsonValue::String("environmentId".to_owned()),
+                ]),
+            );
+        }
+        rule.payload =
+            ArtifactPayload::from_kind_json(&ArtifactKind::Rule, payload).expect("rule payload");
+        action.dependencies.push(norn_ir::ArtifactDependency {
+            artifact_id: rule.artifact_id.clone(),
+            kind: ArtifactKind::Rule,
+            version: Some(version.to_owned()),
+            required: true,
+        });
+        let mut root = decode_action(&action).expect("typed action");
+        root.synchronous_rule = Some(norn_ir::ActionRuleRef {
+            artifact_id: rule.artifact_id.clone(),
+            version: version.to_owned(),
+        });
+        (action, root, rule)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn exact_rule_versions_resolve_and_mismatches_refuse(version in 0u16..1000) {
+            let (action, root, mut rule) = fixture(&format!("1.0.{version}"));
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!(["demo.rule", format!("1.0.{version}")])).is_err(), "sequence pins refuse");
+            proptest::prop_assert!(serde_json::from_value::<norn_ir::ActionRuleRef>(serde_json::json!({"artifactId":"demo.rule", "version":format!("1.0.{version}")})).is_ok(), "object pins decode");
+            proptest::prop_assert!(synchronous_rule_findings(&action, &root, std::slice::from_ref(&rule), &[]).is_empty());
+            rule.version.push_str("-changed");
+            proptest::prop_assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_ambiguous_or_uncovered_rule_pins_refuse() {
+        let (action, mut root, rule) = fixture("1.0.0");
+        assert!(!synchronous_rule_findings(&action, &root, &[], &[]).is_empty());
+        assert!(
+            !synchronous_rule_findings(
+                &action,
+                &root,
+                std::slice::from_ref(&rule),
+                std::slice::from_ref(&rule)
+            )
+            .is_empty()
+        );
+        root.scope_required.clear();
+        assert!(!synchronous_rule_findings(&action, &root, &[rule], &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod writer_footprint_tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "closed writer schema conformance"
+    )]
+    use super::*;
+
+    fn schema(kinds: &[String], operations: &[&str]) -> serde_json::Value {
+        serde_json::json!({"outputSchema":{"properties":{"facts":{"items":{"properties":{"objectType":{"enum":kinds},"op":{"enum":operations}}}}}}})
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn every_declared_writer_is_covered_and_unbounded_targets_refuse(kind in "test\\.[A-Z][a-z]{1,20}") {
+            let kinds = [kind.clone()];
+            let value = schema(&kinds, &["create", "patch", "transition"]);
+            let targets = synchronous_writer_targets(&value).expect("finite schema");
+            proptest::prop_assert_eq!(targets, BTreeSet::from([(kind.as_str(), WriteChange::Created), (kind.as_str(), WriteChange::Modified)]));
+            let mut unbounded = value;
+            unbounded["outputSchema"]["properties"]["facts"]["items"]["properties"]["objectType"] = serde_json::json!({"type":"string"});
+            proptest::prop_assert!(synchronous_writer_targets(&unbounded).is_none());
+        }
+    }
+
+    #[test]
+    fn typed_atomic_writer_admits_and_an_uncovered_creation_refuses() {
+        let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../norn-kernel/tests/fixtures/action-writer.json"
+        ))
+        .expect("typed fixture");
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            base: &[],
+            registry: &registry,
+            tenant: None,
+        };
+        let findings = crate::check_artifact_set(&artifacts, &context);
+        assert!(findings.is_empty(), "{findings:?}");
+        let action = artifacts
+            .iter_mut()
+            .find(|artifact| artifact.kind() == ArtifactKind::Action)
+            .expect("typed action");
+        let mut root = decode_action(action).expect("action root");
+        root.writes
+            .retain(|write| write.entity_kind != "commerce.Quote");
+        let payload =
+            serde_json::from_value(serde_json::to_value(root).expect("root serialization"))
+                .expect("IR values");
+        action.payload = ArtifactPayload::from_kind_json(&ArtifactKind::Action, payload)
+            .expect("action payload");
+        assert!(
+            crate::check_artifact_set(&artifacts, &context)
+                .iter()
+                .any(|finding| finding.code.as_str() == codes::UNDECLARED_EFFECT_WRITE)
+        );
+    }
+
+    #[test]
+    fn composed_links_require_written_sources_and_captured_or_created_targets() {
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../norn-kernel/tests/fixtures/action-writer.json"
+        ))
+        .expect("typed fixture");
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let action = artifacts
+            .iter()
+            .find(|artifact| artifact.kind() == ArtifactKind::Action)
+            .expect("typed action");
+        let mut root = decode_action(action).expect("root");
+        root.create_links.truncate(1);
+        root.create_links[0].source = Some(norn_ir::ActionLinkSource {
+            object_type: "commerce.SalesOrder".into(),
+            id_field: "so_number".into(),
+        });
+        assert!(create_link_findings(action, &root, &model).is_empty());
+        root.writes.clear();
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+        root.writes.push(norn_ir::ActionWrite {
+            entity_kind: "commerce.SalesOrder".into(),
+            change: WriteChange::Modified,
+        });
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+        root.create_links[0]
+            .source
+            .as_mut()
+            .expect("source")
+            .id_field = "undeclared".into();
+        assert!(!create_link_findings(action, &root, &model).is_empty());
+    }
+
+    #[test]
+    fn unsupported_operations_and_empty_enums_refuse_writer_admission() {
+        for operations in [vec!["delete"], vec!["custom"], vec![]] {
+            assert!(
+                synchronous_writer_targets(&schema(&["test.Note".to_owned()], &operations))
+                    .is_none()
+            );
+        }
+        assert!(synchronous_writer_targets(&schema(&[], &["create"])).is_none());
+    }
 }

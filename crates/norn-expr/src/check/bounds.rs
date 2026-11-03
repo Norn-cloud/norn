@@ -241,7 +241,7 @@ pub(crate) fn lexical(source: &str, limits: &StructuralLimits, unary: bool) -> O
 }
 
 /// The direct children of `node`.
-fn children<'n>(node: &'n Node<'n>, out: &mut Vec<&'n Node<'n>>) {
+pub(super) fn children<'n>(node: &'n Node<'n>, out: &mut Vec<&'n Node<'n>>) {
     match node {
         Node::Null
         | Node::Bool(_)

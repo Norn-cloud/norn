@@ -1,0 +1,20 @@
+{
+  "sha256": "4cea5992eefcfb1aff6dba94023afb35d071c24305124303ebbc610a1837f2cb",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-ir/src/deontic.rs",
+    "crates/norn-ir/src/requirement_display.rs"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

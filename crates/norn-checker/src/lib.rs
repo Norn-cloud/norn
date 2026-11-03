@@ -86,6 +86,8 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 pub mod table_analysis;
+mod unit_admission;
+mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod law_enrollment;
 pub mod naming_series;
@@ -212,7 +214,8 @@ pub use sealing::{
 pub use typed_roots::decode_artifact_json;
 
 /// Check one artifact envelope and return every finding in the checker
-/// [`Diagnostic`] model (empty when the artifact is valid).
+/// [`Diagnostic`] model. The artifact is valid when no returned finding
+/// satisfies [`Diagnostic::is_error`]; informational notes may remain.
 ///
 /// Same checks, codes, and messages as [`validate_artifact`]; only the
 /// location is re-expressed as a JSON-pointer [`Span`], resolved against the
@@ -226,9 +229,7 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let legacy = crate::envelope::validate_artifact_unchecked(&normalized)
-        .err()
-        .unwrap_or_default();
+    let legacy = crate::envelope::collect_artifact_diagnostics(&normalized);
     // Resolve dotted paths against the envelope's wire JSON so keys that
     // contain `.` stay one pointer segment.
     let mut checked = match serde_json::to_value(artifact) {
@@ -268,3 +269,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
             .collect(),
     }
 }
+
+/// Single-cell execution diagnostic shared with runtime admission.
+pub mod execution_profile;

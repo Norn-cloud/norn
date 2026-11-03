@@ -723,6 +723,8 @@ impl EffectiveProperty {
                 ))
             };
         }
+        let materialized = self.round_runtime_value(value)?;
+        let value = materialized.as_ref();
         let EffectiveKind::Base(base) = &self.kind else {
             return Err(InstanceError::Unsupported(format!(
                 "an unresolved type on '{}'",
@@ -813,11 +815,54 @@ impl EffectiveProperty {
         }
     }
 
-    /// Canonicalize a valid timestamp runtime value for storage. Invalid source
-    /// strings are preserved so observation admission can record them as
+    /// VAL-ROUND: materialize explicit Decimal rounding before checking stored bounds.
+    fn round_runtime_value<'v>(
+        &self,
+        value: &'v RuntimeValue,
+    ) -> Result<std::borrow::Cow<'v, RuntimeValue>, InstanceError> {
+        let EffectiveKind::Base(
+            site @ PropertyType::Decimal {
+                rounding: Some(mode),
+                ..
+            },
+        ) = &self.kind
+        else {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        };
+        if *mode == norn_ir::Rounding::Refuse || value.is_null() {
+            return Ok(std::borrow::Cow::Borrowed(value));
+        }
+        let inexact = |reason: String| {
+            InstanceError::ConstraintViolation(format!(
+                "{}: {reason}",
+                crate::property_codec::INEXACT
+            ))
+        };
+        let number = value
+            .as_decimal()
+            .ok_or(InstanceError::TypeMismatch("decimal"))?
+            .canonical()
+            .parse::<norn_expr::Number>()
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let rounded = norn_expr::rescale_decimal(site, &number)
+            .map_err(|reason| inexact(reason.to_string()))?;
+        let decimal = rounded
+            .as_str()
+            .parse()
+            .map_err(|reason| inexact(format!("{reason}")))?;
+        Ok(std::borrow::Cow::Owned(RuntimeValue::Number(decimal)))
+    }
+
+    /// Canonicalize Decimal sites and valid timestamps for storage. Invalid source
+    /// values are preserved so observation admission can record them as
     /// quality findings; strict commit admission rejects them separately.
     #[must_use]
     pub fn canonical_runtime_value(&self, value: &RuntimeValue) -> RuntimeValue {
+        if matches!(self.kind, EffectiveKind::Base(PropertyType::Decimal { .. })) {
+            return self
+                .round_runtime_value(value)
+                .map_or_else(|_| value.clone(), std::borrow::Cow::into_owned);
+        }
         if matches!(self.kind, EffectiveKind::Base(PropertyType::Record { .. })) {
             let RuntimeValue::Object(values) = value else {
                 return value.clone();
@@ -909,14 +954,20 @@ impl EffectiveProperty {
             && let (
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: previous_unit,
+                    currency_source: previous_currency,
+                    per_unit: previous_per,
                     ..
                 }),
                 EffectiveKind::Base(PropertyType::Decimal {
                     unit: candidate_unit,
+                    currency_source: candidate_currency,
+                    per_unit: candidate_per,
                     ..
                 }),
             ) = (&previous.kind, &self.kind)
-            && previous_unit != candidate_unit
+            && (previous_unit != candidate_unit
+                || previous_currency != candidate_currency
+                || previous_per != candidate_per)
         {
             return Err(InstanceError::Unsupported(format!(
                 "decimal unit changed from {previous_unit:?} to {candidate_unit:?}; stored value needs an explicit conversion"
@@ -1177,8 +1228,13 @@ fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> Effectiv
     }
 }
 
+/// VAL-ROUND: compare effective contracts, including the default refusal mode.
 fn same_effective_kind(left: &EffectiveKind, right: &EffectiveKind) -> bool {
     match (left, right) {
+        (
+            EffectiveKind::Base(PropertyType::Decimal { .. }),
+            EffectiveKind::Base(PropertyType::Decimal { .. }),
+        ) => kind_narrows(left, right) == Some(true) && kind_narrows(right, left) == Some(true),
         (EffectiveKind::Base(left), EffectiveKind::Base(right)) => match (left, right) {
             (PropertyType::Enum { values: left }, PropertyType::Enum { values: right }) => {
                 enum_values(left) == enum_values(right)
@@ -1222,13 +1278,22 @@ fn kind_narrows(candidate: &EffectiveKind, previous: &EffectiveKind) -> Option<b
                 scale: candidate_scale,
                 unit: candidate_unit,
                 currency_source: candidate_currency,
+                rounding: candidate_rounding,
+                per_unit: candidate_per_unit,
             },
             PropertyType::Decimal {
                 scale: previous_scale,
                 unit: previous_unit,
                 currency_source: previous_currency,
+                rounding: previous_rounding,
+                per_unit: previous_per_unit,
             },
-        ) if candidate_unit == previous_unit && candidate_currency == previous_currency => {
+        ) if candidate_per_unit == previous_per_unit
+            && candidate_unit == previous_unit
+            && candidate_currency == previous_currency
+            && candidate_rounding.unwrap_or(norn_ir::Rounding::Refuse)
+                == previous_rounding.unwrap_or(norn_ir::Rounding::Refuse) =>
+        {
             Some(candidate_scale.0 <= previous_scale.0)
         }
         (
@@ -1918,6 +1983,22 @@ mod tests {
     }
 
     #[test]
+    fn val_round_omission_and_explicit_refuse_have_the_same_contract() {
+        for scale in 0..=28 {
+            let omitted = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale}}),
+            );
+            let explicit = effective_property(
+                serde_json::json!({"id":"amount","type":{"kind":"decimal","scale":scale,"rounding":"refuse"}}),
+            );
+            for (a, b) in [(&omitted, &explicit), (&explicit, &omitted)] {
+                assert!(a.same_contract(b));
+                assert!(a.narrowing_reasons_from(b).is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn normalization_steps_apply_in_order() {
         use Normalization::{CollapseWhitespace, Lowercase, Nfc, Nfkc, Trim, Uppercase};
         assert_eq!(normalize_text("  A  b\t\nC ", &[Trim]), "A  b\t\nC");
@@ -2224,5 +2305,40 @@ mod tests {
         );
         assert!(status.check_runtime_value(&RuntimeValue::Null).is_err());
         assert_eq!(note.check_runtime_value(&RuntimeValue::Null), Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod declared_rounding_tests {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn val_round_materialization_is_idempotent_and_bounds_use_stored_value(coefficient in -10000_i32..10000) {
+            let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+            let effective = EffectiveProperty::from_declared_property(&property,&[]);
+            let number = format!("{}{}.{:03}", if coefficient < 0 {"-"} else {""}, coefficient.abs()/1000, coefficient.abs()%1000);
+            let original = RuntimeValue::from_json_text(&number).expect("number");
+            let stored = effective.canonical_runtime_value(&original);
+            proptest::prop_assert_eq!(&effective.canonical_runtime_value(&stored), &stored);
+            proptest::prop_assert_eq!(effective.check_runtime_value(&original), effective.check_runtime_value(&stored));
+        }
+    }
+
+    #[test]
+    fn val_round_checks_quantized_bounds_and_preserves_invalid_evidence() {
+        let property: norn_ir::Property = serde_json::from_str(r#"{"id":"amount","type":{"kind":"decimal","scale":2,"rounding":"half_away_from_zero"},"constraints":{"max":"1.005"}}"#).expect("property");
+        let effective = EffectiveProperty::from_declared_property(&property, &[]);
+        let input = RuntimeValue::from_json_text("1.005").expect("decimal");
+        assert!(
+            effective.check_runtime_value(&input).is_err(),
+            "1.01 exceeds the stored bound"
+        );
+        assert_eq!(
+            effective.canonical_runtime_value(&input),
+            RuntimeValue::from_json_text("1.01").expect("rounded")
+        );
+        let invalid = RuntimeValue::String("not a decimal".into());
+        assert!(effective.check_runtime_value(&invalid).is_err());
+        assert_eq!(effective.canonical_runtime_value(&invalid), invalid);
     }
 }
