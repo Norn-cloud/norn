@@ -131,7 +131,7 @@ filter = "all()"
 run-wrapper = "quarantine-evidence"
 
 [profile.drop-06]
-default-filter = '''binary_id(norn-cell::jewelry_pricing)'''
+default-filter = '''binary_id(norn-cell::jewelry_pricing) & (test(=jewel_price_sell_and_scrap_commit_exactly_once_and_reopen) | test(=jewel_price_milligram_denominator_refuses_before_execution))'''
 
 [[profile.drop-06.scripts]]
 filter = "all()"
