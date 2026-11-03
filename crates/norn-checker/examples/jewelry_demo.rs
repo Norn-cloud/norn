@@ -1,9 +1,5 @@
 //! Admission-only jewelry authoring and rendering correspondence.
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    io::{Read as _, Write as _},
-};
+use std::{collections::BTreeSet, error::Error, io::Read as _};
 
 use norn_checker::obligations::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
