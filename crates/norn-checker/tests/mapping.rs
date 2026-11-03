@@ -18,7 +18,7 @@
 //! artifact-set check, coverage for every map, and, applied to `ERPNext`
 //! documents, action invocations, link patches, and provenance.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path};
 
 use norn_checker::lint::coverage::{MemberRef, MemberStatus};
