@@ -3094,6 +3094,7 @@ mod identity_history_tests {
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
+                    protected: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },

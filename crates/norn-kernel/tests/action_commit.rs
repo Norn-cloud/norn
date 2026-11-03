@@ -4038,6 +4038,47 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
     );
 }
 
+#[test]
+fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
+    let action = owned_series_action();
+    let mut definitions = owned_series_types(false, false);
+    let mut base = serde_json::to_value(&definitions[1]).unwrap();
+    base["properties"].as_array_mut().unwrap().push(json!({
+        "id":"system_value", "type":{"kind":"text"}, "protected":true, "default":"initial"
+    }));
+    definitions[1] = serde_json::from_value(base).unwrap();
+    let catalog = TypeCatalog::new(&definitions);
+    for supplied in [false, true] {
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(definitions.clone());
+        let mut row = owned_series_add("row-a");
+        if supplied {
+            row["values"]["system_value"] = json!("caller");
+        }
+        let request = owned_series_call(
+            &action,
+            "defaults",
+            "0",
+            &json!({"name":"ORDER-1", "company":"ACME"}),
+            &json!([row]),
+        );
+        let result = commit_action(&mut cell, &catalog, &request, &Allow);
+        if supplied {
+            assert!(result.is_err());
+            assert!(cell.ledger().is_empty());
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let child = cell
+                .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
+                .unwrap();
+            assert_eq!(
+                child.values.unwrap().get("system_value"),
+                Some(&JsonValue::String("initial".into()))
+            );
+        }
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]

@@ -1929,3 +1929,26 @@ proptest::proptest! {
         proptest::prop_assert_eq!(role_diagnostics(&roles, &edges), refusals);
     }
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn protected_fields_cannot_be_weakened_anywhere_in_a_subtype_chain(flags in proptest::collection::vec(proptest::prelude::any::<bool>(), 1..9)) {
+        let definitions: Vec<_> = flags.iter().enumerate().map(|(index, protected)| {
+            let mut definition = serde_json::json!({"name":format!("test.Level{index}"),
+                "properties":[{"id":"system", "type":{"kind":"integer"}, "protected":protected}]});
+            if index > 0 { definition["extends"] = serde_json::json!(format!("test.Level{}", index - 1)); }
+            definition
+        }).collect();
+        let layer = Layer::from_json(&serde_json::json!({"objectTypes":definitions}));
+        let base = Layer::default();
+        let registry = BTreeSet::new();
+        let context = EntityContext { catalog: &[], registry: &registry, base: base.model(), tenant: None };
+        proptest::prop_assert!(check_entity_model(&layer.model(), &context).is_empty());
+        let effective = effective_object_types(&layer.model(), &context);
+        for index in 0..flags.len() {
+            let protected = effective[&index].0.property("system").expect("effective property").protected();
+            proptest::prop_assert_eq!(protected, flags[..=index].iter().any(|flag| *flag));
+        }
+    }
+}

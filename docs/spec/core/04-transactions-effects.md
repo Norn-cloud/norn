@@ -234,3 +234,7 @@ two or three targets check that each record's errors depend on its own target.
 This is sampled checker correspondence; runtime stored-property checks remain
 mandatory. The allocating scanner and effective catalogs are outside the
 bounded Kani harness profile.
+
+### FA-PROTECT-1: caller writes and kernel initialization
+
+A protected property is inherited conjunctively: a subtype or extension cannot remove an ancestor's rule-only write requirement. Unsealed actions, decisions and observations cannot supply protected fields, transition a protected lifecycle or delete an existing object with protected properties. Owned-row admission validates the caller's patch first, then may initialize declared defaults under its private kernel origin; callers cannot claim that origin. Until sealed-rule evaluation is connected, these writes fail closed. Named scenarios: `protected_delete_then_recreate_is_refused`, `owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused`, and the generated-chain `protected_fields_cannot_be_weakened_anywhere_in_a_subtype_chain`. Admission-time action-target and kernel row-field diagnostics follow separately; runtime enforcement does not depend on that earlier rejection.

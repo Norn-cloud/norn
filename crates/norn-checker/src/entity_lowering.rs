@@ -109,6 +109,7 @@ pub fn lower_entity_v1(v1: &EntityRootV1) -> EntityRootV2 {
 #[must_use]
 pub fn lower_field_v1(name: &str, field: &EntityFieldV1) -> Property {
     Property {
+        protected: false,
         id: PropertyId(name.to_owned()),
         description: None,
         property_type: lower_field_type_v1(field),
