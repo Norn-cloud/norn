@@ -126,7 +126,8 @@ def compile_tla(args, root, environment, work):
         "--target", "json", "--flatten", "--step", args.step, "--invariant", args.invariant,
     ], environment, work, deadline)
     stages.append({"stage": "quint-json", "exitCode": compiled.returncode,
-                   "stdout": compiled.stdout.decode(), "stderr": compiled.stderr.decode()})
+                   "stdoutBytes": len(compiled.stdout),
+                   "stdoutSha256": hashlib.sha256(compiled.stdout).hexdigest(), "stderr": compiled.stderr.decode()})
     if compiled.returncode != 0:
         raise ValueError("Quint JSON compilation failed: " + compiled.stderr.decode())
     source = work / "generated.qnt.json"
