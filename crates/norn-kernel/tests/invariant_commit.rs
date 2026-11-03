@@ -3388,24 +3388,39 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
         "properties":[{"id":"reading","type":{"kind":"record","members":[
             {"id":"elapsed","type":{"kind":"duration"}}
         ]}}]
-    })).unwrap();
+    }))
+    .unwrap();
     let key = FactKey::new("test.UnsupportedRecord", "unsupported");
     let values = object(json!({"reading":{"elapsed":"PT1S"}}));
     let catalog = TypeCatalog::new([&definition]);
-    assert!(matches!(norn_kernel::evaluate_invariants(
-        &catalog, &key, &values, &mut EvaluationBudget::default().units()
-    ), Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))));
-    let mut native = CommandCell::new(|command| command.payload.clone())
-        .with_types(vec![definition]);
-    let refusal = native.commit(CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put { values },
-        }],
-        ..CellCommit::empty()
-    }).expect_err("unsupported members cannot become validity findings");
-    assert!(matches!(refusal, CommitError::EffectiveValues { reason: norn_kernel::EffectiveValuesError::Unsupported { .. }, .. }));
+    assert!(matches!(
+        norn_kernel::evaluate_invariants(
+            &catalog,
+            &key,
+            &values,
+            &mut EvaluationBudget::default().units()
+        ),
+        Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))
+    ));
+    let mut native =
+        CommandCell::new(|command| command.payload.clone()).with_types(vec![definition]);
+    let refusal = native
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put { values },
+            }],
+            ..CellCommit::empty()
+        })
+        .expect_err("unsupported members cannot become validity findings");
+    assert!(matches!(
+        refusal,
+        CommitError::EffectiveValues {
+            reason: norn_kernel::EffectiveValuesError::Unsupported { .. },
+            ..
+        }
+    ));
     assert!(native.load(&key).unwrap().values.is_none());
     assert!(native.ledger().is_empty());
     assert!(native.outbox().is_empty());

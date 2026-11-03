@@ -4705,17 +4705,17 @@ export interface components {
         NornIrRoleCondition: {
             anyOf: string[];
         };
+        /**
+         * @description FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.
+         * @enum {string}
+         */
+        NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         NornIrRuleByteRange: {
             /** Format: uint32 */
             end: number;
             /** Format: uint32 */
             start: number;
         };
-        /**
-         * @description FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.
-         * @enum {string}
-         */
-        NornIrRounding: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero";
         /**
          * @description RuleIR v1 closed-operator condition, mirroring the conditions the
          *     `norn-engine` closed evaluator runs (`RuleCondition`).
