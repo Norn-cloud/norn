@@ -1480,6 +1480,7 @@ struct ActionExpressionSite<'a> {
     limits: &'a ResourceLimitProfile,
 }
 
+/// VAL-UNIT: retain informational unit inference at the action admission boundary.
 fn check_action_expression_with_cost(
     source: &ZenExpression,
     expected: &Type,
@@ -1515,7 +1516,15 @@ fn check_action_expression_with_cost(
         limits,
         &action_expression_root_bounds(environment),
     ) {
-        Ok(checked) => Some(checked.cost().units()),
+        Ok(checked) => {
+            for note in checked.notes() {
+                let mut diagnostic =
+                    invalid_diagnostic(note.code, note.message.clone(), path, artifact_id);
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+                diagnostics.push(diagnostic);
+            }
+            Some(checked.cost().units())
+        }
         Err(findings) => {
             for finding in findings {
                 diagnostics.push(invalid_diagnostic(

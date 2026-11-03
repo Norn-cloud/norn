@@ -126,7 +126,7 @@ fn main() -> DemoResult<()> {
         tenant: None,
     };
     let diagnostics = check_artifact_set(&artifacts, &context);
-    if !diagnostics.is_empty() {
+    if diagnostics.iter().any(norn_checker::Diagnostic::is_error) {
         return Err(format!("admission: {diagnostics:?}").into());
     }
     writeln!(
@@ -177,7 +177,7 @@ fn main() -> DemoResult<()> {
         "CURRENT: protected-law edit refused: LawChanged (challenge boundary only)"
     )?;
     let refused = check_artifact_set(&refusal_probe(&artifacts, "self.missing == 1")?, &context);
-    if refused.is_empty() {
+    if !refused.iter().any(norn_checker::Diagnostic::is_error) {
         return Err("invalid property binding was admitted".into());
     }
     writeln!(stdout, "CURRENT: invalid law diagnostics: {refused:?}")?;
