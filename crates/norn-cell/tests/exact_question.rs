@@ -152,7 +152,11 @@ fn typed_question_lowering_matches_the_native_scrap_yield_question() {
         panic!("one typed question")
     };
     let (mut store, plan, context) = fixture();
-    assert_eq!(question, plan.question(), "all admitted semantics survive lowering");
+    assert_eq!(
+        question,
+        plan.question(),
+        "all admitted semantics survive lowering"
+    );
     load(&mut store);
     let result = store
         .evaluate_question(&plan, context, |_| Ok(true))
