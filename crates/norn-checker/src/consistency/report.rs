@@ -1,4 +1,4 @@
-//! Source-pinned refusal diagnostics; never Challenge or proof evidence.
+//! DIAG-PIN-1: source-pinned refusal diagnostics; never proof evidence.
 use super::finite::{FiniteOracle, PROFILE};
 use crate::table_analysis::Unknown;
 use norn_expr::schema::Schema;

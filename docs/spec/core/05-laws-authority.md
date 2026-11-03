@@ -137,7 +137,7 @@ and 1000 expression fuel. A diagnosis discloses these plus its query ceiling.
 Unsupported/unbounded domains or exhausted enumeration return unknown, not a
 conflict. This fragment grants no admission or proof authority.
 
-Refused candidates receive diagnostics only: exact attempted-source/base digests,
+DIAG-PIN-1: refused candidates receive diagnostics only: exact attempted-source/base digests,
 member identities/pointers, checker/expression/fragment profiles, enumeration and
 query budgets, explicit closed-world assumptions and retained editability
 policy are pinned together. The report type has no Challenge/EvidencePins or
