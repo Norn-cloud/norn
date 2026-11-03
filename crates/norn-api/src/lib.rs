@@ -1,4 +1,6 @@
 //! Core IR and checker wire schemas, projected by the existing `OpenAPI` generator.
+/// Typed-question answer documents.
+pub mod answers;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
 pub mod clock;
