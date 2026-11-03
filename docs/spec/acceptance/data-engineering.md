@@ -66,6 +66,32 @@ Knowledge **K1** precedes a correction recorded October 27. At **K2**, accepted 
 
 Use Core [03](../core/03-query-compute.md), [05](https://github.com/Norn-cloud/norn/blob/6ac89f34c9040241c1ff381d1c9c204df8a4b344/docs/spec/core/05-laws-authority.md), [07](https://github.com/Norn-cloud/norn/blob/7076bfcf8d985a21fe989bfe3434bf1ac4a8b18e/docs/spec/core/07-world-boundary.md) and [08](https://github.com/Norn-cloud/norn/blob/7076bfcf8d985a21fe989bfe3434bf1ac4a8b18e/docs/spec/core/08-worlds-projections.md). The latter three links pin the published specification PRs until their main paths land. The nine identities above remain stable through this fixture change. Every case needs real evaluator/cell/surface correspondence and exact-head repository CI/Boat gates. Separate admission/runtime, bounded correspondence, sampled ERPNext parity and proof evidence; no skip passes and no universal IVM or production-ML claim.
 
+## Native incremental correspondence acceptance
+
+The native acceptance is `crates/norn-cell/tests/scrap_yield_incremental.rs`:
+`cargo test --locked -p norn-cell --test scrap_yield_incremental`.
+`data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids` checks
+G4's 83.300/85.000 g insertion, K1 294.000/300.000 = 0.98, K2
+292.500/300.000 = 0.975, recovered delta -1.500 g and loss delta +1.500 g.
+Input stays 300.000 g; only the corrected G2 contribution version changes.
+K1 is reread at its original knowledge cutoff after K2 and a SQLite reopen.
+
+`generated_changes_match_recompute_through_reorder_duplicate_and_restart`
+compares live and knowledge-cutoff IVM with full recomputation at every
+receipt, including the complete result envelope and versioned contribution
+IDs. Each generated sequence contains insert, update, delete, duplicate and
+restart, then generated changes of amount, metal and effective week.
+Independent identities arrive in forward/reverse batch order; updates of the
+same identity retain their order. Different physical ledger hashes are not
+claimed equal across these runs. Restart is explicitly a complete rebuild;
+receipt advances must report incremental maintenance.
+
+`restatement_activation.rs` checks the same signed correction deltas and
+same-slice full recomputation after governed atomic activation. These are
+synthetic native-cell acceptance scenarios and sampled correspondence, with
+source cursor pins supplied by the harness. Mapped-feed capture, source
+authority, training knowledge and the app surface need their own evidence.
+
 ## Post-demo fixture
 
 The following inventory-by-region contract is retained **verbatim** from the earlier acceptance baseline. Its “required”/three-engine language applies to post-demo qualification, not CP2/CP3. It adds no current demo commitment and does not replace the scrap-yield cases above.
