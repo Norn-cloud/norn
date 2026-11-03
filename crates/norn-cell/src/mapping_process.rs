@@ -70,7 +70,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             return Err(CellError::UnsupportedMappingProfile);
         }
-        for record in bundle.records {
+        for record in &bundle.records {
             if !record.links.is_empty()
                 || !record.cleared_links.is_empty()
                 || record.invocations.len() != 1
@@ -81,10 +81,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             let slice = self.store().read().mapping_observation_slice(&key)?;
             let mut values = record
                 .invocations
-                .into_iter()
-                .next()
+                .first()
                 .ok_or(CellError::MappingBundleMismatch)?
-                .input;
+                .input.clone();
             values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
             let prepared = prepare_observed_snapshot(
                 &catalog,
@@ -110,7 +109,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed(commit, authorization)
+        self.commit_observed_evidence(commit, authorization, Some(&bundle))
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(true)
     }

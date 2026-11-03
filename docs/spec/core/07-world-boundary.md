@@ -121,6 +121,7 @@ Evidence: structural mapping/manifest admission; runtime capability/freshness en
 
 ## Named acceptance scenarios
 
+- **FEED-CONFLICT-RACE:** Given mapped preparation, when another connection captures conflict or NFC evidence before the observed commit transaction begins, then recheck that exact bundle inside the transaction and refuse promotion/consumption. Ordinary corrections under a different source event retain their existing capture path.
 - **FEED-RESTART:** Given captured cursor 7, when crash occurs before cursor 8 capture commits, then resume at 8 and store one observation; post-commit crash deduplicates redelivery.
 - **EVENT-MULTI:** Given one ERP event for supplier, voucher and holding, when mapped, then retain all role links and source document; neither a case key nor Item replaces the holding.
 - **OBS-BAD:** Given imported purity 1100‰, when evaluated, then capture a quarantined finding; identical native write refuses without business changes.
@@ -161,8 +162,10 @@ Rebuilding checks every retained conflict/NFC finding and all mapping contexts
 against their retained definitions before publishing positive or negative
 membership. Later mapping contexts therefore extend an existing dispute.
 No caller claim or persisted membership grants authority. A cold snapshot costs
-one evidence rebuild; repeated operands use indexed membership without decoding
-unrelated evidence. Bounded fact/reference reads apply their byte budget first.
+one evidence rebuild; each guarded transaction is a cold snapshot, so this profile
+does not bound commit cost independently of retained inbox size. Repeated operands
+use indexed membership without decoding unrelated evidence. Bounded fact/reference
+reads apply their byte budget first.
 
 Indexes built by quality, guard or candidate validation remain transaction-local
 and cannot survive rollback. Native connection revisions are unavailable while
