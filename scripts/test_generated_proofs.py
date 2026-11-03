@@ -50,6 +50,12 @@ class VerdictPolicy(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.oracle_trace(trace)
 
+    def test_arithmetic_qualification_covers_both_expression_layers(self):
+        self.assertTrue(runner.arithmetic_qualified("(2).to(12).oneOf()"))
+        self.assertTrue(runner.arithmetic_qualified("-127"))
+        self.assertFalse(runner.arithmetic_qualified("128"))
+        self.assertTrue(runner.arithmetic_qualified("v999999999999"))
+
 
 if __name__ == "__main__":
     unittest.main()

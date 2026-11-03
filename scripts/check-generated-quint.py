@@ -48,10 +48,16 @@ def oracle_trace(trace):
     return states
 
 
+def arithmetic_qualified(model):
+    # Each expanded writer expression and law expression has at most 4096
+    # scalar leaves. Laws can add derived post-state coefficients again.
+    magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
+    return max(magnitudes, default=0) * 4096 * 4096 <= 2_147_483_647
+
+
 def run(args):
     model = args.model.read_text()
-    magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
-    if max(magnitudes, default=0) * 4096 > 2_147_483_647:
+    if not arithmetic_qualified(model):
         return {"status": "unknown", "reason": "tla-ts integer arithmetic exceeds qualified profile"}
     root = args.tools.resolve()
     environment = scrubbed_environment(os.environ.copy())
