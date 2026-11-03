@@ -51,7 +51,7 @@ function Exact({ value, totals }: { readonly value: string; readonly totals: rea
 function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; readonly onClose: () => void }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
         {bucket && <>
           <SheetHeader>
             <SheetTitle>{bucket.label}</SheetTitle>
