@@ -372,18 +372,15 @@ fn validate_action_slice(
             ));
         }
         let source_depth = match &entry.key {
-            SliceKey::Parameter { from, .. } => {
-                validate_action_parameter_slice(
-                    &slice,
-                    index,
-                    payload,
-                    derivations,
-                    entry,
-                    diagnostics,
-                    artifact_id,
-                );
-                *link_depths.get(from).unwrap_or(&0)
-            }
+            SliceKey::Parameter { .. } => action_parameter_slice_depth(
+                &slice,
+                index,
+                payload,
+                derivations,
+                &link_depths,
+                diagnostics,
+                artifact_id,
+            ),
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
@@ -441,15 +438,18 @@ fn validate_action_slice(
     }
 }
 
-fn validate_action_parameter_slice(
+fn action_parameter_slice_depth(
     slice: &[SliceDeclaration],
     index: usize,
     payload: &BTreeMap<String, JsonValue>,
     derivations: &ActionDerivationCheck,
-    entry: &SliceDeclaration,
+    link_depths: &BTreeMap<String, u32>,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-) {
+) -> u32 {
+    let Some(entry) = slice.get(index) else {
+        return 0;
+    };
     let SliceKey::Parameter {
         from,
         effective_at,
@@ -458,7 +458,7 @@ fn validate_action_parameter_slice(
         ..
     } = &entry.key
     else {
-        return;
+        return 0;
     };
     let path = format!("payload.slice[{index}]");
     let earlier = slice.iter().take(index).find(|prior| prior.name == *from);
@@ -479,6 +479,7 @@ fn validate_action_parameter_slice(
     if !source_ok || !default_ok || !time_ok || !scopes_unique {
         diagnostics.push(invalid_diagnostic(ACTION_CODE, "parameter requires an earlier same-type list, a guaranteed string effective instant, distinct precedence scopes and an optional earlier same-type default", format!("{path}.key"), artifact_id));
     }
+    *link_depths.get(from).unwrap_or(&0)
 }
 
 fn action_prior_slice_depth(
