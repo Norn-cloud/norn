@@ -117,7 +117,10 @@ impl SqlEngine for WorkersEngine {
                 if !Array::is_array(&row) {
                     return Err(CellError::Engine("invalid DO SQL row".into()));
                 }
-                Array::from(&row).iter().map(|value| decode(&value)).collect()
+                Array::from(&row)
+                    .iter()
+                    .map(|value| decode(&value))
+                    .collect()
             })
             .collect()
     }
