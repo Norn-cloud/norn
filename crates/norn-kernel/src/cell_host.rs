@@ -609,6 +609,12 @@ pub enum CommitError<X> {
         /// Internal lookup subjects for authorized diagnostics; never displayed.
         conflicts: Box<[FactKey; 2]>,
     },
+    /// An existing instance of an append-only type was changed or deleted.
+    #[error("{key} is immutable")]
+    ImmutableObject {
+        /// The stored object.
+        key: FactKey,
+    },
     /// Atomic closure includes another cell or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
     AtomicBoundary {
@@ -860,6 +866,7 @@ impl<X> CommitError<X> {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
+            Self::ImmutableObject { .. } => "commit.immutable_object",
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
             }

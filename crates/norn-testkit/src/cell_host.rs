@@ -756,6 +756,7 @@ pub fn law_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, links: Vec<Link>| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
@@ -1915,11 +1916,12 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
 
 /// The refusal without its host error, or the host error itself.
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    use norn_kernel::CommitError::{self as Error, IdentityCollision};
+    use norn_kernel::CommitError::{self as Error, IdentityCollision, TraversalLimitExceeded};
 
     Ok(match error {
         Error::AtomicBoundary { key } => Error::AtomicBoundary { key },
         AtomicDeliveryBoundary { consumed } => AtomicDeliveryBoundary { consumed },
+        Error::ImmutableObject { key } => Error::ImmutableObject { key },
         Error::Law { key, reason } => Error::Law { key, reason },
         IdentityCollision {
             owner,
@@ -1988,9 +1990,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
         Error::LinkRequired { parent, link } => Error::LinkRequired { parent, link },
         Error::TypeMismatch { key, concrete } => Error::TypeMismatch { key, concrete },
         EffectiveValues { key, reason } => EffectiveValues { key, reason },
-        Error::TraversalLimitExceeded { key, reason } => {
-            Error::TraversalLimitExceeded { key, reason }
-        }
+        TraversalLimitExceeded { key, reason } => TraversalLimitExceeded { key, reason },
         AccountingPosting { key, reason } => AccountingPosting { key, reason },
         Error::InvariantViolation {
             key,
@@ -2155,6 +2155,7 @@ pub fn override_object_types() -> Vec<ObjectTypeDef> {
         properties: Vec::new(),
     };
     let object_type = |name: &str, extends: Option<&str>, link: Link| ObjectTypeDef {
+        immutable: false,
         role: None,
         name: ObjectTypeName(name.to_owned()),
         description: None,
