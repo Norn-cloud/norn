@@ -9,7 +9,28 @@ slow-timeout = { period = "120s" }
 [profile.ci.junit]
 path = "junit.xml"
 
-# Native profiles retain the compiler and bounded-check steps alongside Rust tests.
+[scripts.wrapper.retained-invariant-evidence]
+command = { command-line = ["env"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc", PROPTEST_CASES = "256" } }
+
+[profile.drop-11]
+default-filter = '''binary_id(norn-kernel::invariant_commit) & (
+  test(=law_invariant_runtime_valid_response_admits) |
+  test(=law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin) |
+  test(=law_invariant_runtime_other_responses_still_refuse_before_activation) |
+  test(=law_invariant_runtime_misbound_missing_and_negated_references_refuse) |
+  test(=law_invariant_runtime_resolves_the_retained_subjects_interface_member) |
+  test(=law_invariant_runtime_exhausted_budget_refuses) |
+  test(=law_invariant_runtime_decision_and_action_refusals_journal_and_consume) |
+  test(=law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin) |
+  test(=law_invariant_runtime_matches_the_existing_evaluator) |
+  test(=law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin) |
+  test(=law_interface_mixed_scopes_and_misowned_invariants_refuse) |
+  test(=law_interface_runtime_matches_the_shared_evaluator_for_implementors))'''
+
+[[profile.drop-11.scripts]]
+filter = "all()"
+run-wrapper = "retained-invariant-evidence"
+
 [scripts.setup.authored-profile]
 command = ["bun", "tools/norn-ts/src/cli.ts", "profile", "scripts/demo/jewelry.source.ts"]
 
@@ -101,7 +122,7 @@ default-filter = '''binary_id(norn-cell::definitions_install) & (test(=obs_bad_s
   test(=obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity) |
   test(=obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff) |
   test(=obs_evidence_legacy_candidates_do_not_block_a_verified_producer) |
-  test(=law_complete_inherited_and_effective_scopes_refuse_until_b2) |
+  test(=law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2) |
   test(=legacy_law_snapshot_refuses_without_effects) |
   test(=legacy_version_zero_finding_refuses_without_effects))'''
 

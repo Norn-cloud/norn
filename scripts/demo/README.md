@@ -39,6 +39,7 @@ cargo nextest run --profile drop-02
 | `drop-08` | Ten cutoff/restatement scenarios |
 | `drop-09` | Fresh pack goldens and eight synthetic three-system mapping scenarios |
 | `drop-constitution` | Loss mutation/refusal/restoration; generated goals remain unknown (#565) |
+| `drop-11` | Twelve retained invariant-response scenarios; two sampled properties use 256 cases each |
 
 Nextest owns selection, setup commands, process execution and failures. Profile
 configuration pins sampled seeds/algorithms and disables golden regeneration.
@@ -56,3 +57,10 @@ posted. Structured bilingual authoring remains TARGET (#58); the Rust wording
 adapter uses the real renderer. The constitution result is bounded runtime
 correspondence (77 commits / 66 mutant refusals / 77 restored commits), not a
 solver or inductive proof. See each release's actual bounds and omissions.
+
+`drop-11` qualifies retained invariant evaluation, law/owner pins, atomic native
+refusal and action/decision refusal accounting, including transitive and diamond
+interface implementors. These engine fixtures use a fixture authorizer. This is
+runtime enforcement with sampled correspondence, not generated proof or the
+four-surface `MVP-ROUNDTRIP` acceptance. Unsupported response kinds, timing and
+mixed interface/concrete scopes remain refused. See the [Drop 11 release](https://github.com/Norn-cloud/norn/releases/tag/drop-11).

@@ -1,0 +1,7 @@
+{
+  "name": "norn-sql-adapter-conformance",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {"bindings": [{"name": "CELLS", "class_name": "Probe"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["Probe"]}]
+}

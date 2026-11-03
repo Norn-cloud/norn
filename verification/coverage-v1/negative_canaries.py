@@ -646,6 +646,160 @@ sudo() {{
                 raise AssertionError(f"cleanup preflight drift: {initial}/{after}: {result.stderr!r}")
 
 
+
+def workflow_trusted_policy_canaries(source: str) -> None:
+    job = yaml.safe_load(source)["jobs"]["trusted-policy"]
+    expression = " ".join(job["if"].split())
+    for event, action, body, previous, is_pr, expected in (
+        ("pull_request_target", "synchronize", "", "", True, True),
+        ("issue_comment", "created", "/approve-gates head", "", True, True),
+        ("issue_comment", "edited", "revoked", "/approve-gates head", True, True),
+        ("issue_comment", "deleted", "/approve-gates head", "", True, True),
+        ("issue_comment", "created", "unrelated", "", True, False),
+        ("issue_comment", "created", "/approve-gates head", "", False, False),
+        ("pull_request", "synchronize", "", "", True, False),
+    ):
+        for cancelled in (False, True):
+            condition = expression
+            for key, value in {
+                "github.event_name": event, "github.event.action": action,
+                "github.event.comment.body": body, "github.event.changes.body.from": previous,
+                "github.event.issue.pull_request": is_pr,
+            }.items():
+                condition = condition.replace(key, repr(value))
+            condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
+            condition = re.sub(r"!(?!=)", " not ", condition)
+            accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
+            if bool(accepted) != (expected and not cancelled):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
+
+    reporter = next(step for step in job["steps"]
+                    if step.get("name") == "Report trusted policy on the exact PR head")
+
+    def report(status: str, *, resolved: bool = True) -> dict[str, Any]:
+        script = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}", "head" if resolved else "").replace(
+            "${{ job.status }}", status)
+        # Execute the actual workflow reporter against an API double. No API writes.
+        harness = """const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {issue: {number: 7}},
+            serverUrl: 'https://example.invalid', runId: 42};
+const github = {rest: {pulls: {get: async () => ({data: {head: {sha: 'head'}}})},
+    repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
+(async () => {
+""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        value = json.loads(result.stdout)
+        if value["sha"] != "head" or value["context"] != "trusted-policy":
+            raise AssertionError("reporter lost the required head/context binding")
+        return value
+
+    for status in ("success", "failure", "cancelled", "skipped"):
+        for resolved in (False, True):
+            if report(status, resolved=resolved)["state"] != ("success" if status == "success" else "failure"):
+                raise AssertionError(f"trusted-policy reporter accepted {status}")
+
+    def required_passes(status: dict[str, Any], check_name: str, check_result: str) -> bool:
+        # GitHub requires both a check run and a commit status when names collide.
+        return status["state"] == "success" and (check_name != status["context"] or check_result == "success")
+
+    # An approval arrives while pull_request_target is running. Its cancellation
+    # reports failure; the comment run then publishes a completed success on HEAD.
+    # The comment's own check run belongs to the default branch, not that PR head.
+    cancelled = report("cancelled")
+    approved = report("success")
+    if required_passes(cancelled, job["name"], "cancelled"):
+        raise AssertionError("cancelled policy evaluation passed")
+    if not required_passes(approved, job["name"], "cancelled"):
+        raise AssertionError("cancelled PR-target check blocks completed approval")
+    if required_passes(approved, "trusted-policy", "cancelled"):
+        raise AssertionError("old duplicate-name cancellation defect was not reproduced")
+    # Revocation cancels a running evaluation and its replacement fails policy.
+    # Neither the cancellation nor that completed refusal may retain green.
+    for status in (report("cancelled"), report("failure")):
+        if required_passes(status, job["name"], "success"):
+            raise AssertionError("revoked approval retained a successful verdict")
+
+
+
+def workflow_merge_group_policy_canaries(source: str) -> None:
+    public = yaml.safe_load(source)
+    group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
+
+    def check(document: dict[str, Any]) -> None:
+        trigger = document.get("on", document.get(True))
+        if trigger != {"workflow_run": {"workflows": [public["name"]], "types": ["requested"]}}:
+            raise AssertionError("merge-group policy publisher lost its Public core trigger")
+        job = document["jobs"]["trusted-policy"]
+        if job.get("permissions", {}).get("statuses") != "write" or job.get("continue-on-error"):
+            raise AssertionError("merge-group policy cannot publish a required verdict")
+        condition = job.get("if", "")
+        for event, same_repository in (("merge_group", True), ("merge_group", False),
+                                       ("pull_request", True), ("push", True)):
+            expression = condition.replace("github.event.workflow_run.event", repr(event)).replace(
+                "github.event.workflow_run.head_repository.full_name", repr("owner/repo" if same_repository else "fork/repo")).replace(
+                "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
+            if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
+                raise AssertionError("merge-group publisher event/repository boundary drifted")
+        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        validators = [step for step in job["steps"] if step.get("run") == command]
+        if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
+            raise AssertionError("merge-group status lost its unconditional base-owned validation")
+        reporters = [step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head"]
+        if len(reporters) != 1:
+            raise AssertionError("merge-group required status publisher is missing")
+        reporter = reporters[0]
+        if (reporter.get("if") != "always()" or reporter.get("continue-on-error") or reporter.get("env")
+                or reporter.get("uses") != "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+                or set(reporter.get("with", {})) != {"retries", "script"} or reporter["with"]["retries"] != 3):
+            raise AssertionError("merge-group reporter must always run with the default Actions token")
+        for status in ("success", "failure", "cancelled", "skipped"):
+            script = reporter["with"]["script"].replace("${{ github.event.workflow_run.head_sha }}", "group-head").replace(
+                "${{ github.sha }}", "default-branch-head").replace("${{ job.status }}", status)
+            # workflow_run checks belong to the default branch. The actual JS
+            # must explicitly publish onto the triggering merge-group commit.
+            harness = """const context = {repo: {owner: 'owner', repo: 'repo'},
+    sha: 'default-branch-head', serverUrl: 'https://example.invalid', runId: 42};
+const github = {rest: {repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
+(async () => {
+""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
+            result = subprocess.run(["bun", "-e", harness], check=True, capture_output=True, text=True, timeout=10)
+            value = json.loads(result.stdout)
+            if (value["sha"] != "group-head" or value["context"] != "trusted-policy"
+                    or value["state"] != ("success" if status == "success" else "failure")):
+                raise AssertionError("merge-group required context/head/fail-closed verdict was lost")
+
+    check(group)
+    for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state"):
+        document = copy.deepcopy(group)
+        job = document["jobs"]["trusted-policy"]
+        reporter = next(step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head")
+        if mutation == "trigger":
+            document.get("on", document.get(True))["workflow_run"]["workflows"] = ["Different workflow"]
+        elif mutation == "event":
+            job["if"] = "False"
+        elif mutation == "permission":
+            job["permissions"]["statuses"] = "read"
+        elif mutation == "validation":
+            job["steps"] = [step for step in job["steps"] if step.get("name") != "Validate the group head as data with base-owned policy"]
+        elif mutation == "reporter":
+            job["steps"].remove(reporter)
+        elif mutation == "reporter-if":
+            reporter["if"] = "success()"
+        else:
+            before, after = {
+                "context": ("context: 'trusted-policy'", "context: 'different-status'"),
+                "head": ("${{ github.event.workflow_run.head_sha }}", "${{ github.sha }}"),
+                "state": ("'${{ job.status }}' === 'success' ? 'success' : 'failure'", "'success'"),
+            }[mutation]
+            if before not in reporter["with"]["script"]:
+                raise AssertionError(f"merge-group mutation target drifted: {mutation}")
+            reporter["with"]["script"] = reporter["with"]["script"].replace(before, after)
+        try:
+            check(document)
+        except AssertionError:
+            continue
+        raise AssertionError(f"merge-group context loss mutation passed: {mutation}")
+
+
 def workflow_cache_canaries() -> None:
     from unittest.mock import patch
     importer = load_module("workflow_interop_cache_canary", ROOT / "scripts/importers/erpnext_runtime.py")
@@ -719,6 +873,21 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        for change in ("concurrency", "if", "reporter"):
+            document = copy.deepcopy(workflow)
+            trusted = document["jobs"]["trusted-policy"]
+            if change == "concurrency":
+                trusted["concurrency"]["cancel-in-progress"] = False
+            elif change == "if":
+                trusted["if"] = "!cancelled() && github.event_name == 'pull_request_target'"
+            else:
+                reporter = next(step for step in trusted["steps"]
+                                if step.get("name") == "Report trusted policy on the exact PR head")
+                reporter["with"]["script"] = reporter["with"]["script"].replace("context: 'trusted-policy'", "context: 'different-status'")
+            rejected(f"trusted-policy {change} mutation", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["trusted-policy"]["name"] = "trusted-policy"
+        rejected("duplicate required check name", document)
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
@@ -854,6 +1023,8 @@ def workflow_canaries() -> None:
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
     workflow_cleanup_canaries(source)
+    workflow_trusted_policy_canaries(source)
+    workflow_merge_group_policy_canaries(source)
     workflow_cache_canaries()
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
@@ -1539,8 +1710,10 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        workflow_trusted_policy_canaries(source)
+        workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
-        print("workflow contract: admission, verdict and context canaries passed")
+        print("workflow contract: admission, verdict, context and merge-group publisher canaries passed")
         return 0
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
