@@ -928,11 +928,9 @@ where
     check_scope(call)?;
     let prepared_input = match preparation {
         Some(preparation) if preparation.matches_call(call) => preparation,
-        Some(_) => {
-            return Err(ActionRefusal::InvalidInput {
-                field: "$prepared_input".to_owned(),
-            });
-        }
+        Some(_) => return Err(ActionRefusal::InvalidInput {
+            field: "$prepared_input".to_owned(),
+        }),
         None => prepare_action_input_for_call::<H::Error>(
             action,
             &call.input,
