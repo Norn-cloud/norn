@@ -44,6 +44,8 @@ Status: target architecture, 2026-11-01. Labels identify authority: **[Owner]** 
 
 [Owner] Functions are the sole code boundary, behind `perform`: typed WASM components or external workers, bounded and capability-scoped, returning recorded receipts. [Default] FunctionManifest is canonical; WIT and Effect contracts are checked projections. Start with qualified Rust/Python components, with workers for unsupported dependencies. Determinism, sandboxing and business correctness are separate claims.
 
+[Owner] The sole host exception is Norn-owned, versioned built-in Functions distributed in the engine: they are never installable through authored or pack definition admission, and host execution carries no sandbox or isolation claim.
+
 [Default] Commit and outbox are atomic; dispatch is at least once. An external consequence is unique only under its provider's deduplication/reconciliation contract. Unknown outcomes and failed compensation are durable states. Compensation appends new effects and never erases the original event.
 
 ## Data engineering, integrations, questions and agents
