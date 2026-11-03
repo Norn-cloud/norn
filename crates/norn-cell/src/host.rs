@@ -135,7 +135,8 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
-    /// Trusted host access for definition installation and fixture provisioning.
+    /// Raw provisioning access for explicitly trusted hosts; never a governed write API.
+    #[cfg(feature = "trusted-host")]
     pub const fn store_mut(&mut self) -> &mut CellStore<S> {
         &mut self.store
     }

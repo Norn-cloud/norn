@@ -28,10 +28,13 @@ fn fields(schema: &serde_json::Value) -> Option<String> {
         } else {
             property.get("type")?.as_str()?
         };
-        let input_type = match kind {
-            "string" | "decimal" => "text",
-            "integer" | "number" => "number",
-            "boolean" => "checkbox",
+        let (input_type, syntax) = match kind {
+            "string" | "decimal" => ("text", ""),
+            "integer" | "number" => (
+                "text",
+                r#"inputmode="decimal" pattern="-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?" title="Enter a JSON number""#,
+            ),
+            "boolean" => ("checkbox", ""),
             _ => return None,
         };
         let required = schema
@@ -39,7 +42,7 @@ fn fields(schema: &serde_json::Value) -> Option<String> {
             .and_then(serde_json::Value::as_array)
             .is_some_and(|names| names.iter().any(|value| value.as_str() == Some(name)));
         write!(&mut fields,
-            "<label>{}<input data-field-name=\"{}\" data-json-kind=\"{kind}\" type=\"{input_type}\" step=\"any\" {}></label>",
+            "<label>{}<input data-field-name=\"{}\" data-json-kind=\"{kind}\" type=\"{input_type}\" {syntax} {}></label>",
             escape(&name.replace('_', " ")), escape(name),
             if required && kind != "boolean" { "required" } else { "" }).ok()?;
     }

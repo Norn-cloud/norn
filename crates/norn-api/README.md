@@ -80,8 +80,8 @@ From the repository root (fixture sources require #147 and #227):
 
 Read with `Authorization: Bearer local-demo` at
 `http://127.0.0.1:4174/v1/defs?orgId=org_demo&environmentId=dev`.
-The environment credential is local fixture configuration. This host exposes
-definition reads; actions and subscriptions remain the adapter lane's scope.
+The environment credential is local fixture configuration. The router also serves the governed action surfaces documented below; its
+bootstrap bearer principal has definition-read authority only.
 HOST-MODEL-DEFAULT-SNAPSHOT remains unclaimed: numeric JSON object defaults use
 the legacy floating-point IR and need a shared representation migration.
 HOST-VERSION-ABSENT: every syntactically valid but unrepresentable revision is
@@ -118,7 +118,13 @@ authenticated actor. The service owns scope admission, authorization, the
 definition epoch, governed kernel commit and idempotent replay. Adapters decode
 requests and serialize the returned `ActionResponse` or shared `Refusal`.
 `ActionResponse.record` is the original kernel `ActionCallRecord`. Input and
-receipt OpenAPI schemas are generated from these same Rust types.
+receipt OpenAPI schemas are generated from these same Rust types. The kernel
+receipt schema is generated and drift-checked by its unit test with a test-only
+schema dependency: `NORN_KERNEL_UPDATE_SCHEMAS=1 cargo test -p norn-kernel --lib
+action_call_record_schema_matches_generated_contract`. Production kernel builds
+carry no schema-generation dependency. `SqliteCell::store_mut` requires the
+non-default `trusted-host` feature; this crate enables it only as a dev-dependency
+for fixture provisioning, never as an action transport path.
 
 SURFACE-ACTION-1: HTTP `POST /v1/actions`, MCP `call_action` and the remote
 CLI invoke the same admitted ActionIR through `commit_action`. No application

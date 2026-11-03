@@ -10,6 +10,7 @@ description = "shared cell store with native SQLite adapters (ring 1; see AGENTS
 path = "src/lib.rs"
 
 [features]
+trusted-host = []
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
 
