@@ -3,5 +3,6 @@
   "message": "transition {id} drops the inherited guard {guard}; a subtype restates every inherited guard and may only append its own",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3"
+  "tier": "T3",
+  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
 }

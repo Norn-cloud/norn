@@ -3,5 +3,6 @@
   "message": "{writer} writes {property} of {objectType}, which its lifecycle owns; a status changes only through a declared transition",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3"
+  "tier": "T3",
+  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
 }

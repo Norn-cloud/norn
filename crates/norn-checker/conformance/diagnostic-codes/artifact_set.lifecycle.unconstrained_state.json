@@ -3,5 +3,6 @@
   "message": "the decision creates {objectType} with lifecycle property {property}, which must be a string enum of initial states",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3"
+  "tier": "T3",
+  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
 }

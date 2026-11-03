@@ -3,5 +3,6 @@
   "message": "{writer} writes {objectType}, whose lifecycles cannot be resolved ({reason}); its status writes fail closed",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3"
+  "tier": "T3",
+  "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
 }

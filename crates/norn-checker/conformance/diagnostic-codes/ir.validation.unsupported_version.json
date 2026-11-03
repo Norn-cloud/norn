@@ -3,5 +3,6 @@
   "message": "unsupported IR version '{irVersion}'",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2"
+  "tier": "T2",
+  "fix": "Use a construct supported by the selected admission profile, or explicitly select a profile supporting that construct."
 }

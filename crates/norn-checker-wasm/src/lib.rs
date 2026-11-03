@@ -969,3 +969,29 @@ pub fn version_json() -> String {
     })
     .to_string()
 }
+
+/// Read-only explain projection for native CLI, MCP and editor consumers.
+/// `context` has the same installed base, registry and tenant semantics as check.
+/// Callers must authorize the entire supplied definition set before calling.
+/// # Errors
+/// Refuses malformed JSON and unknown selector kinds; declaration failures are diagnostics.
+pub fn explain_artifact_set_json(artifacts_json: &str, context_json: &str, kind: &str, id: &str, options_json: &str) -> Result<String, AbiError> {
+    use norn_ir::explain::ExplainKind;
+    if artifacts_json.len().saturating_add(context_json.len()).saturating_add(options_json.len()) > 8_388_608 {
+        return Err(invalid("artifacts", "explain input exceeds 8 MiB"));
+    }
+    let kind = match kind { "action" => ExplainKind::Action, "law" => ExplainKind::Law, "concept" => ExplainKind::Concept, _ => return Err(invalid("kind", "expected action, law or concept")) };
+    let values = parse_array("artifacts", artifacts_json)?;
+    let context = parse_context(context_json)?;
+    let base = envelopes_or_invalid("context.base", &context.base)?;
+    let tenant = context.tenant.as_ref().map(|tenant| TenantLayer { tenant_id: &tenant.tenant_id, namespace: &tenant.namespace });
+    let set = EntityArtifactSetContext { registry: &context.registry, base: &base, tenant };
+    let options: norn_ir::explain::ExplainOptions = serde_json::from_str(options_json).map_err(|error| invalid("options", error.to_string()))?;
+    let result = decode_envelopes(&values).and_then(|artifacts| norn_checker::explain::explain(&artifacts, &set, kind, id))
+        .and_then(|mut report| { norn_checker::explain::render_wording(&mut report, &options)?; Ok(report) });
+    let response = match result {
+        Ok(report) => json!({"format":"norn/explain@2", "admitted":true, "report":report, "diagnostics": []}),
+        Err(diagnostics) => json!({"format":"norn/explain@2", "admitted":false, "report":null, "diagnostics":diagnostics.iter().map(Diagnostic::to_json_v2).collect::<Vec<_>>()}),
+    };
+    Ok(response.to_string())
+}

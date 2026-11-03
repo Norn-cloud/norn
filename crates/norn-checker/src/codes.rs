@@ -31,7 +31,7 @@ pub use crate::envelope::IDENTIFIER_TOO_LONG;
 pub const INITIAL_SINCE: &str = "0.1.0";
 
 /// Format tag of the [`conformance_manifest`] document.
-pub const MANIFEST_FORMAT: &str = "norn-checker/diagnostic-codes@1";
+pub const MANIFEST_FORMAT: &str = "norn-checker/diagnostic-codes@2";
 
 /// The checker tier a code belongs to (2026-08-27 ruling, "Tiers").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -86,6 +86,10 @@ pub struct CodeEntry {
     pub message: &'static str,
     /// The checker version that introduced the code.
     pub since: &'static str,
+    /// Supported author action, mutually exclusive with `no_fix`.
+    pub fix: Option<&'static str>,
+    /// Why an automatic supported repair cannot be offered.
+    pub no_fix: Option<&'static str>,
 }
 
 include!(concat!(env!("OUT_DIR"), "/diagnostic_registry.rs"));
@@ -117,13 +121,16 @@ pub fn conformance_manifest() -> serde_json::Value {
     let codes: Vec<serde_json::Value> = REGISTRY
         .iter()
         .map(|entry| {
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "code": entry.code,
                 "tier": entry.tier.as_str(),
                 "severity": severity_str(&entry.severity),
                 "message": entry.message,
                 "since": entry.since,
-            })
+            });
+            if let Some(fix) = entry.fix { value["fix"] = fix.into(); }
+            if let Some(reason) = entry.no_fix { value["no_fix"] = reason.into(); }
+            value
         })
         .collect();
     serde_json::json!({
@@ -160,6 +167,7 @@ mod tests {
                 "{} is not lower snake case",
                 entry.code
             );
+            assert!(matches!((entry.fix, entry.no_fix), (Some(fix), None) | (None, Some(fix)) if !fix.trim().is_empty()), "{} lacks actionable guidance or an explicit no_fix reason", entry.code);
             assert!(!entry.message.is_empty(), "{} has no message", entry.code);
             assert_eq!(lookup(entry.code), Some(entry));
         }

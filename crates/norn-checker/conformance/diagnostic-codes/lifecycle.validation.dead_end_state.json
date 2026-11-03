@@ -3,5 +3,6 @@
   "message": "state {state} has no outgoing transition; declare one or list it as terminal",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2"
+  "tier": "T2",
+  "no_fix": "A supported repair cannot be inferred from this code alone; inspect the named declaration and its diagnostic before changing semantics."
 }

@@ -220,9 +220,13 @@ fn conformance_directory_matches_the_public_manifest() {
 
 #[test]
 fn registry_generation_refuses_invalid_entries() {
-    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0"});
+    let base = serde_json::json!({"code":"toy.validation.invalid", "tier":"T2", "severity":"error", "message":"synthetic \"quoted\" \\ path \u{03b1}", "since":"0.2.0", "fix":"Correct the synthetic declaration"});
     for change in [
         "valid",
+        "no_fix",
+        "missing-guidance",
+        "both-guidance",
+        "blank-guidance",
         "identity",
         "tier",
         "severity",
@@ -238,6 +242,10 @@ fn registry_generation_refuses_invalid_entries() {
         let path = temp.join("toy.validation.invalid.json");
         let mut value = base.clone();
         match change {
+            "no_fix" => { value.as_object_mut().unwrap().remove("fix"); value["no_fix"] = "No supported alternative exists".into(); },
+            "missing-guidance" => { value.as_object_mut().unwrap().remove("fix"); },
+            "both-guidance" => value["no_fix"] = "Conflicting guidance".into(),
+            "blank-guidance" => value["fix"] = " ".into(),
             "identity" => value["code"] = serde_json::json!("other.validation.invalid"),
             "tier" => value["tier"] = serde_json::json!("T8"),
             "severity" => value["severity"] = serde_json::json!("fatal"),
@@ -263,6 +271,6 @@ fn registry_generation_refuses_invalid_entries() {
         }
         let result = registry_build::generate(&temp);
         fs::remove_dir_all(temp).expect("cleanup fixture");
-        assert_eq!(result.is_ok(), change == "valid", "{change}: {result:?}");
+        assert_eq!(result.is_ok(), matches!(change, "valid" | "no_fix"), "{change}: {result:?}");
     }
 }

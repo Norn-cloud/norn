@@ -3,5 +3,6 @@
   "message": "marked link properties require edge classification, which is not supported",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T3"
+  "tier": "T3",
+  "fix": "Use a construct supported by the selected admission profile, or explicitly select a profile supporting that construct."
 }

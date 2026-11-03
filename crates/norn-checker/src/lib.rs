@@ -146,6 +146,7 @@ pub mod source_schema;
 pub mod typed_roots;
 pub mod ui_interaction;
 pub mod verification;
+pub mod explain;
 pub mod widget_ux;
 
 pub use action_set::{check_action_firing, check_action_set};

@@ -3,5 +3,6 @@
   "message": "{member} must not be empty",
   "severity": "error",
   "since": "0.1.0",
-  "tier": "T2"
+  "tier": "T2",
+  "fix": "Bind the declarations to the same explicit organization and environment scope."
 }

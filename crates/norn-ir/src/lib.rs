@@ -46,6 +46,7 @@ pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
 pub mod deontic;
 pub mod entitlement;
+pub mod explain;
 pub mod entity;
 pub mod entity_v2;
 pub mod fact_change;

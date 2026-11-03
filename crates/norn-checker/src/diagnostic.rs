@@ -264,6 +264,18 @@ impl Diagnostic {
         codes::lookup(self.code.as_str())
     }
 
+    /// DIAG-PROJECTION-2: advice is projection metadata, never historical receipt input.
+    #[must_use]
+    pub fn to_json_v2(&self) -> serde_json::Value {
+        let mut value = self.to_json();
+        value["format"] = "norn/diagnostic@2".into();
+        value["phase"] = self.registration().map(|entry| entry.tier.as_str()).into();
+        value["retryable"] = false.into();
+        value["fix"] = self.registration().and_then(|entry| entry.fix).into();
+        value["no_fix"] = self.registration().and_then(|entry| entry.no_fix).into();
+        value
+    }
+
     /// This finding as one stable JSON object (see [`diagnostics_to_json`]).
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {

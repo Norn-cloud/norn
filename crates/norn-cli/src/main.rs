@@ -1,6 +1,7 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
 mod eval;
+mod explain;
 mod remote;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -15,6 +16,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Explain an action, law or concept through the shared checker.
+    Explain(explain::ExplainArgs),
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
     /// Check a JSON artifact array using the shared checker and resource limits.
@@ -50,6 +53,7 @@ enum Command {
 
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
+        Command::Explain(args) => explain::execute(&args),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))

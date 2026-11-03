@@ -35,11 +35,11 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
         let object = entry
             .as_object()
             .ok_or("diagnostic entry must be an object")?;
-        // Five string keys and five string values are exactly ten JSON string tokens.
+        // Six string keys and six string values are exactly twelve JSON string tokens.
         // Extra tokens expose duplicate keys that Value would otherwise discard.
-        if object.len() != 5 || strings.find_iter(&text).count() != 10 {
+        if object.len() != 6 || strings.find_iter(&text).count() != 12 {
             return Err(
-                "diagnostic entry must contain exactly five unique string fields".to_owned(),
+                "diagnostic entry must contain exactly six unique string fields, including fix or no_fix".to_owned(),
             );
         }
         let field = |key| {
@@ -53,6 +53,18 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
         let severity = field("severity")?;
         let message = field("message")?;
         let since = field("since")?;
+        let (guidance_field, guidance) = match (object.get("fix"), object.get("no_fix")) {
+            (Some(_), None) => ("fix", field("fix")?),
+            (None, Some(_)) => ("no_fix", field("no_fix")?),
+            _ => return Err("diagnostic requires exactly one fix or no_fix reason".to_owned()),
+        };
+        if guidance.trim().is_empty() {
+            return Err("diagnostic guidance must not be blank".to_owned());
+        }
+        let (fix, no_fix) = if guidance_field == "fix" {
+            (format!("Some({guidance:?})"), "None".to_owned())
+        } else { ("None".to_owned(), format!("Some({guidance:?})")) };
+
         let segments: Vec<_> = code.split('.').collect();
         if segments.len() != 3
             || segments.iter().any(|part| {
@@ -77,7 +89,7 @@ pub(crate) fn generate(directory: &Path) -> Result<String, String> {
             "info" => "Info",
             _ => return Err("invalid diagnostic severity".to_owned()),
         };
-        writeln!(result, "CodeEntry {{ code: {code:?}, tier: Tier::{tier}, severity: DiagnosticSeverity::{severity}, message: {message:?}, since: {since:?} }},").map_err(|e| e.to_string())?;
+        writeln!(result, "CodeEntry {{ code: {code:?}, tier: Tier::{tier}, severity: DiagnosticSeverity::{severity}, message: {message:?}, since: {since:?}, fix: {fix}, no_fix: {no_fix} }},").map_err(|e| e.to_string())?;
     }
     result.push_str("];\n");
     Ok(result)

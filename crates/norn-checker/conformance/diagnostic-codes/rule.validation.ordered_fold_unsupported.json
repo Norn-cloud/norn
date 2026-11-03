@@ -3,5 +3,6 @@
   "message": "ordered-fold execution is unavailable in this semantics profile",
   "severity": "error",
   "since": "0.2.0",
-  "tier": "T2"
+  "tier": "T2",
+  "fix": "Use a construct supported by the selected admission profile, or explicitly select a profile supporting that construct."
 }
