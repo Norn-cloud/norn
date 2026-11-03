@@ -94,7 +94,7 @@ impl Modify for ContractSchemas {
 
 #[allow(clippy::expect_used, reason = "receipt schema is generated and checked from kernel types")]
 fn action_call_record_schema() -> Value {
-    serde_json::from_str(include_str!("../../norn-kernel/schema/action_call_record.schema.json"))
+    serde_json::from_str(norn_kernel::ActionCallRecord::schema_json())
         .expect("generated kernel receipt schema")
 }
 

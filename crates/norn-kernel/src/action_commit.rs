@@ -418,6 +418,13 @@ pub struct ActionCallRecord {
 }
 
 impl ActionCallRecord {
+    /// Generated JSON Schema of this record's wire contract.
+    /// The kernel's schema correspondence test regenerates and checks it.
+    #[must_use]
+    pub const fn schema_json() -> &'static str {
+        include_str!("../schema/action_call_record.schema.json")
+    }
+
     fn for_transition(
         call: &ActionCall<'_>,
         preparation: &ActionInputPreparation<'_>,
