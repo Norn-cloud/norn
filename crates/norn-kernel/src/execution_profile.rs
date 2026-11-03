@@ -36,6 +36,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
     pub(crate) fn validate<E, C, T>(
         &self,
         commit: &CellCommit<E, C, T>,
+        model: &crate::CommitModel<'_, '_>,
     ) -> Result<(), CommitError<V::Error>> {
         for read in &commit.reads {
             self.fact(&read.key);
@@ -55,7 +56,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
         for key in self.reads.borrow().iter() {
             let ownership = self
                 .inner
-                .atomic_ownership(key)
+                .atomic_ownership(&model.canonical(key))
                 .map_err(CommitError::Host)?;
             if !supports_local(ownership) {
                 return Err(CommitError::AtomicBoundary { key: key.clone() });

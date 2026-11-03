@@ -66,13 +66,29 @@ fn mixed_owner_immediate_read_closure_refuses_without_effects() {
         cell.load(&law_key(1)).expect("fact"),
         cell.ledger().len(),
         cell.outbox().len(),
+        cell.timers().len(),
     );
     let proposal = CellCommit {
         reads: vec![FactExpectation {
             key: FactKey::new(law_key(1).object_type.as_str(), "foreign"),
             expected: FactVersion::ABSENT,
         }],
-        effects: vec![norn_kernel::Effect::Perform(law_command(1, 0, 1))],
+        writes: vec![norn_kernel::FactWrite {
+            key: law_key(1),
+            expected: FactVersion::ABSENT,
+            mutation: norn_kernel::FactMutation::Put {
+                values: norn_testkit::cell_host::law_values(1),
+            },
+        }],
+        events: vec![1],
+        effects: vec![
+            norn_kernel::Effect::Perform(law_command(1, 0, 1)),
+            norn_kernel::Effect::Schedule(norn_kernel::Timer {
+                id: norn_testkit::cell_host::law_timer_id(1),
+                due: norn_kernel::LogicalTime::from_millis(1),
+                payload: LawInput::Timer(1),
+            }),
+        ],
         ..CellCommit::empty()
     };
     let result = check_commit(
@@ -85,16 +101,36 @@ fn mixed_owner_immediate_read_closure_refuses_without_effects() {
     );
     assert!(matches!(result, Err(CommitError::AtomicBoundary { .. })));
     if result.is_ok() {
-        cell.commit(proposal).expect("admitted commit");
+        cell.commit(proposal.clone()).expect("admitted commit");
     }
     assert_eq!(
         (
             cell.load(&law_key(1)).expect("fact"),
             cell.ledger().len(),
-            cell.outbox().len()
+            cell.outbox().len(),
+            cell.timers().len(),
         ),
         before
     );
+    check_commit(
+        &proposal,
+        &model,
+        &View {
+            ownership: AtomicOwnership::Local,
+            hidden: false,
+        },
+    )
+    .expect("co-located closure");
+    cell.commit(proposal).expect("local commit");
+    assert!(
+        cell.load(&law_key(1))
+            .expect("written fact")
+            .values
+            .is_some()
+    );
+    assert_eq!(cell.ledger().len(), 1);
+    assert_eq!(cell.outbox().len(), 1);
+    assert_eq!(cell.timers().len(), 1);
 }
 
 #[test]

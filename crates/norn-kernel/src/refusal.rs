@@ -170,6 +170,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::AtomicBoundary { .. } => RefusalCategory::Invalid,
             Self::Law { reason, .. } => law_category(reason),
             Self::DuplicateKey { .. }
             | Self::DuplicateLink { .. }
@@ -287,6 +288,7 @@ impl<X> DecisionRefusal<X> {
     #[must_use]
     pub const fn category(&self) -> RefusalCategory {
         match self {
+            Self::AtomicBoundary { .. } => RefusalCategory::Invalid,
             Self::Law { reason, .. } => law_category(reason),
             Self::GuardFalse { .. }
             | Self::GuardError { .. }
