@@ -71,6 +71,14 @@ impl RequirementView {
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", visible(&w.terms.company), isolate(id)),
             LawRoot::App(id) => format!("{} {}", visible(&w.terms.application), isolate(id)),
+            LawRoot::Pack(id) => {
+                let pack = w
+                    .terms
+                    .pack
+                    .as_deref()
+                    .ok_or("law.wording.incomplete_locale")?;
+                format!("{} {}", visible(pack), isolate(id))
+            }
             LawRoot::Cell(id) => format!("{} {}", visible(&w.terms.cell), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", visible(&w.terms.entity), isolate(id)),
         };
