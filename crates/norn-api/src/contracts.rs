@@ -24,6 +24,11 @@ impl Modify for ContractSchemas {
         for (name, schema) in artifact_envelope_schemas()
             .into_iter()
             .chain(project_schemars_components(
+                norn_ir::requirement_display::requirement_view_schema(),
+                "NornIrRequirementView",
+                "NornIrRequirement",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",
