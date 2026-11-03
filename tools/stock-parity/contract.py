@@ -1,6 +1,6 @@
 """DIFF-EXACT: stock millionths, gross GL cents; raw legs retained.
 DIFF-REVIEW: observed fingerprints bind three reviewed divergence buckets.
-DIFF-COVERAGE: every trace checkpoint is required; unsupported never passes.
+DIFF-COVERAGE: every applicable command/checkpoint is required; unsupported fails.
 ADAPTER-OBSERVATION: producers read committed rows, never trace expectations.
 """
 from typing import Any, Callable, Dict, List, Literal, Optional, TypedDict

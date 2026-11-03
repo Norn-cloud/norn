@@ -14,20 +14,18 @@ def dump(engine):
 class Contract(unittest.TestCase):
     def setUp(self):
         self.n, self.e = dump('norn'), dump('erpnext')
+        self.trace = json.loads(Path(__file__).with_name('coverage-fixture.json').read_text())['trace']
 
     def report(self, dispositions=None):
         count = max(len(d["cases"][0]["checkpoints"]) for d in (self.n, self.e) if d["cases"])
-        return compare(self.n, self.e, dispositions or [], [dict(format="norn.stock-trace/1",
-            id=self.n["cases"][0]["case"], method="fifo", steps=[{}] * max(1, count))])
+        trace = dict(self.trace, id=self.n['cases'][0]['case'], steps=self.trace['steps'] * max(1, count))
+        return compare(self.n, self.e, dispositions or [], [trace])
 
     def test_trace_coverage_and_unbound_adapter(self):
-        traces = [dict(format='norn.stock-trace/1', id='synthetic', method='fifo', steps=[{}, {}])]
-        self.assertFalse(compare(self.n, self.e, [], traces)['passed'])
+        traces = [self.trace]
         missing = unbound_norn(traces)
         self.assertEqual(missing['cases'][0]['reason'], 'not yet: #850')
         self.assertFalse(compare(missing, self.e, [], traces)['passed'])
-        self.n['cases'] = self.e['cases'] = []
-        self.assertFalse(compare(self.n, self.e, [], traces)['passed'])
 
     def test_stub_match_and_representation(self):
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '20.000000'
@@ -71,32 +69,13 @@ class Contract(unittest.TestCase):
                 d['cases'][0]['checkpoints'][1]['gl'][0]['id'] = 'different-row'
             self.assertRaises(ValueError, self.report, reviewed)
 
-    def test_missing_and_unsupported_fail(self):
-        for checkpoint, field, value in [(False, 'checkpoints', []), (False, 'status', 'unsupported'),
-                                         (True, 'status', 'unsupported'), (True, 'gl', None)]:
-            self.e = dump('erpnext')
-            target = self.e['cases'][0]
-            (target['checkpoints'][0] if checkpoint else target)[field] = value
-            self.assertFalse(self.report()['passed'])
-        self.e['cases'] = []
-        self.assertEqual(self.report()['counts']['unsupported'], 1)
-
-    def test_incomplete_checkpoint_and_refusal_after_missing_observation(self):
-        for d in (self.n, self.e):
-            d['cases'][0]['initial'] = dict(step=-1, status='unsupported')
-            d['cases'][0]['checkpoints'][0]['attempts'][0]['outcome'] = 'refused'
-        counts = self.report()['counts']
-        self.assertEqual((counts['unsupported'], counts['untriaged']), (2, 0))
-        self.n['cases'][0]['initial'] = dump('norn')['cases'][0]['initial']
-        self.assertEqual(self.report()['counts']['untriaged'], 1)
-
-    def test_incomplete_prefix_is_still_compared(self):
-        self.e['cases'][0]['status'] = 'unsupported'
-        self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'
-        report = self.report()
-        self.assertEqual(report['counts']['unsupported'], 1)
-        self.assertEqual(report['counts']['untriaged'], 1)
-        self.assertFalse(report['passed'])
+    def test_coverage_and_mixed_refusal_boundaries(self):
+        for case in json.loads(Path(__file__).with_name('coverage-fixture.json').read_text())['cases']:
+            with self.subTest(case=case['name']):
+                report = compare(case['norn'], case['erpnext'], [], case['traces'])
+                self.assertEqual(report['passed'], case['passed'])
+                for key, value in case['counts'].items():
+                    self.assertEqual(report['counts'][key], value)
 
     def test_exactly_one_reviewed_bucket_bound_to_values(self):
         self.n['cases'][0]['checkpoints'][0]['stock'][0]['value'] = '21'

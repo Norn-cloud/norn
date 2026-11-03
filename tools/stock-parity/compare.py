@@ -52,6 +52,15 @@ def available(cp):
         isinstance(cp.get(field), list) for field in ("stock", "gl", "documents", "attempts"))
 
 
+def observed_attempts(cp, step):
+    observed = [a['requestId'] for a in cp['attempts']]
+    if step['kind'] == 'serial':
+        return step['expected']['kind'] not in ('accepted', 'refused') or observed == [step['command']['requestId']]
+    required = {c['requestId'] for c in step['commands']}
+    return (step['expected'] != 'one-winner' or len(required) != len(step['commands'])
+            or required <= set(observed))
+
+
 def ledger_values(cp, kind):
     return {identity: view(dict(stock=[row] if kind == 'stock' else [],
         gl=[row] if kind == 'gl' else [], documents=[], attempts=[]))[kind]
@@ -59,9 +68,10 @@ def ledger_values(cp, kind):
 
 
 def refusal_unchanged(before, after):
-    if not after['attempts'] or not all(a['outcome'] == 'refused' for a in after['attempts']):
+    outcomes = {a['outcome'] for a in after['attempts']}
+    if not outcomes or outcomes == {'accepted'}:
         return True
-    if not available(before):
+    if outcomes != {'refused'} or not available(before):
         return None
     changes = []
     for kind in ('stock', 'gl'):
@@ -138,7 +148,8 @@ def compare(norn: StockDump, erpnext: StockDump, dispositions, traces):
             pair = [c.get(step) for c in checkpoints]
             entry = dict(step=step, differences=[])
             row['checkpoints'].append(entry)
-            if step >= len(expected[name]['steps']) or any(not available(c) for c in pair):
+            if step >= len(expected[name]['steps']) or any(not available(c) or
+                    (step >= 0 and not observed_attempts(c, expected[name]['steps'][step])) for c in pair):
                 entry['status'] = row['status'] = 'unsupported'
                 counts['unsupported'] += 1
                 continue
