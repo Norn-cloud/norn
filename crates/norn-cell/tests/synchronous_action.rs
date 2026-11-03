@@ -10,8 +10,13 @@
 )]
 //! TXN-ATOMIC-1 / TXN-IDEMPOTENT-1: declared facts, links and outbox share SQLite durability.
 
+mod quantity_support;
+
 use norn_cell::{Model, SqliteCell, StoreOptions};
-use norn_ir::{ActionRoot, ObjectTypeDef};
+use norn_ir::{
+    ActionQuantityEffect, ActionQuantityOperation, ActionRoot, ArtifactEnvelope, ArtifactPayload,
+    DiagnosticSeverity, ObjectTypeDef, RuleRoot,
+};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
@@ -20,7 +25,7 @@ use norn_kernel::{
     commit_action,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
@@ -519,5 +524,249 @@ fn two_deliveries_of_four_against_five_commit_exactly_one_stock_and_books() {
             "action.precondition_failed"
         );
         assert_eq!(cell.store().read().dump().unwrap(), winner_only);
+    }
+}
+
+fn quantity_inputs(mut schema: Value) -> Value {
+    let fields = schema["properties"].as_object_mut().unwrap();
+    fields.insert("reservation_id".into(), json!({"type":"string"}));
+    fields.insert("posting_id".into(), json!({"type":"string"}));
+    fields.insert("balance_versions".into(), json!({
+        "type":"array", "items":{
+            "type":"object", "additionalProperties":false,
+            "properties":{"account":{"type":"string"},"unit":{"type":"string"},"layer":{"type":"string"},"version":{"type":"integer"}},
+            "required":["account","unit","layer","version"]
+        }
+    }));
+    schema["required"].as_array_mut().unwrap().extend([
+        json!("reservation_id"),
+        json!("posting_id"),
+        json!("balance_versions"),
+    ]);
+    schema
+}
+
+// Typed Rust composition reuses the generated writer and the existing quantity contract.
+fn quantity_action() -> (ActionRoot, SynchronousRule) {
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+        "../../norn-kernel/tests/fixtures/action-writer.json"
+    ))
+    .unwrap();
+    let mut action = action();
+    action.quantity_effect = Some(ActionQuantityEffect {
+        ledger_id: "stock".into(),
+        balance_versions_field: "balance_versions".into(),
+        operation: ActionQuantityOperation::PostReservation {
+            reservation_id_field: "reservation_id".into(),
+            posting_id_field: "posting_id".into(),
+        },
+    });
+    let input = quantity_inputs(serde_json::to_value(&action.input_schema).unwrap());
+    action.input_schema = serde_json::from_value(input.clone()).unwrap();
+    let mut writer: RuleRoot = artifacts
+        .iter()
+        .find(|artifact| artifact.artifact_id == "example.atomic.writer.rule")
+        .unwrap()
+        .payload
+        .to_json_value()
+        .decode()
+        .unwrap();
+    let mut schema = serde_json::to_value(&writer.input_schema).unwrap();
+    schema["properties"]["event"]["properties"]["input"] = input;
+    writer.input_schema = serde_json::from_value(schema).unwrap();
+    for artifact in &mut artifacts {
+        let root = match &artifact.payload {
+            ArtifactPayload::Action(_) => serde_json::to_value(&action).unwrap(),
+            ArtifactPayload::Rule(_) => serde_json::to_value(&writer).unwrap(),
+            ArtifactPayload::Entity(_)
+            | ArtifactPayload::Relation(_)
+            | ArtifactPayload::Connector(_)
+            | ArtifactPayload::Widget(_)
+            | ArtifactPayload::Customization(_)
+            | ArtifactPayload::Setting(_)
+            | ArtifactPayload::BusinessPack(_)
+            | ArtifactPayload::Policy(_)
+            | ArtifactPayload::Derived(_)
+            | ArtifactPayload::SourceSchema(_)
+            | ArtifactPayload::Mapping(_)
+            | ArtifactPayload::Law(_)
+            | ArtifactPayload::DefinedConcept(_) => continue,
+        };
+        artifact.payload = ArtifactPayload::from_kind_json(
+            &artifact.kind(),
+            serde_json::from_value(root).unwrap(),
+        )
+        .unwrap();
+    }
+    let findings = norn_checker::check_artifact_set(
+        &artifacts,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|d| d.severity != DiagnosticSeverity::Error),
+        "{findings:?}"
+    );
+    let env = norn_checker::derive_type_env(
+        &artifacts,
+        &[],
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )
+    .unwrap();
+    let rule = SynchronousRule::admit(
+        action.synchronous_rule.clone().unwrap(),
+        &writer,
+        &BTreeMap::new(),
+        norn_kernel::DecisionBinding {
+            profile_id: "norn-zen/6".into(),
+            environment_hash: env.reference().unwrap().sha256,
+        },
+    )
+    .unwrap();
+    (action, rule)
+}
+
+/// TXN-ALL: facts, links, postings, outbox and timer cancellation share one receipt.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one witness compares all effects before refusal and after successful reopen/retry"
+)]
+fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() {
+    use norn_ir::quantity_ledger::{EvaluatedLedgerLeg, QuantityOperation, QuantityResolution};
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let (action, rule) = quantity_action();
+    let rules = [rule];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    for occupied in [true, false] {
+        let path = directory.path().join(if occupied {
+            "refused.sqlite"
+        } else {
+            "accepted.sqlite"
+        });
+        let mut cell = open(&path, &definitions);
+        seed(&mut cell, occupied);
+        for (key, mut request) in [
+            ("define", quantity_support::define()),
+            ("fund", quantity_support::post(0, "fund", "fund", 20)),
+            ("reserve", quantity_support::reserve(0, "r", 10, 100)),
+        ] {
+            request.balance_versions = cell
+                .store()
+                .read()
+                .quantity_balance_versions("main", &request)
+                .unwrap();
+            cell.commit_with_partition_postings(CellCommit::empty(), &[request], key)
+                .unwrap();
+        }
+        assert_eq!(cell.store().read().next_timer_due().unwrap(), Some(100));
+        let quantity = quantity_support::request(
+            0,
+            QuantityOperation::PostReservation {
+                reservation_id: "r".into(),
+                posting_id: "shipment".into(),
+                resolution: QuantityResolution::All,
+            },
+        );
+        let fences = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &quantity)
+            .unwrap();
+        let mut request = call(&action);
+        request.input.extend(
+            serde_json::from_value::<JsonObject>(json!({
+                "reservation_id":"r", "posting_id":"shipment", "balance_versions":fences,
+            }))
+            .unwrap(),
+        );
+        let before = cell.store().read().dump().unwrap();
+        let result = commit_action(&mut cell, &catalog, &request, &Allow);
+        if occupied {
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("cardinality"), "{error}");
+            assert_eq!(cell.store().read().dump().unwrap(), before);
+            drop(cell);
+            let cell = open(&path, &definitions);
+            assert_eq!(cell.store().read().dump().unwrap(), before);
+            assert_eq!(cell.store().read().next_timer_due().unwrap(), Some(100));
+            continue;
+        }
+        let ActionOutcome::Committed { receipt, record } = result.unwrap() else {
+            panic!("first delivery must commit");
+        };
+        assert_eq!(receipt.written.len(), 3);
+        for key in [FactKey::new(ORDER, "SO-1"), FactKey::new(QUOTE, "SO-1")] {
+            assert!(receipt.written.iter().any(|write| write.key == key));
+            assert!(cell.load(&key).unwrap().exists());
+        }
+        assert_eq!(receipt.linked.len(), 2);
+        assert_eq!(cell.store().read().pending_commands().unwrap().len(), 1);
+        assert_eq!(cell.store().read().next_timer_due().unwrap(), None);
+        let posting = cell
+            .store()
+            .read()
+            .quantity_posting("main", "stock", "shipment")
+            .unwrap()
+            .expect("shipment posting");
+        let expected_legs: Vec<_> = [("out", "lot", "-10"), ("in", "transit", "10")]
+            .into_iter()
+            .map(|(id, account, amount)| EvaluatedLedgerLeg {
+                leg_id: id.into(),
+                account_id: account.into(),
+                unit_id: "item".into(),
+                layer: "physical".into(),
+                unit_precision: 0,
+                amount_unscaled: amount.into(),
+            })
+            .collect();
+        assert_eq!(posting.legs, expected_legs);
+        for (account, posted) in [("lot", "10"), ("transit", "10")] {
+            let balance = cell
+                .store()
+                .read()
+                .quantity_balance(
+                    "main",
+                    "stock",
+                    &norn_kernel::quantity::QuantityKey {
+                        account: account.into(),
+                        unit: "item".into(),
+                        layer: "physical".into(),
+                    },
+                )
+                .unwrap();
+            assert_eq!(balance.posted, posted);
+            assert_eq!(balance.held, "0");
+        }
+        let retained = cell.store().export_record(receipt.seq.0).unwrap().unwrap();
+        let committed = cell.store().read().dump().unwrap();
+        drop(cell);
+        let mut cell = open(&path, &definitions);
+        assert_eq!(cell.store().read().dump().unwrap(), committed);
+        assert_eq!(
+            commit_action(&mut cell, &catalog, &request, &Allow).unwrap(),
+            ActionOutcome::Replayed { record }
+        );
+        assert_eq!(
+            cell.store().export_record(receipt.seq.0).unwrap().unwrap(),
+            retained
+        );
+        assert_eq!(cell.store().read().dump().unwrap(), committed);
+        request
+            .input
+            .insert("posting_id".into(), "changed-posting".into());
+        assert_eq!(
+            commit_action(&mut cell, &catalog, &request, &Allow)
+                .unwrap_err()
+                .code(),
+            "action.idempotency_conflict"
+        );
+        assert_eq!(cell.store().read().dump().unwrap(), committed);
     }
 }
