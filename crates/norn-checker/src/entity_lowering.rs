@@ -130,7 +130,7 @@ pub fn lower_field_type_v1(field: &EntityFieldV1) -> PropertyType {
             PropertyType::Text { format: None }
         }
         EntityFieldV1::Integer { .. } => PropertyType::Integer {
-            additivity: norn_ir::PropertyAdditivity::Undeclared,
+            additivity: norn_ir::PropertyAdditivity::Undeclared {},
         },
         EntityFieldV1::Number { .. } => json_of_type("number"),
         EntityFieldV1::Boolean { .. } => PropertyType::Boolean {},

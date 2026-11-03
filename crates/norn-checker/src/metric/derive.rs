@@ -246,9 +246,12 @@ fn candidates_at_time(
             .filter(|source| source.input == property.id || source.outputs.contains(&property.id))
             .cloned()
             .collect();
-        if kind.additivity() != &PropertyAdditivity::Additive
-            && !(kind.additivity() == &PropertyAdditivity::Undeclared && !proof.is_empty())
-        {
+        let additive = match kind.additivity() {
+            PropertyAdditivity::Additive {} => true,
+            PropertyAdditivity::Undeclared {} => !proof.is_empty(),
+            PropertyAdditivity::SemiAdditive {} | PropertyAdditivity::NonAdditive {} | PropertyAdditivity::Ratio { .. } => false,
+        };
+        if !additive {
             continue;
         }
         let definition = sum(object, &property.id, time_path, &proof);
@@ -405,7 +408,7 @@ fn compatible_terms(object: &EffectiveObjectType, source: &ConservationSource) -
             };
             if !matches!(
                 kind.additivity(),
-                PropertyAdditivity::Undeclared | PropertyAdditivity::Additive
+                PropertyAdditivity::Undeclared {} | PropertyAdditivity::Additive {}
             ) {
                 return false;
             }
@@ -609,7 +612,7 @@ fn unwrap(mut text: &str) -> Option<&str> {
 }
 
 fn sum_terms(text: &str, depth: u8) -> Option<Vec<PropertyId>> {
-    if depth > 16 {
+    if depth > 64 {
         return None;
     }
     let text = unwrap(text)?;
@@ -704,7 +707,7 @@ mod tests {
                         currency_source: None,
                         rounding: None,
                         per_unit: None,
-                        additivity: PropertyAdditivity::Undeclared,
+                        additivity: PropertyAdditivity::Undeclared {},
                     },
                 )
             })
@@ -917,7 +920,7 @@ mod tests {
         .expect("entity");
         for property in &mut root.object_type.properties {
             if let PropertyType::Decimal { additivity, .. } = &mut property.property_type {
-                *additivity = PropertyAdditivity::Additive;
+                *additivity = PropertyAdditivity::Additive {};
             }
         }
         let mut declared = artifacts;
@@ -984,7 +987,7 @@ mod tests {
         .expect("entity");
         for property in &mut root.object_type.properties {
             if let PropertyType::Decimal { additivity, .. } = &mut property.property_type {
-                *additivity = PropertyAdditivity::Additive;
+                *additivity = PropertyAdditivity::Additive {};
             }
         }
         root.object_type.properties.push(property(
@@ -1025,8 +1028,8 @@ mod tests {
     #[test]
     fn conservation_cannot_replace_an_explicit_non_additive_or_balance_contract() {
         for class in [
-            PropertyAdditivity::NonAdditive,
-            PropertyAdditivity::SemiAdditive,
+            PropertyAdditivity::NonAdditive {},
+            PropertyAdditivity::SemiAdditive {},
             PropertyAdditivity::Ratio {
                 numerator: PropertyId("recovered".to_owned()),
                 denominator: PropertyId("loss".to_owned()),

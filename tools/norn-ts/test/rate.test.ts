@@ -69,6 +69,13 @@ test("VAL-EXACT-1 exact callback branches refuse before exceeding expression bou
 
 
 test("METRIC-ADDITIVITY-1 decimal authoring retains explicit classes and refuses incomplete ratios", () => {
+  const omitted = source("6").replace(/Norn\.rate\(6,.*?\) /, 'Norn.decimal(6) ')
+  const explicit = source("6").replace(/Norn\.rate\(6,.*?\) /, 'Norn.decimal(6, {additivity:{kind:"undeclared"}}) ')
+  const scope = {orgId:"org_demo",environmentId:"dev"}
+  const omittedResult = compileModule(omitted, scope)
+  const explicitResult = compileModule(explicit, scope)
+  if (!omittedResult.ok || !explicitResult.ok || omittedResult.artifacts === undefined || explicitResult.artifacts === undefined) throw new Error("undeclared authoring failed")
+  expect(canonicalJson(explicitResult.artifacts)).toBe(canonicalJson(omittedResult.artifacts))
   for (const declaration of ['{kind:"additive"}', '{kind:"semi_additive"}', '{kind:"non_additive"}', '{kind:"ratio",numerator:"recovered",denominator:"input"}']) {
     const text = source("6").replace(/Norn\.rate\(6,.*?\) /, `Norn.decimal(6, {additivity:${declaration}}) `)
     const result = compileModule(text, {orgId:"org_demo",environmentId:"dev"})

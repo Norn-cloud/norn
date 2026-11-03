@@ -108,7 +108,7 @@ fn every_binding_and_option_changes_the_hash() {
     }
     let mut changed = Model::retail();
     changed.object_types[0].properties[2].property_type = PropertyType::Decimal {
-        additivity: norn_ir::PropertyAdditivity::Undeclared,
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
 
         scale: norn_ir::WholeNumber(3),
         unit: None,
@@ -922,7 +922,7 @@ fn val_round_defaults_preserve_v1_pins_and_strict_legacy_decoding() {
             .find(|property| property.id.as_str() == "price")
             .unwrap();
         property.property_type = PropertyType::Decimal {
-            additivity: norn_ir::PropertyAdditivity::Undeclared,
+            additivity: norn_ir::PropertyAdditivity::Undeclared {},
 
             scale: norn_ir::WholeNumber(2),
             unit: None,

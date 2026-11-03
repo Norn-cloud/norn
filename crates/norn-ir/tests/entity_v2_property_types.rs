@@ -259,7 +259,7 @@ fn numeric_additivity_defaults_closed_and_round_trips_declared_classes() {
         json!({"kind":"decimal","scale":3}),
     ] {
         let property: PropertyType = serde_json::from_value(kind.clone()).expect("numeric type");
-        assert_eq!(property.additivity(), &PropertyAdditivity::Undeclared);
+        assert_eq!(property.additivity(), &PropertyAdditivity::Undeclared {});
         assert_eq!(serde_json::to_value(property).expect("encode"), kind);
         for class in [
             json!({"kind":"additive"}),
@@ -272,6 +272,11 @@ fn numeric_additivity_defaults_closed_and_round_trips_declared_classes() {
             let property: PropertyType =
                 serde_json::from_value(declared.clone()).expect("declared class");
             assert_eq!(serde_json::to_value(property).expect("encode"), declared);
+        }
+        for class in ["undeclared", "additive", "semi_additive", "non_additive"] {
+            let mut extra = kind.clone();
+            extra["additivity"] = json!({"kind": class, "unexpected": true});
+            assert!(serde_json::from_value::<PropertyType>(extra).is_err());
         }
         let mut invalid = kind;
         invalid["additivity"] = json!({"kind":"ratio"});

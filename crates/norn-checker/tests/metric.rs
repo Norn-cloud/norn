@@ -1046,6 +1046,18 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
 
 /// METRIC-ADDITIVITY-1: declaration, rather than unit or metric metadata, authorizes aggregation.
 #[test]
+fn invoice_totals_require_their_authoritative_currency() {
+    let (mut metric, _) = sales();
+    metric["type_params"]["expr"] = json!("grand_total");
+    metric["type_params"]["metric_aggregation_params"]["semantic_model"] = json!("erpnext.SalesInvoice");
+    metric["x-norn"]["timeDimension"] = json!({"property":"posting_date"});
+    metric["x-norn"]["defaultFilters"] = json!([]);
+    metric["x-norn"].as_object_mut().expect("policy").remove("currency");
+    let metric: MetricDefinition = decode(&metric);
+    assert_code(&check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)), codes::CURRENCY_SOURCE_MISMATCH);
+}
+
+#[test]
 fn numeric_additivity_is_required_even_for_count_and_extrema() {
     let (metric, question) = sales();
     for aggregate in ["sum", "average", "min", "max", "count", "count_distinct"] {

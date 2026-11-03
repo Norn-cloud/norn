@@ -113,18 +113,17 @@ pub struct PropertyTypeDef {
 
 /// METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
 /// Missing declarations permit point reads but never authorize aggregation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PropertyAdditivity {
     /// No aggregation contract has been declared.
-    #[default]
-    Undeclared,
+    Undeclared {},
     /// Summable across entities and time.
-    Additive,
+    Additive {},
     /// Summable across entities at a single instant, never across time.
-    SemiAdditive,
+    SemiAdditive {},
     /// Requires a separately declared weighting calculation.
-    NonAdditive,
+    NonAdditive {},
     /// Recompute from the sums of these operands, never average stored ratios.
     Ratio {
         /// Numerator property at the same object grain.
@@ -134,11 +133,17 @@ pub enum PropertyAdditivity {
     },
 }
 
+impl Default for PropertyAdditivity {
+    fn default() -> Self {
+        Self::Undeclared {}
+    }
+}
+
 impl PropertyAdditivity {
     /// Whether canonical serialization omits the undeclared default.
     #[must_use]
     pub const fn is_undeclared(&self) -> bool {
-        matches!(self, Self::Undeclared)
+        matches!(self, Self::Undeclared {})
     }
 }
 
@@ -263,7 +268,7 @@ impl PropertyType {
             | Self::Enum { .. }
             | Self::Record { .. }
             | Self::JsonExt { .. }
-            | Self::Ref { .. } => &PropertyAdditivity::Undeclared,
+            | Self::Ref { .. } => &PropertyAdditivity::Undeclared {},
         }
     }
 

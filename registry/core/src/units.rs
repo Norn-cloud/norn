@@ -84,14 +84,14 @@ pub(super) fn pack() -> Result<ArtifactEnvelope, serde_json::Error> {
                             member(
                                 "numerator",
                                 PropertyType::Integer {
-                                    additivity: norn_ir::PropertyAdditivity::Undeclared,
+                                    additivity: norn_ir::PropertyAdditivity::Undeclared {},
                                 },
                                 Some(numerator),
                             ),
                             member(
                                 "denominator",
                                 PropertyType::Integer {
-                                    additivity: norn_ir::PropertyAdditivity::Undeclared,
+                                    additivity: norn_ir::PropertyAdditivity::Undeclared {},
                                 },
                                 Some(denominator),
                             ),
