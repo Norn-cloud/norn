@@ -84,7 +84,7 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
             name: ObjectTypeName(name.into()),
             role: None,
             description: None,
-            status: Default::default(),
+            status: norn_ir::ResourceStatus::default(),
             extends: None,
             implements: vec![],
             properties,

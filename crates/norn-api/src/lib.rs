@@ -16,8 +16,6 @@ pub use clock::{Clock, ManualClock};
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 
-/// Shared default-deny host authorization.
-
 /// Shared cell and definition epoch.
 pub mod host;
 /// Authorized read services shared by transports.

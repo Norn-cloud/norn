@@ -44,7 +44,19 @@ impl RetainedActions {
                         return Err(Refusal::host("ambiguous retained writer identity"));
                     }
                 }
-                _ => {}
+                ArtifactKind::Entity
+                | ArtifactKind::Relation
+                | ArtifactKind::Connector
+                | ArtifactKind::Widget
+                | ArtifactKind::Customization
+                | ArtifactKind::Setting
+                | ArtifactKind::BusinessPack
+                | ArtifactKind::Policy
+                | ArtifactKind::Derived
+                | ArtifactKind::SourceSchema
+                | ArtifactKind::Mapping
+                | ArtifactKind::Law
+                | ArtifactKind::DefinedConcept => {}
             }
         }
         let receipt: serde_json::Value = serde_json::from_str(
