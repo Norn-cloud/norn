@@ -15,6 +15,10 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
 mod induction;
+/// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod quint;
+#[cfg(test)]
+mod quint_tests;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 9 also binds verified retained-layer authority; profile 8 bound

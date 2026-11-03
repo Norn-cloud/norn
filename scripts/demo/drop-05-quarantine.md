@@ -1,10 +1,10 @@
 # Drop 5: durable findings, quarantine and recovery
 
 Run `bash scripts/demo/drop-05-quarantine.sh` from clean, fetched main with
-Rust 1.98 and Python 3. It builds one native cell test binary, prints its
+Rust 1.98 and Python 3.9 or newer. It builds one native cell test binary, prints its
 SHA-256, checks that every named scenario exists, and runs twelve scenarios.
 The four generated-input properties each use 16 cases with recorded seed
-21320261103; this is sampled runtime evidence, not exhaustive checking.
+21320261103 and explicitly selected ChaCha (`cc`); this is sampled runtime evidence, not exhaustive checking.
 
 The existing synthetic Measurement fixture has a directly attached purity
 law over the range zero to one. Native invalid writes refuse. Invalid external observations remain in the
