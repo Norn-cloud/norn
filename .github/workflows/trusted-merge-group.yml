@@ -74,12 +74,15 @@ jobs:
               const pullHead = commit.parents[1].sha;
               const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: pullHead });
               for (const pr of pulls.filter((pr) => pr.head.sha === pullHead)) {
+                const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
+                  .filter(status => status.context === 'rights-revocation')
+                  .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
                 const comments = [];
                 for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
                   if (!comment.user || !['/approve-gates', '/ack-rights', '/revoke-rights'].some(command => (comment.body || '').trim().startsWith(command))) continue;
                   comments.push({ id: comment.id, user: comment.user.login, body: comment.body, created_at: comment.created_at, updated_at: comment.updated_at, permission: await permission(comment.user.login) });
                 }
-                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, base_sha: pr.base.sha, comments });
+                pull_requests.push({ number: pr.number, head_repository: pr.head.repo ? pr.head.repo.full_name : null, head_sha: pr.head.sha, base_sha: pr.base.sha, comments, revocations });
               }
               sha = commit.parents[0].sha;
             }

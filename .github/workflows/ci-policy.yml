@@ -213,7 +213,41 @@ jobs:
           [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
+  rights-revocation:
+    name: Record durable rights revocations
+    if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/revoke-rights') ||
+      (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))
+    permissions:
+      contents: read
+      statuses: write
+    concurrency:
+      group: rights-revocation-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Persist the rights revocation boundary
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const { owner, repo } = context.repo;
+            const comment = context.payload.comment;
+            const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: comment.user.login });
+            if (permission.permission !== 'admin') return;
+            const bodies = [comment.body, context.payload.changes?.body?.from];
+            const heads = new Set(bodies.map(body => (body || '').trim().match(/^\/revoke-rights ([0-9a-f]{40})$/)?.[1]).filter(Boolean));
+            for (const sha of heads) {
+              // Commit statuses are append-only. Read ALL history, never just the latest context.
+              await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'failure',
+                context: 'rights-revocation', description: `Rights revoked by comment ${comment.id}` });
+              await github.rest.repos.createCommitStatus({ owner, repo, sha, state: 'failure',
+                context: 'trusted-policy', description: 'Rights revoked; fresh acknowledgment required' });
+            }
   trusted-policy:
+    needs: rights-revocation
     # Comment runs attach their job checks to the default branch. Keep the
     # PR-target job check distinct from the head-bound commit status below,
     # so cancelling it cannot leave a second required check cancelled (#127).
@@ -246,6 +280,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Require durable revocation recording
+        env:
+          RESULT: ${{ needs.rights-revocation.result }}
+        run: test "$RESULT" = success || test "$RESULT" = skipped
       # A comment event carries the issue, not the pull request: read the PR
       # from the API, taking base and head from the same snapshot.
       - name: Resolve the pull request
@@ -298,6 +336,9 @@ jobs:
               }
               return permissions.get(username);
             };
+            const revocations = (await github.paginate(github.rest.repos.listCommitStatusesForRef, { owner, repo, ref: pr.head.sha, per_page: 100 }))
+              .filter(status => status.context === 'rights-revocation')
+              .map(({ id, context, state, created_at }) => ({ id, context, state, created_at }));
             const comments = [];
             for (const comment of await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 })) {
               if (!comment.user || !['/approve-gates', '/ack-rights', '/revoke-rights'].some(command => (comment.body || '').trim().startsWith(command))) continue;
@@ -308,7 +349,7 @@ jobs:
               head_repository: pr.head.repo ? pr.head.repo.full_name : null,
               head_sha: pr.head.sha,
               base_sha: pr.base.sha,
-              comments
+              comments, revocations
             }));
       - name: Validate candidate as data with base-owned policy
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ steps.pr.outputs.head_sha }}" --repository "${{ github.repository }}"

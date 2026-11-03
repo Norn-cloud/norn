@@ -291,6 +291,25 @@ pub fn clean_merge(root: &Path, previous: &str, pull: &str, merged: &str) -> Res
         .keys()
         .chain(before.keys())
         .chain(incoming.keys())
+        .filter(|p| !p.starts_with(super::provenance::CONTROL))
+    {
+        let record = format!("{}artifacts/{path}.json", super::provenance::CONTROL);
+        if before.get(path) != incoming.get(path)
+            && before.get(&record) != incoming.get(&record)
+            && ((before.get(path) != ancestor.get(path)
+                && incoming.get(&record) != ancestor.get(&record))
+                || (incoming.get(path) != ancestor.get(path)
+                    && before.get(&record) != ancestor.get(&record)))
+        {
+            return Err(format!(
+                "unreviewed payload/rights combination requires renewed review: {path}"
+            ));
+        }
+    }
+    for path in ancestor
+        .keys()
+        .chain(before.keys())
+        .chain(incoming.keys())
         .filter(|p| p.starts_with(super::provenance::CONTROL))
     {
         if before.get(path) != ancestor.get(path)

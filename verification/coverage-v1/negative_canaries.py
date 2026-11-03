@@ -655,6 +655,10 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "/approve-gates head", "", True, True),
         ("issue_comment", "edited", "revoked", "/approve-gates head", True, True),
         ("issue_comment", "deleted", "/approve-gates head", "", True, True),
+        ("issue_comment", "created", "/ack-rights head", "", True, True),
+        ("issue_comment", "created", "/revoke-rights head", "", True, True),
+        ("issue_comment", "deleted", "/revoke-rights head", "", True, True),
+        ("issue_comment", "edited", "ordinary text", "/revoke-rights head", True, True),
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
@@ -739,7 +743,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
             if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ github.event.workflow_run.head_sha }}" --repository "${{ github.repository }}"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
@@ -1704,6 +1708,60 @@ def evidence_inventory_canaries() -> None:
     )
 
 
+def durable_rights_history_canaries(source: str, merge: str) -> None:
+    public = yaml.safe_load(source)
+    group = yaml.safe_load(merge)
+    writer = public["jobs"]["rights-revocation"]["steps"][0]["with"]["script"]
+    pr_collector = next(step["with"]["script"] for step in public["jobs"]["trusted-policy"]["steps"]
+                        if step.get("name") == "Record admin approvals of the exact PR head")
+    group_collector = next(step["with"]["script"] for step in group["jobs"]["trusted-policy"]["steps"]
+                           if step.get("name") == "Record admin approvals of the queued heads")
+    pr_collector = pr_collector.replace("${{ steps.pr.outputs.number }}", "7")
+    group_collector = group_collector.replace("${{ steps.group.outputs.base_sha }}", "base").replace("${{ github.event.workflow_run.head_sha }}", "group")
+    harness = """const assert = require('assert');
+const head = '1'.repeat(40), history = [];
+const context = {repo: {owner:'Norn-cloud',repo:'norn'},payload:{}};
+let admin = true;
+const pr = {number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:'base'}};
+const comments = [{id:1,user:{login:'owner'},body:'/ack-rights '+head,created_at:'2026-11-03T00:00:00Z',updated_at:'2026-11-03T00:00:00Z'}];
+const github = {rest:{repos:{
+  getCollaboratorPermissionLevel: async () => ({data:{permission:admin?'admin':'read'}}),
+  createCommitStatus: async value => { history.push({...value,id:history.length+1,created_at:'2026-11-03T00:01:00Z'}); },
+  listCommitStatusesForRef: function statuses(){},
+  getCommit: async () => ({data:{parents:[{sha:'base'},{sha:head}]}}),
+  listPullRequestsAssociatedWithCommit: async () => ({data:[pr]})},
+  pulls:{get:async () => ({data:pr})},issues:{listComments:function comments(){}}},
+  paginate: async (method,args) => {if(method===github.rest.repos.listCommitStatusesForRef){assert.equal(args.ref,head);return history;}return comments;}};
+async function record(payload) {context.payload=payload;
+""" + writer + """\n}
+async function collectPR() {
+""" + pr_collector + """\nreturn JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/maintainer-approval.json')); }
+async function collectGroup() {
+""" + group_collector + """\nreturn JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP+'/maintainer-approval.json')); }
+(async () => {
+ const revoke = {id:2,user:{login:'owner'},body:'/revoke-rights '+head};
+ await record({comment:revoke});
+ // Editing the revocation to ordinary text still records its prior command.
+ await record({comment:{...revoke,body:'ordinary text'},changes:{body:{from:revoke.body}}});
+ // A deleted comment is absent from the live comment API, but not from status history.
+ await record({comment:revoke});
+ assert.equal(history.filter(s=>s.context==='rights-revocation').length,3);
+ assert(history.every(s=>s.sha===head && s.state==='failure'));
+ const evidence = await collectPR();
+ assert.equal(evidence.revocations.length,3);
+ assert.equal(evidence.comments.length,1);
+ const groupEvidence = await collectGroup();
+ assert.deepEqual(groupEvidence.pull_requests[0].revocations,evidence.revocations);
+ admin=false; await record({comment:revoke}); assert.equal(history.length,6);
+ console.log('durable revocation: created, edited, deleted and group history passed');
+})().catch(error=>{console.error(error);process.exit(1)});
+"""
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run(["bun", "-e", harness], check=True, capture_output=True, text=True,
+                                env={**os.environ, "RUNNER_TEMP": directory}, timeout=20)
+    print(result.stdout.strip())
+
+
 def rights_workflow_canaries() -> None:
     coverage_validator = load_module("norn_rights_workflow_canary", VALIDATOR)
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text()
@@ -1732,7 +1790,47 @@ def rights_workflow_canaries() -> None:
             pass
         else:
             raise AssertionError("accepted uncovered merge-group rights")
-    print("rights workflow canaries: missing/stale evidence and group bindings refused")
+    for which in ("pr", "group"):
+        for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env",
+                         "success-reporter", "wrong-head", "disabled-reporter", "reporter-token",
+                         "latest-history", "missing-history"):
+            public = yaml.safe_load(source)
+            group = yaml.safe_load(merge)
+            document = public if which == "pr" else group
+            job = document["jobs"]["trusted-policy"]
+            validator = next(step for step in job["steps"] if "--rights-evidence" in step.get("run", ""))
+            reporter = next(step for step in job["steps"] if step.get("name", "").startswith("Report trusted policy"))
+            collector = next(step for step in job["steps"] if step.get("name", "").startswith("Record admin approvals"))
+            if mutation == "shell": validator["shell"] = "/usr/bin/true {0}"
+            elif mutation == "job-shell": job["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
+            elif mutation == "workflow-shell": document["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
+            elif mutation == "working-directory": validator["working-directory"] = "candidate"
+            elif mutation == "validator-env": validator["env"] = {"PATH": "candidate/bin"}
+            elif mutation == "success-reporter": reporter["with"]["script"] = reporter["with"]["script"].replace("'${{ job.status }}' === 'success' ? 'success' : 'failure'", "'success'")
+            elif mutation == "wrong-head": reporter["with"]["script"] = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}" if which == "pr" else "${{ github.event.workflow_run.head_sha }}", "wrong-head")
+            elif mutation == "disabled-reporter": reporter["if"] = "false"
+            elif mutation == "reporter-token": reporter["with"]["github-token"] = "candidate-token"
+            elif mutation == "latest-history": collector["with"]["script"] = collector["with"]["script"].replace("listCommitStatusesForRef", "getCombinedStatusForRef")
+            elif mutation == "missing-history": collector["with"]["script"] = "const revocations = [];"
+            try:
+                coverage_validator.validate_rights_contract(yaml.safe_dump(public), yaml.safe_dump(group))
+            except coverage_validator.InvalidCoverage:
+                continue
+            raise AssertionError(f"accepted {which} {mutation}")
+    for mutation in ("cancel", "disabled", "failure-bypass", "deleted-body"):
+        public = yaml.safe_load(source)
+        writer = public["jobs"]["rights-revocation"]
+        if mutation == "cancel": writer["concurrency"]["cancel-in-progress"] = True
+        elif mutation == "disabled": writer["if"] = "false"
+        elif mutation == "failure-bypass": public["jobs"]["trusted-policy"]["steps"][0]["run"] = "true"
+        elif mutation == "deleted-body": writer["steps"][0]["with"]["script"] = writer["steps"][0]["with"]["script"].replace("context.payload.changes?.body?.from", "undefined")
+        try:
+            coverage_validator.validate_rights_contract(yaml.safe_dump(public), merge)
+        except coverage_validator.InvalidCoverage:
+            continue
+        raise AssertionError(f"accepted revocation recorder {mutation}")
+    durable_rights_history_canaries(source, merge)
+    print("rights workflow canaries: missing/stale evidence, durable history and execution overrides refused")
 
 
 def main() -> int:

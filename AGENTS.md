@@ -63,7 +63,11 @@ connector terms changes require corresponding metadata changes. Every changed
 payload and metadata path needs an admin `/ack-rights <exact head SHA>` comment,
 collected from the API by base-owned policy. This is separate from `/approve-gates`;
 new heads invalidate it, edits/deletions revoke it, and `/revoke-rights <SHA>`
-explicitly revokes it. Human source review remains necessary. The gate binds all
+explicitly revokes it. Base-owned append-only commit status history retains the
+revocation boundary across comment edits/deletions; a fresh acknowledgment must
+postdate the recorded boundary. Merge groups also refuse unreviewed cross-side
+payload/rights-record combinations, including rights changes already on base.
+Human source review remains necessary. The gate binds all
 inspected bytes and records to the immutable candidate tree. Expanded archives
 must match that source commit exactly; generated exports require an independently
 verified external binding and are refused without one. Nested evidence and

@@ -29,10 +29,18 @@ Every changed payload and metadata path is covered by the admin's unedited
 `/ack-rights <head>` API comment; `/revoke-rights <head>` or removal/editing revokes
 it. Gate-change `/approve-gates` is separate. A new head needs a new acknowledgment.
 Repeated acknowledgments fail closed; revoke before renewing the acknowledgment.
+A base-owned job records revocations in append-only `rights-revocation` commit
+status history before policy evaluation. Later comment events do not cancel that
+writer. Deleting or editing a revocation cannot erase this boundary: PR and group
+checks read the complete history and require a new, unedited acknowledgment
+created strictly after the latest recorded revocation. Same-second review fails
+closed. Missing history or failed recording cannot admit a head.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits
-to the same file. Hand resolutions require renewed review.
+to the same file. Hand resolutions require renewed review. Cross-side payload and rights-record
+changes also require renewed review, including metadata already on the queue
+base; a clean textual merge alone does not review their combined meaning.
 
 For `git archive`, add `--distribution --root <expanded> --source-root <git>
 --base-root <trusted> --head <source commit> --repository Norn-cloud/norn`.

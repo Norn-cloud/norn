@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import shlex
@@ -422,7 +423,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "run name must attribute READY to the triggering event and head")
     validate_rights_contract(source)
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy", "rights-revocation"}, "workflow job inventory changed")
     check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
@@ -637,6 +638,32 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     """The API collector and binary invocation remain base-owned and head-bound."""
     if merge_source is None:
         merge_source = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    # Pin complete base-owned API programs, including append-only history reads
+    # and fail-closed publishers; substring matches cannot establish execution.
+    programs = {
+        'Persist the rights revocation boundary': ('56f1fb52072000ff37b4cc67d61311bd6aa58acaaecbb8800bbffefec89a94fc', ['script', 'retries'], False, None),
+        'Record admin approvals of the exact PR head': ('4d0f195b0af388bc465cf06787c72438f136bc8ccd9e8641d8814c7aa8963353', ['script'], True, None),
+        'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
+        'Record admin approvals of the queued heads': ('685caef4348d52cb8db996db04146f97c0fcfaceed9cabc61e23bcdad5fa409c', ['script'], True, None),
+        'Report trusted policy on the group head': ('006a4ebe5ab690da267c9b0665a11c68b979fd4f9d53b73aac2054642c53cb27', ['script', 'retries'], False, 'always()'),
+    }
+    def api_step(step: dict) -> None:
+        digest, inputs, tolerated_failure, condition = programs[step["name"]]
+        allowed = {"name", "uses", "with"} | ({"continue-on-error"} if tolerated_failure else set()) | ({"if"} if condition else set())
+        require(set(step) == allowed
+                and step.get("uses") == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+                and step.get("continue-on-error", False) is tolerated_failure
+                and step.get("if") == condition
+                and set(step.get("with", {})) == set(inputs)
+                and ("retries" not in inputs or step["with"]["retries"] == 3)
+                and hashlib.sha256(step.get("with", {}).get("script", "").encode()).hexdigest() == digest,
+                f"trusted API program or execution changed: {step.get('name')}")
+    public = yaml.load(source, Loader=WorkflowLoader)
+    ledger = public["jobs"].get("rights-revocation", {})
+    require({k: v for k, v in ledger.items() if k != "steps"} == {'name': 'Record durable rights revocations', 'if': "github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/revoke-rights') || (github.event.action == 'edited' && contains(github.event.changes.body.from, '/revoke-rights')))", 'permissions': {'contents': 'read', 'statuses': 'write'}, 'concurrency': {'group': 'rights-revocation-${{ github.event.issue.number }}', 'cancel-in-progress': False}, 'runs-on': 'ubuntu-24.04', 'timeout-minutes': 5},
+            "revocation recording must be base-owned and never superseded")
+    require(len(ledger.get("steps", [])) == 1, "missing durable revocation writer")
+    api_step(ledger["steps"][0])
     for text, head in ((source, "${{ steps.pr.outputs.head_sha }}"),
                        (merge_source, "${{ github.event.workflow_run.head_sha }}")):
         workflow = yaml.load(text, Loader=WorkflowLoader)
@@ -647,8 +674,24 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                     f'--head "{head}" --repository "${{{{ github.repository }}}}"')
         steps = job["steps"]
         checks = [step for step in steps if step.get("run", "").strip() == expected]
-        require(len(checks) == 1 and "if" not in checks[0] and not checks[0].get("continue-on-error"),
+        require(len(checks) == 1 and set(checks[0]) == {"name", "run"}
+                and not job.get("env") and not workflow.get("env")
+                and all(key not in scope.get("defaults", {}).get("run", {})
+                        for scope in (job, workflow) for key in ("shell", "working-directory")),
                 "trusted rights: missing or wrong exact-head evidence/binding command")
+        is_pr = text == source
+        collector = "Record admin approvals of the exact PR head" if is_pr else "Record admin approvals of the queued heads"
+        reporter = "Report trusted policy on the exact PR head" if is_pr else "Report trusted policy on the group head"
+        for name in (collector, reporter):
+            matching = [step for step in steps if step.get("name") == name]
+            require(len(matching) == 1, f"missing trusted API step: {name}")
+            api_step(matching[0])
+        if is_pr:
+            require(job.get("needs") == "rights-revocation", "policy must await durable revocation recording")
+            require(steps[0] == {"name": "Require durable revocation recording",
+                    "env": {"RESULT": "${{ needs.rights-revocation.result }}"},
+                    "run": 'test "$RESULT" = success || test "$RESULT" = skipped'},
+                    "failed/cancelled recording must fail policy before admission")
         scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
         for contract in ("'/ack-rights'", "'/revoke-rights'", "id: comment.id", "base_sha: pr.base.sha",
                          "head_sha: pr.head.sha", "permission: await permission(comment.user.login)",

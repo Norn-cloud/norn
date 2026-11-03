@@ -1164,7 +1164,7 @@ fn bound_report(f: &Fixture, head: &str) -> provenance::Report {
 
 fn rights_document(head: &str, base: &str) -> Value {
     json!({"repository":"Norn-cloud/norn", "head_repository":"Norn-cloud/norn",
-        "head_sha":head, "base_sha":base, "comments":[{"id":1,"user":"owner","permission":"admin",
+        "head_sha":head, "base_sha":base, "revocations":[], "comments":[{"id":1,"user":"owner","permission":"admin",
         "body":format!("/ack-rights {head}"), "created_at":"2026-11-03T00:00:00Z", "updated_at":"2026-11-03T00:00:00Z"}]})
 }
 
@@ -1495,6 +1495,51 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
         .errors()
         .is_empty()
     );
+    for edited in [false, true] {
+        let mut revoked = doc.clone();
+        revoked["pull_requests"][0]["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:00Z"}]);
+        if edited {
+            revoked["pull_requests"][0]["comments"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"id":2,"user":"owner","permission":"admin","body":"ordinary text"}));
+        }
+        fs::write(&evidence, revoked.to_string()).unwrap();
+        let report = norn_skeleton_guard::ci::check_with_rights(
+            f.root(),
+            &trusted,
+            &head,
+            "Norn-cloud/norn",
+            None,
+            &evidence,
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("unacknowledged constituent")),
+            "{:?}",
+            report.errors
+        );
+        let mut renewed = revoked["pull_requests"][0]["comments"][0].clone();
+        renewed["id"] = json!(3);
+        renewed["created_at"] = json!("2026-11-03T00:01:01Z");
+        renewed["updated_at"] = renewed["created_at"].clone();
+        revoked["pull_requests"][0]["comments"]
+            .as_array_mut()
+            .unwrap()
+            .push(renewed);
+        fs::write(&evidence, revoked.to_string()).unwrap();
+        let report = norn_skeleton_guard::ci::check_with_rights(
+            f.root(),
+            &trusted,
+            &head,
+            "Norn-cloud/norn",
+            None,
+            &evidence,
+        );
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+    }
     let mut missing = doc.clone();
     missing["pull_requests"][1]["comments"] = json!([]);
     assert!(admission(&missing, &head).is_err());
@@ -1661,4 +1706,134 @@ fn overlapping_rights_metadata_changes_require_resolution_even_if_source_merges_
             .unwrap_err()
             .contains("metadata disagreement")
     );
+}
+
+#[test]
+fn trusted_groups_refuse_unreviewed_payload_rights_pairs_in_either_order_or_on_base() {
+    for (reverse, metadata_on_base) in [(false, false), (true, false), (false, true)] {
+        let mut f = policy_fixture();
+        f.add("notes", b"original authored notes\n", "code");
+        let original = bind_fixture(&f);
+        let temporary = tempfile::tempdir().unwrap();
+        let trusted = temporary.path().join("trusted");
+        git_in(
+            &f,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                trusted.to_str().unwrap(),
+                &original,
+            ],
+        );
+        let evidence = temporary.path().join("evidence.json");
+        let mut heads = Vec::new();
+        for metadata in [false, true] {
+            git_in(&f, &["checkout", "--quiet", "-B", "pull", &original]);
+            if metadata {
+                let path = format!("{RECORDS}notes.json");
+                let mut record: Value =
+                    serde_json::from_slice(&fs::read(f.root().join(&path)).unwrap()).unwrap();
+                record["category"] = json!("generic-proof");
+                f.write(
+                    &path,
+                    serde_json::to_vec_pretty(&record).unwrap().as_slice(),
+                );
+            } else {
+                f.write("notes", b"changed authored notes\n");
+            }
+            let head = commit_fixture(&f);
+            fs::write(&evidence, rights_document(&head, &original).to_string()).unwrap();
+            let report = norn_skeleton_guard::ci::check_with_rights(
+                f.root(),
+                &trusted,
+                &head,
+                "Norn-cloud/norn",
+                None,
+                &evidence,
+            );
+            assert!(
+                report.errors.is_empty(),
+                "individual reviewed pair: {:?}",
+                report.errors
+            );
+            heads.push(head);
+        }
+        let base = if metadata_on_base {
+            heads[1].clone()
+        } else {
+            original.clone()
+        };
+        git_in(
+            &f,
+            &[
+                "-C",
+                trusted.to_str().unwrap(),
+                "checkout",
+                "--quiet",
+                "--detach",
+                &base,
+            ],
+        );
+        git_in(&f, &["checkout", "--quiet", "-B", "queue", &base]);
+        let mut queued = if metadata_on_base {
+            vec![heads[0].clone()]
+        } else {
+            heads
+        };
+        if reverse {
+            queued.reverse();
+        }
+        for head in &queued {
+            git_in(&f, &["merge", "--quiet", "--no-ff", "--no-edit", head]);
+        }
+        let group = git_in(&f, &["rev-parse", "HEAD"]);
+        let document = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":group},
+            "pull_requests":queued.iter().map(|head| rights_document(head, &original)).collect::<Vec<_>>()});
+        fs::write(&evidence, document.to_string()).unwrap();
+        let report = norn_skeleton_guard::ci::check_with_rights(
+            f.root(),
+            &trusted,
+            &group,
+            "Norn-cloud/norn",
+            None,
+            &evidence,
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("unreviewed payload/rights combination")),
+            "{:?}",
+            report.errors
+        );
+    }
+}
+
+#[test]
+fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_ack() {
+    let head = "1".repeat(40);
+    for edited in [false, true] {
+        let mut doc = rights_document(&head, &"2".repeat(40));
+        doc["revocations"] = json!([{"id":10,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:00Z"}]);
+        if edited {
+            doc["comments"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"id":2,"user":"owner","permission":"admin","body":"ordinary text"}));
+        }
+        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
+        let mut renewed = doc["comments"][0].clone();
+        renewed["id"] = json!(3);
+        renewed["created_at"] = json!("2026-11-03T00:01:01Z");
+        renewed["updated_at"] = renewed["created_at"].clone();
+        doc["comments"].as_array_mut().unwrap().push(renewed);
+        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_ok());
+        // A newer status cannot erase the older boundary, and same-second review fails closed.
+        doc["revocations"].as_array_mut().unwrap().push(json!({"id":11,"context":"rights-revocation","state":"failure","created_at":"2026-11-03T00:01:01Z"}));
+        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
+        doc.as_object_mut().unwrap().remove("revocations");
+        assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head).is_err());
+    }
 }

@@ -807,7 +807,9 @@ pub fn check_with_rights(
 /// changed payload and metadata path, including deletions, relative to its base.
 /// Exactly one acknowledgment after the last revocation is admissible. Repeated
 /// acknowledgments require revocation before renewal, so deleting a live review
-/// cannot expose an older acknowledgment. Edited acknowledgments are invalid.
+/// cannot expose an older acknowledgment. Append-only status history retains
+/// revocation boundaries after comment edits/deletions; renewal must postdate
+/// every recorded boundary. Edited acknowledgments are invalid.
 ///
 /// # Errors
 /// Refuses wrong identity, missing, stale, edited or revoked evidence.
@@ -829,6 +831,31 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         .get("comments")
         .and_then(serde_json::Value::as_array)
         .ok_or("missing rights comments")?;
+    let revocations = evidence
+        .get("revocations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing durable revocation history")?;
+    let mut boundary = None;
+    let mut status_ids = BTreeSet::new();
+    for status in revocations {
+        let id = status
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("missing revocation status ID")?;
+        let at = status
+            .get("created_at")
+            .and_then(serde_json::Value::as_str)
+            .filter(|at| rights_timestamp(at))
+            .ok_or("invalid revocation timestamp")?;
+        if !status_ids.insert(id)
+            || status.get("context").and_then(serde_json::Value::as_str)
+                != Some("rights-revocation")
+            || status.get("state").and_then(serde_json::Value::as_str) != Some("failure")
+        {
+            return Err("invalid durable revocation status".into());
+        }
+        boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
+    }
     let mut decisions = Vec::new();
     let mut ids = BTreeSet::new();
     for comment in comments {
@@ -864,6 +891,12 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
             .get("updated_at")
             .and_then(serde_json::Value::as_str)
             .ok_or("missing comment timestamp")?;
+        if !rights_timestamp(created) || !rights_timestamp(updated) {
+            return Err("invalid rights comment timestamp".into());
+        }
+        if ack && boundary.is_some_and(|at| created <= at) {
+            continue;
+        }
         let user = comment
             .get("user")
             .and_then(serde_json::Value::as_str)
@@ -888,6 +921,18 @@ pub fn rights_acknowledgment(evidence: &serde_json::Value, head: &str) -> Result
         )),
         _ => Err(format!("missing, edited or revoked /ack-rights {head}")),
     }
+}
+
+// GitHub API timestamps use canonical UTC seconds, so lexical order is time order.
+fn rights_timestamp(at: &str) -> bool {
+    at.len() == 20
+        && at.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            10 => byte == b'T',
+            13 | 16 => byte == b':',
+            19 => byte == b'Z',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 /// Verify constituent reviews and independently recompute each clean merge.
