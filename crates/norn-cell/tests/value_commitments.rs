@@ -23,6 +23,7 @@ fn model() -> Model {
         json!({"name":"proof.Item","properties":[{"id":"value","type":{"kind":"text"}}]}),
         json!({"name":"proof.Input","properties":[{"id":"value","type":{"kind":"text"},"markings":["pii.contact"]}]}),
         json!({"name":"proof.Empty","properties":[]}),
+        json!({"name":"proof.Child","extends":"proof.Item"}),
         json!({"name":"proof.Observed","properties":[{"id":"observationJson","type":{"kind":"text"}}]}),
         json!({"name":"proof.Defaulted","properties":[{"id":"value","type":{"kind":"text"}},{"id":"optional","type":{"kind":"text"},"constraints":{"nullable":true}},{"id":"defaulted","type":{"kind":"text"},"default":"declared"}]}),
         json!({"name":"proof.State","properties":[{"id":"status","type":{"kind":"enum","values":[{"value":"draft"},{"value":"approved"}]}}],"lifecycles":[{"property":"status","initial":["draft"],"terminal":["approved"],"transitions":[{"id":"approve","from":["draft"],"to":"approved"}]}]}),
@@ -232,15 +233,24 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("cell.sqlite");
     let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
-    store
+    let original = store
         .commit(&CommitBatch {
             logical_time: 300,
             ..batch(vec![put("proof.Item", "item", "late")])
         })
         .expect("seed");
+    store
+        .commit(&CommitBatch {
+            logical_time: 301,
+            ..batch(vec![])
+        })
+        .expect("frontier");
     let connection = rusqlite::Connection::open(path).expect("corruption fixture");
     connection
-        .execute("UPDATE _norn_receipt SET receipt = '{}'", [])
+        .execute(
+            "UPDATE _norn_receipt SET receipt = '{}' WHERE commit_seq=1",
+            [],
+        )
         .expect("corrupt receipt");
     let fact = FactKey::new("proof.Item", "item");
     let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
@@ -255,15 +265,63 @@ fn knowledge_cutoff_budgets_proofs_before_decoding_and_rejects_corrupt_receipts(
                 ..limits
             }),
         );
+        let selected = store.read().fact_evidence_known_at_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            norn_cell::KnowledgeCutoff {
+                recorded_at: LogicalTime::from_millis(200),
+                frontier: 1,
+            },
+            &mut DecodeBudget::new(&ReactiveLimits {
+                max_candidate_bytes_per_commit: byte_limit,
+                ..limits
+            }),
+        );
         if byte_limit == 0 {
+            assert!(matches!(
+                selected,
+                Ok(norn_cell::HistoricalEvidence::Exhausted)
+            ));
             assert!(matches!(result, Ok(BudgetedRead::Exhausted)));
         } else {
             assert!(
                 result.is_err(),
                 "corrupt receipt cannot supply an earlier timestamp"
             );
+            assert!(
+                selected.is_err(),
+                "selection cannot authenticate a corrupt frontier"
+            );
         }
     }
+    connection
+        .execute(
+            "UPDATE _norn_receipt SET receipt=?1 WHERE commit_seq=1",
+            [serde_json::to_string(&original.receipt().body).expect("original body")],
+        )
+        .expect("restore fact receipt");
+    connection
+        .execute(
+            "UPDATE _norn_receipt SET receipt_hash='incorrect' WHERE commit_seq=2",
+            [],
+        )
+        .expect("corrupt parseable frontier");
+    assert!(
+        store
+            .read()
+            .fact_evidence_known_at_with_budget(
+                MAIN_WORLD,
+                "proof.Item",
+                "item",
+                norn_cell::KnowledgeCutoff {
+                    recorded_at: LogicalTime::from_millis(301),
+                    frontier: 2
+                },
+                &mut DecodeBudget::new(&limits)
+            )
+            .is_err()
+    );
 }
 
 proptest! {
@@ -1757,11 +1815,25 @@ fn fact_version_receipts_reject_missing_or_tampered_identity_lookup_and_receipt(
     for (world, ty, key, version) in [
         ("wrong", "proof.Item", "item", 1),
         (MAIN_WORLD, "proof.Input", "item", 1),
+        (MAIN_WORLD, "proof.Child", "item", 1),
         (MAIN_WORLD, "proof.Item", "missing", 1),
         (MAIN_WORLD, "proof.Item", "item", 0),
         (MAIN_WORLD, "proof.Item", "item", 3),
     ] {
         assert!(read(world, ty, key, version).is_err());
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        assert!(
+            store
+                .read()
+                .fact_version_evidence_with_budget(
+                    world,
+                    ty,
+                    key,
+                    version,
+                    &mut DecodeBudget::new(&limits)
+                )
+                .is_err()
+        );
     }
     let conn = rusqlite::Connection::open(path).expect("corruption fixture");
     // The locator's seq is not itself a proof: even authentic other receipts
@@ -1892,6 +1964,174 @@ fn exact_fact_receipt_admits_both_proofs_before_decoding() {
     assert_eq!(budget.remaining_rows(), limits.max_scan - 2);
 }
 
+#[test]
+fn knowledge_selection_retains_tombstones_absence_and_budget_refusal() {
+    use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
+    use norn_kernel::LogicalTime;
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    for (time, write) in [
+        (10, put("proof.Item", "item", "old")),
+        (20, put("proof.Item", "item", "corrected")),
+        (
+            30,
+            FactWriteRow::Delete {
+                object_type: "proof.Item".into(),
+                key: "item".into(),
+            },
+        ),
+    ] {
+        store
+            .commit(&CommitBatch {
+                logical_time: time,
+                ..batch(vec![write])
+            })
+            .expect("append");
+    }
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let read = |at, budget: &mut DecodeBudget| {
+        store.read().fact_evidence_known_at_with_budget(
+            MAIN_WORLD,
+            "proof.Item",
+            "item",
+            KnowledgeCutoff {
+                recorded_at: LogicalTime::from_millis(at),
+                frontier: 3,
+            },
+            budget,
+        )
+    };
+    assert!(matches!(
+        read(9, &mut DecodeBudget::new(&limits)).expect("before creation"),
+        HistoricalEvidence::Missing
+    ));
+    for (at, version) in [(10, 1), (19, 1), (20, 2), (30, 3)] {
+        let HistoricalEvidence::Found(proof) =
+            read(at, &mut DecodeBudget::new(&limits)).expect("historical selection")
+        else {
+            panic!("missing incarnation")
+        };
+        assert_eq!(proof.snapshot().version, version);
+        assert_eq!(proof.snapshot().values.is_none(), version == 3);
+        assert!(proof.receipt().body.logical_time <= at);
+    }
+    let mut tiny = limits;
+    tiny.max_candidate_bytes_per_commit = 0;
+    assert!(matches!(
+        read(20, &mut DecodeBudget::new(&tiny)).expect("bounded"),
+        HistoricalEvidence::Exhausted
+    ));
+    let mut bounded = limits;
+    let mut partial_refuses = false;
+    for bytes in (1..16_384).step_by(32) {
+        bounded.max_candidate_bytes_per_commit = bytes;
+        let mut budget = DecodeBudget::new(&bounded);
+        match read(20, &mut budget).expect("bounded historical read") {
+            HistoricalEvidence::Exhausted => {
+                partial_refuses |= budget.remaining_rows() <= limits.max_scan.saturating_sub(7);
+            }
+            HistoricalEvidence::Found(proof) => assert_eq!(
+                proof.snapshot().version,
+                2,
+                "complete latest eligible answer"
+            ),
+            HistoricalEvidence::Missing => panic!("retained eligible answer disappeared"),
+        }
+    }
+    assert!(
+        partial_refuses,
+        "exhaustion after the first candidate never returns a partial answer"
+    );
+}
+#[test]
+fn historical_revision_reproduces_real_prefixes_and_refuses_future_or_unbudgeted_receipts() {
+    use norn_cell::KnowledgeCutoff;
+    use norn_kernel::LogicalTime;
+    let mut store = CellStore::open_in_memory(model()).expect("store");
+    store
+        .commit(&CommitBatch {
+            logical_time: 10,
+            ..batch(vec![])
+        })
+        .expect("event-free commit");
+    let old = store.verified_head().expect("actual old prefix");
+    store
+        .commit(&CommitBatch {
+            logical_time: 20,
+            events: vec![Value::from("later")],
+            ..batch(vec![])
+        })
+        .expect("later commit");
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+    let cutoff = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(10),
+        frontier: 1,
+    };
+    assert_eq!(
+        store
+            .read()
+            .historical_revision_with_budget(cutoff, &mut DecodeBudget::new(&limits))
+            .expect("historical revision"),
+        Some(old)
+    );
+    assert!(matches!(
+        store.read().historical_revision_with_budget(
+            KnowledgeCutoff {
+                frontier: 2,
+                ..cutoff
+            },
+            &mut DecodeBudget::new(&limits)
+        ),
+        Err(CellError::TemporalLeakage)
+    ));
+    let empty = KnowledgeCutoff {
+        frontier: 0,
+        ..cutoff
+    };
+    assert_eq!(
+        store
+            .read()
+            .historical_revision_with_budget(empty, &mut DecodeBudget::new(&limits))
+            .expect("empty history"),
+        Some(norn_cell::LedgerHead::genesis())
+    );
+    let mut tiny = limits;
+    tiny.max_candidate_bytes_per_commit = 0;
+    assert!(
+        store
+            .read()
+            .historical_revision_with_budget(cutoff, &mut DecodeBudget::new(&tiny))
+            .expect("budget refusal")
+            .is_none()
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn selected_old_answer_reproduces_after_each_appended_correction(
+        original in any::<u64>(), corrections in prop::collection::vec(any::<u64>(),1..8), same_clock in any::<bool>(),
+    ) {
+        use norn_cell::{HistoricalEvidence, KnowledgeCutoff};
+        use norn_kernel::LogicalTime;
+        let mut store=CellStore::open_in_memory(model()).expect("store");
+        store.commit(&CommitBatch{logical_time:10,..batch(vec![put("proof.Item","item",&original.to_string())])}).expect("original");
+        let limits=ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let HistoricalEvidence::Found(initial)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("initial proof") else {return Err(TestCaseError::fail("initial proof lost"))};
+        let initial=serde_json::to_vec(&*initial).expect("initial evidence bytes");
+        for (time,correction) in (11u64..).zip(corrections) {
+            let recorded=if same_clock {10} else {time};
+            store.commit(&CommitBatch{logical_time:recorded,..batch(vec![put("proof.Item","item",&correction.to_string())])}).expect("correction");
+            let HistoricalEvidence::Found(old)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(10),frontier:1},&mut DecodeBudget::new(&limits)).expect("old answer") else {return Err(TestCaseError::fail("old answer lost"))};
+            prop_assert_eq!(serde_json::to_vec(&*old).expect("reproduced evidence bytes"),initial.clone());
+            prop_assert_eq!(old.snapshot().version,1);
+            prop_assert_eq!(&old.snapshot().values.as_ref().expect("live")["value"],&Value::from(original.to_string()));
+            let HistoricalEvidence::Found(new)=store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",KnowledgeCutoff{recorded_at:LogicalTime::from_millis(recorded),frontier:time.checked_sub(9).expect("fixture frontier")},&mut DecodeBudget::new(&limits)).expect("new answer") else {return Err(TestCaseError::fail("new answer lost"))};
+            prop_assert_eq!(new.snapshot().version,time.checked_sub(9).expect("fixture version"));
+            prop_assert_eq!(&new.snapshot().values.as_ref().expect("live")["value"],&Value::from(correction.to_string()));
+        }
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
     #[test]
@@ -1916,6 +2156,7 @@ proptest! {
         prop_assert!(matches!(store.read().object_at_version_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().fact_version_evidence_with_budget(MAIN_WORLD,"proof.Item","item",version,&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))));
         prop_assert!(matches!(store.read().receipt_for_fact_version(MAIN_WORLD,"proof.Item","item",version),Err(CellError::HistoricalValueUnproven(_))));
+        prop_assert!(matches!(store.read().fact_evidence_known_at_with_budget(MAIN_WORLD,"proof.Item","item",norn_cell::KnowledgeCutoff{recorded_at:norn_kernel::LogicalTime::from_millis(u64::MAX),frontier:version},&mut DecodeBudget::new(&limits)),Err(CellError::HistoricalValueUnproven(_))), "joint tampering must refuse historical selection");
         prop_assert_eq!(store.read().receipt_at(version).expect("receipt unchanged").expect("receipt"),evidence.receipt().clone());
         drop(store);drop(connection);
         prop_assert!(matches!(CellStore::open(&path,model(),StoreOptions::default()),Err(CellError::HistoricalValueUnproven(_))));
