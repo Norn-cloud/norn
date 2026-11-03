@@ -227,10 +227,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
         let mut index = SourceDisputeIndex::default();
         for conflict in self.verified_source_conflicts()? {
-            index.conflicts.insert(crate::mapping_identity::keys(
-                &conflict.incoming.raw,
-                &conflict.incoming.input,
-            )?.map(|key| norn_ir::canonical::nfc(&key)));
+            index.conflicts.insert(
+                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+                    .map(|key| norn_ir::canonical::nfc(&key)),
+            );
             self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
         }
         for guard in self.identity_evidence()? {
@@ -345,7 +345,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// OBS-EVIDENCE-1: a dispute covers the accepted event as well as its candidate.
-    pub(crate) fn mapping_event_is_disputed(&self, bundle: &MappingBundle) -> Result<bool, CellError> {
+    pub(crate) fn mapping_event_is_disputed(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<bool, CellError> {
         let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
             .map(|key| norn_ir::canonical::nfc(&key));
         self.with_source_dispute_index(|index| {

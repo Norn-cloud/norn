@@ -3,8 +3,8 @@ use crate::{CellError, SqliteCell, StoreReader, engine::SqlEngine, mapping_bundl
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, prepare_observed_snapshot};
 use norn_kernel::{
-    CellCommit, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
-    Observed, TypeCatalog, World,
+    CellCommit, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent, Observed,
+    TypeCatalog, World,
 };
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
