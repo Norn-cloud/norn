@@ -1,66 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "MappingPayload",
-  "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
-  "type": "object",
-  "properties": {
-    "entitlements": {
-      "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/EntitlementMap"
-      }
+  "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`]).",
+  "oneOf": [
+    {
+      "description": "Source records produce ordinary entity facts, never inherited laws.",
+      "$ref": "#/$defs/MappingIr"
     },
-    "extensions": {
-      "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/JsonValue"
-      }
-    },
-    "format": {
-      "description": "The format tag.",
-      "$ref": "#/$defs/MappingFormat"
-    },
-    "identityBindings": {
-      "description": "Explicit exact bindings from external account ids to canonical\nprincipals. This is a reviewed mapping configuration table, separate\nfrom source metadata; an empty table refuses principal resolution.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/IdentityBinding"
-      }
-    },
-    "interfaces": {
-      "description": "Artifact ids of the `entity` artifacts defining the interfaces the\nmapping covers: every map targets one of them.",
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "maps": {
-      "description": "The object maps, in evaluation order.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/ObjectMap"
-      }
-    },
-    "pathMappings": {
-      "description": "Required path preservation obligations over the named entity artifacts.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/PathMappingBinding"
-      }
-    },
-    "source": {
-      "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash.",
-      "$ref": "#/$defs/SourceBinding"
+    {
+      "description": "A separately checked interpretation between exact ontology layers.",
+      "$ref": "#/$defs/LawInterpretationIr"
     }
-  },
-  "additionalProperties": false,
-  "required": [
-    "format",
-    "source",
-    "interfaces",
-    "maps"
   ],
   "$defs": {
     "EntitlementActionMap": {
@@ -527,6 +477,50 @@
         "reason"
       ]
     },
+    "InterpretationEndpoint": {
+      "description": "Exact Norn1 semantic envelope identity of an interpretation endpoint.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "description": "Retained artifact, resolved without namespace inference.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Receipt-profile semantic content digest.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Exact artifact version.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "sha256"
+      ]
+    },
+    "InterpretationFormat": {
+      "description": "Only the interpretation wire format decodes here.",
+      "oneOf": [
+        {
+          "description": "First interpretation contract.",
+          "type": "string",
+          "const": "norn.interpretation/1"
+        }
+      ]
+    },
+    "InterpretationRole": {
+      "description": "A law interpretation is neither source evidence nor term correspondence.",
+      "oneOf": [
+        {
+          "description": "Subject to contract totality and preservation obligations.",
+          "type": "string",
+          "const": "law_interpretation"
+        }
+      ]
+    },
     "JsonValue": {
       "anyOf": [
         {
@@ -554,6 +548,43 @@
             "$ref": "#/$defs/JsonValue"
           }
         }
+      ]
+    },
+    "LawInterpretationIr": {
+      "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed format discriminator.",
+          "$ref": "#/$defs/InterpretationFormat"
+        },
+        "members": {
+          "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberInterpretation"
+          }
+        },
+        "role": {
+          "description": "Explicit semantic role.",
+          "$ref": "#/$defs/InterpretationRole"
+        },
+        "sourceLayer": {
+          "description": "Layer whose contract must be preserved.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "targetLayer": {
+          "description": "Layer interpreting that contract.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "role",
+        "sourceLayer",
+        "targetLayer",
+        "members"
       ]
     },
     "LifecycleMap": {
@@ -586,33 +617,6 @@
       "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
-    },
-    "LinkImage": {
-      "description": "The source path a [`PathMapping`] assigns to one target link.",
-      "type": "object",
-      "properties": {
-        "concept": {
-          "description": "The target concept declaring the link.",
-          "type": "string"
-        },
-        "link": {
-          "description": "The target link ID.",
-          "type": "string"
-        },
-        "path": {
-          "description": "Forward source link IDs from the image of `concept`; empty is identity.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "concept",
-        "link",
-        "path"
-      ]
     },
     "LinkMap": {
       "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
@@ -709,6 +713,275 @@
       "required": [
         "member",
         "reason"
+      ]
+    },
+    "MappingIr": {
+      "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
+      "type": "object",
+      "properties": {
+        "entitlements": {
+          "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EntitlementMap"
+          }
+        },
+        "extensions": {
+          "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "format": {
+          "description": "The format tag.",
+          "$ref": "#/$defs/MappingFormat"
+        },
+        "identityBindings": {
+          "description": "Explicit exact bindings from external account ids to canonical\nprincipals. This is a reviewed mapping configuration table, separate\nfrom source metadata; an empty table refuses principal resolution.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IdentityBinding"
+          }
+        },
+        "interfaces": {
+          "description": "Artifact ids of the `entity` artifacts defining the interfaces the\nmapping covers: every map targets one of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maps": {
+          "description": "The object maps, in evaluation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObjectMap"
+          }
+        },
+        "source": {
+          "description": "The one `source_schema` artifact the mapping reads, pinned by\ncontent hash.",
+          "$ref": "#/$defs/SourceBinding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "source",
+        "interfaces",
+        "maps"
+      ]
+    },
+    "Member": {
+      "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id.",
+      "oneOf": [
+        {
+          "description": "The artifact as a whole (an action, a decision, a mapping).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "An object type or interface.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "type"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName"
+          ]
+        },
+        {
+          "description": "A property of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "property"
+            },
+            "property": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "property"
+          ]
+        },
+        {
+          "description": "A link of a type.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "link"
+            },
+            "link": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "link"
+          ]
+        },
+        {
+          "description": "A state of a type's lifecycle (a value of its lifecycle property).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "state"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "state"
+          ]
+        },
+        {
+          "description": "A declared transition of a type's lifecycle.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transition"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "transition": {
+              "type": "string"
+            },
+            "typeName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "typeName",
+            "lifecycle",
+            "transition"
+          ]
+        },
+        {
+          "description": "An object map of a mapping.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "object_map"
+            },
+            "map": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "map"
+          ]
+        },
+        {
+          "description": "A law.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "law"
+            },
+            "law": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "law"
+          ]
+        }
+      ]
+    },
+    "MemberInterpretation": {
+      "description": "One interpretation between exact catalog members, never a coverage claim.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Source type, property, link, lifecycle state or transition identity.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "target": {
+          "description": "Corresponding target identity, resolved within the pinned target layer.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "transform": {
+          "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ]
+    },
+    "MemberRef": {
+      "description": "A member of one exact artifact.",
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "member": {
+          "$ref": "#/$defs/Member"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "version",
+        "member"
       ]
     },
     "NestedPropertySource": {
@@ -831,66 +1104,6 @@
       "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
-    },
-    "PathMapping": {
-      "description": "PATH-MAP-1: a declared mapping `F: target -> source` between two concept\ncatalogs. Each target concept names its source concept and each mapped\ntarget link a forward source path; source data moves to the target by\npullback along these paths. Unmapped target links are never produced.",
-      "type": "object",
-      "properties": {
-        "id": {
-          "description": "Stable declaration identity, retained by generated TGDs.",
-          "type": "string"
-        },
-        "links": {
-          "description": "Images of target links. Two images of one link make it non-functional.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/LinkImage"
-          }
-        },
-        "objects": {
-          "description": "Target concept name to source concept name.",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "objects",
-        "links"
-      ]
-    },
-    "PathMappingBinding": {
-      "description": "Catalog bindings for a required path mapping. Admission binds evidence to\nthe exact envelopes (including equations), and the enclosing MappingIR.",
-      "type": "object",
-      "properties": {
-        "mapping": {
-          "description": "Declared object and link images.",
-          "$ref": "#/$defs/PathMapping"
-        },
-        "sourceEntities": {
-          "description": "Source entity artifact IDs.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "targetEntities": {
-          "description": "Target entity artifact IDs.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "sourceEntities",
-        "targetEntities",
-        "mapping"
-      ]
     },
     "PropertyId": {
       "description": "Id of a property within its object type (`sku_code`), unique there.",

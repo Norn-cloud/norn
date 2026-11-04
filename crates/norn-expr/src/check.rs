@@ -3013,6 +3013,8 @@ pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType
         return None;
     };
     Some(norn_ir::PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+
         scale: norn_ir::WholeNumber(*scale),
         unit: unit.clone(),
         rounding: Some(*rounding),

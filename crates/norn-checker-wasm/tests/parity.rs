@@ -596,6 +596,35 @@ fn runtime_values_match_the_pinned_golden() {
 }
 
 #[test]
+fn authored_host_refusal_is_preserved_by_the_shared_abi() {
+    use norn_ir::function::{FunctionManifest, ImplementationFormat};
+
+    let mut host: FunctionManifest =
+        serde_json::from_str(&read("fixtures/function/manifest.effectful.json"))
+            .expect("typed manifest");
+    host.function_id = "norn.builtin.fixture".to_owned();
+    host.implementation.format = ImplementationFormat::Host;
+    host.implementation.locator = Some(format!(
+        "{}/{}@{}",
+        host.runtime.id, host.runtime.version, host.implementation.digest
+    ));
+    let output = function_contract_json(&serde_json::to_string(&host).expect("encode"), None, None)
+        .expect("ABI response");
+    let output: Value = serde_json::from_str(&output).expect("response");
+    assert_eq!(output["admitted"], false);
+    assert!(
+        output["diagnostics"]["diagnostics"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|finding| {
+                finding["code"] == norn_checker::function::codes::AUTHORED_HOST
+                    && finding["span"]["pointer"] == "/manifest/implementation/format"
+            })
+    );
+}
+
+#[test]
 fn function_contracts_match_the_pinned_golden() {
     // The norn-ir golden identities (T1-FN-1, #2776): the same digests
     // natively here and, through the parity run, on wasm32.
