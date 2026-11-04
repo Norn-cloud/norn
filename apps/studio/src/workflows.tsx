@@ -36,7 +36,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         {data.terminal && <Badge variant="outline">Ends here</Badge>}
         {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
         {data.backs.map((back) => (
-          <button key={back.label} type="button" onClick={() => data.onPick(back.to)} className="rounded-full border px-2 py-0.5 text-meta text-muted-foreground hover:bg-muted hover:text-foreground">↺ {back.label}</button>
+          <button key={back.label} type="button" onClick={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-full border px-2 py-0.5 text-meta text-muted-foreground hover:bg-muted hover:text-foreground">↺ {back.label}</button>
         ))}
       </div>
     </div>
@@ -111,7 +111,10 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   }
   return (
     <div className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
+      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
+        // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
+        onNodeClick={(_, node) => { if (node.id !== "more") onPin(node.id) }} onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
+        fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
         <Background />
         <Controls showInteractive={false} />
         {tree.nodes.length > 12 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
