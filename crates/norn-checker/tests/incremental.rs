@@ -16,8 +16,16 @@ use proptest::prelude::*;
 mod units;
 
 fn registry() -> BTreeSet<norn_ir::PropertyTypeName> {
-    ["core.code", "core.quantity", "ucum.unit_code", "core.display_name", "iso8601.timestamp"]
-        .map(|name| norn_ir::PropertyTypeName(name.into())).into_iter().collect()
+    [
+        "core.code",
+        "core.quantity",
+        "ucum.unit_code",
+        "core.display_name",
+        "iso8601.timestamp",
+    ]
+    .map(|name| norn_ir::PropertyTypeName(name.into()))
+    .into_iter()
+    .collect()
 }
 
 fn fixture() -> Vec<ArtifactEnvelope> {
