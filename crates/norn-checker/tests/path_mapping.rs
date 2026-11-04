@@ -147,7 +147,7 @@ fn identity_and_equivalent_path_controls_are_admitted() {
 
 fn equations(ids: &[&str]) -> BTreeSet<String> {
     ids.iter()
-        .map(|id| format!("t.Delivery.entity:path-equation:{id}"))
+        .map(|id| format!("t.Delivery.entity:path-equation:{id}:t.Delivery"))
         .collect()
 }
 
@@ -184,7 +184,7 @@ fn a_bad_component_breaks_its_composite_and_identity_composes() {
     assert_eq!(good.links, identity.links);
     assert_eq!(admit(&good), Ok(12));
     let bad = compose(&mapping("swap", "s", "s", SWAPPED));
-    assert!(unpreserved(&bad).contains("t.Delivery.entity:path-equation:provider"));
+    assert!(unpreserved(&bad).contains("t.Delivery.entity:path-equation:provider:t.Delivery"));
     let both: &[(&str, &[&str])] = &[("provider", &["provider"]), ("provider", &["receiver"])];
     let refused = compose_path_mappings(
         &identity,
