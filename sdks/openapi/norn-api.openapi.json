@@ -9852,6 +9852,33 @@
         "description": "A role name of a link: the link id on the source type, or the inverse\non the target type. Same grammar as a property id\n([`MEMBER_ID_PATTERN`]); properties, links, and inverse roles share one\nmember name space per object type.",
         "pattern": "^[a-z][a-z0-9_]*$"
       },
+      "NornIrLinkImage": {
+        "type": "object",
+        "description": "The source path a [`PathMapping`] assigns to one target link.",
+        "required": [
+          "concept",
+          "link",
+          "path"
+        ],
+        "properties": {
+          "concept": {
+            "type": "string",
+            "description": "The target concept declaring the link."
+          },
+          "link": {
+            "type": "string",
+            "description": "The target link ID."
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Forward source link IDs from the image of `concept`; empty is identity."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLinkMap": {
         "type": "object",
         "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
@@ -10058,6 +10085,13 @@
               "$ref": "#/components/schemas/NornIrObjectMap"
             },
             "description": "The object maps, in evaluation order."
+          },
+          "pathMappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPathMappingBinding"
+            },
+            "description": "Required path preservation obligations over the named entity artifacts."
           },
           "source": {
             "$ref": "#/components/schemas/NornIrSourceBinding",
@@ -12319,6 +12353,69 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrPathMapping": {
+        "type": "object",
+        "description": "PATH-MAP-1: a declared mapping `F: target -> source` between two concept\ncatalogs. Each target concept names its source concept and each mapped\ntarget link a forward source path; source data moves to the target by\npullback along these paths. Unmapped target links are never produced.",
+        "required": [
+          "id",
+          "objects",
+          "links"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable declaration identity, retained by generated TGDs."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLinkImage"
+            },
+            "description": "Images of target links. Two images of one link make it non-functional."
+          },
+          "objects": {
+            "$ref": "#/components/schemas/NornIrPathMappingPropertyObjects"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPathMappingBinding": {
+        "type": "object",
+        "description": "Catalog bindings for a required path mapping. Admission binds evidence to\nthe exact envelopes (including equations), and the enclosing MappingIR.",
+        "required": [
+          "sourceEntities",
+          "targetEntities",
+          "mapping"
+        ],
+        "properties": {
+          "mapping": {
+            "$ref": "#/components/schemas/NornIrPathMapping",
+            "description": "Declared object and link images."
+          },
+          "sourceEntities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Source entity artifact IDs."
+          },
+          "targetEntities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Target entity artifact IDs."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPathMappingPropertyObjects": {
+        "type": "object",
+        "description": "Target concept name to source concept name.",
+        "additionalProperties": {
+          "type": "string"
+        }
       },
       "NornIrPolicyObligation": {
         "type": "object",
