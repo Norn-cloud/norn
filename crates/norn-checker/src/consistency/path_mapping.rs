@@ -274,3 +274,78 @@ pub fn admit_path_mapping(
         Err(findings)
     }
 }
+
+/// The composite `first ; then` of `first: target -> middle` and
+/// `then: middle -> source`, substituting `then`'s images into `first`'s
+/// paths. Non-functional components refuse rather than composing.
+///
+/// # Errors
+/// A component with two images of one link, or an unmapped middle concept/link.
+pub fn compose_path_mappings(
+    first: &PathMapping,
+    then: &PathMapping,
+    middle: &[ArtifactEnvelope],
+    registry: &BTreeSet<PropertyTypeName>,
+) -> Result<PathMapping, Vec<Diagnostic>> {
+    let id = format!("{};{}", first.id, then.id);
+    let catalog = EffectiveCatalog::from_artifacts_with_registry(middle, registry);
+    let mut images = BTreeMap::new();
+    for component in [first, then] {
+        let mut seen = BTreeSet::new();
+        for image in &component.links {
+            if !seen.insert((&image.concept, &image.link)) {
+                return Err(refuse(
+                    &id,
+                    &format!(
+                        "{} maps {}.{} twice",
+                        component.id, image.concept, image.link
+                    ),
+                ));
+            }
+        }
+    }
+    for image in &then.links {
+        images.insert(
+            (image.concept.as_str(), image.link.as_str()),
+            image.path.as_slice(),
+        );
+    }
+    let mut objects = BTreeMap::new();
+    for (to, via) in &first.objects {
+        let from = then
+            .objects
+            .get(via)
+            .ok_or_else(|| refuse(&id, &format!("{via} is not mapped")))?;
+        objects.insert(to.clone(), from.clone());
+    }
+    let mut links = Vec::new();
+    for image in &first.links {
+        let mut current = first
+            .objects
+            .get(&image.concept)
+            .cloned()
+            .ok_or_else(|| refuse(&id, &format!("{} has no object image", image.concept)))?;
+        let mut path = Vec::new();
+        for step in &image.path {
+            let next = catalog
+                .links_for_object_type(&current)
+                .and_then(|links| links.iter().find(|l| l.id.as_str() == step))
+                .filter(|link| link.cardinality.to == Multiplicity::One)
+                .map(|l| l.target.as_str().to_owned());
+            let (Some(next), Some(sub)) = (next, images.get(&(current.as_str(), step.as_str())))
+            else {
+                return Err(refuse(&id, &format!("{current}.{step} has no image")));
+            };
+            if !then.objects.contains_key(&next) {
+                return Err(refuse(&id, &format!("{next} is not mapped")));
+            }
+            path.extend_from_slice(sub);
+            current = next;
+        }
+        links.push(LinkImage {
+            path,
+            ..image.clone()
+        });
+    }
+    Ok(PathMapping { id, objects, links })
+}
