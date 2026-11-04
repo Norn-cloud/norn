@@ -877,7 +877,7 @@ pub fn rights_digest(value: &serde_json::Value) -> Result<String, String> {
     fn count(hash: &mut Sha256, value: usize) -> Result<(), String> {
         hash.update(
             u64::try_from(value)
-                .map_err(|_| "checkpoint length overflow")?
+                .map_err(|error| format!("checkpoint length overflow: {error}"))?
                 .to_be_bytes(),
         );
         Ok(())
@@ -964,7 +964,7 @@ fn rights_projection(value: &serde_json::Value, digest: Option<&str>) -> Result<
                 .and_then(serde_json::Value::as_str)
                 .ok_or("missing success checkpoint")?,
         )
-        .map_err(|_| "unbound success checkpoint")?;
+        .map_err(|error| format!("unbound success checkpoint: {error}"))?;
         if row.get("v").and_then(serde_json::Value::as_u64) != Some(4)
             || row.get("f").and_then(serde_json::Value::as_u64) != Some(failure)
             || !row
