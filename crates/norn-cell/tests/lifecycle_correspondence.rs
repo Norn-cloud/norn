@@ -13,7 +13,7 @@ use norn_checker::obligations::lifecycle::{
     graph::Graph,
 };
 use norn_checker::obligations::{ApprovedContract, DefinitionSource};
-use norn_ir::{DecisionOutput, EntityRootV2, FactChange, ObjectTypeName, PropertyId, TransitionId};
+use norn_ir::{ArtifactEnvelope, DecisionOutput, EntityRootV2, FactChange, ObjectTypeName, PropertyId, TransitionId};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     CellHost, DecisionRefusal, DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World,
@@ -49,7 +49,7 @@ fn native(
             .expect("fixture pre-state");
     }
     let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject> =
-        SqliteCell::new(store, "org_demo/dev", |c| c.payload.clone()).expect("native cell");
+        SqliteCell::new(store, "org_demo/dev", |c: &norn_kernel::Command<JsonObject>| c.payload.clone()).expect("native cell");
     let prior = cell.store().read().dump().expect("before");
     let key = FactKey::new("demo.Melt", "synthetic");
     let slice = load_slice(&cell, [key.clone()]).expect("read");
@@ -87,7 +87,7 @@ fn native(
     }
     (accepted, cell.load(&key).expect("after").values)
 }
-fn fixture(joint: bool, disabled: bool, input: u8) -> (DefinitionSource, Bounds, Graph) {
+fn fixture(joint: bool, disabled: bool, input: u8) -> (Vec<ArtifactEnvelope>, Bounds, Graph) {
     let mut declarations: Value = serde_json::from_str(include_str!(
         "../../norn-checker/tests/fixtures/jewelry_demo.json"
     ))
@@ -117,8 +117,9 @@ fn fixture(joint: bool, disabled: bool, input: u8) -> (DefinitionSource, Bounds,
         "../../../registry/core/artifacts/core.units.json"
     ))
     .expect("units");
+    let source_text = serde_json::to_string(&declarations).expect("source");
     let source = DefinitionSource::parse(
-        &serde_json::to_string(&declarations).expect("source"),
+        &source_text,
         &serde_json::to_string(&vec![base]).expect("base"),
     )
     .expect("exact source");
@@ -146,7 +147,7 @@ fn fixture(joint: bool, disabled: bool, input: u8) -> (DefinitionSource, Bounds,
         .expect("fresh inputs")
         .graph
         .expect("qualified graph");
-    (source, bounds, graph)
+    (serde_json::from_str(&source_text).expect("same native declarations"), bounds, graph)
 }
 #[test]
 fn every_bounded_initialization_and_transition_matches_native_commit() {
@@ -163,8 +164,8 @@ fn every_bounded_initialization_and_transition_matches_native_commit() {
         compare(&source, &graph);
     }
 }
-fn compare(source: &DefinitionSource, graph: &Graph) {
-    let entity: EntityRootV2 = source.artifacts[0]
+fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
+    let entity: EntityRootV2 = artifacts[0]
         .payload
         .to_json_value()
         .decode()
@@ -172,9 +173,9 @@ fn compare(source: &DefinitionSource, graph: &Graph) {
     let definitions = [entity.object_type];
     let model = Model::from_definitions(&definitions, &[])
         .expect("projection")
-        .with_governing_laws(&source.artifacts)
+        .with_governing_laws(artifacts)
         .expect("retained laws");
-    let catalog = TypeCatalog::new(definitions.iter()).with_governing_laws(&source.artifacts);
+    let catalog = TypeCatalog::new(definitions.iter()).with_governing_laws(artifacts);
     assert_eq!(graph.inputs.nodes.len(), 10);
     let mut compared = 0;
     for (from, row) in graph.inputs.nodes.iter().enumerate() {
