@@ -24,7 +24,7 @@ pub fn dispatch<E: SqlEngine>(
     let origin = request.headers().get(header::ORIGIN);
     let allowed_origin = origin.filter(|value| value.to_str().is_ok_and(local_origin));
     let mut response = if origin.is_some() && allowed_origin.is_none() {
-        refusal(Refusal::new(
+        refusal(&Refusal::new(
             StatusCode::FORBIDDEN,
             "origin.denied",
             "origin is not allowed",
@@ -33,7 +33,7 @@ pub fn dispatch<E: SqlEngine>(
     } else if request.method() == Method::OPTIONS {
         response(StatusCode::NO_CONTENT, Vec::new())
     } else if request.method() != Method::GET {
-        let mut result = refusal(Refusal::new(
+        let mut result = refusal(&Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
             "request.method",
             "method is not allowed",
@@ -45,7 +45,7 @@ pub fn dispatch<E: SqlEngine>(
         );
         result
     } else {
-        route(host, runtime, request, actor).unwrap_or_else(refusal)
+        route(host, runtime, request, actor).unwrap_or_else(|error| refusal(&error))
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -70,7 +70,9 @@ fn local_origin(origin: &str) -> bool {
     let Ok(uri) = origin.parse::<http::Uri>() else {
         return false;
     };
-    uri.scheme_str() == Some("http")
+    uri.authority()
+        .is_some_and(|authority| !authority.as_str().contains('@'))
+        && uri.scheme_str() == Some("http")
         && matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]"))
         && uri.path() == "/"
         && uri.query().is_none()
@@ -104,7 +106,7 @@ fn route<E: SqlEngine>(
             version: get("version")
                 .map(|value| value.parse())
                 .transpose()
-                .map_err(|_| Refusal::invalid("invalid definitions version"))?,
+                .map_err(|_syntax| Refusal::invalid("invalid definitions version"))?,
         };
         return json(&get_defs(host, &query, actor)?);
     }
@@ -121,7 +123,7 @@ fn route<E: SqlEngine>(
     {
         let question = percent_encoding::percent_decode_str(question)
             .decode_utf8()
-            .map_err(|_| Refusal::invalid("invalid question identifier"))?;
+            .map_err(|_utf8| Refusal::invalid("invalid question identifier"))?;
         return match operation {
             "answer" => json(&get_answer(host, &scope, actor, &question, runtime)?),
             "trace" => json(&get_numeric_trace(
@@ -154,7 +156,7 @@ fn not_found() -> Refusal {
         "the requested read route does not exist",
     )
 }
-fn refusal(value: Refusal) -> Response<Vec<u8>> {
+fn refusal(value: &Refusal) -> Response<Vec<u8>> {
     let status = StatusCode::from_u16(value.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     match serde_json::to_vec(&value) {
         Ok(bytes) => response(status, bytes),
@@ -274,6 +276,7 @@ mod tests {
         }
         for origin in [
             "null",
+            "http://user@localhost:5173",
             "http://localhost.example:5173",
             "https://example.com",
             "http://localhost:5173/path",
