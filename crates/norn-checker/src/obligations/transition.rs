@@ -100,16 +100,14 @@ pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, Stri
     let tokens = tokens(source)?;
     let mut expression = tokens.as_slice();
     while let ["(", inner @ .., ")"] = expression {
-        let mut depth = 0_i32;
-        let encloses = expression.iter().enumerate().all(|(index, token)| {
-            if *token == "(" {
-                depth += 1;
-            }
-            if *token == ")" {
-                depth -= 1;
-            }
-            depth > 0 || index + 1 == expression.len()
-        });
+        let encloses = expression.iter().enumerate().try_fold(0_i32, |depth, (index, token)| {
+            let depth = match *token {
+                "(" => depth.checked_add(1)?,
+                ")" => depth.checked_sub(1)?,
+                _ => depth,
+            };
+            (depth > 0 || index.checked_add(1) == Some(expression.len())).then_some(depth)
+        }).is_some();
         if !encloses {
             break;
         }
@@ -125,7 +123,7 @@ pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, Stri
     };
     arithmetic(expression.get(..*position).ok_or("equality lhs")?, symbols)?.combine(
         arithmetic(
-            expression.get(position + 1..).ok_or("equality rhs")?,
+            expression.get(position.checked_add(1).ok_or("equality index")?..).ok_or("equality rhs")?,
             symbols,
         )?,
         -1,
@@ -175,7 +173,7 @@ impl Parser<'_> {
     fn sum(&mut self, depth: usize) -> Result<Affine, String> {
         let mut value = self.atom(depth)?;
         while let Some(operator @ ("+" | "-")) = self.tokens.get(self.index).copied() {
-            self.index += 1;
+            self.index = self.index.checked_add(1).ok_or("affine token budget")?;
             value = value.combine(self.atom(depth)?, if operator == "+" { 1 } else { -1 })?;
         }
         Ok(value)
@@ -189,16 +187,16 @@ impl Parser<'_> {
             .get(self.index)
             .copied()
             .ok_or("missing affine operand")?;
-        self.index += 1;
+        self.index = self.index.checked_add(1).ok_or("affine token budget")?;
         match token {
-            "-" => Affine::default().combine(self.atom(depth + 1)?, -1),
-            "+" => self.atom(depth + 1),
+            "-" => Affine::default().combine(self.atom(depth.checked_add(1).ok_or("affine nesting budget")?)?, -1),
+            "+" => self.atom(depth.checked_add(1).ok_or("affine nesting budget")?),
             "(" => {
-                let value = self.sum(depth + 1)?;
+                let value = self.sum(depth.checked_add(1).ok_or("affine nesting budget")?)?;
                 if self.tokens.get(self.index) != Some(&")") {
                     return Err("unclosed affine operand".into());
                 }
-                self.index += 1;
+                self.index = self.index.checked_add(1).ok_or("affine token budget")?;
                 Ok(value)
             }
             symbol if self.symbols.contains(symbol) => Ok(Affine {
