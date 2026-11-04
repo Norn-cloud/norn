@@ -196,6 +196,10 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   preparation seals claim metadata at its computed identity. Generic observation
   authority cannot create claim metadata or rewrite a retained claim; claim
   identities remain immutable across observation preparation and authorization merges.
+  Seals compare the catalog-effective metadata, including extension defaults.
+  Re-observation never backfills or changes retained metadata when defaults evolve;
+  differing effective values refuse until the existing definition-migration path
+  has made the retained row conform. The typed claim preimage and identity stay fixed.
 - **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
   all source claims remain individually addressable provenance. Observation
   authority is confined to recomputed declared claims. The existing authored
@@ -222,6 +226,9 @@ Named acceptance scenarios:
 - **OBS-LINK-IDENTITY:** changing a source, mapping pin, observation or endpoint
   changes claim identity; repeated evaluation of the same evidence preserves it.
   A clear and an unresolved explicit target are distinct claims.
+- **OBS-LINK-EXTENSION-DEFAULT:** an admitted extension default is included in
+  both creation and retained-read seals. A later changed default cannot rewrite
+  the existing claim through re-observation.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
