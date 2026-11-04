@@ -245,6 +245,14 @@ Named acceptance scenarios:
 - **OBS-LINK-EXTENSION-DEFAULT:** an admitted extension default is included in
   both creation and retained-read seals. A later changed default cannot rewrite
   the existing claim through re-observation.
+- **OBS-LINK-RETARGET:** a superseding source contribution replaces its old
+  endpoint, retaining old evidence and preserving active corroborating claims
+  and unbacked authored edges. Redelivery of an already consumed older event
+  cannot roll the relation back.
+- **OBS-LINK-CLEAR-UNION:** a to-many clear withdraws only its own contribution;
+  another source's asserted endpoint stays present through repeated captures.
+- **OBS-LINK-CONCRETE-DEFAULT:** a pending base-typed claim resolves with the
+  stored subtype's effective link defaults, exactly as commit normalization does.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield

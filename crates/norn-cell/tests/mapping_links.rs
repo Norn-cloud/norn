@@ -560,11 +560,9 @@ fn obs_link_withdrawal_preserves_unbacked_authored_edges() {
 }
 
 #[test]
-fn obs_link_mixed_clear_and_assert_never_oscillate_or_consume() {
+fn obs_link_mixed_clear_and_assert_preserve_other_contributors_without_oscillation() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup_with(&directory.path().join("clear.sqlite"), |artifacts| {
-        many_holding(artifacts)
-    });
+    let mut cell = setup_with(&directory.path().join("clear.sqlite"), |a| many_holding(a));
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows {
@@ -575,15 +573,9 @@ fn obs_link_mixed_clear_and_assert_never_oscillate_or_consume() {
     let expected = graph(&cell);
     let mut changed = rows[4].clone();
     changed["record"]["owner_ref"] = json!("clear");
-    let id = retain_in(&mut cell, "erpnext", &changed, "2", "demo");
-    let before = cell.store().export_commit_count().expect("head");
-    for _ in 0..3 {
-        assert!(matches!(
-            cell.process_mapping_bundle(&id),
-            Err(norn_cell::CellError::UnsupportedMappingProfile)
-        ));
+    for event in ["2", "3", "4"] {
+        capture(&mut cell, "erpnext", &changed, event);
         assert_eq!(graph(&cell), expected);
-        assert_eq!(cell.store().export_commit_count().expect("head"), before);
     }
 }
 

@@ -140,10 +140,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             latest.insert(claim.contribution_id()?, target.clone());
             targets.insert(target);
             if targets.len() > 1
-                && (targets.contains(&None)
-                    || model
-                        .link(&source.object_type, claim.role.as_str())
-                        .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One))
+                && model
+                    .link(&source.object_type, claim.role.as_str())
+                    .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One)
             {
                 return Err(CellError::UnsupportedMappingProfile);
             }
