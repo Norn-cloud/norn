@@ -103,7 +103,7 @@ use norn_ir::{
 };
 
 use crate::action_set::check_action_set;
-use crate::entity_artifacts::{EntityArtifactSetContext, check_entity_artifacts, dedupe_findings};
+use crate::entity_artifacts::{EntityArtifactSetContext, check_entity_artifacts_using, dedupe_findings};
 use crate::graph::{cycle_groups, topological_order};
 use crate::jdm_profile::check_sub_decision_closures;
 use crate::lifecycle_writes::check_lifecycle_write_set;
@@ -309,6 +309,14 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    check_artifact_set_using(artifacts, context, &mut crate::check_artifact)
+}
+
+pub(crate) fn check_artifact_set_using(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
     let normalized_base = normalize_artifacts(context.base, &mut layout_findings);
@@ -318,7 +326,7 @@ pub fn check_artifact_set(
     };
 
     let findings = match resolve_artifact_set(&normalized_artifacts, &normalized_base) {
-        Ok(_resolved) => check_entity_artifacts(&normalized_artifacts, &normalized_context)
+        Ok(_resolved) => check_entity_artifacts_using(&normalized_artifacts, &normalized_context, local)
             .into_iter()
             .chain(scope_findings(&normalized_artifacts, &normalized_base))
             .chain(check_pack_instances(
@@ -365,7 +373,7 @@ pub fn check_artifact_set(
             .collect::<Vec<_>>(),
         Err(resolution) => normalized_artifacts
             .iter()
-            .flat_map(crate::check_artifact)
+            .flat_map(local)
             .chain(crate::markings::check_references(
                 &normalized_artifacts,
                 &normalized_base,
