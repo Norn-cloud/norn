@@ -620,6 +620,27 @@ export interface components {
             pack_version: string;
         };
         /**
+         * @description Where one object version came from: the source record, its document and the
+         *     mapping that produced it. Describes the JSON of
+         *     `norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.
+         */
+        NornInstanceSourceProvenance: {
+            /** @description Content address of the recomputed mapping bundle. */
+            bundleDigest: string;
+            /** @description Digest of the source document payload. */
+            documentDigest: string;
+            /** @description A source system and the record's identity in it. */
+            documentRef: components["schemas"]["NornIrSourceRecordRef"];
+            /** @description Field-level source and rule provenance, by property id. */
+            fieldProvenance: {
+                [key: string]: components["schemas"]["NornIrInstanceProvenance"];
+            };
+            /** @description The mapping declaration that produced the version. */
+            mappingPin: components["schemas"]["NornMappingPin"];
+            /** @description A source system and the record's identity in it. */
+            sourceRecordRef: components["schemas"]["NornIrSourceRecordRef"];
+        };
+        /**
          * @description One typed conjunct of [`AccessRule::all_of`]. Externally tagged and closed:
          *     an unknown node (for example `{"expression": "..."}`) fails to decode.
          */
@@ -7478,6 +7499,76 @@ export interface components {
              * @description The last event sequence number (`0` when empty).
              */
             seq: number;
+        };
+        /** @description One live link touching the requested object. */
+        NornLinkEdge: {
+            /** @description The link id. */
+            link: string;
+            /** @description The source object id. */
+            source: string;
+            /** @description The link's declaring (source) type. */
+            sourceType: string;
+            /** @description The target object id. */
+            target: string;
+            /** @description The declared target type. */
+            targetType: string;
+            /**
+             * Format: int64
+             * @description The link version.
+             */
+            version: number;
+        };
+        /** @description One bounded page of live links touching an object, in both directions. */
+        NornLinkPage: {
+            /** @description Whether more candidate links remain after this page. */
+            hasMore: boolean;
+            /** @description The requested object's identity. */
+            id: string;
+            /** @description Live links on this page. */
+            items: components["schemas"]["NornLinkEdge"][];
+            /** @description The requested object's type. */
+            objectType: string;
+        };
+        /** @description The exact admitted mapping declaration that produced an object version. */
+        NornMappingPin: {
+            /** @description Mapping artifact ID. */
+            artifactId: string;
+            /** @description Canonical artifact digest. */
+            sha256: string;
+            /** @description Admitted artifact version. */
+            version: string;
+        };
+        /** @description One bounded page of a concept's authoritative objects. */
+        NornObjectPage: {
+            /** @description The concept read; records may be of its subtypes. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Candidates on this page held back by source disputes or open quarantining findings.
+             */
+            quarantineCount: number;
+            /** @description Authoritative records on this page. */
+            records: components["schemas"]["NornObjectRecord"][];
+            /** @description The last scanned identity: the next page starts after it. */
+            scannedThrough: string | null;
+        };
+        /** @description One object as the cell stores it, at its current version. */
+        NornObjectRecord: {
+            /** @description The object's identity. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description The tenant scope. */
+            scope: string;
+            /** @description Every stored property by property id; decimals are exact JSON number tokens. */
+            values: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description The owner version (`+1` per write).
+             */
+            version: number;
         };
         /**
          * @description The evaluator that produced an answer.
