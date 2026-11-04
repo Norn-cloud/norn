@@ -1587,7 +1587,6 @@ dependencies = [
  "norn-ir",
  "norn-projections",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1606,6 +1605,7 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "norn-authz",
  "norn-checker",
  "norn-ir",
  "norn-kernel",

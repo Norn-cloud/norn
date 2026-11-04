@@ -1,15 +1,17 @@
 //! In-memory transport for separately loaded, replaceable solver modules.
 
-use std::future::Future;
-use norn_authz::symbolic::{DecisionWithModel, SolverError, Solver, SmtLibScript};
 use norn_authz::symbolic::SatDecision as Sat;
+use norn_authz::symbolic::{DecisionWithModel, SmtLibScript, Solver, SolverError};
+use std::future::Future;
 
 /// In-memory transport implemented by the host's separately loaded official
 /// cvc5 WASM module. SAT must include a model; request get-model only after SAT.
 pub trait WasmModule: Send {
     /// Execute the complete buffered SMTLib query. No subprocess transport.
-    fn solve(&mut self, input: Vec<u8>)
-        -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send;
+    fn solve(
+        &mut self,
+        input: Vec<u8>,
+    ) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send;
 }
 
 /// SymCC's Solver adapter. Uses only upstream-generated SMTLib.
@@ -22,7 +24,10 @@ pub struct MemorySolver<M> {
 impl<M: WasmModule> MemorySolver<M> {
     /// Bind one replaceable module instance to a fresh in-memory buffer.
     pub const fn new(module: M) -> Self {
-        Self { input: Vec::new(), module }
+        Self {
+            input: Vec::new(),
+            module,
+        }
     }
 }
 
@@ -50,52 +55,72 @@ impl<M: WasmModule> Solver for MemorySolver<M> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-use super::*;
-use norn_authz::{ValidatedPolicySet, symbolic::{Analysis, Property, analyze_in_worker}};
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
-struct Noop;
-impl Wake for Noop { fn wake(self: Arc<Self>) {} }
-fn ready<F: Future>(future: F) -> F::Output {
-    let mut future = std::pin::pin!(future);
-    let waker = Waker::from(Arc::new(Noop));
-    match future.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
-        Poll::Ready(value) => value,
-        Poll::Pending => panic!("test double must complete synchronously"),
+    use super::*;
+    use norn_authz::{
+        ValidatedPolicySet,
+        symbolic::{Analysis, Property, analyze_in_worker},
+    };
+    use std::sync::Arc;
+    use std::task::{Poll, Wake, Waker};
+    struct Noop;
+    impl Wake for Noop {
+        fn wake(self: Arc<Self>) {}
     }
-}
-
-fn sets() -> (ValidatedPolicySet, ValidatedPolicySet) {
-    let schema = norn_authz::AuthzSchema::from_projected_cedarschema(
-        include_str!("../../norn-authz/tests/fixtures/order.cedarschema")
-    ).expect("schema");
-    let access = serde_json::from_str(include_str!("../../norn-authz/tests/fixtures/order_access.json")).expect("AccessIR");
-    let set = norn_authz::compile(&schema, &access).expect("admitted fixture");
-    let empty = set.clone();
-    (set, empty)
-}
-
-struct Double(DecisionWithModel);
-impl WasmModule for Double {
-    async fn solve(&mut self, input: Vec<u8>) -> Result<DecisionWithModel, SolverError> {
-        let text = String::from_utf8(input).expect("SMTLib is UTF8");
-        assert!(text.contains("(check-sat)"));
-        Ok(self.0.clone())
+    fn ready<F: Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let waker = Waker::from(Arc::new(Noop));
+        match future
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(&waker))
+        {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("test double must complete synchronously"),
+        }
     }
-}
 
-#[test]
-fn upstream_queries_use_memory_transport_for_every_environment() {
-    let (candidate, _) = sets();
-    for property in [Property::Refinement, Property::Equivalence] {
-        let result = ready(analyze_in_worker(MemorySolver::new(Double(DecisionWithModel::Unsat)), &candidate, &candidate, property));
-        assert_eq!(result, Analysis::Unsat);
+    fn sets() -> (ValidatedPolicySet, ValidatedPolicySet) {
+        let schema = norn_authz::AuthzSchema::from_projected_cedarschema(include_str!(
+            "../../norn-authz/tests/fixtures/order.cedarschema"
+        ))
+        .expect("schema");
+        let access = serde_json::from_str(include_str!(
+            "../../norn-authz/tests/fixtures/order_access.json"
+        ))
+        .expect("AccessIR");
+        let set = norn_authz::compile(&schema, &access).expect("admitted fixture");
+        let empty = norn_authz::compile_all(&schema, &[]).expect("empty set");
+        (set, empty)
     }
-    let result = ready(analyze_in_worker(MemorySolver::new(Double(DecisionWithModel::Unknown)), &candidate, &candidate, Property::Refinement));
-    assert_eq!(result, Analysis::Unknown);
-}
 
+    struct Double(DecisionWithModel);
+    impl WasmModule for Double {
+        async fn solve(&mut self, input: Vec<u8>) -> Result<DecisionWithModel, SolverError> {
+            let text = String::from_utf8(input).expect("SMTLib is UTF8");
+            assert!(text.contains("(check-sat)"));
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn upstream_queries_use_memory_transport_for_every_environment() {
+        let (candidate, previous) = sets();
+        for property in [Property::Refinement, Property::Equivalence] {
+            let result = ready(analyze_in_worker(
+                MemorySolver::new(Double(DecisionWithModel::Unsat)),
+                &candidate,
+                &candidate,
+                property,
+            ));
+            assert_eq!(result, Analysis::Unsat);
+        }
+        let result = ready(analyze_in_worker(
+            MemorySolver::new(Double(DecisionWithModel::Unknown)),
+            &candidate,
+            &previous,
+            Property::Refinement,
+        ));
+        assert_eq!(result, Analysis::Unknown);
+    }
 }

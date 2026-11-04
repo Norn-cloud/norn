@@ -3,13 +3,13 @@
 //! terminable, memory-limited worker (compilation and replay included).
 //! No cvc5 binary or library is linked or distributed by this crate.
 
-use std::future::Future;
 use cedar_policy::{Authorizer, Decision};
 use cedar_policy_symcc::{CedarSymCompiler, CompiledPolicySet, Env};
-pub use cedar_policy_symcc::{solver::Solver, SmtLibScript};
+pub use cedar_policy_symcc::{SmtLibScript, solver::Solver};
+use std::future::Future;
 // Hosts implement the transport without a direct dependency on SymCC.
-pub use cedar_policy_symcc::solver::{Decision as SatDecision, DecisionWithModel, SolverError};
 use crate::ValidatedPolicySet;
+pub use cedar_policy_symcc::solver::{Decision as SatDecision, DecisionWithModel, SolverError};
 
 /// Built-in whole-policy-set property to ask of the candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,19 +107,36 @@ pub async fn analyze_in_worker<S: Solver>(
         return Analysis::Unknown;
     };
     for environment in schema.request_envs() {
-        let Ok(new) = CompiledPolicySet::compile(candidate.cedar_policies(), &environment, schema) else {
+        let Ok(new) = CompiledPolicySet::compile(candidate.cedar_policies(), &environment, schema)
+        else {
             return Analysis::Unknown;
         };
-        let Ok(old) = CompiledPolicySet::compile(previous.cedar_policies(), &environment, schema) else {
+        let Ok(old) = CompiledPolicySet::compile(previous.cedar_policies(), &environment, schema)
+        else {
             return Analysis::Unknown;
         };
         let result = match property {
-            Property::Refinement => compiler.check_implies_with_counterexample_opt(&new, &old).await,
-            Property::Equivalence => compiler.check_equivalent_with_counterexample_opt(&new, &old).await,
+            Property::Refinement => {
+                compiler
+                    .check_implies_with_counterexample_opt(&new, &old)
+                    .await
+            }
+            Property::Equivalence => {
+                compiler
+                    .check_equivalent_with_counterexample_opt(&new, &old)
+                    .await
+            }
         };
         match result {
-            Ok(None) => {},
-            Ok(Some(witness)) => return replay(witness, candidate.cedar_policies(), previous.cedar_policies(), property),
+            Ok(None) => {}
+            Ok(Some(witness)) => {
+                return replay(
+                    witness,
+                    candidate.cedar_policies(),
+                    previous.cedar_policies(),
+                    property,
+                );
+            }
             Err(_) => return Analysis::Unknown,
         }
     }
@@ -136,10 +153,15 @@ fn replay(
     let new = authorizer.is_authorized(&witness.request, candidate, &witness.entities);
     let old = authorizer.is_authorized(&witness.request, previous, &witness.entities);
     let differs = match property {
-        Property::Refinement => new.decision() == Decision::Allow && old.decision() == Decision::Deny,
+        Property::Refinement => {
+            new.decision() == Decision::Allow && old.decision() == Decision::Deny
+        }
         Property::Equivalence => new.decision() != old.decision(),
     };
-    if differs && new.diagnostics().errors().next().is_none() && old.diagnostics().errors().next().is_none() {
+    if differs
+        && new.diagnostics().errors().next().is_none()
+        && old.diagnostics().errors().next().is_none()
+    {
         Analysis::Counterexample(Box::new(witness))
     } else {
         Analysis::Unknown
