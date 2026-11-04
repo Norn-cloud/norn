@@ -65,7 +65,7 @@ impl AdmissionCache {
     pub fn new(tool_sha256: &[u8; 32], policy: &str, assumptions: &str) -> Self {
         Self {
             profile: format!(
-                "norn.incremental-structural/1:{tool_sha256:?}:{policy:?}:{assumptions:?}"
+                "norn.incremental-structural/2:{tool_sha256:?}:{policy:?}:{assumptions:?}"
             ),
             local: BTreeMap::new(),
             global: None,
@@ -113,7 +113,7 @@ impl AdmissionCache {
         let mut next = BTreeMap::new();
         let mut local = |artifact: &ArtifactEnvelope| {
             // This callback receives the same normalized envelope as full admission.
-            let key = exact_artifact_digest(artifact).and_then(|hash| {
+            let key = admission_artifact_digest(artifact).and_then(|hash| {
                 exact_commitment(
                     b"local-admission",
                     &[self.profile.as_bytes(), hash.as_bytes()],
@@ -167,7 +167,7 @@ impl AdmissionCache {
         // identities cannot collapse, nor can moving an artifact into the base.
         let hashes = |pool: &[ArtifactEnvelope]| {
             pool.iter()
-                .map(exact_artifact_digest)
+                .map(admission_artifact_digest)
                 .collect::<Result<Vec<_>, _>>()
         };
         let body = json!({
@@ -192,5 +192,48 @@ fn global_evidence(digest: &str, reused: bool) -> JobEvidence {
         } else {
             EvidenceOrigin::Rechecked
         },
+    }
+}
+
+// Wire serialization intentionally omits lenient decoder diagnostics. They are
+// checker inputs too, so bind them separately without changing protected hashes.
+fn admission_artifact_digest(artifact: &ArtifactEnvelope) -> Result<String, ChallengeError> {
+    let envelope = exact_artifact_digest(artifact)?;
+    let shape = json!({
+        "unknownFields": artifact.payload.unknown_fields(),
+        "invalidExtensions": artifact.payload.has_invalid_extensions(),
+    });
+    let bytes = norn_canonical::serialize_json_verbatim(&shape)
+        .map_err(|_error| ChallengeError::Closure)?;
+    exact_commitment(b"admission-artifact", &[envelope.as_bytes(), &bytes])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used, clippy::indexing_slicing, reason = "fixed lenient decode fixtures")]
+    fn recorded_payload_state_invalidates_local_and_global_reuse() {
+        let original: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+            "../../../fixtures/law-ir/entities.json"
+        )).expect("entities");
+        let registry = std::collections::BTreeSet::new();
+        let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
+        for field in ["unknown_field", "extensions"] {
+            for force_global_change in [false, true] {
+                let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
+                cache.check(&original, &context);
+                let mut edited = original.clone();
+                let mut wire = serde_json::to_value(&edited[0]).expect("wire");
+                wire["payload"][field] = json!(true);
+                edited[0] = serde_json::from_value(wire).expect("lenient root");
+                if force_global_change { edited[1].name.push_str(" changed"); }
+                let result = cache.check(&edited, &context);
+                assert_eq!(crate::diagnostics_to_json(&result.findings),
+                    crate::diagnostics_to_json(&crate::check_artifact_set(&edited, &context)));
+                assert_eq!(result.evidence[0].origin, EvidenceOrigin::Rechecked);
+            }
+        }
     }
 }
