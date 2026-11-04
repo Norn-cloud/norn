@@ -1,0 +1,176 @@
+{
+  "format": "norn-stress/proposals@1",
+  "source": "fixtures/stress/purchase.json",
+  "cases": [
+    {
+      "name": "unknown-measure",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/response/expression",
+      "value": "self.unseen > 0",
+      "code": "law.model.predicate_type",
+      "text": ""
+    },
+    {
+      "name": "numeric-law",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/response/expression",
+      "value": "self.ordered",
+      "code": "law.model.predicate_type",
+      "text": ""
+    },
+    {
+      "name": "wrong-scalar",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/response/expression",
+      "value": "self.ordered == 'four'",
+      "code": "law.model.predicate_type",
+      "text": ""
+    },
+    {
+      "name": "unknown-nested-path",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/response/expression",
+      "value": "self.ordered.missing > 0",
+      "code": "law.model.predicate_type",
+      "text": ""
+    },
+    {
+      "name": "unknown-law-subject",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/subject",
+      "value": "stress.Absent",
+      "code": "law.model.unknown_binding",
+      "text": ""
+    },
+    {
+      "name": "unsupported-law-modality",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/modality",
+      "value": {
+        "kind": "next"
+      },
+      "code": "law.validation.invalid_document",
+      "text": ""
+    },
+    {
+      "name": "missing-law-response",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/payload/response",
+      "value": {
+        "kind": "predicate"
+      },
+      "code": "law.validation.invalid_document",
+      "text": ""
+    },
+    {
+      "name": "missing-law-dependency",
+      "artifact": "stress.purchase_positive.law",
+      "pointer": "/dependencies",
+      "value": [],
+      "code": "law.model.unknown_binding",
+      "text": ""
+    },
+    {
+      "name": "raw-lifecycle-writer",
+      "artifact": "stress.purchase.create.action",
+      "pointer": "/payload/inputSchema/properties/status",
+      "value": {
+        "type": "string"
+      },
+      "code": "artifact_set.lifecycle.direct_write",
+      "text": "lifecycle"
+    },
+    {
+      "name": "undeclared-create-write",
+      "artifact": "stress.purchase.create.action",
+      "pointer": "/payload/writes",
+      "value": [],
+      "code": "artifact_set.action.undeclared_effect_write",
+      "text": "write"
+    },
+    {
+      "name": "unbound-slice",
+      "artifact": "stress.purchase.record_received.action",
+      "pointer": "/payload/slice/0/objectType",
+      "value": "stress.Absent",
+      "code": "artifact_set.action.unknown_slice_type",
+      "text": ""
+    },
+    {
+      "name": "missing-unit-pin",
+      "artifact": "stress.ReceiptLine.entity",
+      "pointer": "/dependencies",
+      "value": [],
+      "code": "core.values.unit_mismatch",
+      "text": "unit"
+    },
+    {
+      "name": "invented-unit",
+      "artifact": "stress.ReceiptLine.entity",
+      "pointer": "/payload/objectType/properties/1/type/unit/code",
+      "value": "crate",
+      "code": "core.values.unit_mismatch",
+      "text": "unit"
+    },
+    {
+      "name": "negative-decimal-scale",
+      "artifact": "stress.ReceiptLine.entity",
+      "pointer": "/payload/objectType/properties/1/type/scale",
+      "value": -1,
+      "code": "entity.validation.invalid_property_type",
+      "text": ""
+    },
+    {
+      "name": "unknown-transition-source",
+      "artifact": "stress.Purchase.entity",
+      "pointer": "/payload/objectType/lifecycles/0/transitions/0/from",
+      "value": [
+        "absent"
+      ],
+      "code": "lifecycle.validation.unknown_state",
+      "text": ""
+    },
+    {
+      "name": "unknown-transition-target",
+      "artifact": "stress.Purchase.entity",
+      "pointer": "/payload/objectType/lifecycles/0/transitions/0/to",
+      "value": "absent",
+      "code": "lifecycle.validation.unknown_state",
+      "text": ""
+    },
+    {
+      "name": "unsafe-effect-kind",
+      "artifact": "stress.purchase.create.action",
+      "pointer": "/payload/effectProgram/kind",
+      "value": "execute_script",
+      "code": "action.validation.invalid_effect",
+      "text": ""
+    },
+    {
+      "name": "unsupported-input-schema",
+      "artifact": "stress.purchase.create.action",
+      "pointer": "/payload/inputSchema/type",
+      "value": "gadget",
+      "code": "action.validation.invalid_schema",
+      "text": ""
+    },
+    {
+      "name": "unknown-implemented-interface",
+      "artifact": "stress.Purchase.entity",
+      "pointer": "/payload/objectType/implements",
+      "value": [
+        "stress.Absent"
+      ],
+      "code": "artifact_set.entity.unknown_interface",
+      "text": ""
+    },
+    {
+      "name": "unknown-transition-binding",
+      "artifact": "stress.purchase.approve.action",
+      "pointer": "/payload/effectProgram/transition",
+      "value": "teleport",
+      "code": "artifact_set.action.unknown_transition",
+      "text": ""
+    }
+  ]
+}
