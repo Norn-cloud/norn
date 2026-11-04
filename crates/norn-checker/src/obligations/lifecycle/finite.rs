@@ -1,7 +1,7 @@
 //! PROOF-LIFECYCLE-2: exact frozen inputs for conditional chart relations, never evidence.
 use super::super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use crate::{EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType};
-use norn_ir::{ArtifactKind, LawIR, PropertyType, RuntimeValue};
+use norn_ir::{LawIR, PropertyType, RuntimeValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Exact stored scalar values, keyed by declaration property ID.
@@ -45,73 +45,216 @@ pub struct Batch {
 fn require(ok: bool, reason: &str) -> Result<(), String> {
     if ok { Ok(()) } else { Err(reason.into()) }
 }
-fn freeze(object: &EffectiveObjectType, bounds: &Bounds, domain_bytes: usize) -> Result<Snapshot, String> {
-    require(object.lifecycles.len() == 1, "requires one isolated effective lifecycle")?;
-    require(!object.has_invariants && object.owned_collections.is_empty(), "declared invariants or owned effects are outside the conditional profile")?;
-    let machine=object.lifecycle(&bounds.property).ok_or("unknown lifecycle property")?;
-    require(!machine.states.is_empty() && machine.states.len()<=128 && machine.lifecycle.transitions.len()<=128,"chart exceeds finite profile")?;
-    require(object.properties.len()<=16,"more than 16 stored fields")?;
-    require(!object.keys.iter().any(|key|key.components.iter().any(|member|member.as_str()==bounds.property)),"lifecycle-dependent identity is outside profile")?;
-    let state_bytes=machine.states.iter().map(|state|state.len().saturating_mul(6)).max().unwrap_or(0);
-    let row_bytes=domain_bytes.saturating_add(state_bytes).saturating_add(bounds.property.len().saturating_mul(6)).saturating_add(32);
-    require(row_bytes.saturating_mul(machine.states.len())<=4_194_304,"finite snapshot byte budget exceeded")?;
-    let mut rows=vec![Row::new()];
-    let mut fields=BTreeMap::new();
+fn freeze(
+    object: &EffectiveObjectType,
+    bounds: &Bounds,
+    domain_bytes: usize,
+) -> Result<Snapshot, String> {
+    require(
+        object.lifecycles.len() == 1,
+        "requires one isolated effective lifecycle",
+    )?;
+    require(
+        !object.has_invariants && object.owned_collections.is_empty(),
+        "declared invariants or owned effects are outside the conditional profile",
+    )?;
+    let machine = object
+        .lifecycle(&bounds.property)
+        .ok_or("unknown lifecycle property")?;
+    require(
+        !machine.states.is_empty()
+            && machine.states.len() <= 128
+            && machine.lifecycle.transitions.len() <= 128,
+        "chart exceeds finite profile",
+    )?;
+    require(object.properties.len() <= 16, "more than 16 stored fields")?;
+    require(
+        !object.keys.iter().any(|key| {
+            key.components
+                .iter()
+                .any(|member| member.as_str() == bounds.property)
+        }),
+        "lifecycle-dependent identity is outside profile",
+    )?;
+    let state_bytes = machine
+        .states
+        .iter()
+        .map(|state| state.len().saturating_mul(6))
+        .max()
+        .unwrap_or(0);
+    let row_bytes = domain_bytes
+        .saturating_add(state_bytes)
+        .saturating_add(bounds.property.len().saturating_mul(6))
+        .saturating_add(32);
+    require(
+        row_bytes.saturating_mul(machine.states.len()) <= 4_194_304,
+        "finite snapshot byte budget exceeded",
+    )?;
+    let mut rows = vec![Row::new()];
+    let mut fields = BTreeMap::new();
     for property in &object.properties {
-        require(!property.computed && !property.nullable,"computed or nullable scalar context is unsupported")?;
-        let EffectiveKind::Base(kind)=&property.kind else { return Err("unresolved scalar context type".into()); };
-        require(matches!(kind,PropertyType::Text {..}|PropertyType::Integer {..}|PropertyType::Decimal {..}|PropertyType::Boolean {}|PropertyType::Enum {..}),"unsupported frozen scalar kind")?;
-        fields.insert(property.id.as_str().to_owned(),kind.clone());
-        if property.id.as_str()==bounds.property {
-            require(!property.protected(),"rule-owned lifecycle property is outside profile")?;
-            for state in &machine.states { property.check_runtime_value(&RuntimeValue::String(state.clone())).map_err(|error|error.to_string())?; }
+        require(
+            !property.computed && !property.nullable,
+            "computed or nullable scalar context is unsupported",
+        )?;
+        let EffectiveKind::Base(kind) = &property.kind else {
+            return Err("unresolved scalar context type".into());
+        };
+        require(
+            matches!(
+                kind,
+                PropertyType::Text { .. }
+                    | PropertyType::Integer { .. }
+                    | PropertyType::Decimal { .. }
+                    | PropertyType::Boolean {}
+                    | PropertyType::Enum { .. }
+            ),
+            "unsupported frozen scalar kind",
+        )?;
+        fields.insert(property.id.as_str().to_owned(), kind.clone());
+        if property.id.as_str() == bounds.property {
+            require(
+                !property.protected(),
+                "rule-owned lifecycle property is outside profile",
+            )?;
+            for state in &machine.states {
+                property
+                    .check_runtime_value(&RuntimeValue::String(state.clone()))
+                    .map_err(|error| format!("{error:?}"))?;
+            }
             continue;
         }
-        let literals=bounds.frozen.get(property.id.as_str()).ok_or("missing explicit frozen scalar domain")?;
-        let count=rows.len().saturating_mul(literals.len()).saturating_mul(machine.states.len());
-        require(!literals.is_empty() && count<=4096,"empty or excessive frozen context domain (4096 nodes)")?;
-        require(count.saturating_mul(row_bytes)<=4_194_304,"finite snapshot byte budget exceeded")?;
-        let values=literals.iter().map(|literal|RuntimeValue::from_json_text(literal).map_err(|error|error.to_string())).collect::<Result<Vec<_>,_>>()?;
+        let literals = bounds
+            .frozen
+            .get(property.id.as_str())
+            .ok_or("missing explicit frozen scalar domain")?;
+        let count = rows
+            .len()
+            .saturating_mul(literals.len())
+            .saturating_mul(machine.states.len());
+        require(
+            !literals.is_empty() && count <= 4096,
+            "empty or excessive frozen context domain (4096 nodes)",
+        )?;
+        require(
+            count.saturating_mul(row_bytes) <= 4_194_304,
+            "finite snapshot byte budget exceeded",
+        )?;
+        let values = literals
+            .iter()
+            .map(|literal| RuntimeValue::from_json_text(literal).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
         for value in &values {
-            property.check_runtime_value(value).map_err(|error|error.to_string())?;
-            require(property.canonical_runtime_value(value)==*value,"frozen scalar requires storage materialization")?;
+            property
+                .check_runtime_value(value)
+                .map_err(|error| format!("{error:?}"))?;
+            require(
+                property.canonical_runtime_value(value) == *value,
+                "frozen scalar requires storage materialization",
+            )?;
         }
-        let mut expanded=Vec::new();
-        for row in &rows { for value in &values { let mut next=row.clone();next.insert(property.id.as_str().to_owned(),value.clone());expanded.push(next); } }
-        rows=expanded;
+        let mut expanded = Vec::new();
+        for row in &rows {
+            for value in &values {
+                let mut next = row.clone();
+                next.insert(property.id.as_str().to_owned(), value.clone());
+                expanded.push(next);
+            }
+        }
+        rows = expanded;
     }
-    require(bounds.frozen.keys().all(|name|name!=&bounds.property && object.property(name).is_some()),"extra frozen scalar domain")?;
-    let mut nodes=Vec::new();
-    for row in rows { for state in &machine.states { let mut next=row.clone();next.insert(bounds.property.clone(),RuntimeValue::String(state.clone()));nodes.push(next); } }
-    Ok(Snapshot{object_type:object.name.as_str().to_owned(),machine:machine.clone(),fields,nodes,laws:Vec::new()})
+    require(
+        bounds
+            .frozen
+            .keys()
+            .all(|name| name != &bounds.property && object.property(name).is_some()),
+        "extra frozen scalar domain",
+    )?;
+    let mut nodes = Vec::new();
+    for row in rows {
+        for state in &machine.states {
+            let mut next = row.clone();
+            next.insert(bounds.property.clone(), RuntimeValue::String(state.clone()));
+            nodes.push(next);
+        }
+    }
+    Ok(Snapshot {
+        object_type: object.name.as_str().to_owned(),
+        machine: machine.clone(),
+        fields,
+        nodes,
+        laws: Vec::new(),
+    })
 }
 impl ApprovedContract {
     /// Reconstruct admission and exact scalar inputs before any relation or solver runs.
     /// # Errors
     /// Admission/challenge or bounds-document resource refusal; no solver verdict.
-    pub fn lifecycle_inputs(&self,source:&DefinitionSource,registry:&BTreeSet<norn_ir::PropertyTypeName>,bounds:&Bounds)->Result<Batch,ChallengeError> {
-        let challenge=self.challenge(source,registry)?;
-        if bounds.frozen.len()>16 || bounds.frozen.values().any(|values|values.len()>4096) { return Err(ChallengeError::Limit); }
-        let raw_bytes=bounds.frozen.iter().fold(0_usize,|total,(name,values)|total.saturating_add(name.len()).saturating_add(values.iter().map(String::len).fold(0_usize,usize::saturating_add)));
-        if raw_bytes>10_000 { return Err(ChallengeError::Limit); }
-        let domains=norn_canonical::serialize_json_verbatim(&bounds.frozen).map_err(|_error|ChallengeError::LossyInput)?;
-        let pool:Vec<_>=source.base.iter().chain(&source.artifacts).cloned().collect();
-        let catalog=EffectiveCatalog::from_artifacts_with_registry(&pool,registry);
-        let laws=pool.iter().filter(|artifact|artifact.kind()==ArtifactKind::Law).map(|artifact| {
-            let law:LawIR=artifact.payload.to_json_value().decode().map_err(|_error|ChallengeError::Closure)?;
-            Ok((artifact,law))
-        }).collect::<Result<Vec<_>,ChallengeError>>()?;
-        let object=catalog.object_type_named(&bounds.object_type).and_then(Result::ok);
-        let snapshot=object.ok_or_else(||"unavailable effective subject".into()).and_then(|object| {
-            if let Some(reason)=super::unsupported_binding(object,&laws) { return Err(reason); }
-            let mut snapshot=freeze(object,bounds,domains.len())?;
-            snapshot.laws=laws.iter().filter(|(_,law)|object.lineage.iter().any(|ty|ty.as_str()==law.subject)||object.interfaces.iter().any(|ty|ty.as_str()==law.subject)).map(|(artifact,law)|(artifact.artifact_id.clone(),law.clone())).collect();
-            Ok(snapshot)
+    pub fn lifecycle_inputs(
+        &self,
+        source: &DefinitionSource,
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        bounds: &Bounds,
+    ) -> Result<Batch, ChallengeError> {
+        let challenge = self.challenge(source, registry)?;
+        if bounds.frozen.len() > 16 || bounds.frozen.values().any(|values| values.len() > 4096) {
+            return Err(ChallengeError::Limit);
+        }
+        let raw_bytes = bounds.frozen.iter().fold(0_usize, |total, (name, values)| {
+            total.saturating_add(name.len()).saturating_add(
+                values
+                    .iter()
+                    .map(String::len)
+                    .fold(0_usize, usize::saturating_add),
+            )
         });
-        let document=serde_json::json!({"profile":"norn.lifecycle.frozen/1","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
-        let bytes=norn_canonical::serialize_json_verbatim(&document).map_err(|_error|ChallengeError::LossyInput)?;
-        if bytes.len()>65_536 { return Err(ChallengeError::Limit); }
-        let bounds_json=String::from_utf8(bytes).map_err(|_error|ChallengeError::LossyInput)?;
-        Ok(Batch{challenge,bounds_json,snapshot})
+        if raw_bytes > 10_000 {
+            return Err(ChallengeError::Limit);
+        }
+        let domains = norn_canonical::serialize_json_verbatim(&bounds.frozen)
+            .map_err(|_error| ChallengeError::LossyInput)?;
+        let pool: Vec<_> = source
+            .base
+            .iter()
+            .chain(&source.artifacts)
+            .cloned()
+            .collect();
+        let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, registry);
+        let laws = super::law_bindings(&pool)?;
+        let object = catalog
+            .object_type_named(&bounds.object_type)
+            .and_then(Result::ok);
+        let snapshot = object
+            .ok_or_else(|| "unavailable effective subject".into())
+            .and_then(|object| {
+                if let Some(reason) = super::unsupported_binding(object, &laws) {
+                    return Err(reason);
+                }
+                let mut snapshot = freeze(object, bounds, domains.len())?;
+                snapshot.laws = laws
+                    .iter()
+                    .filter(|(_, law)| {
+                        object.lineage.iter().any(|ty| ty.as_str() == law.subject)
+                            || object
+                                .interfaces
+                                .iter()
+                                .any(|ty| ty.as_str() == law.subject)
+                    })
+                    .map(|(artifact, law)| (artifact.artifact_id.clone(), law.clone()))
+                    .collect();
+                Ok(snapshot)
+            });
+        let document = serde_json::json!({"profile":"norn.lifecycle.frozen/1","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
+        let bytes = norn_canonical::serialize_json_verbatim(&document)
+            .map_err(|_error| ChallengeError::LossyInput)?;
+        if bytes.len() > 65_536 {
+            return Err(ChallengeError::Limit);
+        }
+        let bounds_json = String::from_utf8(bytes).map_err(|_error| ChallengeError::LossyInput)?;
+        Ok(Batch {
+            challenge,
+            bounds_json,
+            snapshot,
+        })
     }
 }

@@ -26,7 +26,7 @@ fn constitution() -> DefinitionSource {
     )
     .expect("exact source")
 }
-fn authority(source: &DefinitionSource) -> ApprovedContract {
+pub(super) fn authority(source: &DefinitionSource) -> ApprovedContract {
     ApprovedContract::approve(
         source,
         &BTreeSet::new(),
