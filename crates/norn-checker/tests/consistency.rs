@@ -722,3 +722,35 @@ fn path_equation_endpoint_mismatch_refuses_artifact_admission() {
             .any(|d| d.code.as_str() == "consistency.path_equation.invalid")
     );
 }
+
+#[test]
+fn path_equation_base_only_errors_do_not_reject_tenant() {
+    let base = [path_concept(&serde_json::json!([{"id":"bad","left":["missing"],"right":[]}]), false).unwrap()];
+    let findings = norn_checker::check_entity_artifacts(
+        &[],
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(), base: &base, tenant: None,
+        },
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn path_equation_inherited_failure_names_tenant_subtype() {
+    let base = [path_concept(&serde_json::json!([{"id":"identity","left":["next"],"right":[]}]), false).unwrap()];
+    let mut child = serde_json::to_value(path_concept(&serde_json::json!([]), true).unwrap()).unwrap();
+    child["artifactId"] = serde_json::json!("paths.Child.entity");
+    child["name"] = serde_json::json!("Child");
+    child["payload"]["objectType"]["name"] = serde_json::json!("paths.Child");
+    child["payload"]["objectType"]["extends"] = serde_json::json!("paths.Node");
+    child["dependencies"] = serde_json::json!([{"artifactId":"paths.Node.entity","kind":"entity","version":"0.1.0","required":true}]);
+    let findings = norn_checker::check_entity_artifacts(
+        &[serde_json::from_value(child).unwrap()],
+        &norn_checker::EntityArtifactSetContext {
+            registry: &std::collections::BTreeSet::new(), base: &base, tenant: None,
+        },
+    );
+    assert!(findings.iter().any(|finding| finding.code == "consistency.path_equation.invalid"
+        && finding.artifact_id.as_deref() == Some("paths.Child.entity")), "{findings:?}");
+    assert!(!findings.iter().any(|finding| finding.artifact_id.as_deref() == Some("paths.Node.entity")), "{findings:?}");
+}

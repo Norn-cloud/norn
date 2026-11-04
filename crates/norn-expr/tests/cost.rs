@@ -1072,24 +1072,14 @@ fn certified_fuel_bounds_exhaustive_small_inputs_and_detects_quadratic_mutant() 
 }
 
 #[test]
-fn fuel_certificate_checker_measurement() {
+fn fuel_certificate_replay_preserves_certified_bound() {
     use norn_expr::check::certify_expression;
     let env = independent_roots_environment();
     let expression = Expression::compile("count(input.items, #.ok)").expect("compile");
     let (_, certificate) =
-        certify_expression(&expression, &env, &Type::Number, &limits()).expect("warm identity");
-    let start = std::time::Instant::now();
-    for _ in 0..100 {
-        certificate
-            .verify(&expression, &env, &Type::Number, &limits())
-            .expect("replay");
-    }
-    eprintln!(
-        "fuel certificate: 100 warm replays {:?}; source_bytes={}, units={}, source cap={}, AST node cap={}",
-        start.elapsed(),
-        expression.source().len(),
-        certificate.units,
-        StructuralLimits::NORN_EXPR_4.max_source_bytes,
-        StructuralLimits::NORN_EXPR_4.max_nodes
-    );
+        certify_expression(&expression, &env, &Type::Number, &limits()).expect("certify");
+    certificate
+        .verify(&expression, &env, &Type::Number, &limits())
+        .expect("replay");
+    assert!(certificate.units > 0);
 }

@@ -183,7 +183,11 @@ pub(crate) fn check_entity_artifacts_using(
             .flat_map(local)
             .chain(check_artifact_set_entity_model(artifacts, context))
             .chain(crate::markings::check_references(artifacts, context.base))
-            .chain(path_findings),
+            .chain(path_findings.into_iter().filter(|finding| {
+                artifacts.iter().any(|artifact| {
+                    finding.artifact_id.as_deref() == Some(artifact.artifact_id.as_str())
+                })
+            })),
     )
 }
 

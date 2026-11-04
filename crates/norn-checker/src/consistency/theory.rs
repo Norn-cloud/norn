@@ -335,7 +335,22 @@ pub fn lower_path_equations(
                         }
                         theory.dependencies.push(Dependency::Egd(egd));
                     }
-                    Err(message) => refuse(&origin, format!("{label}: {message}")),
+                    Err(message) => {
+                        let instance_origin = if instance == owner.as_str() {
+                            origin.clone()
+                        } else {
+                            RuleOrigin {
+                                artifact_id: artifacts.iter().find_map(|artifact| {
+                                    catalog.object_type(&artifact.artifact_id)
+                                        .and_then(Result::ok)
+                                        .filter(|object| object.name.as_str() == instance)
+                                        .map(|_| artifact.artifact_id.clone())
+                                }),
+                                pointer: "/payload/objectType".into(),
+                            }
+                        };
+                        refuse(&instance_origin, format!("{label}: {message}"));
+                    }
                 }
             }
         }
