@@ -730,3 +730,36 @@ fn native_order_rejects_incomplete_law_identities() {
         assert!(lower_declared_order(&[broken], &norn_expr::schema::Schema::Boolean).is_err());
     }
 }
+
+#[test]
+#[allow(clippy::expect_used, reason = "locale conformance fixtures")]
+fn wording_pack_term_is_required_in_every_declared_locale_for_both_views() {
+    use norn_ir::requirement_display::RequirementView;
+    let mut r = requirement();
+    r.norm.law.scope.root = norn_ir::LawRoot::Pack("toy.root".to_owned());
+    for entry in r.wording.0.values_mut() {
+        entry.terms.pack = Some("pack".to_owned());
+    }
+    for requested in ["en", "ar"] {
+        let complete = RequirementView {
+            requirement: r.clone(),
+            locale: requested.to_owned(),
+        };
+        assert!(complete.slots().is_ok());
+        assert!(complete.direction().is_ok());
+        for incomplete in ["en", "ar"] {
+            for value in [None, Some(" ".to_owned())] {
+                let mut view = complete.clone();
+                view.requirement
+                    .wording
+                    .0
+                    .get_mut(incomplete)
+                    .expect("declared locale")
+                    .terms
+                    .pack = value;
+                assert_eq!(view.slots(), Err("law.wording.incomplete_locale"));
+                assert_eq!(view.direction(), Err("law.wording.incomplete_locale"));
+            }
+        }
+    }
+}

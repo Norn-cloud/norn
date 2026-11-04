@@ -59,7 +59,8 @@ allow-wildcard-paths = true
 deny = [
   { crate = "worker", wrappers = ["norn-cell-do"], reason = "SKELETON.md: workers-rs is confined to the Cloudflare host adapter" },
   { crate = "rusqlite", wrappers = ["norn-cell"], reason = "SKELETON.md: only norn-cell (native test driver) may use rusqlite" },
-  { crate = "cedar-policy", wrappers = ["norn-authz"], reason = "SKELETON.md: cedar-policy is confined to norn-authz and is never an expression evaluator" },
+# Cedar's own symbolic compiler; used only from norn-authz.
+  { crate = "cedar-policy", wrappers = ["norn-authz", "cedar-policy-symcc"], reason = "SKELETON.md: cedar-policy is confined to norn-authz and is never an expression evaluator" },
   { crate = "zen-engine", wrappers = ["norn-decisions"], reason = "SKELETON.md: the kernel consumes only Norn-owned decision types via norn-decisions" },
   { crate = "zen-expression", wrappers = ["norn-expr", "zen-engine", "zen-tmpl"], reason = "SKELETON.md: norn-expr owns ZEN Expression; zen-engine and its zen-tmpl use it internally" },
 ]

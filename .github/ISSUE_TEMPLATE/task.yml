@@ -1,0 +1,51 @@
+name: Task
+description: Record a task using Norn's spec vocabulary.
+labels: ["kind:task"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [task]
+    validations: {required: true}
+  - type: dropdown
+    id: track
+    attributes:
+      label: Track
+      options: ["track:cell-network", "track:ci-infra", "track:data-analysis", "track:demo-ui", "track:dx", "track:engine-core", "track:hosts", "track:laws-proofs", "track:mappings-integrations"]
+    validations: {required: true}
+  - type: dropdown
+    id: checkpoint
+    attributes:
+      label: Checkpoint
+      options: [C1, C2, C3]
+    validations: {required: true}
+  - type: input
+    id: specs
+    attributes:
+      label: "Spec IDs:"
+      description: Cite stable invariant IDs and named scenarios; use new for a proposed contract.
+    validations: {required: true}
+  - type: dropdown
+    id: concept
+    attributes:
+      label: Primary concept
+      options: [rea-party-resource, rea-event-process, rea-obligation-ledger, law, writer-action, mapping, question-metric, fold, world-projection, cell-host, function, evidence-proof, authorization, identity-value, connector]
+    validations: {required: true}
+  - type: input
+    id: relations
+    attributes:
+      label: Relates-to / supersedes
+      description: "Use issue references; supersedes requires full acceptance coverage."
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome and evidence
+      description: State the goal, governing Core areas, evidence and any change to the spec.
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Name observable scenarios and gates; epics list children, visions state a falsifiable target.
+    validations: {required: true}

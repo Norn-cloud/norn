@@ -43,9 +43,10 @@ pub fn project_host_access_schema(object_types: &[ObjectTypeDef]) -> String {
     };
     let resources: Vec<String> = resources.into_iter().collect();
     format!(
-        "namespace norn {{\n  entity Ledger = {{\n    scope: Norn::Scope\n  }};\n  entity Definitions = {{\n    scope: Norn::Scope\n  }};\n  entity Marking = {{\n    scope: Norn::Scope,\n    id: String\n  }};\n  entity Source = {{\n    scope: Norn::Scope\n  }};\n}}\nnamespace Norn {{\n  action \"norn.read\" appliesTo {{\n    principal: [Actor],\n    resource: [{}],\n    context: {{\n      scope: Scope\n    }}\n  }};\n{}  action \"norn.observe\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Source],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.reveal\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.declassify\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n}}\n",
+        "namespace norn {{\n  entity Ledger = {{\n    scope: Norn::Scope\n  }};\n  entity Definitions = {{\n    scope: Norn::Scope\n  }};\n  entity Marking = {{\n    scope: Norn::Scope,\n    id: String\n  }};\n  entity Source = {{\n    scope: Norn::Scope\n  }};\n  entity RefusalDetail = {{\n    scope: Norn::Scope\n  }};\n}}\nnamespace Norn {{\n  action \"norn.read\" appliesTo {{\n    principal: [Actor],\n    resource: [{}],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"{disclose}\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::RefusalDetail],\n    context: {{\n      scope: Scope,\n      governedAction: String\n    }}\n  }};\n{}  action \"norn.observe\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Source],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.reveal\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.declassify\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n}}\n",
         resources.join(", "),
-        admin_action
+        admin_action,
+        disclose = norn_ir::access::DISCLOSE_REFUSAL_DETAIL_ACTION
     )
 }
 
@@ -576,6 +577,8 @@ fn cedar_principal_attribute_type(attribute: CedarPrincipalAttribute) -> &'stati
     }
 }
 
+/// AUTH-SYNC-WRITER-1: authorization schema includes the declared writer footprint;
+/// catalog invocation entry points remain tied to the primary effect.
 fn render_actions(
     schema: &mut String,
     types: &CedarObjectTypes<'_>,
@@ -617,6 +620,13 @@ fn render_actions(
         };
         let kind = program.target().object_kind;
         let mut resource_kinds = BTreeSet::from([kind]);
+        // AUTH-SYNC-WRITER-1: commit authorizes every declared writer target.
+        // Catalog invocation targets stay tied to the primary effect.
+        if action.synchronous_rule.is_some()
+            && matches!(program, ActionEffectProgram::FireTransition { .. })
+        {
+            resource_kinds.extend(action.writes.iter().map(|write| write.entity_kind.as_str()));
+        }
         if let ActionEffectProgram::MutateParentWithRows { collections, .. } = program {
             let lineage = types.lineages.get(kind).cloned().unwrap_or_default();
             for collection in collections {
@@ -869,7 +879,7 @@ fn project_value_type(
             }
             Some(CedarAttribute::String)
         }
-        PropertyType::Integer {} => Some(CedarAttribute::Long),
+        PropertyType::Integer { .. } => Some(CedarAttribute::Long),
         PropertyType::Decimal { unit, .. } => {
             add_loss(
                 losses,
