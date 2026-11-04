@@ -533,7 +533,7 @@ fn live_route_documents_conform_to_the_generated_sdk() {
     let model = mapped.store().model().clone();
     drop(mapped);
     let store = CellStore::open(
-        directory.path().join("cell.sqlite"),
+        &directory.path().join("cell.sqlite"),
         model,
         norn_cell::StoreOptions::default(),
     )
