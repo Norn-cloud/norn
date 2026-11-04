@@ -6325,6 +6325,33 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
     },
+    "LinkImage": {
+      "description": "The source path a [`PathMapping`] assigns to one target link.",
+      "type": "object",
+      "properties": {
+        "concept": {
+          "description": "The target concept declaring the link.",
+          "type": "string"
+        },
+        "link": {
+          "description": "The target link ID.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Forward source link IDs from the image of `concept`; empty is identity.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "concept",
+        "link",
+        "path"
+      ]
+    },
     "LinkMap": {
       "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
       "type": "object",
@@ -6509,6 +6536,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/ObjectMap"
+          }
+        },
+        "pathMappings": {
+          "description": "Required path preservation obligations over the named entity artifacts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathMappingBinding"
           }
         },
         "source": {
@@ -8127,6 +8161,66 @@
       "required": [
         "instanceId",
         "pack"
+      ]
+    },
+    "PathMapping": {
+      "description": "PATH-MAP-1: a declared mapping `F: target -> source` between two concept\ncatalogs. Each target concept names its source concept and each mapped\ntarget link a forward source path; source data moves to the target by\npullback along these paths. Unmapped target links are never produced.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Stable declaration identity, retained by generated TGDs.",
+          "type": "string"
+        },
+        "links": {
+          "description": "Images of target links. Two images of one link make it non-functional.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LinkImage"
+          }
+        },
+        "objects": {
+          "description": "Target concept name to source concept name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "objects",
+        "links"
+      ]
+    },
+    "PathMappingBinding": {
+      "description": "Catalog bindings for a required path mapping. Admission binds evidence to\nthe exact envelopes (including equations), and the enclosing MappingIR.",
+      "type": "object",
+      "properties": {
+        "mapping": {
+          "description": "Declared object and link images.",
+          "$ref": "#/$defs/PathMapping"
+        },
+        "sourceEntities": {
+          "description": "Source entity artifact IDs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "targetEntities": {
+          "description": "Target entity artifact IDs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sourceEntities",
+        "targetEntities",
+        "mapping"
       ]
     },
     "PolicyObligation": {
