@@ -345,6 +345,7 @@ pub fn check_artifact_set(
             .chain(crate::mapping::check_mapping_artifacts(
                 &normalized_artifacts,
                 &normalized_base,
+                normalized_context.registry,
             ))
             // Typed Widget UX references and expression contracts resolve
             // only after the candidate and installed-base artifact pool

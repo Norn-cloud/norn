@@ -44,6 +44,7 @@ pub fn mapping_key(artifact: &ArtifactEnvelope) -> String {
 pub fn check_mapping_artifacts(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     // One deterministic work ceiling across every required path obligation.
@@ -68,7 +69,7 @@ pub fn check_mapping_artifacts(
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
         if !path_refused {
-            let findings = path_findings(artifact, mapping, artifacts, base, &work);
+            let findings = path_findings(artifact, mapping, artifacts, base, registry, &work);
             path_refused = findings
                 .iter()
                 .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
@@ -109,6 +110,7 @@ fn path_findings(
     mapping: &MappingIr,
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
     work: &crate::consistency::chase::AdmissionWork,
 ) -> Vec<Diagnostic> {
     use crate::consistency::{ChaseBudget, PATH_MAPPING_INVALID, path_mapping::admit_with_work};
@@ -148,7 +150,7 @@ fn path_findings(
                 &source,
                 &target,
                 &binding.mapping,
-                &BTreeSet::new(),
+                registry,
                 ChaseBudget::default(),
                 work,
             )?;
