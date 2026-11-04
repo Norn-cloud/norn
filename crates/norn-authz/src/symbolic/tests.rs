@@ -1,4 +1,8 @@
-#![expect(clippy::expect_used, clippy::panic, reason = "fixture assertions and deliberately synchronous test doubles")]
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixture assertions and deliberately synchronous test doubles"
+)]
 
 use super::*;
 use cedar_policy::{Context, Entities, Request};
