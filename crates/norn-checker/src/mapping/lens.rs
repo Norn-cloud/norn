@@ -115,19 +115,7 @@ fn check_declaration(
     if sources.is_empty() || sources.len() > 32 || put.len() != sources.len() {
         return Err("unknown: invalid finite domain or put table size".into());
     }
-    let put = put
-        .into_iter()
-        .map(|[no, yes]| {
-            Ok([
-                no.parse::<usize>().map_err(|_error| "unknown: put index")?,
-                yes.parse::<usize>()
-                    .map_err(|_error| "unknown: put index")?,
-            ])
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    if put.iter().flatten().any(|index| *index >= sources.len()) {
-        return Err("unknown put-back".into());
-    }
+    let put = parse_put(put, sources.len())?;
     for (row, source) in sources.iter().enumerate() {
         if source.is_empty()
             || source.len() > 16
@@ -190,6 +178,23 @@ fn check_declaration(
     let lens = AdmittedLens { sources, get, put };
     check_laws(&lens)?;
     Ok(Some(lens))
+}
+
+fn parse_put(put: Vec<[String; 2]>, source_states: usize) -> Result<Vec<[usize; 2]>, String> {
+    let put = put
+        .into_iter()
+        .map(|[no, yes]| {
+            Ok([
+                no.parse::<usize>().map_err(|_error| "unknown: put index")?,
+                yes.parse::<usize>()
+                    .map_err(|_error| "unknown: put index")?,
+            ])
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if put.iter().flatten().any(|index| *index >= source_states) {
+        return Err("unknown put-back".into());
+    }
+    Ok(put)
 }
 
 fn check_source_schema(
