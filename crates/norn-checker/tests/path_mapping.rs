@@ -1,3 +1,4 @@
+//! PATH-MAP-1: declared mutation, composition and cost controls.
 #![allow(
     clippy::unwrap_used,
     clippy::indexing_slicing,
