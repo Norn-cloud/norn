@@ -1,7 +1,7 @@
 //! PROOF-LIFECYCLE-2: exact frozen inputs for conditional chart relations, never evidence.
 use super::super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use crate::{EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType};
-use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, PropertyType, RuntimeValue};
+use norn_ir::{ArtifactKind, LawIR, PropertyType, RuntimeValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Exact stored scalar values, keyed by declaration property ID.
