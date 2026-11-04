@@ -139,6 +139,6 @@ proptest::proptest! {
         let mut profile=bounds();profile.frozen.insert("loss_fine_g".into(),vec![loss.to_string()]);
         let snapshot=batch(&source(true),&profile).snapshot.expect("bounded");
         proptest::prop_assert_eq!(snapshot.nodes.len(),snapshot.machine.states.len());
-        for row in snapshot.nodes { proptest::prop_assert_eq!(&row["loss_fine_g"],&norn_ir::RuntimeValue::from_json_text(&loss.to_string()).expect("exact")); }
+        for row in snapshot.nodes { proptest::prop_assert_eq!(&row["loss_fine_g"],&norn_ir::RuntimeValue::from_json_text(loss.to_string()).expect("exact")); }
     }
 }
