@@ -66,6 +66,7 @@ impl QueryContext {
         record: &ObjectRecord,
         frontier: Option<u64>,
         exclusions: &mut BTreeMap<String, String>,
+        finding_members: &mut BTreeSet<String>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<bool, CellError> {
         if record.scope != self.scope {
@@ -74,6 +75,7 @@ impl QueryContext {
         if !visible(record)? {
             return Ok(false);
         }
+        finding_members.insert(record.id.clone());
         if let Some(finding) = reader
             .question_findings(&self.world, record, frontier)?
             .first()
@@ -305,6 +307,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
+            let mut finding_members = BTreeSet::new();
             for id in ids {
                 let selected = if let Some(cutoff) = cutoff {
                     historical::historical_record(
@@ -337,6 +340,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &record,
                     cutoff.map(|c| c.frontier),
                     &mut exclusions,
+                    &mut finding_members,
                     visible,
                 )? {
                     continue;
@@ -360,6 +364,7 @@ impl<E: SqlEngine> CellStore<E> {
                     result,
                     contributions,
                     members,
+                    finding_members,
                 },
                 &mut budget,
             )
@@ -401,6 +406,7 @@ struct Snapshot {
     result: QueryResult,
     contributions: Contributions,
     members: BTreeSet<String>,
+    finding_members: BTreeSet<String>,
 }
 
 #[derive(Clone, Default)]
