@@ -200,8 +200,8 @@ installation paths. Compiler stages retain exit codes; oracle records retain ver
 trace values in state order. Run-specific diagnostics and ITF creation metadata
 stay outside recorded evidence. Structured primary results remain bound.
 The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
-Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
-count, worker count and exclusions. Model digests, invariant selectors and step
+Law-level bounds use sorted-key exact-text canonical JSON and retain the complete
+shared profile, toolchain, expected state count, worker count and exclusions. Model digests, invariant selectors and step
 selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
 
 **PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains

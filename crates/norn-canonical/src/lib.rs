@@ -1808,6 +1808,7 @@ mod tests {
                 .expect("UTF8")
                 .contains("1.2300e+2")
         );
+        assert!(String::from_utf8(bytes.clone()).expect("UTF8").contains("900719925474099312345"));
         let roundtrip: &serde_json::value::RawValue = serde_json::from_slice(&bytes).expect("raw");
         assert_eq!(
             bytes,
