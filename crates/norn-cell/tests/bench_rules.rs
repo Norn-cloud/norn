@@ -14,6 +14,10 @@ use norn_kernel::{ActionOutcome, TypeCatalog};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+fn set(value: &mut Value, pointer: &str, replacement: Value) {
+    *value.pointer_mut(pointer).expect("existing template field") = replacement;
+}
+
 fn declarations(rule: &Value) -> Vec<ArtifactEnvelope> {
     let baseline: Vec<Value> =
         serde_json::from_str(include_str!("../../../fixtures/stress/purchase.json"))
@@ -26,7 +30,9 @@ fn declarations(rule: &Value) -> Vec<ArtifactEnvelope> {
             .clone()
     };
     let mut entity = find("stress.Purchase.entity");
-    entity["payload"]["objectType"]
+    entity
+        .pointer_mut("/payload/objectType")
+        .expect("object type")
         .as_object_mut()
         .expect("entity")
         .remove("lifecycles");
@@ -44,17 +50,32 @@ fn declarations(rule: &Value) -> Vec<ArtifactEnvelope> {
     let mut schema = json!({"id":{"type":"string"}});
     for field in fields {
         properties.push(json!({"id":field,"type":numeric,"default":"0"}));
-        schema[field] = json!({"type":"number","nornType":numeric});
+        schema
+            .as_object_mut()
+            .expect("input properties")
+            .insert(field.into(), json!({"type":"number","nornType":numeric}));
     }
-    entity["payload"]["objectType"]["properties"] = json!(properties);
+    set(
+        &mut entity,
+        "/payload/objectType/properties",
+        json!(properties),
+    );
     let mut action = find("stress.purchase.create.action");
-    action["payload"]["inputSchema"]["properties"] = schema;
-    action["payload"]["inputSchema"]["required"] = json!(["id"]);
+    set(&mut action, "/payload/inputSchema/properties", schema);
+    set(&mut action, "/payload/inputSchema/required", json!(["id"]));
     let mut law = find("stress.purchase_positive.law");
-    law["artifactId"] = json!(format!("bench.{}.law", rule["id"].as_str().expect("id")));
-    law["payload"]["id"] = rule["id"].clone();
-    law["payload"]["rationale"] = rule["requirement"].clone();
-    law["payload"]["response"]["expression"] = rule["expression"].clone();
+    set(
+        &mut law,
+        "/artifactId",
+        json!(format!("bench.{}.law", rule["id"].as_str().expect("id"))),
+    );
+    set(&mut law, "/payload/id", rule["id"].clone());
+    set(&mut law, "/payload/rationale", rule["requirement"].clone());
+    set(
+        &mut law,
+        "/payload/response/expression",
+        rule["expression"].clone(),
+    );
     [entity, action, law]
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("LawIR corpus"))
@@ -114,7 +135,10 @@ fn selected_rules_admit_commit_and_refuse_with_atomicity_and_controls() {
                     .with_interfaces(&interfaces)
                     .with_governing_laws(&artifacts);
                 let mut input = rule[sample].clone();
-                input["id"] = json!("sample");
+                input
+                    .as_object_mut()
+                    .expect("sample input")
+                    .insert("id".into(), json!("sample"));
                 let before = cell.store().read().dump().expect("before");
                 let result = stress::run(
                     "stress.purchase.create.action",
