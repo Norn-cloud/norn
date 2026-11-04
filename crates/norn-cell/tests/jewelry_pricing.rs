@@ -108,6 +108,7 @@ fn audit_type(mut definition: ObjectTypeDef) -> ObjectTypeDef {
     ]
     .into_iter()
     .map(|id| Property {
+        protected: false,
         id: PropertyId(id.into()),
         description: None,
         property_type: PropertyType::JsonExt { schema: None },
