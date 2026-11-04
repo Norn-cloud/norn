@@ -3835,6 +3835,15 @@ export interface components {
          *     member name space per object type.
          */
         NornIrLinkId: string;
+        /** @description The source path a [`PathMapping`] assigns to one target link. */
+        NornIrLinkImage: {
+            /** @description The target concept declaring the link. */
+            concept: string;
+            /** @description The target link ID. */
+            link: string;
+            /** @description Forward source link IDs from the image of `concept`; empty is identity. */
+            path: string[];
+        };
         /**
          * @description One link rule: the produced object links to the object another map
          *     produces with this key (an RML referencing object map with its join).
@@ -3952,6 +3961,8 @@ export interface components {
             interfaces: string[];
             /** @description The object maps, in evaluation order. */
             maps: components["schemas"]["NornIrObjectMap"][];
+            /** @description Required path preservation obligations over the named entity artifacts. */
+            pathMappings?: components["schemas"]["NornIrPathMappingBinding"][];
             /**
              * @description The one `source_schema` artifact the mapping reads, pinned by
              *     content hash.
@@ -4876,6 +4887,35 @@ export interface components {
             instanceId: string;
             pack: components["schemas"]["NornIrInterpretationEndpoint"];
         };
+        /**
+         * @description PATH-MAP-1: a declared mapping `F: target -> source` between two concept
+         *     catalogs. Each target concept names its source concept and each mapped
+         *     target link a forward source path; source data moves to the target by
+         *     pullback along these paths. Unmapped target links are never produced.
+         */
+        NornIrPathMapping: {
+            /** @description Stable declaration identity, retained by generated TGDs. */
+            id: string;
+            /** @description Images of target links. Two images of one link make it non-functional. */
+            links: components["schemas"]["NornIrLinkImage"][];
+            objects: components["schemas"]["NornIrPathMappingPropertyObjects"];
+        };
+        /**
+         * @description Catalog bindings for a required path mapping. Admission binds evidence to
+         *     the exact envelopes (including equations), and the enclosing MappingIR.
+         */
+        NornIrPathMappingBinding: {
+            /** @description Declared object and link images. */
+            mapping: components["schemas"]["NornIrPathMapping"];
+            /** @description Source entity artifact IDs. */
+            sourceEntities: string[];
+            /** @description Target entity artifact IDs. */
+            targetEntities: string[];
+        };
+        /** @description Target concept name to source concept name. */
+        NornIrPathMappingPropertyObjects: {
+            [key: string]: string;
+        };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {
             appliesTo: string;
@@ -4929,8 +4969,44 @@ export interface components {
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /** @description FA-PROTECT-1: only sealed rule outputs may write this inherited field. */
+            protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
             type: components["schemas"]["NornIrPropertyType"];
+        };
+        /**
+         * @description METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
+         *     Missing declarations permit point reads but never authorize aggregation.
+         */
+        NornIrPropertyAdditivity: components["schemas"]["NornIrPropertyAdditivityOneOf0"] | components["schemas"]["NornIrPropertyAdditivityOneOf1"] | components["schemas"]["NornIrPropertyAdditivityOneOf2"] | components["schemas"]["NornIrPropertyAdditivityOneOf3"] | components["schemas"]["NornIrPropertyAdditivityOneOf4"];
+        /** @description No aggregation contract has been declared. */
+        NornIrPropertyAdditivityOneOf0: {
+            /** @enum {string} */
+            kind: "undeclared";
+        };
+        /** @description Summable across entities and time. */
+        NornIrPropertyAdditivityOneOf1: {
+            /** @enum {string} */
+            kind: "additive";
+        };
+        /** @description Summable across entities at a single instant, never across time. */
+        NornIrPropertyAdditivityOneOf2: {
+            /** @enum {string} */
+            kind: "semi_additive";
+        };
+        /** @description Requires a separately declared weighting calculation. */
+        NornIrPropertyAdditivityOneOf3: {
+            /** @enum {string} */
+            kind: "non_additive";
+        };
+        /** @description Recompute from the sums of these operands, never average stored ratios. */
+        NornIrPropertyAdditivityOneOf4: {
+            /** @description Denominator property at the same object grain. */
+            denominator: string;
+            /** @enum {string} */
+            kind: "ratio";
+            /** @description Numerator property at the same object grain. */
+            numerator: string;
         };
         /**
          * @description Constraints on the values of a property type.
@@ -5046,6 +5122,8 @@ export interface components {
         };
         /** @description A signed 64-bit integer. */
         NornIrPropertyTypeOneOf1: {
+            /** @description Explicit aggregation contract; a missing declaration fails closed. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /** @enum {string} */
             kind: "integer";
         };
@@ -5061,6 +5139,8 @@ export interface components {
          *     quantity in a declared unit.
          */
         NornIrPropertyTypeOneOf2: {
+            /** @description Explicit aggregation contract; units do not imply additivity. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /**
              * @description Authoritative currency path relative to the object holding this amount.
              *     Monetary decimals declare this instead of a quantity unit. Metrics

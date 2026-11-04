@@ -1,0 +1,7 @@
+{
+  "code": "consistency.path_equation.invalid",
+  "message": "A declared path equation is malformed or leaves the functional concrete-type fragment",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

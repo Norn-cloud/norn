@@ -1,0 +1,266 @@
+//! Bounded lifecycle input snapshots; no backend verdict is simulated.
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "bounded source fixtures"
+)]
+use super::lifecycle::finite::{Batch, Bounds};
+use super::*;
+
+fn source(entity_root: bool) -> DefinitionSource {
+    let mut declarations: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json"))
+            .expect("actual authored source");
+    if entity_root {
+        // A separate supported test declaration; the actual App-root pack stays Unknown.
+        declarations[1]["payload"]["scope"]["root"] = json!({"kind":"entity","id":"demo.Melt"});
+        for artifact in declarations.as_array_mut().expect("artifacts") {
+            artifact["provenance"]["sourcePath"] = json!("tests/lifecycle_finite");
+        }
+        declarations[1]["payload"]["provenance"]["sourcePath"] = json!("tests/lifecycle_finite");
+    }
+    definition_source(&declarations)
+}
+fn definition_source(declarations: &Value) -> DefinitionSource {
+    let units: Value = serde_json::from_str(include_str!(
+        "../../../../registry/core/artifacts/core.units.json"
+    ))
+    .expect("units");
+    DefinitionSource::parse(
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(declarations).expect("source"))
+            .expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&vec![units]).expect("base"))
+            .expect("UTF8"),
+    )
+    .expect("exact source")
+}
+fn bounds() -> Bounds {
+    Bounds {
+        object_type: "demo.Melt".into(),
+        property: "status".into(),
+        seed: 0,
+        frozen: BTreeMap::from([
+            ("id".into(), vec!["\"synthetic\"".into()]),
+            ("input_fine_g".into(), vec!["2".into()]),
+            ("output_fine_g".into(), vec!["1".into()]),
+            ("loss_fine_g".into(), vec!["0".into(), "1".into()]),
+        ]),
+    }
+}
+fn batch(source: &DefinitionSource, bounds: &Bounds) -> Batch {
+    super::lifecycle_tests::authority(source)
+        .lifecycle_inputs(source, &BTreeSet::new(), bounds)
+        .expect("fresh challenge")
+}
+#[test]
+fn lifecycle_inputs_are_exact_complete_and_source_bound() {
+    let prepared = batch(&source(true), &bounds());
+    let snapshot = prepared.snapshot.expect("separate supported declaration");
+    assert_eq!(snapshot.nodes.len(), 10);
+    assert_eq!(snapshot.machine.states.len(), 5);
+    assert_eq!(snapshot.laws.len(), 1);
+    assert!(
+        matches!(&snapshot.fields["input_fine_g"],norn_ir::PropertyType::Decimal{scale,unit:Some(unit),..} if scale.0==3 && unit.code=="g")
+    );
+    for state in &snapshot.machine.states {
+        assert_eq!(
+            snapshot
+                .nodes
+                .iter()
+                .filter(|row| row["status"] == norn_ir::RuntimeValue::String(state.clone()))
+                .count(),
+            2
+        );
+    }
+    let repeated = batch(&source(true), &bounds());
+    assert_eq!(prepared.challenge.sha256(), repeated.challenge.sha256());
+    assert_eq!(prepared.bounds_json, repeated.bounds_json);
+    let profile: Value = serde_json::from_str(&prepared.bounds_json).expect("pinned profile");
+    assert_eq!(
+        prepared.bounds_json.as_bytes(),
+        norn_canonical::canonical_json_exact_of(&profile).expect("canonical profile")
+    );
+}
+#[test]
+fn lifecycle_input_refusals_never_clip_the_domain() {
+    assert!(
+        batch(&source(false), &bounds())
+            .snapshot
+            .expect_err("actual App root stays Unknown")
+            .contains("UnsupportedUntilB2")
+    );
+    let mut profile = bounds();
+    profile
+        .frozen
+        .insert("loss_fine_g".into(), vec!["0.0001".into()]);
+    assert!(batch(&source(true), &profile).snapshot.is_err());
+    profile = bounds();
+    profile.frozen.remove("id");
+    assert!(
+        batch(&source(true), &profile)
+            .snapshot
+            .expect_err("no implicit context")
+            .contains("missing explicit")
+    );
+    profile = bounds();
+    profile
+        .frozen
+        .insert("status".into(), vec!["\"posted\"".into()]);
+    assert!(
+        batch(&source(true), &profile)
+            .snapshot
+            .expect_err("no enum clipping")
+            .contains("extra frozen")
+    );
+    profile = bounds();
+    profile
+        .frozen
+        .insert("id".into(), vec!["\"synthetic\"".into(); 600]);
+    let reason = batch(&source(true), &profile)
+        .snapshot
+        .expect_err("full product refused");
+    assert_eq!(
+        reason,
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
+    profile = bounds();
+    profile
+        .frozen
+        .insert("id".into(), vec![format!("\"{}\"", "x".repeat(4096))]);
+    profile.frozen.insert(
+        "input_fine_g".into(),
+        (0..128).map(|i| i.to_string()).collect(),
+    );
+    assert!(
+        batch(&source(true), &profile)
+            .snapshot
+            .expect_err("byte product refuses as a whole")
+            .contains("budget")
+    );
+    let source = source(true);
+    profile = bounds();
+    profile.object_type = "x".repeat(10_001);
+    assert_eq!(
+        super::lifecycle_tests::authority(&source)
+            .lifecycle_inputs(&source, &BTreeSet::new(), &profile)
+            .expect_err("oversized selector"),
+        ChallengeError::Limit
+    );
+}
+// Separately attributed chart-only declarations isolate the finite input boundary.
+fn cap_source(empty_enum: bool) -> DefinitionSource {
+    let mut declarations: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json"))
+            .expect("source");
+    declarations.as_array_mut().expect("artifacts").truncate(1);
+    declarations[0]["provenance"]["sourcePath"] = json!("tests/lifecycle_finite_caps");
+    let object = &mut declarations[0]["payload"]["objectType"];
+    let status = object["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .iter_mut()
+        .find(|p| p["id"] == "status")
+        .expect("status");
+    status["type"]["values"] = if empty_enum {
+        json!([])
+    } else {
+        json!([{"value":"only"}])
+    };
+    status["default"] = json!("only");
+    object["lifecycles"] =
+        json!([{"property":"status","initial":["only"],"terminal":["only"],"transitions":[]}]);
+    definition_source(&declarations)
+}
+fn cap_bounds(inputs: u32, outputs: u32) -> Bounds {
+    let mut profile = bounds();
+    profile.frozen.insert(
+        "input_fine_g".into(),
+        (0..inputs).map(|i| i.to_string()).collect(),
+    );
+    profile.frozen.insert(
+        "output_fine_g".into(),
+        (0..outputs).map(|i| i.to_string()).collect(),
+    );
+    profile
+        .frozen
+        .insert("loss_fine_g".into(), vec!["0".into()]);
+    profile
+}
+#[test]
+fn lifecycle_inputs_accept_exactly_4096_nodes() {
+    let snapshot = batch(&cap_source(false), &cap_bounds(64, 64))
+        .snapshot
+        .expect("64 by 64 by one state");
+    assert_eq!(snapshot.nodes.len(), 4096);
+    let unique: BTreeSet<_> = snapshot
+        .nodes
+        .iter()
+        .map(|row| norn_canonical::serialize_json_verbatim(row).expect("row"))
+        .collect();
+    assert_eq!(unique.len(), 4096);
+}
+#[test]
+fn lifecycle_inputs_refuse_the_complete_4097_node_product() {
+    let reason = batch(&cap_source(false), &cap_bounds(17, 241))
+        .snapshot
+        .expect_err("17 by 241 by one state");
+    assert_eq!(
+        reason,
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
+}
+#[test]
+fn lifecycle_inputs_reject_an_empty_domain() {
+    let mut profile = cap_bounds(1, 1);
+    profile
+        .frozen
+        .get_mut("loss_fine_g")
+        .expect("domain")
+        .clear();
+    assert_eq!(
+        batch(&cap_source(false), &profile)
+            .snapshot
+            .expect_err("empty domain"),
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
+}
+#[test]
+fn lifecycle_inputs_reject_an_empty_enum_at_admission() {
+    let source = cap_source(true);
+    let registry = BTreeSet::new();
+    let diagnostics = crate::check_artifact_set(
+        &source.artifacts,
+        &crate::EntityArtifactSetContext {
+            registry: &registry,
+            base: &source.base,
+            tenant: None,
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == crate::property_types::codes::EMPTY_ENUM)
+    );
+    assert_eq!(
+        ApprovedContract::approve(
+            &source,
+            &registry,
+            json!({"expr":"norn-zen/6"}),
+            json!({"store":"empty"}),
+            json!({"level":"bounded"})
+        )
+        .expect_err("empty enum"),
+        ChallengeError::NotAdmitted
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn every_frozen_choice_keeps_the_complete_chart(loss in 0_u8..5) {
+        let mut profile=bounds();profile.frozen.insert("loss_fine_g".into(),vec![loss.to_string()]);
+        let snapshot=batch(&source(true),&profile).snapshot.expect("bounded");
+        proptest::prop_assert_eq!(snapshot.nodes.len(),snapshot.machine.states.len());
+        for row in snapshot.nodes { proptest::prop_assert_eq!(&row["loss_fine_g"],&norn_ir::RuntimeValue::from_json_text(loss.to_string()).expect("exact")); }
+    }
+}

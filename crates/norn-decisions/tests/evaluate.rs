@@ -1636,6 +1636,8 @@ fn val_exact_runtime_preserves_predicates_intermediates_and_explicit_stores() {
     use norn_expr::Expression;
     use norn_ir::{PropertyType, Rounding, WholeNumber};
     let site = |rounding| PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+
         scale: WholeNumber(2),
         rounding,
         unit: None,
@@ -1710,7 +1712,9 @@ proptest::proptest! {
     fn val_exact_runtime_division_matches_signed_integer_reference(a in -10000_i32..10000, b in 1_i32..100, mode in 0..4_usize) {
         use norn_ir::{PropertyType, Rounding, WholeNumber};
         let rounding = [Rounding::Refuse, Rounding::TowardZero, Rounding::HalfEven, Rounding::HalfAwayFromZero][mode];
-        let site = PropertyType::Decimal { scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
+        let site = PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+ scale: WholeNumber(2), rounding: Some(rounding), unit: None, currency_source: None, per_unit: None, };
         let expression = norn_expr::Expression::compile(&format!("{a} / {b}")).unwrap();
         let result = expression.evaluate_exact_metered(&Value::Null, EvaluationBudget::default(), Some(&site)).result;
         let numerator = a * 100;
@@ -1774,7 +1778,9 @@ proptest::proptest! {
         let coefficient = i128::from(a);
         let text = if scale == 0 { a.to_string() } else { format!("{}{}.{:0width$}", if a<0 {"-"} else {""}, coefficient.abs()/factor, coefficient.abs()%factor, width=usize::try_from(scale).unwrap()) };
         let number: norn_expr::Number = text.parse().unwrap();
-        let site = norn_ir::PropertyType::Decimal { scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None, per_unit:None };
+        let site = norn_ir::PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+ scale:norn_ir::WholeNumber(2), rounding:Some(mode), unit:None, currency_source:None, per_unit:None };
         let expected = norn_expr::rescale_decimal(&site, &number);
         let env = norn_expr::ZenTypeEnv::input_only(std::collections::BTreeMap::new(), norn_expr::EnvOptions::default()).unwrap();
         let source = norn_expr::Expression::compile(&format!("round({}, 2, '{spelling}')", number.as_str())).unwrap();
@@ -1796,7 +1802,11 @@ fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
         links: Vec::new(),
         property: PropertyId("currency".into()),
     });
-    let site = |scale, unit, currency_source, per_unit| json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()});
+    let site = |scale, unit, currency_source, per_unit| {
+        json!({"type":"number","nornType":serde_json::to_value(PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::Refuse)}).unwrap()})
+    };
     let slice = closed(
         &json!({"currency":{"type":"string","enum":["USD"]},"rate":site(6,None,currency.clone(),Some(unit(denominator))),"grams":site(3,Some(unit("g")),None,None)}),
     );
@@ -1814,6 +1824,12 @@ fn bounded_rate_rule(denominator: &str, output_currency: &str) -> Json {
 #[test]
 fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
     let decision = admit_inline(&bounded_rate_rule("g", "USD"));
+    assert!(!decision.assignment_fuel().is_empty());
+    for assignment in decision.assignment_fuel() {
+        assert!(assignment.fuel.units > 0);
+        assert_eq!(assignment.fuel.semantics.len(), 64);
+        assert!(!assignment.source.is_empty());
+    }
     let slice = Value::object([
         ("currency", Value::String("USD".into())),
         ("rate", num("15")),

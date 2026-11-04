@@ -1,0 +1,7 @@
+{
+  "code": "object_type.validation.link_property_protection_unsupported",
+  "message": "protected link properties require sealed link authority, which is not supported",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

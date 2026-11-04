@@ -1406,6 +1406,10 @@
             "$ref": "#/$defs/MarkingId"
           }
         },
+        "protected": {
+          "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field.",
+          "type": "boolean"
+        },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
           "$ref": "#/$defs/PropertyType"
@@ -1415,6 +1419,91 @@
       "required": [
         "id",
         "type"
+      ]
+    },
+    "PropertyAdditivity": {
+      "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation.",
+      "oneOf": [
+        {
+          "description": "No aggregation contract has been declared.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "undeclared"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities and time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities at a single instant, never across time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Requires a separately declared weighting calculation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Recompute from the sums of these operands, never average stored ratios.",
+          "type": "object",
+          "properties": {
+            "denominator": {
+              "description": "Denominator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ratio"
+            },
+            "numerator": {
+              "description": "Numerator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "numerator",
+            "denominator"
+          ]
+        }
       ]
     },
     "PropertyConstraints": {
@@ -1477,6 +1566,10 @@
           "description": "A signed 64-bit integer.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; a missing declaration fails closed.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "integer"
@@ -1491,6 +1584,10 @@
           "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; units do not imply additivity.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "currencySource": {
               "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
               "$ref": "#/$defs/DimensionPath"
