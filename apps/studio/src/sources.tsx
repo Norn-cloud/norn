@@ -10,11 +10,11 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
-import { RecordsPanel } from "./objects.tsx"
+import { ObjectRecords } from "./objects.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
-function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table className="text-[13px] tabular-nums">
@@ -25,7 +25,7 @@ function DenseTable({ head, children }: { readonly head: ReactNode; readonly chi
   )
 }
 
-const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
+export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
 function Systems({ catalog }: { readonly catalog: Catalog }) {
   const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
@@ -52,7 +52,7 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
 function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
-    <Link to="/sources/$type" params={{ type: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle>{concept.title}</CardTitle>
@@ -116,7 +116,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
 /** One object type as a record page: what it is, its fields, links, rules and where its records come from. */
 function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; readonly concept: Concept }) {
   const link = (target: string) => catalog.byName.has(target)
-    ? <Link to="/sources/$type" params={{ type: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
+    ? <Link to="/sources/$concept" params={{ concept: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
     : <span>{conceptTitle(target)}</span>
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
@@ -162,7 +162,6 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
             : <p className="text-muted-foreground">No rule is declared on this object type itself.</p>}
         </Well>
       </Panel>
-      {concept.kind === "concept" && <RecordsPanel objectType={concept.name} />}
       <Panel icon={Database} label="Where its records come from">
         <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-sm text-muted-foreground">No connected system maps records into it directly.</p>}</div>
       </Panel>
@@ -170,19 +169,18 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
   )
 }
 
-/** One object type's record page; the submenu lists the others. */
+/** One object type's page: its definition, then its records; the submenu lists the others. */
 export function ObjectTypePage() {
-  // Reached at /sources/<type> and, with no identity, through the record route.
-  const { type = "" } = useParams({ strict: false })
-  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
-  const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  const { concept: type = "" } = useParams({ strict: false })
+  const { read, catalog } = useCatalog()
   const concept = catalog?.byName.get(type)
   return (
-    <>
+    <div className="space-y-6">
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-    </>
+      {concept?.kind === "concept" && <ObjectRecords concept={concept} />}
+    </div>
   )
 }
 
@@ -194,9 +192,15 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
     .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces", icon: kind === "concept" ? Box : Layers, tint: kind === "concept" ? (1 as const) : (3 as const) })))
 }
 
-export function SourcesPage() {
+/** The admitted catalog, indexed once per read. */
+export function useCatalog() {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  return { read, catalog }
+}
+
+export function SourcesPage() {
+  const { read, catalog } = useCatalog()
   const [search, setSearch] = useState("")
   const matches = (concept: Concept) => `${concept.title} ${concept.description ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
@@ -234,7 +238,6 @@ export function SourcesPage() {
             ))}
           </Well>
         </Panel>
-        <p className="text-meta text-muted-foreground">The records inside each object type are not available yet.</p>
       </>}
     </section>
   )

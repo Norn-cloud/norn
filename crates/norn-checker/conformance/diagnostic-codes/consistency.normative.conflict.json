@@ -1,0 +1,7 @@
+{
+  "code": "consistency.normative.conflict",
+  "message": "Declared priority cycle, unresolved opposing rules or protected layer clash",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

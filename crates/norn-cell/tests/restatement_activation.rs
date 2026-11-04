@@ -744,6 +744,13 @@ fn generated_restatement_sequence(changes: Vec<(i64, u8, bool, bool, bool)>) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     let (mut store, plan, mut context, model) = setup(&path);
+    assert!(
+        norn_checker::metric::compute::certificate::question(&plan)
+            .algebraic
+            .iter()
+            .all(|result| *result
+                == norn_checker::metric::compute::certificate::Algebraic::ProvedAlgebraic)
+    );
     let point = cutoff(&store, &context);
     stage(&mut store, &plan, &context, point);
     drop(store);

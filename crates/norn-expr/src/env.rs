@@ -174,7 +174,9 @@ impl Type {
         Self::List(Box::new(self))
     }
 
-    fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
+    /// Stable type encoding in the explicitly selected environment format.
+    #[must_use]
+    pub fn to_canonical_value(&self, version: TypeEnvVersion) -> JsonValue {
         match self {
             Self::Bool => kind("bool", []),
             Self::Text { format } => match format {
@@ -1697,13 +1699,14 @@ impl<'d, 'e> Derivation<'d, 'e> {
         loop {
             let ty = match current {
                 PropertyType::Text { format } => Type::Text { format: *format },
-                PropertyType::Integer {} => Type::Integer,
+                PropertyType::Integer { .. } => Type::Integer,
                 PropertyType::Decimal {
                     scale,
                     unit,
                     rounding,
                     currency_source,
                     per_unit,
+                    ..
                 } => Type::Decimal {
                     scale: scale.0,
                     unit: unit.clone(),

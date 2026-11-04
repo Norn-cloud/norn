@@ -154,6 +154,27 @@ fn raw(system: &str, record: &Value) -> norn_kernel::Observed<RuntimeValue> {
     }
 }
 
+/// Each continuation page the engine returns after `after`, until it returns no cursor.
+fn retain_continuations(
+    reader: &norn_cell::StoreReader<'_>,
+    object_type: &str,
+    mut after: Option<String>,
+) {
+    while let Some(cursor) = after {
+        let next = NornObjectPage::new(
+            object_type,
+            reader
+                .authoritative_page(MAIN_WORLD, object_type, Some(&cursor), 100)
+                .expect("continuation page"),
+        );
+        retained(
+            &format!("{object_type}.after.{}.page.json", file_name(&cursor)),
+            &next,
+        );
+        after = next.scanned_through;
+    }
+}
+
 fn file_name(id: &str) -> String {
     id.replace('/', "~")
 }
@@ -211,18 +232,20 @@ fn three_systems_object_reads_are_the_cells_exact_documents() {
         let page = NornObjectPage::new(object_type, page);
         for record in &page.records {
             let name = file_name(&record.id);
+            // Each record is read and retained under its concrete type, as Studio links it.
+            let concrete = record.object_type.as_str();
             let object = reader
-                .authoritative_object(MAIN_WORLD, object_type, &record.id)
+                .authoritative_object(MAIN_WORLD, concrete, &record.id)
                 .expect("object read")
                 .expect("present");
             retained(
-                &format!("{object_type}/{name}.object.json"),
+                &format!("{concrete}/{name}.object.json"),
                 &NornObjectRecord::from(object),
             );
             let links = reader
                 .links_touching_page(
                     MAIN_WORLD,
-                    object_type,
+                    concrete,
                     &record.id,
                     LinkDirection::Both,
                     None,
@@ -231,23 +254,25 @@ fn three_systems_object_reads_are_the_cells_exact_documents() {
                 )
                 .expect("link page");
             retained(
-                &format!("{object_type}/{name}.links.json"),
-                &NornLinkPage::new(object_type, &record.id, links),
+                &format!("{concrete}/{name}.links.json"),
+                &NornLinkPage::new(concrete, &record.id, links),
             );
             let mut budget = DecodeBudget::new(&ReactiveLimits {
                 max_scan: 100,
                 max_candidate_bytes_per_commit: 10_000_000,
                 ..ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1())
             });
-            let fact = norn_ir::FactRef::new(object_type, &record.id, record.version);
+            let fact = norn_ir::FactRef::new(concrete, &record.id, record.version);
             let lineage = reader
                 .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
                 .expect("source lineage")
                 .expect("a mapped object retains its source bundle");
-            retained(&format!("{object_type}/{name}.source.json"), &lineage);
+            retained(&format!("{concrete}/{name}.source.json"), &lineage);
         }
         index.insert(object_type, page.records.len());
+        let after = page.scanned_through.clone();
         retained(&format!("{object_type}.page.json"), &page);
+        retain_continuations(&reader, object_type, after);
     }
     assert_eq!(
         index["canon.Item"], 1,

@@ -7,7 +7,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::chase::{ChaseBudget, ChaseError, ChaseOutcome, Fact, Value, chase, first_violation};
+use super::chase::{
+    AdmissionWork, ChaseBudget, ChaseError, ChaseOutcome, Fact, Value, chase, chase_with_work,
+    first_violation, first_violation_with_work,
+};
 use super::theory::{Atom, Dependency, RuleOrigin, Term, Tgd, Theory, TheoryError};
 use super::{codes, conflict_message, finding, origin_of, refusal};
 use crate::{Diagnostic, DiagnosticSeverity};
@@ -71,6 +74,14 @@ fn join(theories: &[&Theory], keep: impl Fn(&Dependency) -> bool) -> Theory {
 /// constraint.
 #[must_use]
 pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) -> Vec<Diagnostic> {
+    check_schema_compatibility_with_work(exchange, budget, &AdmissionWork::new(usize::MAX))
+}
+
+pub(crate) fn check_schema_compatibility_with_work(
+    exchange: &Exchange<'_>,
+    budget: ChaseBudget,
+    work: &AdmissionWork,
+) -> Vec<Diagnostic> {
     if let Err(error) = exchange.validate() {
         return vec![refusal(exchange.mapping, &error)];
     }
@@ -81,7 +92,7 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
             relation: relation.clone(),
             values: (0..columns.len()).map(Value::Null).collect(),
         };
-        match chase(&merged, &[frozen], budget) {
+        match chase_with_work(&merged, &[frozen], budget, work) {
             Ok(ChaseOutcome::Model(_)) => {}
             Ok(ChaseOutcome::Conflict(conflict)) => findings.push(finding(
                 codes::INCOMPATIBLE,
@@ -115,6 +126,7 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
             &source_side,
             &source,
             budget,
+            work,
         ) {
             Ok(None) => {}
             Ok(Some(witness)) => findings.push(finding(
@@ -149,6 +161,7 @@ fn unpreserved(
     source_side: &Theory,
     source: &BTreeSet<&str>,
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<Option<Vec<Fact>>, ChaseError> {
     let body = match constraint {
         Dependency::Tgd(tgd) => &tgd.body,
@@ -165,8 +178,9 @@ fn unpreserved(
             .filter(|d| matches!(d, Dependency::Egd(_)))
             .cloned(),
     );
-    for candidate in unfoldings(body, mapping, budget)? {
-        let ChaseOutcome::Model(model) = chase(source_side, &candidate, budget)? else {
+    for candidate in unfoldings(body, mapping, budget, work)? {
+        let ChaseOutcome::Model(model) = chase_with_work(source_side, &candidate, budget, work)?
+        else {
             continue;
         };
         // Report the verified source instance, not the unfolding seed.
@@ -191,11 +205,11 @@ fn unpreserved(
                     .collect(),
             })
             .collect();
-        let violated = match chase(&equations, &grounded, budget)? {
+        let violated = match chase_with_work(&equations, &grounded, budget, work)? {
             ChaseOutcome::Conflict(conflict) => conflict.egd == constraint.id(),
             ChaseOutcome::Model(mapped) => {
                 matches!(constraint, Dependency::Tgd(_))
-                    && first_violation(constraint, &mapped, budget)?.is_some()
+                    && first_violation_with_work(constraint, &mapped, budget, work)?.is_some()
             }
         };
         if violated {
@@ -234,6 +248,7 @@ fn unfoldings(
     body: &[Atom],
     mapping: &Theory,
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<Vec<Vec<Fact>>, ChaseError> {
     let options: Vec<Vec<(&[Atom], &Atom)>> = body
         .iter()
@@ -257,6 +272,7 @@ fn unfoldings(
         let mut next = Vec::new();
         for prefix in &combinations {
             for &choice in choices {
+                work.charge()?;
                 if next.len() >= budget.max_facts {
                     return Err(ChaseError::BudgetExceeded {
                         resource: "facts",
@@ -319,6 +335,13 @@ fn unfoldings(
                         }
                     })
                     .collect();
+                work.charge()?;
+                if facts.len() >= budget.max_facts {
+                    return Err(ChaseError::BudgetExceeded {
+                        resource: "unfolding facts",
+                        limit: budget.max_facts,
+                    });
+                }
                 facts.insert(Fact {
                     relation: atom.relation.clone(),
                     values,
