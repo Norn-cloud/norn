@@ -77,3 +77,25 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 ## G3 receipt-maintained generations
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
+
+## IA operator certificates
+
+Core 03's operator-certificate section defines `norn.ivm-algebra/1` and its
+separate algebraic/runtime evidence ceilings. The closed checker is in
+`metric::compute::certificate`; it reconstructs sufficient-statistic operators
+from the borrowed admitted QuestionPlan. Its general DAG checker checks all
+nodes and never treats unsupported dependencies as proved. Fold laws are
+closed mathematical operations, not caller-provided proof booleans.
+
+Reference: Budiu et al., DBSP (PVLDB 2023), Proposition 3.2 and Theorems
+3.3/3.4, https://www.vldb.org/pvldb/vol16/p1601-budiu.pdf .
+`Composition.lean` is an engine-level conditional composition theorem.
+No new application theorem, admission variant or runtime operator is added.
+Tests exhaust two-key signed multiplicities -2..2 for old inputs and deltas
+(390625 combinations), including each omitted join-term mutant. Existing
+incremental_question/restatement_activation generated harnesses check the
+certificate on the same admitted plan before runtime correspondence.
+Kani is deferred here: the new mechanism checks symbolic rule shapes rather
+than performing unbounded arithmetic; exhaustive small-relation tests are an
+independent oracle, not a proof of runtime join support. Arbitrary fold
+runtime correspondence remains unknown until a fold is admitted by this plan.

@@ -102,6 +102,36 @@
       "generatedArtifacts": []
     },
     {
+      "id": "assurance-linear-conservation-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "assurance-ivm-composition-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/query-compute-v1/Composition.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "transition-lean",
       "profile": "fast",
       "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
