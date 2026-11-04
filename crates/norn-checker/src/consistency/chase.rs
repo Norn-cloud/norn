@@ -106,6 +106,16 @@ impl AdmissionWork {
     }
 }
 
+// Stream input metering so oversized catalogs refuse without an encoded copy.
+impl std::io::Write for &AdmissionWork {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.charge_units(bytes.len()).map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
 /// Why a chase was refused. A refusal never means "consistent".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChaseError {
