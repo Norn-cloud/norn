@@ -68,11 +68,19 @@ impl ApprovedContract {
             challenge,
         };
         // Bound input work and never use a failed reconstruction to skip work.
-        if prior.iter().fold(0_usize, |total, e| total.saturating_add(e.record.challenge_json.len()).saturating_add(e.record.result_json.len()).saturating_add(e.pins.bounds_json.len())) > 8_388_608
+        if prior.iter().fold(0_usize, |total, evidence| {
+            total
+                .saturating_add(evidence.record.challenge_json.len())
+                .saturating_add(evidence.record.result_json.len())
+                .saturating_add(evidence.pins.bounds_json.len())
+        }) > 8_388_608
             || prior.len() > 8_192
             || !base_source.base.is_empty()
             || source.base_sources != base_source.receipt_sources
-            || source.artifacts.iter().any(|a| a.kind() != ArtifactKind::Law)
+            || source
+                .artifacts
+                .iter()
+                .any(|a| a.kind() != ArtifactKind::Law)
             || self.semantics != base_contract.semantics
             || self.assumptions != base_contract.assumptions
             || self.assurance != base_contract.assurance
@@ -93,39 +101,87 @@ impl ApprovedContract {
             }
             let Some(old) = usize::try_from(evidence.pins.goal_index)
                 .ok()
-                .and_then(|index| goals(&base).get(index)) else { continue };
+                .and_then(|index| goals(&base).get(index))
+            else {
+                continue;
+            };
             let kind = old["goal"]["kind"].as_str().unwrap_or("");
             if !matches!(kind, "initialization" | "preservation") {
                 continue;
             }
-            let Some(law_index) = old["law"].as_u64().and_then(|i| usize::try_from(i).ok()) else { continue };
-            let Some(law_identity) = base.body()["lawStatements"].as_array().and_then(|a| a.get(law_index)) else { continue };
-            let safety = base_source.artifacts.iter().find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
-                .and_then(|a| serde_json::to_value(a.payload.to_json_value()).ok().and_then(|v| serde_json::from_value::<LawIR>(v).ok()))
-                .is_some_and(|law| matches!(law.modality, LawModality::Always {} | LawModality::Never {}));
-            if !safety { continue; }
-            let Some(target_law) = result.challenge.body()["lawStatements"].as_array()
-                .and_then(|laws| laws.iter().position(|law| law == law_identity)) else { continue };
+            let Some(law_index) = old["law"].as_u64().and_then(|i| usize::try_from(i).ok()) else {
+                continue;
+            };
+            let Some(law_identity) = base.body()["lawStatements"]
+                .as_array()
+                .and_then(|a| a.get(law_index))
+            else {
+                continue;
+            };
+            let safety = base_source
+                .artifacts
+                .iter()
+                .find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
+                .and_then(|a| {
+                    serde_json::to_value(a.payload.to_json_value())
+                        .ok()
+                        .and_then(|v| serde_json::from_value::<LawIR>(v).ok())
+                })
+                .is_some_and(|law| {
+                    matches!(law.modality, LawModality::Always {} | LawModality::Never {})
+                });
+            if !safety {
+                continue;
+            }
+            let Some(target_law) = result.challenge.body()["lawStatements"]
+                .as_array()
+                .and_then(|laws| laws.iter().position(|law| law == law_identity))
+            else {
+                continue;
+            };
             let mut target = old.clone();
             target["law"] = target_law.into();
             target["statement"]["law"] = target_law.into();
-            let Some(index) = goals(&result.challenge).iter().position(|goal| goal == &target) else { continue };
-            if result.reused.iter().any(|r| r.goal_index == index) { continue; }
-            let bytes = norn_canonical::serialize_json_verbatim(evidence.record).map_err(|_| ChallengeError::Closure)?;
+            let Some(index) = goals(&result.challenge)
+                .iter()
+                .position(|goal| goal == &target)
+            else {
+                continue;
+            };
+            if result.reused.iter().any(|r| r.goal_index == index) {
+                continue;
+            }
+            let bytes = norn_canonical::serialize_json_verbatim(evidence.record)
+                .map_err(|_| ChallengeError::Closure)?;
             let base_evidence_sha256 = exact_commitment(b"specialisation-evidence", &[&bytes])?;
             let extension_sha256 = source.exact_digest.clone();
             let index_bytes = index.to_string();
-            let sha256 = exact_commitment(b"specialisation-reuse", &[
-                RULE.as_bytes(), base_evidence_sha256.as_bytes(), extension_sha256.as_bytes(),
-                result.challenge.sha256().as_bytes(), index_bytes.as_bytes(),
-            ])?;
-            result.reused.push(ReusedEvidence { goal_index: index, base_evidence_sha256, extension_sha256, sha256 });
+            let sha256 = exact_commitment(
+                b"specialisation-reuse",
+                &[
+                    RULE.as_bytes(),
+                    base_evidence_sha256.as_bytes(),
+                    extension_sha256.as_bytes(),
+                    result.challenge.sha256().as_bytes(),
+                    index_bytes.as_bytes(),
+                ],
+            )?;
+            result.reused.push(ReusedEvidence {
+                goal_index: index,
+                base_evidence_sha256,
+                extension_sha256,
+                sha256,
+            });
         }
-        result.recheck.retain(|index| !result.reused.iter().any(|r| r.goal_index == *index));
+        result
+            .recheck
+            .retain(|index| !result.reused.iter().any(|r| r.goal_index == *index));
         Ok(result)
     }
 }
 
 fn goals(challenge: &Challenge) -> &[Value] {
-    challenge.body()["obligations"].as_array().map_or(&[], Vec::as_slice)
+    challenge.body()["obligations"]
+        .as_array()
+        .map_or(&[], Vec::as_slice)
 }
