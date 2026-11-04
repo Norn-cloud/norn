@@ -346,10 +346,10 @@ fn affine_relation_retains_derivation_order_and_input_requirements() {
         {"field":"difference","inputRequired":false,"expression":"input.amount - input.remaining"},
         {"field":"remaining","inputRequired":true,"expression":"input.difference"}
     ]);
-    let source = source(&artifacts);
+    let original = source(&artifacts);
     let registry = BTreeSet::new();
     let authority = ApprovedContract::approve(
-        &source,
+        &original,
         &registry,
         json!({"expr":"norn-zen/6"}),
         json!({"store":"empty"}),
@@ -357,7 +357,7 @@ fn affine_relation_retains_derivation_order_and_input_requirements() {
     )
     .expect("admitted");
     let model = authority
-        .finite(&source, &registry, &bounds(&artifacts))
+        .finite(&original, &registry, &bounds(&artifacts))
         .expect("batch")
         .goals
         .into_iter()
@@ -377,8 +377,12 @@ fn affine_relation_retains_derivation_order_and_input_requirements() {
         model.origins[&target.symbol],
         super::transition::AssignmentOrigin::Derivation(1)
     );
-}
+    artifacts[2]["payload"]["derive"][1]["field"] = json!("difference");
+    let missing = authority.finite(&source(&artifacts), &registry, &bounds(&artifacts))
+        .expect("unsupported raw-input profile");
+    assert!(missing.goals.iter().all(|goal| goal.as_ref().is_err_and(|reason| reason == "required derivation input absent")));
 
+}
 #[test]
 fn affine_unknown_is_explicit_for_opaque_nonlinear_and_non_equality_parts() {
     use super::transition::{affine, equality};

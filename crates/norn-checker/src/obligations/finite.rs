@@ -338,7 +338,7 @@ fn lower(
         .ok_or("no numeric properties")?;
     for (index, derivation) in action.derive.iter().enumerate() {
         demand(
-            !derivation.input_required || fields.contains_key(&derivation.field),
+            !derivation.input_required || bounds.inputs.contains_key(&derivation.field),
             "required derivation input absent",
         )?;
         demand(
