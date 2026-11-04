@@ -20,7 +20,7 @@ export const ErpnextSource = Norn.sourceSchema({
 
 export const ErpnextMapping = Norn.mapping({
   id: "erpnext.live.mapping", title: "ERPNext Items to canonical catalog", version: "0.1.0",
-  source: {schemaId: "erpnext.live.source", version: "0.1.0", sha256: "0000000000000000000000000000000000000000000000000000000000000000"},
+  source: {schemaId: "erpnext.live.source", version: "0.1.0", sha256: "015cbf1dcc4c6ce0fdb744ebf41630bc2a34107904b728551ebcbe36a590eef0"},
   sourceContract: {kind: "generic"}, interfaces: [Catalog],
   maps: [{id: "item", source: {dataset: "Item"}, target: {type: Item, interface: Catalog},
     subject: "input.norn_ref", sourceRecord: "'erpnext/live/Item/' + input.name",

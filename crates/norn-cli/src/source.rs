@@ -182,7 +182,7 @@ fn keyset_read<'a>(
                 additional,
                 ..
             } if resource_id == resource => {
-                let doctype = additional.get("doctype")?.as_str()?;
+                let doctype = additional.get("doctype")?.as_string()?;
                 Some((
                     endpoint.replace("{doctype}", doctype),
                     keyset.as_ref(),
