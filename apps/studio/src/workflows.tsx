@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow, getViewportForBounds, useNodesInitialized, useReactFlow, useStore, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -131,12 +131,15 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
 function Follow({ ids }: { readonly ids: readonly string[] }) {
   const flow = useReactFlow()
   const measured = useNodesInitialized()
+  const width = useStore((store) => store.width)
+  const height = useStore((store) => store.height)
   const key = ids.join(">")
+  // fitView() waits for the next node change, which a pin does not make; set the viewport from the path's bounds instead.
   useEffect(() => {
-    if (!measured || ids.length === 0) return
-    const frame = requestAnimationFrame(() => { void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 250 }) })
-    return () => cancelAnimationFrame(frame)
-  }, [key, measured])
+    if (!measured || ids.length === 0 || width === 0 || height === 0) return
+    const viewport = getViewportForBounds(flow.getNodesBounds([...ids]), width, height, 0.3, 1, 0.2)
+    void flow.setViewport(viewport, { duration: 250 })
+  }, [key, measured, width, height])
   return null
 }
 
