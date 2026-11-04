@@ -1629,18 +1629,32 @@ fn link_protection_is_refused_for_definitions_and_extensions_until_authority_exi
             "name":"test.Thing", "links":[{"id":"owner","target":"crm.Customer",
                 "cardinality":one_of_many(), "properties":properties.clone()}]
         }]}));
-        assert_eq!(defined, if protected {
-            one(codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
-                "/objectTypes/0/links/0/properties/0/protected")
-        } else { Vec::new() });
+        assert_eq!(
+            defined,
+            if protected {
+                one(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "/objectTypes/0/links/0/properties/0/protected",
+                )
+            } else {
+                Vec::new()
+            }
+        );
         let mut extensions = serde_json::to_value(tenant_link_layer().extensions)
             .expect("fixture extensions serialize");
         extensions[0]["links"][0]["properties"] = properties;
         let extended = tenant_findings(&serde_json::json!({"extensions":extensions}));
-        assert_eq!(extended, if protected {
-            one(codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
-                "/extensions/0/links/0/properties/0/protected")
-        } else { Vec::new() });
+        assert_eq!(
+            extended,
+            if protected {
+                one(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "/extensions/0/links/0/properties/0/protected",
+                )
+            } else {
+                Vec::new()
+            }
+        );
     }
 }
 
