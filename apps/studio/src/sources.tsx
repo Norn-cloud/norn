@@ -74,7 +74,7 @@ function SourceCell({ source }: { readonly source: Source | undefined }) {
   switch (source?.kind) {
     case undefined: return <span className="text-muted-foreground">not sent</span>
     case "field": return <code className="text-xs">{source.field}</code>
-    case "fixed": return <span>always “{source.value.replaceAll("_", " ")}”</span>
+    case "fixed": return <span>always <code className="text-xs">{source.value}</code></span>
     case "empty": return <span className="text-muted-foreground">left empty</span>
     case "computed": return <code className="text-xs">{source.expression}</code>
     case "nested": return <span title={`${source.collection} rows where ${source.where}`}><SourceCell source={source.value} /> <span className="text-muted-foreground">in each {source.dataset} row</span></span>
