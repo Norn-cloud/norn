@@ -239,6 +239,10 @@ impl IncrementalQuestion {
         Ok(changed)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "receipt and source invalidation publish one staged generation"
+    )]
     fn apply<E: SqlEngine>(
         &mut self,
         store: &CellStore<E>,
