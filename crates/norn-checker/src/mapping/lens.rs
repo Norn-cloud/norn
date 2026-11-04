@@ -83,8 +83,12 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     };
     // The enclosing artifact admission bounds serialized input memory. Bound
     // this extension before decoding a second owned representation.
-    let bytes = norn_canonical::canonical_json_of(raw)
+    // Reject declarations Norn1 cannot canonicalize, but decode the verbatim
+    // bytes: canonicalization NFC-normalizes strings and would rewrite keys.
+    norn_canonical::canonical_json_of(raw)
         .map_err(|_error| "unknown: lens declaration is not canonical JSON")?;
+    let bytes = norn_canonical::serialize_json_verbatim(raw)
+        .map_err(|_error| "unknown: lens declaration is not serializable")?;
     (bytes.len() <= 65_536)
         .then_some(())
         .ok_or("unknown: lens declaration exceeds byte bound")?;
