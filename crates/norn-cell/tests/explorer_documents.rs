@@ -1,5 +1,6 @@
 //! Studio's Data Explorer documents are the cell's exact output for the
-//! synthetic three-systems world (Drop 9), retained as bytes.
+//! synthetic ERPNext and Shopify demo world, retained as bytes. The Odoo pack
+//! stays in the registry and in `three_systems.rs`, outside the demo.
 //! `NORN_BLESS=1` rewrites them; review the diff.
 #![allow(
     clippy::expect_used,
@@ -36,7 +37,7 @@ fn retained(name: &str, text: &str) {
     );
 }
 
-/// The admitted three-systems set, as `crates/norn-checker/tests/three_systems.rs` selects it.
+/// The admitted demo set, selected as `crates/norn-checker/tests/three_systems.rs` does, without Odoo.
 fn artifacts() -> Vec<ArtifactEnvelope> {
     let excluded = [
         "commerce.SalesOrder.entity",
@@ -47,20 +48,14 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "location.Space.entity",
         "party.Brand.entity",
     ];
-    let mut paths: Vec<PathBuf> = [
-        "core",
-        "packs/canon",
-        "packs/erpnext",
-        "packs/shopify",
-        "packs/odoo",
-    ]
-    .into_iter()
-    .flat_map(|dir| {
-        std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
-            .expect("artifact directory")
-            .map(|entry| entry.expect("entry").path())
-    })
-    .collect();
+    let mut paths: Vec<PathBuf> = ["core", "packs/canon", "packs/erpnext", "packs/shopify"]
+        .into_iter()
+        .flat_map(|dir| {
+            std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
+                .expect("artifact directory")
+                .map(|entry| entry.expect("entry").path())
+        })
+        .collect();
     paths.sort();
     paths
         .into_iter()
