@@ -254,9 +254,6 @@ pub fn lower_path_equations(
         })
         .collect();
     let mut theory = Theory::default();
-    if declarations.is_empty() {
-        return Ok(theory);
-    }
     let catalog =
         crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
     let mut findings = Vec::new();
@@ -303,11 +300,10 @@ pub fn lower_path_equations(
             }
             // Inherited equations constrain each subtype's effective links, whose
             // relations are distinct from the declaring type's relations.
-            let instances = catalog.object_type_names().filter(|name| {
-                catalog
-                    .lineage(name)
-                    .is_some_and(|lineage| lineage.contains(&owner))
-            });
+            let instances = catalog
+                .object_type_names()
+                .filter(|name| catalog.lineage(name).is_some_and(|l| l.contains(&owner)));
+            let id = format!("{}:path-equation:{}", artifact.artifact_id, equation.id);
             let lower = |instance: &str| -> Result<Egd, String> {
                 let mut body = vec![Atom {
                     relation: format!("concept:{instance}"),
@@ -319,14 +315,11 @@ pub fn lower_path_equations(
                     equation_path(&catalog, instance, &equation.right, "r", &mut body)?;
                 if left_type != right_type {
                     return Err(format!(
-                        "endpoint types differ ({left_type} vs {right_type})"
+                        "endpoint types differ: {left_type} vs {right_type}"
                     ));
                 }
                 Ok(Egd {
-                    id: format!(
-                        "{}:path-equation:{}:{instance}",
-                        artifact.artifact_id, equation.id
-                    ),
+                    id: format!("{id}:{instance}"),
                     origin: origin.clone(),
                     body,
                     left,
@@ -336,9 +329,7 @@ pub fn lower_path_equations(
             for instance in instances {
                 match lower(instance) {
                     Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                    Err(message) => {
-                        refuse(&origin, format!("equation {:?}: {message}", equation.id))
-                    }
+                    Err(message) => refuse(&origin, format!("{}: {message}", equation.id)),
                 }
             }
         }
