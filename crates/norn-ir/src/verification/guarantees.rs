@@ -197,7 +197,7 @@ fn ineligible_is_unknown(schema: &mut schemars::Schema) {
 }
 
 /// The presentation contract consumed by Studio; identity alone grants no verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GuaranteesDocument {
     /// Versioned wire contract.
@@ -230,6 +230,59 @@ pub struct GuaranteesDocument {
     pub runtime_enforcement: GuaranteeReference,
     /// Separately supplied application/reference parity evidence, or not yet.
     pub parity: GuaranteeReference,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "GuaranteesDocument",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+struct GuaranteesDocumentWire {
+    format: GuaranteesFormat,
+    law_artifact_id: String,
+    law_id: String,
+    law_version: String,
+    verdict: GuaranteeVerdict,
+    level: GuaranteeLevel,
+    challenge_sha256: String,
+    bounds_json: String,
+    tools: Vec<EvidenceTool>,
+    goals: Vec<GoalGuarantee>,
+    total: u32,
+    eligible: u32,
+    discharged: u32,
+    runtime_enforcement: GuaranteeReference,
+    parity: GuaranteeReference,
+}
+impl GuaranteesDocument {
+    fn counts_valid(&self) -> bool {
+        u32::try_from(self.goals.len()).ok() == Some(self.total)
+            && u32::try_from(self.goals.iter().filter(|goal| goal.eligible).count()).ok()
+                == Some(self.eligible)
+            && self.discharged <= self.eligible
+    }
+}
+impl Serialize for GuaranteesDocument {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if !self.counts_valid() {
+            return Err(serde::ser::Error::custom(
+                "guarantees counts contradict goal inventory",
+            ));
+        }
+        GuaranteesDocumentWire::serialize(self, serializer)
+    }
+}
+impl<'de> Deserialize<'de> for GuaranteesDocument {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let document = GuaranteesDocumentWire::deserialize(deserializer)?;
+        if !document.counts_valid() {
+            return Err(serde::de::Error::custom(
+                "guarantees counts contradict goal inventory",
+            ));
+        }
+        Ok(document)
+    }
 }
 
 /// Additive schema for the exact typed document; no existing artifact schema changes.
@@ -388,8 +441,82 @@ mod tests {
         }
     }
 
+    fn valid_document() -> super::GuaranteesDocument {
+        let unknown = json!({"kind":"unknown","reason":"outside qualified fragment"});
+        let not_yet = json!({"kind":"not-yet","reason":"not supplied"});
+        serde_json::from_value(json!({
+            "format":"norn/guarantees@1","lawArtifactId":"test.law","lawId":"test",
+            "lawVersion":"1","verdict":unknown,"level":unknown,"challengeSha256":"retained",
+            "boundsJson":"{}","tools":[],"total":3,"eligible":2,"discharged":1,
+            "runtimeEnforcement":not_yet,"parity":not_yet,"goals":[
+                {"index":0,"goalKind":"initialization","eligible":true,"verdict":{"kind":"bounded-pass"},"level":{"kind":"exhaustive-finite/bounded"},"evidence":null,"scenario":null},
+                {"index":1,"goalKind":"preservation","eligible":true,"verdict":unknown,"level":unknown,"evidence":null,"scenario":null},
+                {"index":2,"goalKind":"unsupported","eligible":false,"verdict":unknown,"level":unknown,"evidence":null,"scenario":null}
+            ]
+        })).expect("coherent complete inventory")
+    }
+    fn count_refusal(field: &str, bad: u32, change: fn(&mut super::GuaranteesDocument, u32)) {
+        let mut document = valid_document();
+        let mut wire = serde_json::to_value(&document).expect("valid document encodes");
+        change(&mut document, bad);
+        *wire.get_mut(field).expect("retained count field") = json!(bad);
+        assert!(serde_json::to_value(&document).is_err(), "{field}={bad}");
+        assert!(
+            serde_json::from_value::<super::GuaranteesDocument>(wire).is_err(),
+            "{field}={bad}"
+        );
+    }
+    #[test]
+    fn document_total_matches_complete_goal_inventory_at_both_wire_boundaries() {
+        for bad in [2, 4, u32::MAX] {
+            count_refusal("total", bad, |document, count| document.total = count);
+        }
+    }
+    #[test]
+    fn document_eligible_matches_goal_flags_at_both_wire_boundaries() {
+        for bad in [1, 3, u32::MAX] {
+            count_refusal("eligible", bad, |document, count| document.eligible = count);
+        }
+    }
+    #[test]
+    fn document_discharged_cannot_exceed_eligible_at_both_wire_boundaries() {
+        for bad in [3, u32::MAX] {
+            count_refusal("discharged", bad, |document, count| {
+                document.discharged = count
+            });
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn document_count_boundaries_match_generated_inventories(
+            flags in prop::collection::vec(any::<bool>(), 0..8),
+            wrong_total in any::<bool>(), wrong_eligible in any::<bool>(), discharged in 0..10_u32,
+        ) {
+            let mut document = valid_document();
+            let template = document.goals.get(1).expect("Unknown template").clone();
+            document.goals = flags.iter().enumerate().map(|(index, eligible)| {
+                let mut goal = template.clone();
+                goal.index = u32::try_from(index).expect("bounded index");
+                goal.eligible = *eligible;
+                goal
+            }).collect();
+            document.total = u32::try_from(flags.len()).expect("bounded inventory");
+            document.eligible = u32::try_from(flags.iter().filter(|flag| **flag).count()).expect("bounded inventory");
+            document.discharged = 0;
+            let mut wire = serde_json::to_value(&document).expect("valid generated inventory");
+            let valid = !wrong_total && !wrong_eligible && discharged <= document.eligible;
+            document.total = document.total.checked_add(u32::from(wrong_total)).expect("bounded count");
+            document.eligible = document.eligible.checked_add(u32::from(wrong_eligible)).expect("bounded count");
+            document.discharged = discharged;
+            *wire.get_mut("total").expect("count") = json!(document.total);
+            *wire.get_mut("eligible").expect("count") = json!(document.eligible);
+            *wire.get_mut("discharged").expect("count") = json!(document.discharged);
+            prop_assert_eq!(serde_json::to_value(&document).is_ok(), valid);
+            prop_assert_eq!(serde_json::from_value::<super::GuaranteesDocument>(wire).is_ok(), valid);
+        }
+
         #[test]
         fn guarantee_scalar_roundtrip_preserves_exact_coefficient(coefficient in any::<i64>(), scale in 0..=28_u32) {
             let value = GuaranteeScalar { coefficient, scale,

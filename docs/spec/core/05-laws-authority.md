@@ -200,6 +200,12 @@ generated goal inventory. Unsupported goals keep explicit Unknown reasons.
 An ineligible goal must have Unknown verdict and level; encoding, decoding and
 the emitted schema reject every other combination. Named refusal scenario:
 `ineligible_goals_require_unknown_on_both_wire_boundaries`.
+Rust also enforces document count relations at both wire boundaries:
+`total == goals.len()`, `eligible == count(goals where eligible)`, and
+`discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
+`document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
+`document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
 Exact trace quantities serialize as canonical integer text with declared scale
 and units; counterexamples and non-vacuity witnesses have distinct kinds.
 Runtime enforcement and application parity links are either independently
