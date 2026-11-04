@@ -294,8 +294,9 @@ pub fn lower_path_equations(
         let mut ids = BTreeSet::new();
         for (index, equation) in equations.into_iter().enumerate() {
             let origin = at(format!("{slot}/{index}"));
+            let label = format!("equation {:?}", equation.id);
             if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
-                refuse(&origin, "ID must be nonempty and unique".into());
+                refuse(&origin, format!("{label}: ID must be nonempty and unique"));
                 continue;
             }
             // Inherited equations constrain each subtype's effective links, whose
@@ -313,7 +314,7 @@ pub fn lower_path_equations(
                     equation_path(&catalog, instance, &equation.left, "l", &mut body)?;
                 let (right_type, right) =
                     equation_path(&catalog, instance, &equation.right, "r", &mut body)?;
-                if left_type != right_type {
+                if instance == owner.as_str() && left_type != right_type {
                     return Err(format!(
                         "endpoint types differ: {left_type} vs {right_type}"
                     ));
@@ -329,7 +330,7 @@ pub fn lower_path_equations(
             for instance in instances {
                 match lower(instance) {
                     Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                    Err(message) => refuse(&origin, format!("{}: {message}", equation.id)),
+                    Err(message) => refuse(&origin, format!("{label}: {message}")),
                 }
             }
         }
