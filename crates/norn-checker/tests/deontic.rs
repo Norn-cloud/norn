@@ -1058,7 +1058,11 @@ fn admitted_normative_resolution_survives_installation() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].code.as_str(), "consistency.diagnosis.unknown");
     assert_eq!(
-        findings[0].message,
+        findings[0]
+            .message
+            .split_once(" Canonical attempted/base SHA256:")
+            .expect("diagnosis provenance")
+            .0,
         "Normative admission refused: Expression(\"invalid normative source or binding\"). Limits: 64 declarations, 256 contexts, 8192 evaluations, 4096 diagnosis queries."
     );
     // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
