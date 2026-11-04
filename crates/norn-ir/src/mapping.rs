@@ -155,6 +155,9 @@ pub struct MappingIr {
     pub interfaces: Vec<String>,
     /// The object maps, in evaluation order.
     pub maps: Vec<ObjectMap>,
+    /// Required path preservation obligations over the named entity artifacts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_mappings: Vec<PathMappingBinding>,
     /// Declarative permission-row maps. These emit ordinary upsert actions
     /// for `core.Entitlement`; joins are applied only from a caller-declared
     /// complete snapshot of every `requiredSnapshot` dataset.
@@ -173,6 +176,19 @@ pub struct MappingIr {
     )]
     #[schemars(with = "JsonObject")]
     pub extensions: Option<JsonObject>,
+}
+
+/// Catalog bindings for a required path mapping. Admission binds evidence to
+/// the exact envelopes (including equations), and the enclosing MappingIR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathMappingBinding {
+    /// Source entity artifact IDs.
+    pub source_entities: Vec<String>,
+    /// Target entity artifact IDs.
+    pub target_entities: Vec<String>,
+    /// Declared object and link images.
+    pub mapping: crate::entity::PathMapping,
 }
 
 /// A checked, declarative projection of source permission rows into the
@@ -961,4 +977,20 @@ pub fn mapping_ir_schema() -> Schema {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+/// Closed finite Boolean write-back declaration in `norn.write-back/0.1.0`.
+/// Evidence covers only these source states and grants no mutation authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FiniteWriteBackLens {
+    /// Existing direct, unguarded object map id.
+    pub map: String,
+    /// Existing property projection supplying Get.
+    pub property: String,
+    /// Closed domain of unique, same-shaped Boolean source records.
+    pub sources: Vec<BTreeMap<String, bool>>,
+    /// For each source, destination indices for false then true, encoded as
+    /// decimal strings to avoid floating-point interpretation in extension JSON.
+    pub put: Vec<[String; 2]>,
 }

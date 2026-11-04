@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.undeclared_additivity",
+  "message": "METRIC-ADDITIVITY-1: declare additivity on the numeric property type before aggregating; units do not establish additivity.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
