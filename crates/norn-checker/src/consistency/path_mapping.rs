@@ -120,6 +120,14 @@ fn lower_mapping(
     let concrete = |catalog: &EffectiveCatalog, name: &str| {
         matches!(catalog.object_type_named(name), Some(Ok(_)))
     };
+    for concept in target_catalog.object_type_names() {
+        if !mapping.objects.contains_key(concept) {
+            return Err(refuse(
+                &mapping.id,
+                &format!("{concept} has no object image"),
+            ));
+        }
+    }
     let mut lowered = Theory::default();
     for (to, from) in &mapping.objects {
         if !concrete(target_catalog, to) || !concrete(source_catalog, from) {
