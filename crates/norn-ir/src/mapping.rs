@@ -751,6 +751,27 @@ impl ObservedLinkClaim {
         ]))
     }
 
+    /// OBS-LINK-CONTRIBUTION-1: one source row/role contributes through a mapping.
+    /// A new occurrence or mapping version replaces that contribution, preserving
+    /// every earlier claim as evidence.
+    ///
+    /// # Errors
+    /// The contribution cannot be canonically encoded.
+    pub fn contribution_id(&self) -> Result<String, crate::canonical::CanonicalJsonError> {
+        let mapping = self.provenance.mapping_version.as_str();
+        let mapping_id = mapping.split_once('@').map_or(mapping, |(id, _)| id);
+        crate::canonical::domain_hash_hex(
+            b"norn.link.contribution.v1\0",
+            &(
+                &self.source_type,
+                &self.source_key,
+                &self.role,
+                &self.provenance.source,
+                mapping_id,
+            ),
+        )
+    }
+
     /// Replay-stable evidence identity. Different sources remain distinct claims
     /// even when their endpoints converge to one canonical relation.
     ///
