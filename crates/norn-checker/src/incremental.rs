@@ -119,10 +119,8 @@ impl AdmissionCache {
                     &[self.profile.as_bytes(), hash.as_bytes()],
                 )
             });
-            let old = self.local.get(&artifact.artifact_id);
-            let reused = key
-                .as_ref()
-                .is_ok_and(|key| old.is_some_and(|e| e.digest == *key));
+            let old = key.as_ref().ok().and_then(|key| self.local.get(key));
+            let reused = old.is_some();
             let findings = if reused {
                 old.map(|entry| entry.findings.clone()).unwrap_or_default()
             } else {
@@ -130,7 +128,7 @@ impl AdmissionCache {
             };
             if let Ok(key) = &key {
                 next.insert(
-                    artifact.artifact_id.clone(),
+                    key.clone(),
                     Entry {
                         digest: key.clone(),
                         findings: findings.clone(),
