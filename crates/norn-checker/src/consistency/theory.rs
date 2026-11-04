@@ -257,13 +257,7 @@ pub fn lower_path_equations(
     // reserved. Reserve every declaration before allocating inherited IDs.
     let mut rule_ids: BTreeSet<String> = declarations
         .iter()
-        .flat_map(|(artifact, _, value)| {
-            serde_json::to_value(value)
-                .and_then(serde_json::from_value::<Vec<PathEquation>>)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|equation| format!("{}:path-equation:{}", artifact.artifact_id, equation.id))
-        })
+        .flat_map(|(artifact, _, value)| declared_equation_rule_ids(&artifact.artifact_id, value))
         .collect();
     let mut theory = Theory::default();
     let catalog =
@@ -353,12 +347,21 @@ pub fn lower_path_equations(
                         }
                         theory.dependencies.push(Dependency::Egd(egd));
                     }
-                    Err(message) => refuse(&origin, format!("{label} on {instance}: {message}")),
+                    Err(message) => refuse(&origin, format!("{label}: {message}")),
                 }
             }
         }
     }
     findings.is_empty().then_some(theory).ok_or(findings)
+}
+
+fn declared_equation_rule_ids(artifact: &str, value: &impl serde::Serialize) -> Vec<String> {
+    serde_json::to_value(value)
+        .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|equation| format!("{artifact}:path-equation:{}", equation.id))
+        .collect()
 }
 
 pub(crate) fn equation_path(
