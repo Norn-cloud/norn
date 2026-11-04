@@ -198,7 +198,9 @@ supplied references or explicit `not-yet` values. A typed document is a
 presentation of the checked driver's result, never proof or activation authority.
 Its OpenAPI projection adds new components without modifying existing schemas.
 Named scenarios: exact coefficient roundtrip; unknown requires a reason;
-unknown enum/field, fractional coefficient and invented `proved` level refuse.
+unknown enum/field, fractional coefficient and invented `proved` level refuse;
+`guarantee_projection_matches_typed_eligibility_and_exact_scalars` checks wire/schema
+correspondence, including integer endpoints and trailing line terminators.
 
 ### HOST-AUTH-1: explicit server policy before host access
 

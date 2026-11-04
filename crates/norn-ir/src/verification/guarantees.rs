@@ -269,6 +269,7 @@ mod integer_text {
             }
             format!("({})", alternatives.join("|"))
         }
+        // ECMAScript `$` admits a final line terminator; require actual end of input.
         schemars::json_schema!({"type": "string", "pattern": format!("^(0|{}|-{})(?![\\s\\S])",
             magnitude(i64::MAX.unsigned_abs()), magnitude(i64::MIN.unsigned_abs()))})
     }
