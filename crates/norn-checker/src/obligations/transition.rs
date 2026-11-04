@@ -100,14 +100,18 @@ pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, Stri
     let tokens = tokens(source)?;
     let mut expression = tokens.as_slice();
     while let ["(", inner @ .., ")"] = expression {
-        let encloses = expression.iter().enumerate().try_fold(0_i32, |depth, (index, token)| {
-            let depth = match *token {
-                "(" => depth.checked_add(1)?,
-                ")" => depth.checked_sub(1)?,
-                _ => depth,
-            };
-            (depth > 0 || index.checked_add(1) == Some(expression.len())).then_some(depth)
-        }).is_some();
+        let encloses = expression
+            .iter()
+            .enumerate()
+            .try_fold(0_i32, |depth, (index, token)| {
+                let depth = match *token {
+                    "(" => depth.checked_add(1)?,
+                    ")" => depth.checked_sub(1)?,
+                    _ => depth,
+                };
+                (depth > 0 || index.checked_add(1) == Some(expression.len())).then_some(depth)
+            })
+            .is_some();
         if !encloses {
             break;
         }
@@ -123,7 +127,9 @@ pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, Stri
     };
     arithmetic(expression.get(..*position).ok_or("equality lhs")?, symbols)?.combine(
         arithmetic(
-            expression.get(position.checked_add(1).ok_or("equality index")?..).ok_or("equality rhs")?,
+            expression
+                .get(position.checked_add(1).ok_or("equality index")?..)
+                .ok_or("equality rhs")?,
             symbols,
         )?,
         -1,
@@ -189,7 +195,10 @@ impl Parser<'_> {
             .ok_or("missing affine operand")?;
         self.index = self.index.checked_add(1).ok_or("affine token budget")?;
         match token {
-            "-" => Affine::default().combine(self.atom(depth.checked_add(1).ok_or("affine nesting budget")?)?, -1),
+            "-" => Affine::default().combine(
+                self.atom(depth.checked_add(1).ok_or("affine nesting budget")?)?,
+                -1,
+            ),
             "+" => self.atom(depth.checked_add(1).ok_or("affine nesting budget")?),
             "(" => {
                 let value = self.sum(depth.checked_add(1).ok_or("affine nesting budget")?)?;
