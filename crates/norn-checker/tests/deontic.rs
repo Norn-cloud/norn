@@ -912,7 +912,7 @@ fn admitted_normative_resolution_survives_installation() {
     let registry = BTreeSet::new();
     assert!(
         check_artifact_set(
-            &[installed.clone()],
+            std::slice::from_ref(&installed),
             &EntityArtifactSetContext {
                 registry: &registry,
                 base: &[],
@@ -926,7 +926,7 @@ fn admitted_normative_resolution_survives_installation() {
             &[],
             &EntityArtifactSetContext {
                 registry: &registry,
-                base: &[installed.clone()],
+                base: std::slice::from_ref(&installed),
                 tenant: None
             }
         )
@@ -941,7 +941,7 @@ fn admitted_normative_resolution_survives_installation() {
             &[unrelated],
             &EntityArtifactSetContext {
                 registry: &registry,
-                base: &[installed.clone()],
+                base: std::slice::from_ref(&installed),
                 tenant: None
             }
         )
