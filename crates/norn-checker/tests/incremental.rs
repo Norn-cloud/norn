@@ -135,9 +135,27 @@ fn conflicting_versions_retain_independent_local_evidence() {
     conflicting.version = "2.0.0".into();
     pool.push(conflicting);
     let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
-    compare(&mut cache, &pool, &context);
+    let initial = compare(&mut cache, &pool, &context);
+    let id = pool.last().expect("writer").artifact_id.clone();
+    let versions: Vec<_> = initial
+        .evidence
+        .iter()
+        .filter(|e| e.artifact_id.as_ref() == Some(&id))
+        .collect();
+    assert_ne!(versions[0].closure_digest, versions[1].closure_digest);
     pool[0].name = "changed catalog label".into();
     let result = compare(&mut cache, &pool, &context);
+    for (job, old) in result
+        .evidence
+        .iter()
+        .filter(|e| e.artifact_id.as_ref() == Some(&id))
+        .zip(versions)
+    {
+        assert_eq!(
+            job.origin,
+            EvidenceOrigin::ReusedFromDigest(old.closure_digest.clone().expect("digest"))
+        );
+    }
     assert_eq!(
         result
             .evidence
@@ -178,36 +196,42 @@ proptest! {
 
 #[test]
 fn registry_tenant_and_base_are_global_inputs() {
-    let mut registry = registry();
-    let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
+    let registry = registry();
+    let mut changed_registry = registry.clone();
+    changed_registry.insert(norn_ir::PropertyTypeName("external.value".into()));
     let pool = fixture();
-    compare(
-        &mut cache,
-        &pool,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
-            tenant: None,
-        },
-    );
-    registry.insert(norn_ir::PropertyTypeName("external.value".into()));
+    let base = [pool[0].clone()];
     let namespace = norn_ir::ExtensionNamespace("test".into());
-    let result = compare(
-        &mut cache,
-        &pool,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
+    let original = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    for context in [
+        EntityArtifactSetContext {
+            registry: &changed_registry,
+            ..original
+        },
+        EntityArtifactSetContext {
             tenant: Some(norn_checker::entity_artifacts::TenantLayer {
                 tenant_id: "customer",
                 namespace: &namespace,
             }),
+            ..original
         },
-    );
-    assert_eq!(
-        result.evidence.last().expect("global").origin,
-        EvidenceOrigin::Rechecked
-    );
+        EntityArtifactSetContext {
+            base: &base,
+            ..original
+        },
+    ] {
+        let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
+        compare(&mut cache, &pool, &original);
+        let result = compare(&mut cache, &pool, &context);
+        assert_eq!(
+            result.evidence.last().expect("global").origin,
+            EvidenceOrigin::Rechecked
+        );
+    }
 }
 
 #[test]
