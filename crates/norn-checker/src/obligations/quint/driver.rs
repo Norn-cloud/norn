@@ -1,6 +1,6 @@
 //! PROOF-QUINT-RUN-1: bounded acceptance with real backends and exact result binding.
-use norn_checker::obligations::evidence::{EvidenceIdentity, EvidenceRecord, EvidenceTool};
-use norn_checker::obligations::{ApprovedContract, DefinitionSource, quint::Bounds};
+use crate::obligations::evidence::{EvidenceIdentity, EvidenceRecord, EvidenceTool};
+use crate::obligations::{ApprovedContract, DefinitionSource, quint::Bounds};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -10,6 +10,32 @@ use std::{
     path::Path,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+/// Native driver operation; unrecognized command-line values never enter the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverMode {
+    /// Generate deterministic checker-owned backend jobs.
+    Prepare,
+    /// Bind independently checked result bytes.
+    Bind,
+}
+
+/// Native input paths, parsed by the binary rather than the trusted binder.
+#[derive(Debug)]
+pub struct DriverRequest<'a> {
+    /// Requested operation.
+    pub mode: DriverMode,
+    /// Original declarations.
+    pub original: &'a Path,
+    /// Mutated declarations.
+    pub mutant: &'a Path,
+    /// Independent retained base.
+    pub base: &'a Path,
+    /// Complete bounds profile.
+    pub profile: &'a Path,
+    /// Generated models and actual result bytes.
+    pub work: &'a Path,
+}
 fn digest(path: &Path) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(std::fs::read(path)?)))
 }
@@ -68,13 +94,18 @@ fn assessment(kind: &str, status: &str) -> (&'static str, &'static str) {
     clippy::too_many_lines,
     reason = "bounded acceptance driver; all backend and binding steps remain explicit"
 )]
-fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    let [mode, original, mutant, base, profile, work, _tools] = args.as_slice() else {
-        return Err(
-            "usage: quint prepare|bind ORIGINAL MUTANT BASE BOUNDS OUTPUT_DIR TOOL_ROOT".into(),
-        );
-    };
+/// Prepare generated jobs or bind independently checked results on a native host.
+/// # Errors
+/// Refuses invalid inputs, stale pins, changed models/results or failed acceptance.
+pub fn run(request: &DriverRequest<'_>) -> Result<()> {
+    let DriverRequest {
+        mode,
+        original,
+        mutant,
+        base,
+        profile,
+        work,
+    } = *request;
     let profile: Value = serde_json::from_str(&std::fs::read_to_string(profile)?)?;
     let bounds = Bounds {
         action: field(&profile, "action")?.into(),
@@ -96,9 +127,6 @@ fn main() -> Result<()> {
         json!({"level":"exhaustive-finite/bounded"}),
     )?;
     std::fs::create_dir_all(work)?;
-    if mode != "prepare" && mode != "bind" {
-        return Err("invalid driver mode".into());
-    }
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let control: Value = serde_json::from_str(&input)?;
@@ -109,7 +137,7 @@ fn main() -> Result<()> {
         version: "quint-0.32.0/tla-ts-0.0.7/apalache-0.56.1".into(),
         implementation_sha256: format!(
             "{:x}",
-            Sha256::digest(serde_json::to_vec(&implementation)?)
+            Sha256::digest(norn_canonical::serialize_json_verbatim(&implementation)?)
         ),
     };
     let mut cases = Vec::new();
@@ -167,7 +195,7 @@ fn main() -> Result<()> {
                 "step"
             };
             let model_sha = format!("{:x}", Sha256::digest(model.as_bytes()));
-            if mode == "prepare" {
+            if mode == DriverMode::Prepare {
                 std::fs::write(&path, model)?;
                 jobs.push(json!({"key":key,"model":path,"result":result,"modelSha":model_sha,"challenge":batch.challenge.sha256(),"invariant":invariant,"step":step,"seed":bounds.seed,"expectedStates":profile.get("expectedStates").ok_or("expected states")?}));
                 continue;
@@ -229,7 +257,7 @@ fn main() -> Result<()> {
         let expected = if label == "mutant" { 2 } else { 3 };
         cases.push(json!({"case":label,"challenge":batch.challenge.sha256(),"total":batch.goals.len(),"eligible":eligible,"discharged":discharged,"acceptancePassed":eligible==3 && batch.goals.len()==10 && discharged==expected && counterexample,"goals":goals}));
     }
-    if mode == "prepare" {
+    if mode == DriverMode::Prepare {
         writeln!(
             std::io::stdout().lock(),
             "{}",
@@ -258,8 +286,41 @@ fn main() -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "bounded binder fixtures"
+)]
 mod tests {
-    use super::assessment;
+    use super::{assessment, scenario};
+    use serde_json::json;
+
+    #[test]
+    fn counterexample_reconstruction_uses_declared_exact_units_and_empty_state() {
+        let bounds = json!({"action":"test.writer","identity":"one","interpretation":{
+            "v0":{"property":"mass","type":{"scale":2,"unit":{"system":"ucum","code":"g"}}}
+        }});
+        let trace = json!([
+            {"state":{"present":false,"v0":0}},
+            {"state":{"present":true,"v0":125}}
+        ]);
+        let result = scenario(&trace, &bounds, &json!("test.law")).expect("scenario");
+        assert_eq!(result["states"][0], json!({"exists":false,"values":{}}));
+        assert_eq!(
+            result["states"][1]["values"]["mass"],
+            json!({"coefficient":"125","scale":2,"unit":{"system":"ucum","code":"g"}})
+        );
+        for bad in [json!(1.25), json!("125"), json!(null)] {
+            assert!(
+                scenario(
+                    &json!([{"state":{"present":true,"v0":bad}}]),
+                    &bounds,
+                    &json!("test.law")
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn missing_witness_and_unsupported_goals_keep_unknown_assurance() {
         assert_eq!(assessment("non_vacuity", "ok"), ("unknown", "unknown"));
