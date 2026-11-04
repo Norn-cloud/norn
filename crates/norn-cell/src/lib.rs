@@ -48,6 +48,7 @@ mod migration;
 pub mod mining;
 mod observation_quality;
 pub use observation_quality::AuthoritativePage;
+mod identity;
 pub mod model;
 mod payload_storage;
 pub mod quantity;
@@ -79,3 +80,7 @@ pub use store::{
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
     OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
+
+/// Workers/Durable Objects SQLite adapter (celld and workerd).
+#[cfg(target_arch = "wasm32")]
+pub mod workers;

@@ -25,9 +25,23 @@ Admission validates structured slots and grounded normative precedence, then res
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
 
+**AUTH-SYNC-WRITER-1:** the Cedar schema for a synchronous transition action
+includes its primary target and the declared writer types, including effective
+subtypes. Catalog invocation entry points remain primary targets. Schema
+projection grants no permission: the actual policy, scope and capability grant
+still authorize every current/proposed resource, and the kernel still checks
+the closed writer footprint. Unbound or non-transition actions retain their
+existing target projection. The finite four-type writer domain is checked over
+all subsets with and without a synchronous binding; real PDP cases retain
+wrong-scope, wrong-role, absent-policy and absent-grant refusals.
+
 Generate initialization, non-vacuity, each-writer preservation, mapping totality/identity/unit/transition simulation/law preservation and open-boundary obligations from retained contracts. An empty implementor/domain is not non-vacuity evidence. Every writer introduced by rule, migration, connector or mapping changes the challenge. Missing/unsupported semantics remains unknown; runtime admission refuses safety predicates it cannot actually enforce.
 
 At governed commit evaluate supported safety requirements on the whole proposed state/effect closure. Deontic permission is checked separately from action authorization. Recheck revocation and delegated limits at commit and dispatch; distinct-agent sessions of one accountable person do not satisfy independent-person approval. Timed liveness needs an activation model and scheduler/environment assumptions; no single commit proves eventuality.
+
+**LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
+
+**LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
 
 [Owner] For imported/observed data, a law violation is a finding with quarantine and evidence because the source fact already happened. Its capture is not refused as a governed transaction. Promotion into authoritative business facts is a separate governed action that can refuse. The same law ID/predicate explains both outcomes; authority mode selects enforcement, never changes truth.
 
@@ -238,6 +252,107 @@ Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
 transitive edges resolve; removing an edge refuses; cross-layer wins and protected
 defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
 three-rule groundings and generated catalog permutations preserve exact survivors.
+## Generated bounded creation profile (#565)
+
+**PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
+a selected create-only writer, ordered derivations, preconditions, stored defaults
+and a pointwise predicate law. One empty store, singleton object identity and
+explicit finite decimal input intervals bound the claim. Unsupported constructs
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
+
+Initialization is vacuous over the empty store. Writer preservation checks the
+proposal before law enforcement; non-vacuity needs a reachable law-satisfying
+witness. Neither a generated module nor structural correspondence discharges a
+goal: only an independently pinned backend result supplies bounded evidence.
+Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
+decimal correspondence and unsupported expression/inexact literal refusal.
+
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
+
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Compiler transport must not determine discharge. Flattened Quint JSON uses the
+pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
+The initializer conversion accepts only a complete constant assignment to each
+state variable, with no initializer reuse; it changes assignment to equality
+only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
+as Unknown. Both compilation stages share the existing 120-second budget and
+own their process groups. The independent Apalache CLI checks the same emitted
+TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
+exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
+an exact typed ITF trace and agreement with the primary trace shape. Other exits,
+missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
+real generated output must match the prior RPC compiler bytes.
+
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
+
+**LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+law artifact/version, bounded verdict and evidence level as closed enums,
+Challenge identity, exact bounds JSON, actual tool/result pins and the complete
+generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+An ineligible goal must have Unknown verdict and level; encoding, decoding and
+the emitted schema reject every other combination. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
+Rust also enforces document count relations at both wire boundaries:
+`total == goals.len()`, `eligible == count(goals where eligible)`, and
+`discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Rust also rejects duplicate goal indices at both boundaries. Indices refer to
+the retained Challenge, so a per-law document may contain non-contiguous indices.
+Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
+`document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
+`document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
+Named index scenario: `document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries`.
+Exact trace quantities serialize as canonical integer text with declared scale
+and units; counterexamples and non-vacuity witnesses have distinct kinds.
+Runtime enforcement and application parity links are either independently
+supplied references or explicit `not-yet` values. A typed document is a
+presentation of the checked driver's result, never proof or activation authority.
+Its OpenAPI projection adds new components without modifying existing schemas.
+Named scenarios: exact coefficient roundtrip; unknown requires a reason;
+unknown enum/field, fractional coefficient and invented `proved` level refuse;
+`guarantee_projection_matches_typed_eligibility_and_exact_scalars` checks wire/schema
+correspondence, including integer endpoints and trailing line terminators.
+
+### HOST-AUTH-1: explicit server policy before host access
+
+The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.
+
+### DIAG-DISCLOSE-1: explicit diagnostic permission
+
+Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
+
+Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
 
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 

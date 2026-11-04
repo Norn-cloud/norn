@@ -10,9 +10,7 @@ use crate::engine::{NativeEngine, SqlEngine, params};
 use crate::export::{ExportError, ExportManifest, ExportRecord, Exporter};
 use crate::history::restore_input;
 use crate::system::{GENESIS_HASH, META};
-use crate::{
-    CellError, CellStore, CommitOutcome, InstalledDefinitionInput, LedgerHead, Model, StoreOptions,
-};
+use crate::{CellError, CellStore, CommitOutcome, LedgerHead, Model, StoreOptions};
 
 /// Restore refused or failed; a failed replay never publishes the target file.
 #[derive(Debug, thiserror::Error)]
@@ -126,29 +124,17 @@ impl CellStore<NativeEngine> {
                     .map(|install| &install.model)
             })
             .ok_or(RestoreError::ModelDefinitionsMismatch)?;
-        let mut store = Self::open(file.path(), Model::from_snapshot(initial)?, options)?;
+        let mut store = Self::from_retained_engine(
+            NativeEngine::open(file.path(), options)?,
+            Model::from_retained_snapshot(initial)?,
+        )?;
         for record in &records {
             for (key, value) in &record.bindings {
                 store.bind(key, value)?;
             }
             let seq = record.receipt.body.commit_seq;
             if let Some(install) = &record.definition_install {
-                let model = Model::from_snapshot(&install.model)?;
-                let installed = store.install_definitions(
-                    model,
-                    InstalledDefinitionInput {
-                        canonical_set: install.installed.canonical_set.clone(),
-                        registry: install.installed.registry.clone(),
-                        receipt_sha256: install.installed.receipt_sha256.clone(),
-                        admission_receipt: install.installed.admission_receipt.clone(),
-                        readmission: install.readmission.clone(),
-                        installed_at: install.installed.installed_at,
-                        diff: install.diff.clone(),
-                        layout: install.installed.layout.clone(),
-                    },
-                    Some(install.installed.version.saturating_sub(1)),
-                    scope,
-                )?;
+                let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(RestoreError::ReceiptMismatch(seq));
                 }
@@ -166,17 +152,7 @@ impl CellStore<NativeEngine> {
                         RestoreError::Cell(error)
                     }
                 })?;
-                let ((), outcome) = store
-                    .commit_guarded_submitted(
-                        &record.batch,
-                        record.quantity_input.as_ref(),
-                        |_reader| Ok::<(), CellError>(()),
-                        &mut |_point| Ok(()),
-                    )
-                    .map_err(|error| match error {
-                        crate::store::GuardedError::Guard(error)
-                        | crate::store::GuardedError::Store(error) => error,
-                    })?;
+                let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
                 {
@@ -187,6 +163,7 @@ impl CellStore<NativeEngine> {
                 return Err(RestoreError::JournalMismatch(seq));
             }
         }
+        store.admit_reconstructed_model()?;
         let ledger_head = store.read().verify_ledger()?;
         let rebuilt_hash = store
             .export_record(ledger_head.commits)?

@@ -16,7 +16,12 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 pub mod conservation;
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
+/// Bounded declaration-to-Quint lowering, without solver execution.
+pub mod finite;
 mod induction;
+pub mod quint;
+#[cfg(test)]
+mod quint_tests;
 /// Conjunction-only specialisation evidence provenance.
 pub mod specialisation;
 

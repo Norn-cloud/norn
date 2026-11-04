@@ -54,6 +54,10 @@ declare module "@norn/authoring" {
       readonly code: string
     }
 
+    type PropertyAdditivity =
+      | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
+      | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -62,7 +66,7 @@ declare module "@norn/authoring" {
      * number for authoring only; on the wire it is an exact number token and
      * never a binary float. `scale` is a non-negative integer literal.
      */
-    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
+    function decimal(scale: number, options?: ({ readonly unit?: UnitRef } | { readonly currency: string }) & { readonly additivity?: PropertyAdditivity; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
 
     /** VAL-RATE: a typed currency-per-unit decimal; general compound units are not admitted. */
     function rate(scale: number, options: { readonly currency: string; readonly perUnit: UnitRef; readonly rounding?: "refuse" | "toward_zero" | "half_even" | "half_away_from_zero" }): Schema.Finite
@@ -128,6 +132,22 @@ declare module "@norn/authoring" {
       readonly _tag: "NornType"
       readonly __types?: { readonly type: T }
     }
+
+    /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
+    interface QuestionDefinition { readonly _tag: "NornQuestion" }
+    interface QuestionMeta {
+      readonly name: string
+      readonly of: string | TypeDefinition<unknown>
+      readonly where: ReadonlyArray<{ readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      readonly measure: string
+      readonly by: ReadonlyArray<{ readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+      readonly asOf:
+        | { readonly basis: "effective"; readonly from: string; readonly to: string; readonly freshness: { readonly kind: "live" | "delayed"; readonly maxAgeMs: number } }
+        | { readonly basis: "knowledge" }
+      readonly population: { readonly kind: "authorized_objects" }
+    }
+    /** Syntax only: authored modules and callbacks never execute. */
+    function question(meta: QuestionMeta): QuestionDefinition
 
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
