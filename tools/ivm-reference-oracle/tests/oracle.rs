@@ -51,8 +51,10 @@ impl Oracle {
         let (start, end) = (epoch_day("2026-07-06"), epoch_day("2026-10-26"));
         let (send, updates) = mpsc::channel::<Vec<(Row, isize)>>();
         let (results, receive) = mpsc::channel();
+        let updates = std::sync::Mutex::new(updates);
         let worker = thread::spawn(move || {
             timely::execute_directly(move |worker| {
+                let updates = updates.into_inner().expect("updates receiver");
                 let mut input = InputSession::<u64, Row, isize>::new();
                 let output = Rc::new(RefCell::new(BTreeMap::new()));
                 let sink = output.clone();
