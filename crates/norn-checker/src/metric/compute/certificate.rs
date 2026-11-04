@@ -153,7 +153,7 @@ pub fn question(plan: &QuestionPlan) -> QuestionCertificate<'_> {
     QuestionCertificate {
         plan,
         algebraic: check(&operators, true),
-        finalizer: "shared finalizer correspondence is sampled, including rounded ratios and zero divisors",
+        finalizer: "shared finalizer correspondence is sampled, including rounded ratios",
         runtime: Correspondence::Sampled,
     }
 }
