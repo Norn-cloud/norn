@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link, useParams } from "@tanstack/react-router"
 import { useState } from "react"
 import { ChartLine, Clock, Rows3, Sigma } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
@@ -6,9 +7,11 @@ import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { ListDetail } from "@/components/list-detail"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, bucketLabel, day, headline, percent, period, scope } from "./lib/format.ts"
@@ -85,7 +88,7 @@ function DrillDown({ bucket, onClose }: { readonly bucket: Bucket | undefined; r
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
 
-function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
+function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
   const [open, setOpen] = useState<Bucket>()
   const question = read.question.document
   const answer = read.answer.document
@@ -96,10 +99,12 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
     Object.values(partitions).map(({ complete }) => `${source} ${complete ? "complete" : "incomplete"}`))
   return (
-    <section id={question.name} className="scroll-mt-4 space-y-3">
+    <section className="space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{headline(question)}</h2>
+          {heading === "h1"
+            ? <h1 className="text-title font-medium">{headline(question)}</h1>
+            : <h2 className="text-section font-medium"><Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{headline(question)}</Link></h2>}
           <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
           {read.answer.origin === "recorded" && <Badge variant="outline" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
@@ -161,7 +166,28 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
 /** The questions on the board, for the submenu island. */
 export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
   const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
-  return board.data?.map(({ question }) => ({ href: `#${question.document.name}`, label: headline(question.document) }))
+  return board.data?.map((read) => ({ href: `/questions/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) }))
+}
+
+/** The object type a question counts, which is how the list groups questions. */
+const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.document.name)
+
+/** One question as a record page, listed beside the others grouped by the object type it counts. */
+export function QuestionPage() {
+  const { name } = useParams({ from: "/questions/$name" })
+  const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
+  const read = board.data?.find(({ question }) => question.document.name === name)
+  return (
+    <ListDetail title="Questions" placeholder="Find a question" selected={name}
+      items={(board.data ?? []).map((item) => ({
+        id: item.question.document.name, to: `/questions/${item.question.document.name}`,
+        title: headline(item.question.document), subtitle: scope(item.question.document), group: subject(item),
+      }))}>
+      {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
+      {board.isError && <p className="text-destructive">{board.error.message}</p>}
+      {board.data && (read ? <QuestionCard read={read} heading="h1" /> : <EmptyState icon={ChartLine}>No question named {name} is on the board.</EmptyState>)}
+    </ListDetail>
+  )
 }
 
 export function QuestionsPage() {

@@ -22,6 +22,7 @@ export interface Section {
 }
 
 export interface MenuEntry {
+  /** The entry's route, e.g. `/sources/canon.Holding`, or `#anchor` on the section's own page. */
   readonly href: string
   readonly label: ReactNode
   /** The submenu group this entry is listed under. */
@@ -53,6 +54,7 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
 export function Submenu({ section }: { readonly section: Section }) {
   const entries = (section.useMenu ?? none)() ?? []
   const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
   return (
     <Sidebar collapsible="none" className="flex-1">
       <SidebarHeader className="gap-3 px-4 pt-5 pb-3">
@@ -75,7 +77,7 @@ export function Submenu({ section }: { readonly section: Section }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => (
-                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild><a href={entry.href}>{entry.label}</a></SidebarMenuButton></SidebarMenuItem>
+                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname}><Link {...target(section, entry.href)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -98,7 +100,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
     document.addEventListener("keydown", toggle)
     return () => document.removeEventListener("keydown", toggle)
   }, [])
-  const go = (path: string, hash?: string) => { setOpen(false); void navigate({ to: path, hash }) }
+  const go = (to: { to: string; hash?: string }) => { setOpen(false); void navigate(to) }
   return (
     <>
       <Button variant="outline" className="w-full max-w-md justify-start text-muted-foreground" onClick={() => setOpen(true)}>
@@ -110,11 +112,11 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
         <CommandList>
           <CommandEmpty>Nothing matches.</CommandEmpty>
           <CommandGroup heading="Sections">
-            {sections.map(({ path, label, icon: Icon }) => <CommandItem key={path} onSelect={() => go(path)}><Icon />{label}</CommandItem>)}
+            {sections.map(({ path, label, icon: Icon }) => <CommandItem key={path} onSelect={() => go({ to: path })}><Icon />{label}</CommandItem>)}
           </CommandGroup>
           {entries.filter(({ entries: list }) => list.length > 0).map(({ section, entries: list }) => (
             <CommandGroup key={section.path} heading={section.label}>
-              {list.map((entry) => <CommandItem key={entry.href} onSelect={() => go(section.path, entry.href.replace(/^#/, ""))}>{entry.label}</CommandItem>)}
+              {list.map((entry) => <CommandItem key={entry.href} onSelect={() => go(target(section, entry.href))}>{entry.label}</CommandItem>)}
             </CommandGroup>
           ))}
         </CommandList>
@@ -124,10 +126,18 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   )
 }
 
+/** Where an entry goes: its route, or an anchor on its section's page. */
+export const target = (section: Pick<Section, "path">, href: string) =>
+  href.startsWith("#") ? { to: section.path, hash: href.slice(1) } : { to: href }
+
+/** The section a route belongs to: its own path, or a record page under it. */
+export const sectionOf = (sections: readonly Section[], pathname: string) =>
+  sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))
+
 /** A thin icon rail, the active section's submenu beside it, and the page card. */
 export function Shell({ sections }: { sections: readonly Section[] }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const current = sections.find(({ path }) => path === pathname)
+  const current = sectionOf(sections, pathname)
   return (
     <TooltipProvider>
       <SidebarProvider style={{ "--sidebar-width": "21rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
@@ -142,7 +152,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
             </SidebarHeader>
             <SidebarContent>
               <SidebarGroup><SidebarGroupContent className="px-1.5 md:px-0">
-                <SidebarMenu>{sections.map((section) => <RailItem key={section.path} section={section} active={section.path === pathname} />)}</SidebarMenu>
+                <SidebarMenu>{sections.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>
               </SidebarGroupContent></SidebarGroup>
             </SidebarContent>
             <SidebarFooter>
