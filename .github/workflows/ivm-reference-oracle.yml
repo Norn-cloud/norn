@@ -1,14 +1,14 @@
-name: IVM DBSP oracle
+name: IVM reference oracle
 on:
   pull_request:
     paths:
-      - 'tools/ivm-dbsp-oracle/**'
+      - 'tools/ivm-reference-oracle/**'
       - 'crates/**'
       - 'vendor/zen/**'
       - 'fixtures/**'
       - 'Cargo.toml'
       - 'deny.toml'
-      - '.github/workflows/ivm-dbsp-oracle.yml'
+      - '.github/workflows/ivm-reference-oracle.yml'
   push:
     branches: [main]
   merge_group:
@@ -29,7 +29,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt
-      - run: cargo fmt --manifest-path tools/ivm-dbsp-oracle/Cargo.toml -- --check
-      - run: cargo test --locked --manifest-path tools/ivm-dbsp-oracle/Cargo.toml
+      - run: cargo fmt --manifest-path tools/ivm-reference-oracle/Cargo.toml -- --check
+      - run: cargo test --locked --manifest-path tools/ivm-reference-oracle/Cargo.toml
       - run: cargo install --locked cargo-deny --version 0.19.0
-      - run: cargo deny --manifest-path tools/ivm-dbsp-oracle/Cargo.toml check licenses --config deny.toml
+      - run: cargo deny --locked --manifest-path tools/ivm-reference-oracle/Cargo.toml check licenses --config deny.toml

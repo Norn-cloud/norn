@@ -1,8 +1,8 @@
 # Dev/test-only differential-dataflow reference oracle for Norn's incremental question (#714).
 # Deliberately outside the root workspace: `differential-dataflow` never enters the runtime,
-# wasm or root Cargo.lock graph. Run: cargo test --locked --manifest-path tools/ivm-dbsp-oracle/Cargo.toml
+# wasm or root Cargo.lock graph. Run: cargo test --locked --manifest-path tools/ivm-reference-oracle/Cargo.toml
 [package]
-name = "norn-ivm-dbsp-oracle"
+name = "norn-ivm-reference-oracle"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
