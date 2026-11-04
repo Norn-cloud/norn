@@ -1667,6 +1667,9 @@ pub(crate) fn validate_closed_schema(
         diagnostics.push(invalid_diagnostic(code, error.reason, path, artifact_id));
     }
     let allowed: &[&str] = match schema_type {
+        "number" if matches!(profile.unions, ClosedSchemaUnions::ActionInput) => {
+            &["type", "nornType", "description"]
+        }
         "number" => &["type", "nornType"],
         "object" => &["type", "properties", "required", "additionalProperties"],
         "array" => &["type", "items"],
@@ -1680,6 +1683,17 @@ pub(crate) fn validate_closed_schema(
         _ => &["type"],
     };
     reject_unknown_object_fields(schema, allowed, path, diagnostics, artifact_id, code);
+    if schema
+        .get("description")
+        .is_some_and(|description| description.as_string().is_none())
+    {
+        diagnostics.push(invalid_diagnostic(
+            code,
+            "description must be a string",
+            format!("{path}.description"),
+            artifact_id,
+        ));
+    }
 
     match schema_type {
         "object" => {

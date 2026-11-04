@@ -266,6 +266,42 @@ fn unbound_input_preparation_cannot_be_committed() {
 }
 
 #[test]
+fn described_decimal_action_input_prepares_exactly_and_rejects_unknown_constraints() {
+    let mut action = action();
+    action.derive.clear();
+    let schema = json!({
+        "type": "object", "additionalProperties": false,
+        "properties": {"amount": {
+            "type": "number", "nornType": {"kind": "decimal", "scale": 2},
+            "description": "Exact decimal text"
+        }},
+        "required": ["amount"]
+    });
+    action.input_schema = serde_json::from_value(schema.clone()).unwrap();
+    let raw: JsonObject = serde_json::from_value(json!({"amount": "9007199254740993.25"})).unwrap();
+    let prepared = prepare_action_input::<Infallible>(&action, &raw).unwrap();
+    assert_eq!(
+        serde_json::to_string(prepared.effective_input()).unwrap(),
+        r#"{"amount":9007199254740993.25}"#
+    );
+    assert_eq!(
+        raw["amount"],
+        norn_ir::RuntimeValue::String("9007199254740993.25".to_owned())
+    );
+    for (key, value) in [("maximum", json!(1)), ("description", json!(false))] {
+        let mut invalid = schema.clone();
+        invalid["properties"]["amount"][key] = value;
+        action.input_schema = serde_json::from_value(invalid).unwrap();
+        assert_eq!(
+            prepare_action_input::<Infallible>(&action, &raw)
+                .unwrap_err()
+                .code(),
+            "action.invalid_input"
+        );
+    }
+}
+
+#[test]
 fn underived_twenty_kib_input_is_retained_once_and_commits_a_small_transition() {
     let mut action = action();
     action.derive.clear();
