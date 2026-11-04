@@ -72,6 +72,7 @@ fn audit_type() -> ObjectTypeDef {
         default: None,
         markings: Vec::new(),
         computed: None,
+        protected: false,
     })
     .collect();
     object
