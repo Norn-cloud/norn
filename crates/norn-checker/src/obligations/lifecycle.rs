@@ -9,17 +9,27 @@ pub(super) fn append(
     pool: &[ArtifactEnvelope],
     goals: &mut Vec<Value>,
 ) -> Result<(), ChallengeError> {
-    let laws = pool.iter().filter(|a| a.kind() == ArtifactKind::Law).map(|artifact| {
-        let law: LawIR = artifact.payload.to_json_value().decode().map_err(|_error| ChallengeError::Closure)?;
-        Ok((artifact, law))
-    }).collect::<Result<Vec<_>, ChallengeError>>()?;
+    let laws = pool
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Law)
+        .map(|artifact| {
+            let law: LawIR = artifact
+                .payload
+                .to_json_value()
+                .decode()
+                .map_err(|_error| ChallengeError::Closure)?;
+            Ok((artifact, law))
+        })
+        .collect::<Result<Vec<_>, ChallengeError>>()?;
     let mut bytes = 0_usize;
     for name in catalog.object_type_names() {
         let object = catalog
             .object_type_named(name)
             .and_then(Result::ok)
             .ok_or(ChallengeError::Closure)?;
-        if object.lifecycles.is_empty() { continue; }
+        if object.lifecycles.is_empty() {
+            continue;
+        }
         let reason = unsupported_binding(object, &laws).unwrap_or_else(||
             "conditional finite lifecycle goal requires a qualified bounds profile and checked result".into());
         for machine in &object.lifecycles {
@@ -100,16 +110,26 @@ fn push(
 }
 
 // Match the native governing-law resolver's applicability and B2 scope boundary.
-fn unsupported_binding(object: &EffectiveObjectType, laws: &[(&ArtifactEnvelope, LawIR)]) -> Option<String> {
-    let is_a = |name: &str| object.lineage.iter().any(|ty| ty.as_str() == name)
-        || object.interfaces.iter().any(|ty| ty.as_str() == name);
+fn unsupported_binding(
+    object: &EffectiveObjectType,
+    laws: &[(&ArtifactEnvelope, LawIR)],
+) -> Option<String> {
+    let is_a = |name: &str| {
+        object.lineage.iter().any(|ty| ty.as_str() == name)
+            || object.interfaces.iter().any(|ty| ty.as_str() == name)
+    };
     for (artifact, law) in laws {
-        if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) { continue; }
+        if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) {
+            continue;
+        }
         if !is_a(&law.subject)
             || !matches!(&law.scope.root, LawRoot::Entity(name) if name == &law.subject)
             || law.scope.object_types != [law.subject.as_str()]
         {
-            return Some(format!("UnsupportedUntilB2: governing law {} ({}) has unsupported root/binding {:?}", artifact.artifact_id, law.id, law.scope.root));
+            return Some(format!(
+                "UnsupportedUntilB2: governing law {} ({}) has unsupported root/binding {:?}",
+                artifact.artifact_id, law.id, law.scope.root
+            ));
         }
     }
     None
