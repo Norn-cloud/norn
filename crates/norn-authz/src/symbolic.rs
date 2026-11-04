@@ -144,7 +144,7 @@ pub async fn analyze_in_worker<S: Solver>(
     property: Property,
 ) -> Analysis {
     let schema = candidate.schema().cedar();
-    if schema != previous.schema().cedar() {
+    if candidate.schema().symbolic_identity != previous.schema().symbolic_identity {
         return Analysis::Unknown;
     }
     let Ok(mut compiler) = CedarSymCompiler::new(solver) else {
