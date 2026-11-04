@@ -37,10 +37,11 @@ impl InclusionProof {
         }
         ct_merkle::InclusionProof::try_from_bytes(bytes)
             .map(Self)
-            .map_err(|_| ProofError)
+            .map_err(|_invalid_proof| ProofError)
     }
 
     /// Concatenated SHA-256 hashes.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }
@@ -61,10 +62,11 @@ impl ConsistencyProof {
         }
         ct_merkle::ConsistencyProof::try_from_bytes(bytes)
             .map(Self)
-            .map_err(|_| ProofError)
+            .map_err(|_invalid_proof| ProofError)
     }
 
     /// Concatenated SHA-256 hashes.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }
@@ -77,16 +79,19 @@ pub struct Checkpoint(ct_merkle::RootHash<Sha256>);
 impl Checkpoint {
     /// Decode a retained root and size without trusting their contents.
     /// Verification validates the size before invoking the Merkle library.
+    #[must_use]
     pub fn new(digest: [u8; 32], num_leaves: u64) -> Self {
         Self(ct_merkle::RootHash::new(digest.into(), num_leaves))
     }
 
     /// Number of committed leaves claimed by this checkpoint.
+    #[must_use]
     pub fn num_leaves(&self) -> u64 {
         self.0.num_leaves()
     }
 
     /// SHA-256 root digest.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }
@@ -107,12 +112,12 @@ impl Checkpoint {
         }
         // The index helper is safe only after the size and index checks above.
         let hashes = ct_merkle::indices_for_inclusion_proof(size, index).len();
-        if proof.as_bytes().len() != hashes * 32 {
+        if proof.as_bytes().len() != hashes.checked_mul(32).ok_or(ProofError)? {
             return Err(ProofError);
         }
         self.0
             .verify_inclusion(value, index, &proof.0)
-            .map_err(|_| ProofError)
+            .map_err(|_invalid_proof| ProofError)
     }
 
     /// Verify that this tree extends a retained nonempty checkpoint.
@@ -129,13 +134,14 @@ impl Checkpoint {
         if size > MAX_TREE_SIZE || old_size == 0 || old_size > size {
             return Err(ProofError);
         }
-        let hashes = ct_merkle::indices_for_consistency_proof(old_size, size - old_size).len();
-        if proof.as_bytes().len() != hashes * 32 {
+        let additions = size.checked_sub(old_size).ok_or(ProofError)?;
+        let hashes = ct_merkle::indices_for_consistency_proof(old_size, additions).len();
+        if proof.as_bytes().len() != hashes.checked_mul(32).ok_or(ProofError)? {
             return Err(ProofError);
         }
         self.0
             .verify_consistency(&old.0, &proof.0)
-            .map_err(|_| ProofError)
+            .map_err(|_invalid_proof| ProofError)
     }
 }
 pub(crate) type ReceiptLog = MemoryBackedTree<Sha256, String>;
