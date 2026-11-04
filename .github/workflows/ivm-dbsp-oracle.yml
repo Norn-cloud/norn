@@ -4,6 +4,7 @@ on:
     paths:
       - 'tools/ivm-dbsp-oracle/**'
       - 'crates/**'
+      - 'vendor/zen/**'
       - 'fixtures/**'
       - 'Cargo.toml'
       - 'deny.toml'
