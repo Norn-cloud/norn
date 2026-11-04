@@ -21,7 +21,7 @@ export default {
       const bytes = new Uint8Array(length)
       let offset = 0
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes))
       if (!object(value) || Object.keys(value).length !== 3 || typeof value.source !== "string" ||
           typeof value.expectedStates !== "number") throw new Error("malformed generated request")
       const outcome = await checkFinite({ source: value.source, expectedStates: value.expectedStates,
