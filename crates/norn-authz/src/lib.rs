@@ -64,3 +64,7 @@ pub use request::{
 mod projected_tests;
 #[cfg(test)]
 mod tests;
+
+// Native-only until crates.io SymCC gates tokio/process (see #769).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod symbolic;
