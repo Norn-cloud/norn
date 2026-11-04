@@ -713,9 +713,15 @@ fn native_order_rejects_incomplete_law_identities() {
     let mut rule = obligation().expect("fixture");
     rule.law.timing = None;
     rule.law.modality = LawModality::Always {};
-    for slot in ["owner", "subject", "root", "types"] {
+    rule.law.condition = Some(norn_ir::ZenExpression("true".into()));
+    rule.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("true".into()),
+    };
+    assert!(lower_declared_order(&[rule.clone()], &norn_expr::schema::Schema::Boolean).is_ok());
+    for slot in ["owner", "subject", "root", "types", "long"] {
         let mut broken = rule.clone();
         match slot {
+            "long" => broken.law.id = "x".repeat(257),
             "owner" => broken.law.owner.clear(),
             "subject" => broken.law.subject.clear(),
             "root" => broken.law.scope.root = norn_ir::LawRoot::App(String::new()),
