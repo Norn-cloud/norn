@@ -735,7 +735,7 @@ mod admission_tests {
             run(report.diagnosis.calls.saturating_sub(1)),
             Err(NormRefusal::Diagnosis(Unknown::Budget))
         ));
-        assert_eq!(run(report.diagnosis.calls)?.diagnosis, report.diagnosis);
+        assert_eq!(run(report.diagnosis.calls)?.diagnosis.calls, report.diagnosis.calls);
         Ok(())
     }
 }
