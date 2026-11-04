@@ -127,9 +127,11 @@ fn described_decimal_action_schema_is_admitted_but_unknown_constraints_refuse() 
     for (key, value) in [("maximum", json!(1)), ("description", json!(false))] {
         let mut invalid = documents.clone();
         invalid[4]["payload"]["inputSchema"]["properties"]["amount"][key] = value;
-        assert!(findings(invalid).iter().any(|diagnostic| {
-            diagnostic.code == "action.validation.invalid_schema"
-        }));
+        assert!(
+            findings(invalid)
+                .iter()
+                .any(|diagnostic| { diagnostic.code == "action.validation.invalid_schema" })
+        );
     }
 }
 
