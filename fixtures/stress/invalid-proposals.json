@@ -53,7 +53,7 @@
       "pointer": "/payload/subject",
       "value": "stress.Absent",
       "code": "law.model.unknown_binding",
-      "text": "entity root must name the subject"
+      "text": "law subject has no complete effective contract"
     },
     {
       "name": "unsupported-law-modality",
@@ -115,7 +115,7 @@
       "pointer": "/dependencies",
       "value": [],
       "code": "core.values.unit_mismatch",
-      "text": "unit"
+      "text": "visible, exact core unit catalog pin and an admitted UCUM code"
     },
     {
       "name": "invented-unit",
@@ -123,7 +123,7 @@
       "pointer": "/payload/objectType/properties/1/type/unit/code",
       "value": "crate",
       "code": "core.values.unit_mismatch",
-      "text": "unit"
+      "text": "visible, exact core unit catalog pin and an admitted UCUM code"
     },
     {
       "name": "negative-decimal-scale",
