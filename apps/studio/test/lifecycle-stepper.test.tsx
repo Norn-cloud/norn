@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Lifecycle } from "../src/lib/catalog.ts"
-import { LifecycleStepper } from "../src/objects.tsx"
+import { LifecycleStepper } from "../src/components/lifecycle-stepper.tsx"
 
 const lifecycle: Lifecycle = {
   property: "status",
