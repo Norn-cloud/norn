@@ -1591,6 +1591,10 @@ fn symcc_has_exactly_one_direct_owner() {
     assert!(check_dependencies(&with_dep("norn-authz", "cedar-policy-symcc")).is_empty());
     for owner in ["norn-kernel", "norn-checker", "norn-cli", "norn-cell"] {
         let violations = check_dependencies(&with_dep(owner, "cedar-policy-symcc"));
-        assert!(rules_of(&violations).contains(&"single-owner"), "{}", render(&violations));
+        assert!(
+            rules_of(&violations).contains(&"single-owner"),
+            "{}",
+            render(&violations)
+        );
     }
 }
