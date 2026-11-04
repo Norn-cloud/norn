@@ -484,6 +484,22 @@ fn sort_exact_json(
     serde_json::value::RawValue::from_string(bytes)
 }
 
+/// Stream the same JSON bytes as [`serialize_json_verbatim`] into a writer.
+///
+/// This preserves Serde JSON's write boundaries so budget writers can refuse
+/// oversized input without allocating the full encoded value.
+///
+/// # Errors
+///
+/// Returns the serialization or writer error, including any budget refusal.
+/// Writes completed before an error remain charged by the writer.
+pub fn meter_json_verbatim<W: std::io::Write, T: Serialize + ?Sized>(
+    writer: W,
+    value: &T,
+) -> Result<(), serde_json::Error> {
+    serde_json::to_writer(writer, value)
+}
+
 /// Alias for [`parse`].
 ///
 /// # Errors
@@ -1469,6 +1485,54 @@ fn write_string(value: &str, output: &mut String) {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn verbatim_meter_preserves_bytes_and_partial_budget_charges() {
+        struct BudgetWriter {
+            remaining: usize,
+            bytes: Vec<u8>,
+        }
+
+        impl std::io::Write for BudgetWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if bytes.len() > self.remaining {
+                    return Err(std::io::Error::other("budget exhausted"));
+                }
+                self.remaining -= bytes.len();
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let value = serde_json::json!({"text": "é\n\"", "nested": [1, true, null]});
+        let encoded = serialize_json_verbatim(&value).expect("encode");
+        for budget in 0..=encoded.len() + 1 {
+            let mut writer = BudgetWriter {
+                remaining: budget,
+                bytes: Vec::new(),
+            };
+            let mut baseline = BudgetWriter {
+                remaining: budget,
+                bytes: Vec::new(),
+            };
+            let result = meter_json_verbatim(&mut writer, &value);
+            let expected = serde_json::to_writer(&mut baseline, &value);
+            assert_eq!(result.is_ok(), budget >= encoded.len());
+            assert_eq!(
+                result.err().map(|e| e.to_string()),
+                expected.err().map(|e| e.to_string())
+            );
+            assert_eq!(writer.remaining, baseline.remaining);
+            assert_eq!(writer.bytes, baseline.bytes);
+            if budget >= encoded.len() {
+                assert_eq!(writer.bytes, encoded);
+            }
+        }
+    }
 
     fn arb_string() -> impl Strategy<Value = String> {
         prop::collection::vec(any::<char>(), 0..8)
