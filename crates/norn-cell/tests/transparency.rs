@@ -219,9 +219,11 @@ fn cache_read_failure_cannot_turn_a_durable_commit_into_an_error() {
     first.bind("scope", "org_demo/dev").expect("scope");
     let fail = Rc::new(Cell::new(false));
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
-    let mut second =
-        CellStore::from_engine(FaultEngine(engine, Rc::clone(&fail)), common::corpus_model())
-            .expect("open");
+    let mut second = CellStore::from_engine(
+        FaultEngine(engine, Rc::clone(&fail)),
+        common::corpus_model(),
+    )
+    .expect("open");
     first.commit(&batch("one")).expect("commit");
     fail.set(true);
     assert!(matches!(
