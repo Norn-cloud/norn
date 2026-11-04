@@ -1063,8 +1063,9 @@ fn an_observed_delete_cannot_transition_a_protected_lifecycle() {
                 &catalog, &slice, &unconsumed_turn("protected-delete"),
                 ObservedDelete { key: &key, lifecycles: &lifecycles, provenance: &provenance },
             ).unwrap_err();
-            assert!(matches!(refusal, norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { property, reason }
-                if property == protected_property && reason.contains("protected")));
+            assert!(matches!(refusal, norn_kernel::snapshot_observe::ObservationRefusal::Properties(error)
+                if matches!(*error, norn_kernel::DecisionRefusal::InvalidOutput { reason }
+                    if reason.contains(protected_property) && reason.contains("protected"))));
             assert_eq!(cell.load(&key).unwrap(), before);
             assert_eq!(cell.ledger(), ledger.as_slice());
             assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());

@@ -1545,10 +1545,14 @@ pub fn prepare_observed_delete(
             .iter()
             .find(|property| property.protected())
     }) {
-        return Err(invalid(
-            &property.id,
-            "objects with protected properties may be deleted only by rules",
-        ));
+        return Err(ObservationRefusal::Properties(Box::new(
+            DecisionRefusal::InvalidOutput {
+                reason: format!(
+                    "protected property `{}` of {key} may be deleted only by rules",
+                    property.id
+                ),
+            },
+        )));
     }
     let before = effective_observed_values(catalog, key, values)?;
     let mut current = before.clone();
