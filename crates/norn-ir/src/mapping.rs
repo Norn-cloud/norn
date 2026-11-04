@@ -52,6 +52,44 @@ pub enum MappingFormat {
     V1,
 }
 
+/// Closed mapping-family documents; term correspondences remain link packs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+#[schemars(transform = crate::members::one_of_forms)]
+pub enum MappingDocument {
+    /// Source records produce ordinary entity facts, never inherited laws.
+    SourceRecord(MappingIr),
+    /// A separately checked interpretation between exact ontology layers.
+    LawInterpretation(LawInterpretationIr),
+}
+
+/// Wire discriminator shared by the lenient artifact root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum MappingDocumentFormat {
+    /// Source-record transforms.
+    #[serde(rename = "norn.mapping/1")]
+    SourceRecord,
+    /// Law-carrying interpretation.
+    #[serde(rename = "norn.interpretation/1")]
+    LawInterpretation,
+}
+
+/// Only the interpretation wire format decodes here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum InterpretationFormat {
+    /// First interpretation contract.
+    #[serde(rename = "norn.interpretation/1")]
+    V1,
+}
+
+/// A law interpretation is neither source evidence nor term correspondence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InterpretationRole {
+    /// Subject to contract totality and preservation obligations.
+    LawInterpretation,
+}
+
 /// Exact Norn1 semantic envelope identity of an interpretation endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -62,6 +100,42 @@ pub struct InterpretationEndpoint {
     pub version: String,
     /// Receipt-profile semantic content digest.
     pub sha256: String,
+}
+
+/// Typed interpretation contract. Admission refuses until conformance exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LawInterpretationIr {
+    /// Closed format discriminator.
+    pub format: InterpretationFormat,
+    /// Explicit semantic role.
+    pub role: InterpretationRole,
+    /// Layer whose contract must be preserved.
+    pub source_layer: InterpretationEndpoint,
+    /// Layer interpreting that contract.
+    pub target_layer: InterpretationEndpoint,
+    /// MAP-MEMBER-CONTRACT-1: retain every explicit member binding.
+    /// Required coverage and unit/link contracts come from pinned definitions.
+    pub members: Vec<MemberInterpretation>,
+}
+
+/// One interpretation between exact catalog members, never a coverage claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemberInterpretation {
+    /// Source type, property, link, lifecycle state or transition identity.
+    pub source: crate::definition_catalog::MemberRef,
+    /// Corresponding target identity, resolved within the pinned target layer.
+    pub target: crate::definition_catalog::MemberRef,
+    /// Absent means identity. Expressions require checked conformance;
+    /// declaring one does not establish preservation.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "ZenExpression")]
+    pub transform: Option<ZenExpression>,
 }
 
 /// An interface-scoped mapping from one source schema: the payload of a

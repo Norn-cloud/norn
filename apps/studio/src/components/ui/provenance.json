@@ -1,0 +1,32 @@
+{
+  "vendor": {
+    "path": "apps/studio/src/components/ui",
+    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source",
+    "license": {
+      "spdx": "MIT",
+      "file": "LICENSE",
+      "copyright": "Copyright (c) 2023 shadcn"
+    },
+    "files": [
+      "apps/studio/src/components/ui/badge.tsx",
+      "apps/studio/src/components/ui/button.tsx",
+      "apps/studio/src/components/ui/card.tsx",
+      "apps/studio/src/components/ui/chart.tsx",
+      "apps/studio/src/components/ui/input.tsx",
+      "apps/studio/src/components/ui/sheet.tsx",
+      "apps/studio/src/components/ui/shadcn.css",
+      "apps/studio/src/components/ui/table.tsx",
+      "apps/studio/src/index.css",
+      "apps/studio/src/lib/utils.ts"
+    ],
+    "changes": [
+      "`cn` is imported from `@/lib/utils`",
+      "shadcn.css is the keyframes, state variants and no-scrollbar part of shadcn@4.23.0's dist/tailwind.css, vendored instead of depending on the CLI package",
+      "index.css carries the Norn theme tokens plus the app's base layer"
+    ]
+  },
+  "upstream": {
+    "repository": "shadcn-ui/ui",
+    "commit": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610"
+  }
+}

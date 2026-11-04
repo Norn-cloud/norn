@@ -4870,6 +4870,26 @@
         "sha256"
       ]
     },
+    "InterpretationFormat": {
+      "description": "Only the interpretation wire format decodes here.",
+      "oneOf": [
+        {
+          "description": "First interpretation contract.",
+          "type": "string",
+          "const": "norn.interpretation/1"
+        }
+      ]
+    },
+    "InterpretationRole": {
+      "description": "A law interpretation is neither source evidence nor term correspondence.",
+      "oneOf": [
+        {
+          "description": "Subject to contract totality and preservation obligations.",
+          "type": "string",
+          "const": "law_interpretation"
+        }
+      ]
+    },
     "Invariant": {
       "description": "One declared invariant of an object type or interface.",
       "type": "object",
@@ -5684,6 +5704,43 @@
         "properties"
       ]
     },
+    "LawInterpretationIr": {
+      "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Closed format discriminator.",
+          "$ref": "#/$defs/InterpretationFormat"
+        },
+        "members": {
+          "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberInterpretation"
+          }
+        },
+        "role": {
+          "description": "Explicit semantic role.",
+          "$ref": "#/$defs/InterpretationRole"
+        },
+        "sourceLayer": {
+          "description": "Layer whose contract must be preserved.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        },
+        "targetLayer": {
+          "description": "Layer interpreting that contract.",
+          "$ref": "#/$defs/InterpretationEndpoint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "role",
+        "sourceLayer",
+        "targetLayer",
+        "members"
+      ]
+    },
     "LawModality": {
       "description": "Scoped temporal vocabulary; nested temporal operators have no wire representation.",
       "oneOf": [
@@ -6006,6 +6063,24 @@
             "kind": {
               "type": "string",
               "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "description": "Exact retained composition-pack boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pack"
             }
           },
           "additionalProperties": false,
@@ -6468,8 +6543,8 @@
         "reason"
       ]
     },
-    "MappingPayload": {
-      "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+    "MappingIr": {
+      "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
       "type": "object",
       "properties": {
         "entitlements": {
@@ -6522,6 +6597,19 @@
         "source",
         "interfaces",
         "maps"
+      ]
+    },
+    "MappingPayload": {
+      "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`]).",
+      "oneOf": [
+        {
+          "description": "Source records produce ordinary entity facts, never inherited laws.",
+          "$ref": "#/$defs/MappingIr"
+        },
+        {
+          "description": "A separately checked interpretation between exact ontology layers.",
+          "$ref": "#/$defs/LawInterpretationIr"
+        }
       ]
     },
     "MappingRelation": {
@@ -6867,6 +6955,29 @@
             "law"
           ]
         }
+      ]
+    },
+    "MemberInterpretation": {
+      "description": "One interpretation between exact catalog members, never a coverage claim.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "Source type, property, link, lifecycle state or transition identity.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "target": {
+          "description": "Corresponding target identity, resolved within the pinned target layer.",
+          "$ref": "#/$defs/MemberRef"
+        },
+        "transform": {
+          "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation.",
+          "$ref": "#/$defs/ZenExpression"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
       ]
     },
     "MemberRef": {
@@ -8235,6 +8346,10 @@
             "$ref": "#/$defs/MarkingId"
           }
         },
+        "protected": {
+          "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field.",
+          "type": "boolean"
+        },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
           "$ref": "#/$defs/PropertyType"
@@ -8244,6 +8359,91 @@
       "required": [
         "id",
         "type"
+      ]
+    },
+    "PropertyAdditivity": {
+      "description": "METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.\nMissing declarations permit point reads but never authorize aggregation.",
+      "oneOf": [
+        {
+          "description": "No aggregation contract has been declared.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "undeclared"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities and time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Summable across entities at a single instant, never across time.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "semi_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Requires a separately declared weighting calculation.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "non_additive"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Recompute from the sums of these operands, never average stored ratios.",
+          "type": "object",
+          "properties": {
+            "denominator": {
+              "description": "Denominator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ratio"
+            },
+            "numerator": {
+              "description": "Numerator property at the same object grain.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "numerator",
+            "denominator"
+          ]
+        }
       ]
     },
     "PropertyConstraints": {
@@ -8348,6 +8548,10 @@
           "description": "A signed 64-bit integer.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; a missing declaration fails closed.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "kind": {
               "type": "string",
               "const": "integer"
@@ -8362,6 +8566,10 @@
           "description": "An exact decimal with a fixed number of fraction digits, optionally a\nquantity in a declared unit.",
           "type": "object",
           "properties": {
+            "additivity": {
+              "description": "Explicit aggregation contract; units do not imply additivity.",
+              "$ref": "#/$defs/PropertyAdditivity"
+            },
             "currencySource": {
               "description": "Authoritative currency path relative to the object holding this amount.\nMonetary decimals declare this instead of a quantity unit. Metrics\nmust verify this source; descriptions and names carry no semantics.",
               "$ref": "#/$defs/DimensionPath"
