@@ -12,7 +12,7 @@ Reuse `RuleRoot`, `RuleDecisionV1`, `JdmGraph`, `SliceDeclaration`, `ZenExpressi
 | Operators | closed variants: select/filter/project/link/group/aggregate/classify/ordered_fold/as_of; typed member/expression references; each records dependencies and input completeness. No arbitrary function node. |
 | Ordered fold | `item_schema`, `accumulator_schema`, `initial: Exact record`, `order: [typed key + direction]` ending in stable ID, `step: pinned RuleIR`, `result: Expr`, `max_items`, `max_steps`, `scale`, `rounding`, residual/allocation provenance fields. Follow #323's wire contract when landed. |
 | Freshness policy | Reuse admitted `FreshnessPolicy::Live { max_age_ms }`, `Delayed { max_age_ms }`, `AsOf { at: UtcTimestamp }`; no replacement wire variants. Source completeness and unmet-policy handling are target query-plan fields, not changes to this enum; governed law reads always exact. |
-| Result envelope | `query_pin`, `engine: cell/ivm/olap`, `revision`, `effective_as_of`, `known_as_of`, `source_cursors: map(source,partition→cursor)`, `watermarks`, `freshness: exact/fresh/stale/incomplete`, `complete`, `grain`, `lineage_ref`, `rows`. |
+| Result envelope | `query_pin`, `engine: cell/ivm/olap`, `revision`, `effective_as_of`, `known_as_of`, `source_cursors: map(source,partition→cursor)`, `watermarks`, `freshness: exact/fresh/stale/incomplete`, `complete`, `grain`, `lineage_ref`, `exclusions: map(identity → finding_id)`, `rows`. |
 
 Derived concepts and questions share this algebra. Source cursors are opaque and compared only by their connector's declared ordering; never take a meaningless minimum across unrelated sources. Expose a vector frontier, not a fabricated global source sequence.
 
@@ -82,6 +82,25 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Cell-owned quarantine exclusions (DATA-QUARANTINE)
+
+Question execution resolves exclusion identity → finding ID from durable open
+findings under their retained governing definitions. Recovery evaluates the
+selected record incarnation; historical selection admits only findings committed
+by its authenticated knowledge frontier. The existing observation findings read
+returns the evidence document (rule, source, offending values and reason).
+`QueryContext` cannot represent exclusions; unknown wire fields refuse decoding.
+Only `QueryResult.exclusions` carries engine-derived finding pins.
+Visible candidates only disclose exclusion pins. Incremental maintenance retracts
+changes in finding disposition even when the aggregate input is unchanged.
+Historical source-dispute overlays remain refused as
+`core.world.source_dispute_unqualified` until their frontier is retained.
+
+Named scenario: `data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm`.
+
+Regression: `quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pins`
+checks that reusing an answer context re-derives pins at the historical frontier.
 
 ## Structural sum extraction
 
