@@ -410,7 +410,13 @@ pub(crate) fn check_declared_order_set(
         let source = norn_canonical::canonical_json_of(&artifacts);
         let installed = norn_canonical::canonical_json_of(&base);
         if let (Ok(source), Ok(installed)) = (source, installed) {
-            let pins = format!(" Canonical attempted/base SHA256: {:x}/{:x}. Profile norn.normative-admission/1; closed domains derived from the exact pinned subject definitions.", sha2::Sha256::digest(source), sha2::Sha256::digest(installed));
+            let source_hash = format!("{:x}", sha2::Sha256::digest(source));
+            let base_hash = format!("{:x}", sha2::Sha256::digest(installed));
+            let profile = serde_json::json!(["norn.normative-admission/1", env!("CARGO_PKG_VERSION"),
+                crate::receipt::EXPR_PROFILE, ADMISSION_CALLS, crate::consistency::diagnosis::MAX_DECLARATIONS,
+                crate::consistency::finite::FiniteOracle::bounds(), "structural-base-protected/candidate-editable",
+                source_hash, base_hash]).to_string();
+            let pins = format!(" Canonical attempted/base SHA256: {source_hash}/{base_hash}; profile SHA256: {:x}. Profile norn.normative-admission/1; closed domains derived from the exact pinned subject definitions.", sha2::Sha256::digest(profile.as_bytes()));
             for finding in &mut findings { finding.message.push_str(&pins); }
         }
     }

@@ -922,3 +922,21 @@ fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
         );
     }
 }
+
+#[test]
+fn live_diagnosis_pins_reproduce_and_change_with_attempted_source() {
+    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low, high]});
+    let run = |value| {
+        let artifact = serde_json::from_value(value).expect("candidate");
+        check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&BTreeSet::new(),base:&[],tenant:None})
+            .into_iter().map(|d| d.message).collect::<Vec<_>>()
+    };
+    let original = run(entity.clone());
+    assert_eq!(original, run(entity.clone()));
+    assert!(original.iter().all(|message| message.contains("profile SHA256:")));
+    entity["name"] = json!("edited");
+    assert_ne!(original, run(entity));
+}
