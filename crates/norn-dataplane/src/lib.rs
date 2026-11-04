@@ -7,3 +7,6 @@ pub use raw_observation::{
     RAW_OBSERVATION_CONTRACT, REDACTED, RawObservation, RedactionPolicy, RedactionRecord,
     parse_exact_json, raw_observation_schema,
 };
+
+pub mod converge;
+pub use converge::{Applied, Convergence, ConvergenceError, CurrentRecord};
