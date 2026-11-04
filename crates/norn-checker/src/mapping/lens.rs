@@ -4,8 +4,9 @@
 //! evidence grants no cell/connector write authority and proves no concurrency law.
 use std::collections::BTreeMap;
 
-use norn_expr::{EvaluationBudget, Expression, Value};
+use norn_expr::{EvaluationBudget, Expression, Type, Value};
 use norn_ir::mapping::{FiniteWriteBackLens, MappingIr};
+use norn_ir::source_schema::SourceSchemaIr;
 
 /// Reserved mapping extension for finite Boolean write-back projections.
 pub const LENS_SLOT: &str = "norn.write-back/0.1.0";
@@ -71,7 +72,18 @@ impl AdmittedLens {
 ///
 /// # Errors
 /// Malformed, unsupported, unknown or refuted declarations refuse admission.
-pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
+pub fn admit(mapping: &MappingIr, source: &SourceSchemaIr) -> Result<Option<AdmittedLens>, String> {
+    check_declaration(mapping, Some(source))
+}
+
+pub(super) fn check_local(mapping: &MappingIr) -> Result<(), String> {
+    check_declaration(mapping, None).map(|_| ())
+}
+
+fn check_declaration(
+    mapping: &MappingIr,
+    source_schema: Option<&SourceSchemaIr>,
+) -> Result<Option<AdmittedLens>, String> {
     if mapping.extensions.as_ref().is_some_and(|e| {
         e.keys()
             .any(|k| k.starts_with("norn.write-back/") && k != LENS_SLOT)
@@ -132,6 +144,27 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
         .ok_or("unknown map")?;
     if map.when.is_some() || map.source.nested_in.is_some() {
         return Err("unknown: guarded or nested lens".into());
+    }
+    if let Some(schema) = source_schema {
+        let fields = super::input_fields(schema, &map.source.dataset)
+            .ok_or("unknown: lens source dataset is not declared")?;
+        // Every record already has identical keys and required Boolean values.
+        let declared = &sources[0];
+        for (field, ty) in &fields {
+            if !declared.contains_key(field) {
+                return Err(format!("unknown: lens source field {field:?} is missing"));
+            }
+            if *ty != Type::Bool {
+                return Err(format!(
+                    "unknown: lens source field {field:?} requires {ty:?}, declared required Boolean"
+                ));
+            }
+        }
+        if let Some(field) = declared.keys().find(|field| !fields.contains_key(*field)) {
+            return Err(format!(
+                "unknown: lens source field {field:?} is undeclared"
+            ));
+        }
     }
     let rule = map
         .properties
