@@ -7,13 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import zipfile
 
-from quint_apalache import HarnessError, kill_group, scrubbed_environment
+from quint_apalache import HarnessError, scrubbed_environment
 
 
 def verdict(primary, oracle, returncode, timed_out, expected):
@@ -92,18 +93,23 @@ def initializer_predicate(spec):
     Only the generated constant initializer is accepted. Other definitions,
     identifiers, types and effects pass unchanged to the pinned parser.
     """
+    if not isinstance(spec, dict):
+        raise ValueError("malformed Quint JSON: root must be an object")
     result = copy.deepcopy(spec)
-    modules = result.get("modules", [])
-    if len(modules) != 1 or modules[0].get("name") != "generated":
+    modules = result.get("modules")
+    if not isinstance(modules, list) or len(modules) != 1 or not isinstance(modules[0], dict) or modules[0].get("name") != "generated":
         raise ValueError("unsupported flattened Quint module")
-    declarations = modules[0]["declarations"]
-    names = [d.get("name") for d in declarations]
+    declarations = modules[0].get("declarations")
+    if not isinstance(declarations, list) or any(not isinstance(d, dict) or not isinstance(d.get("name"), str) or not d["name"] or not isinstance(d.get("kind"), str) for d in declarations):
+        raise ValueError("malformed Quint JSON: declarations require named objects")
+    names = [d["name"] for d in declarations]
     if len(set(names)) != len(names) or any(d.get("kind") not in {"var", "def"} or d.get("qualifier") == "run" for d in declarations):
         raise ValueError("unsupported Quint declaration")
     definitions = {d["name"]: d for d in declarations if d["kind"] == "def"}
     init = definitions.get("init", {})
     alias = definitions.get("q::init", {})
-    if init.get("qualifier") != "action" or alias.get("qualifier") != "action" or alias.get("expr", {}).get("kind") != "name" or alias["expr"].get("name") != "init":
+    alias_expression = alias.get("expr")
+    if init.get("qualifier") != "action" or alias.get("qualifier") != "action" or not isinstance(alias_expression, dict) or alias_expression.get("kind") != "name" or alias_expression.get("name") != "init":
         raise ValueError("unsupported Quint initializer alias")
     def visits(value):
         if isinstance(value, dict):
@@ -114,15 +120,21 @@ def initializer_predicate(spec):
             for child in value:
                 yield from visits(child)
     for definition in declarations:
-        if definition.get("name") != "q::init" and any(node.get("kind") == "name" and node.get("name") in {"init", "q::init"} for node in visits(definition.get("expr"))):
-            raise ValueError("initializer reused outside q::init")
-    expression = init.get("expr", {})
-    if expression.get("kind") != "app" or expression.get("opcode") != "actionAll" or not expression.get("args"):
+        for node in visits(definition.get("expr")):
+            if node.get("kind") == "name":
+                if not isinstance(node.get("name"), str):
+                    raise ValueError("malformed Quint JSON: expression name must be text")
+                if definition["name"] != "q::init" and node["name"] in {"init", "q::init"}:
+                    raise ValueError("initializer reused outside q::init")
+    expression = init.get("expr")
+    if not isinstance(expression, dict) or expression.get("kind") != "app" or expression.get("opcode") != "actionAll" or not isinstance(expression.get("args"), list) or not expression["args"]:
         raise ValueError("unsupported Quint initializer expression")
     assigned = []
     for assignment in expression["args"]:
-        args = assignment.get("args", [])
-        if assignment.get("kind") != "app" or assignment.get("opcode") != "assign" or len(args) != 2 or args[0].get("kind") != "name":
+        if not isinstance(assignment, dict):
+            raise ValueError("malformed Quint JSON: initializer assignment must be an object")
+        args = assignment.get("args")
+        if assignment.get("kind") != "app" or assignment.get("opcode") != "assign" or not isinstance(args, list) or len(args) != 2 or not all(isinstance(arg, dict) for arg in args) or args[0].get("kind") != "name" or not isinstance(args[0].get("name"), str):
             raise ValueError("unsupported Quint initializer assignment")
         literal = args[1]
         if not ((literal.get("kind") == "int" and type(literal.get("value")) is int) or (literal.get("kind") == "bool" and type(literal.get("value")) is bool)):
@@ -135,15 +147,25 @@ def initializer_predicate(spec):
     return result
 
 
+CLEANUP_RESERVE_SECONDS = 1.0
+
+
 def compile_process(command, environment, work, deadline):
-    """A bounded compiler invocation owns and cleans its whole process group."""
+    """Process execution and group cleanup share the caller's wall-clock budget."""
+    if deadline - time.monotonic() <= CLEANUP_RESERVE_SECONDS:
+        raise subprocess.TimeoutExpired(command, 0)
     process = subprocess.Popen(command, env=environment, cwd=work, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     try:
-        stdout, stderr = process.communicate(timeout=max(0.001, deadline - time.monotonic()))
+        remaining = max(0, deadline - time.monotonic() - CLEANUP_RESERVE_SECONDS)
+        stdout, stderr = process.communicate(timeout=remaining)
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     finally:
-        kill_group(process)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=max(0, deadline - time.monotonic()))
 
 
 def compile_tla(args, root, environment, work):

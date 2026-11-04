@@ -2,6 +2,12 @@
 """PROOF-QUINT-RUN-1: result availability never overrides timeout/exit policy."""
 import importlib.util
 import copy
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from unittest import mock
 from pathlib import Path
 import unittest
 
@@ -110,6 +116,51 @@ class ConstantInitializerPredicate(unittest.TestCase):
             mutate(source["modules"][0]["declarations"])
             with self.assertRaises(ValueError):
                 runner.initializer_predicate(source)
+
+
+    def test_malformed_compiler_shapes_have_visible_refusal_reasons(self):
+        malformed = [None, [], 1, {}, {"modules": None}, {"modules": {}}, {"modules": [None]},
+                     {"modules": [{"name": "generated"}]},
+                     {"modules": [{"name": "generated", "declarations": None}]},
+                     {"modules": [{"name": "generated", "declarations": [None]}]}]
+        mutations = [
+            lambda ds: ds[0].update(name=[]),
+            lambda ds: ds[0].update(kind={}),
+            lambda ds: ds[2].update(expr=None),
+            lambda ds: ds[3].update(expr=[]),
+            lambda ds: ds[2]["expr"].update(args=None),
+            lambda ds: ds[2]["expr"].update(args=[None]),
+            lambda ds: ds[2]["expr"]["args"][0].update(args=[None, {}]),
+            lambda ds: ds[2]["expr"]["args"][0]["args"][0].update(name=[]),
+            lambda ds: ds[4].update(expr={"kind": "name", "name": {}}),
+        ]
+        for mutate in mutations:
+            value = self.fixture()
+            mutate(value["modules"][0]["declarations"])
+            malformed.append(value)
+        for value in malformed:
+            with self.subTest(value=value), self.assertRaises(ValueError) as refusal:
+                runner.initializer_predicate(value)
+            self.assertTrue(str(refusal.exception))
+
+
+class ProcessBudget(unittest.TestCase):
+    def test_term_ignoring_child_is_reaped_inside_the_shared_budget(self):
+        command = [sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(30)"]
+        owned = []
+        real_popen = subprocess.Popen
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            owned.append(child)
+            return child
+        with tempfile.TemporaryDirectory() as work, mock.patch.object(runner, "CLEANUP_RESERVE_SECONDS", 0.1), mock.patch.object(runner.subprocess, "Popen", side_effect=spawn):
+            began = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired) as refusal:
+                runner.compile_process(command, os.environ.copy(), Path(work), began + 0.5)
+            self.assertLess(time.monotonic() - began, 1.0)
+            self.assertIn(b"ready", refusal.exception.output)
+            self.assertEqual(len(owned), 1)
+            self.assertIsNotNone(owned[0].poll())
 
 
 if __name__ == "__main__":
