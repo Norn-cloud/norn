@@ -45,21 +45,21 @@ pub(super) fn append(
                 push(
                     goals,
                     &mut bytes,
-                    json!({"kind":"lifecycle_terminal_reachability","terminal":terminal}),
+                    &json!({"kind":"lifecycle_terminal_reachability","terminal":terminal}),
                     &statement,
                 )?;
             }
             push(
                 goals,
                 &mut bytes,
-                json!({"kind":"lifecycle_no_stuck_non_terminal"}),
+                &json!({"kind":"lifecycle_no_stuck_non_terminal"}),
                 &statement,
             )?;
             for transition in &chart.transitions {
                 push(
                     goals,
                     &mut bytes,
-                    json!({"kind":"lifecycle_transition_non_vacuity","transition":transition.id}),
+                    &json!({"kind":"lifecycle_transition_non_vacuity","transition":transition.id}),
                     &statement,
                 )?;
             }
@@ -71,7 +71,7 @@ pub(super) fn append(
 fn push(
     goals: &mut Vec<Value>,
     bytes: &mut usize,
-    goal: Value,
+    goal: &Value,
     statement: &Value,
 ) -> Result<(), ChallengeError> {
     let value = json!({"goal":goal,"statement":statement,"assessment":"unknown",
