@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState, type KeyboardEvent } from "react"
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
     <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-60 p-3" : "w-48 px-3 py-2")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
-      <button type="button" onClick={() => data.onPick(id)} className="block w-full text-start outline-none">
+      <button type="button" onPointerDown={() => data.onPick(id)} className="block w-full text-start outline-none">
         <div className={cn("font-medium", data.start && "text-base")}>{data.label}</div>
         {data.start && data.description && <div className="line-clamp-1 text-meta text-muted-foreground">{data.description}</div>}
       </button>
@@ -36,7 +36,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         {data.terminal && <Badge variant="outline">Ends here</Badge>}
         {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
         {data.backs.map((back) => (
-          <button key={back.label} type="button" onClick={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-full border px-2 py-0.5 text-meta text-muted-foreground hover:bg-muted hover:text-foreground">↺ {back.label}</button>
+          <button key={back.label} type="button" onPointerDown={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-full border px-2 py-0.5 text-meta text-muted-foreground hover:bg-muted hover:text-foreground">↺ {back.label}</button>
         ))}
       </div>
     </div>
@@ -45,7 +45,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" onClick={() => data.onPick(data.id)} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none")}>
+    <button type="button" onPointerDown={() => data.onPick(data.id)} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
       <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[11px] tabular-nums">{data.order}</span>{data.label}</div>
@@ -113,21 +113,34 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     <div className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
         // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
-        onNodeClick={(_, node) => { if (node.id !== "more") onPin(node.id) }} onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-        fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
+        // Pinning happens on pointer down: hover re-renders the cards, which can swallow a click.
+        onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
+        colorMode="system" fitView fitViewOptions={{ padding: 0.12, maxZoom: 1, nodes: nodes.filter(({ id }) => (tree.nodes.find((node) => node.id === id)?.column ?? 0) <= 4).map(({ id }) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
         <Background />
         <Controls showInteractive={false} />
-        {tree.nodes.length > 12 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
+        <Follow ids={pinned === undefined ? undefined : pathTo(tree, pinned).path} />
+        {tree.nodes.filter(({ kind }) => kind === "state").length > 8 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
       </ReactFlow>
     </div>
   )
+}
+
+/** Bring a pinned path into view. */
+function Follow({ ids }: { readonly ids: readonly string[] | undefined }) {
+  const flow = useReactFlow()
+  const key = ids?.join(">")
+  useEffect(() => {
+    if (ids !== undefined && ids.length > 0) void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 300 })
+  }, [key])
+  return null
 }
 
 /** The pinned element's place on its path, as a breadcrumb. */
 function Breadcrumb({ tree, pinned }: { readonly tree: Tree; readonly pinned: string }) {
   const { path } = pathTo(tree, pinned)
   const name = (id: string) => { const node = tree.nodes.find((each) => each.id === id); return node === undefined ? id : state(node.kind === "state" ? node.state : node.transition.id) }
-  return <p className="px-1 text-meta text-muted-foreground">{path.length} of {path.length} on the path · {path.map(name).join(" › ")}</p>
+  const steps = path.filter((id) => tree.nodes.find((node) => node.id === id)?.kind === "step").length
+  return <p className="px-1 text-meta text-muted-foreground">{steps} {steps === 1 ? "step" : "steps"} from the start · {path.map(name).join(" › ")}</p>
 }
 
 /** The step's declared description, else the fields its guard reads, with the declared rule one click away. */
