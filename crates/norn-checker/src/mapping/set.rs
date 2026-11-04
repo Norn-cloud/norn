@@ -165,10 +165,14 @@ fn path_findings(
         })();
         match result {
             Ok(finding) => out.push(finding),
-            Err(findings) => out.extend(findings.into_iter().map(|mut d| {
-                d.severity = crate::DiagnosticSeverity::Error;
-                d
-            })),
+            Err(findings) => {
+                let exhausted = findings.iter().any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+                out.extend(findings.into_iter().map(|mut d| {
+                    d.severity = crate::DiagnosticSeverity::Error;
+                    d
+                }));
+                if exhausted { break; }
+            }
         }
     }
     out.into_iter().map(|d| in_payload(d, artifact)).collect()
