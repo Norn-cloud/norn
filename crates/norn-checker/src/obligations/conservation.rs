@@ -7,6 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::UnitRef;
 
+/// Untrusted exact equality-feasibility discovery; candidates require checking.
+pub mod discovery;
+
 pub use crate::exact_rational::Rational;
 
 /// One coordinate of the declared conserved functional.
@@ -62,14 +65,7 @@ pub enum Failure {
     },
 }
 
-/// CONS-LINEAR-1: verify all coefficients of wᵀΔ independently per scope/unit.
-/// A certificate may not replace the declared functional with another nullspace
-/// vector. This checks all parameter valuations without quantity enumeration.
-/// Empty writer sets prove only the mathematical no-step system.
-/// # Errors
-/// Malformed certificate/system, unsupported writer, resource/number limit, or
-/// a nonzero symbolic coefficient. No failure grants application authority.
-pub fn check(
+fn validate(
     coordinates: &[Coordinate],
     writers: &[Writer],
     certificate: &[Rational],
@@ -99,11 +95,30 @@ pub fn check(
         }
     }
     let mut writer_ids = BTreeSet::new();
+    if writers
+        .iter()
+        .any(|w| w.id.is_empty() || !writer_ids.insert(&w.id))
+    {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
+/// CONS-LINEAR-1: verify all coefficients of wᵀΔ independently per scope/unit.
+/// A certificate may not replace the declared functional with another nullspace
+/// vector. This checks all parameter valuations without quantity enumeration.
+/// Empty writer sets prove only the mathematical no-step system.
+/// # Errors
+/// Malformed certificate/system, unsupported writer, resource/number limit, or
+/// a nonzero symbolic coefficient. No failure grants application authority.
+pub fn check(
+    coordinates: &[Coordinate],
+    writers: &[Writer],
+    certificate: &[Rational],
+) -> Result<(), Failure> {
+    validate(coordinates, writers, certificate)?;
     let mut work = 0_usize;
     for writer in writers {
-        if writer.id.is_empty() || !writer_ids.insert(&writer.id) {
-            return Err(malformed());
-        }
         let rows = match &writer.delta {
             Delta::Affine(rows) => rows,
             Delta::Unknown(reason) => {
@@ -115,7 +130,7 @@ pub fn check(
             || columns == 0
             || rows.iter().any(|r| r.len() != columns)
         {
-            return Err(malformed());
+            return Err(Failure::Malformed);
         }
         work = work.saturating_add(rows.len().saturating_mul(columns));
         if work > 65_536 {

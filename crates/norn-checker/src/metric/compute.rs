@@ -1,6 +1,7 @@
 //! Checked, identity-grained lowering for the bounded exact query profile.
 
 pub mod arithmetic;
+pub mod certificate;
 pub mod contribution;
 
 use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};

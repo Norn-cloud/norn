@@ -15,6 +15,18 @@
       ]
     },
     {
+      "id": "INV-CERT-IVM-OPERATOR-COMPOSITION",
+      "priority": "P0",
+      "statement": "Two abstract one-step query maintainers satisfying their local Correct equations compose into a one-step maintainer for the composed query.",
+      "assumptions": [
+        "Each local operator satisfies its abstract Correct equation under the supplied state addition functions."
+      ],
+      "sourceIssues": [
+        "#714",
+        "#770"
+      ]
+    },
+    {
       "id": "INV-CERT-SPECIALISATION",
       "priority": "P0",
       "statement": "Conjunctive extensions with no new projected writers preserve base safety invariants.",

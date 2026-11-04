@@ -372,6 +372,10 @@ run_gate fast assurance-linear-conservation-lean \
   "lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean" \
   command \
   lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean
+run_gate fast assurance-ivm-composition-lean \
+  "lean -DwarningAsError=true verification/query-compute-v1/Composition.lean" \
+  command \
+  lean -DwarningAsError=true verification/query-compute-v1/Composition.lean
 run_gate fast assurance-specialisation-lean \
   "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean" \
   command \
