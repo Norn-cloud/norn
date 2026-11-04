@@ -577,6 +577,48 @@ impl<'a> TypeCatalog<'a> {
             .collect())
     }
 
+    /// Owners of the invariants named `id` in the effective contract of the
+    /// object type or interface `name`.
+    ///
+    /// # Errors
+    /// Returns the name of an unknown type or of a missing interface.
+    pub(crate) fn contract_invariant_owners(
+        &self,
+        name: &str,
+        id: &str,
+    ) -> Result<Vec<InvariantOwner>, ObjectTypeName> {
+        if self.types.contains_key(name) {
+            return Ok(self
+                .invariants(&ObjectTypeName(name.to_owned()))?
+                .into_iter()
+                .filter(|item| item.id.as_str() == id)
+                .map(|item| item.owner)
+                .collect());
+        }
+        let interface = self
+            .interfaces
+            .get(name)
+            .copied()
+            .ok_or_else(|| ObjectTypeName(name.to_owned()))?;
+        let lineage = norn_expr::env::interface_lineage(interface, |parent| {
+            self.interfaces.get(parent.as_str()).copied()
+        })
+        .map_err(|missing| ObjectTypeName(missing.0))?;
+        Ok(lineage
+            .into_iter()
+            .filter(|owner| owner.invariants.iter().any(|item| item.id.as_str() == id))
+            .map(|owner| InvariantOwner::Interface(owner.name.clone()))
+            .collect())
+    }
+
+    /// Every retained object type name.
+    pub(crate) fn object_type_names(&self) -> Vec<ObjectTypeName> {
+        self.types
+            .keys()
+            .map(|name| ObjectTypeName((*name).to_owned()))
+            .collect()
+    }
+
     /// Pin an invariant owner to its canonical `EntityIR` declaration content.
     ///
     /// Artifact envelopes are not retained by this kernel catalog, so findings
@@ -974,6 +1016,60 @@ pub enum FactEvent {
         /// Stable identity of the attempted turn or action call.
         attempt_id: String,
     },
+}
+
+impl<X> CommitError<X> {
+    pub(crate) fn is_invariant_refusal(&self) -> bool {
+        if matches!(self, Self::InvariantViolation { .. }) {
+            return true;
+        }
+        if let Self::Law {
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = self
+        {
+            return failure.invariant.is_some();
+        }
+        false
+    }
+
+    pub(crate) fn invariant_refusal_event(&self, attempt_id: String) -> Option<FactEvent> {
+        if let Self::InvariantViolation {
+            key,
+            owner,
+            id,
+            message,
+            outcome,
+            ..
+        } = self
+        {
+            return Some(FactEvent::InvariantRefused {
+                key: key.as_ref().clone(),
+                owner: owner.clone(),
+                id: id.clone(),
+                message: message.clone(),
+                outcome: outcome.as_ref().clone(),
+                attempt_id,
+            });
+        }
+        if let Self::Law {
+            key,
+            reason: crate::governing_laws::LawEvaluationError::Violated(failure),
+        } = self
+        {
+            let bound = failure.invariant.as_ref()?;
+            let invariant = &bound.failure;
+            return Some(FactEvent::InvariantRefused {
+                key: key.clone(),
+                owner: invariant.owner.clone(),
+                id: invariant.id.clone(),
+                message: invariant.message.clone(),
+                outcome: invariant.outcome.clone(),
+                attempt_id,
+            });
+        }
+        None
+    }
 }
 
 // Like FactChange, decode exact runtime values through a plain record. Serde's
@@ -1401,6 +1497,17 @@ fn temporal_property_expected(property: &EffectiveProperty) -> Option<&'static s
 /// Why a decision result was refused. Nothing was committed.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecisionRefusal<X> {
+    /// ID-STABLE-1: a deleted identity needs explicit governed restoration.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
+    /// ID-UNIQUE-1: commit refused a normalized business-key collision.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// Declaring key root, without object identities or key values.
+        owner: String,
+        /// Declared key name.
+        key: String,
+    },
     /// Complete atomic closure includes foreign or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the local profile")]
     AtomicBoundary {
@@ -1686,6 +1793,8 @@ impl<X> DecisionRefusal<X> {
             Self::SourceOwnedTarget { .. } => "decision.source_owned_target",
             Self::ObjectMissing { .. } => "decision.object_missing",
             Self::ObjectExists { .. } => "decision.object_exists",
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::LifecyclePropertySet { .. } => lifecycle_codes::DIRECT_WRITE,
             Self::ImmutableStateWrite { .. } => lifecycle_codes::IMMUTABLE_STATE_WRITE,
             Self::InvalidInitialState { .. } | Self::NotFromState { .. } => {
@@ -1736,7 +1845,9 @@ impl<X> DecisionRefusal<X> {
             Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
                 Some(key.as_ref())
             }
-            Self::AtomicDeliveryBoundary { .. }
+            Self::IdentityReuse
+            | Self::IdentityCollision { .. }
+            | Self::AtomicDeliveryBoundary { .. }
             | Self::ReadOnlyWorld
             | Self::PerformOutsideMain { .. }
             | Self::EnvelopeExceeded { .. }
@@ -1751,13 +1862,17 @@ impl<X> DecisionRefusal<X> {
     }
 
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
+        use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
+
         let invalid = |reason| Self::InvalidOutput { reason };
         match error {
+            CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
-            CommitError::AtomicDeliveryBoundary { consumed } => {
-                Self::AtomicDeliveryBoundary { consumed }
-            }
+            AtomicDeliveryBoundary { consumed } => Self::AtomicDeliveryBoundary { consumed },
             CommitError::Law { key, reason } => Self::Law { key, reason },
+            CommitError::IdentityCollision { owner, key, .. } => {
+                Self::IdentityCollision { owner, key }
+            }
             CommitError::DuplicateKey { key } => Self::InvalidOutput {
                 reason: format!("{key} appears twice in one commit"),
             },
@@ -1819,9 +1934,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
             },
-            CommitError::AccountingPosting { key, reason } => {
-                Self::AccountingPosting { key, reason }
-            }
+            AccountingPosting { key, reason } => Self::AccountingPosting { key, reason },
             CommitError::InvariantViolation {
                 key,
                 owner,
@@ -2294,35 +2407,14 @@ where
             }
             Ok(receipt)
         }
-        Err(CommitError::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
-        }) => {
-            let refusal = DecisionRefusal::InvariantViolation {
-                key: key.clone(),
-                owner: owner.clone(),
-                version,
-                id: id.clone(),
-                message: message.clone(),
-                outcome: outcome.clone(),
+        Err(error) if error.is_invariant_refusal() => {
+            let Some(event) = error.invariant_refusal_event(turn.id.clone()) else {
+                return Err(DecisionRefusal::from_commit(error));
             };
+            let refusal = DecisionRefusal::from_commit(error);
             let mut refusal_commit = CellCommit::empty();
             refusal_commit.consumes.clone_from(&turn.consumes);
-            refusal_commit.events.push(
-                FactEvent::InvariantRefused {
-                    key: *key,
-                    owner,
-                    id,
-                    message,
-                    outcome: *outcome,
-                    attempt_id: turn.id.clone(),
-                }
-                .into(),
-            );
+            refusal_commit.events.push(event.into());
             match host.commit(refusal_commit) {
                 Ok(_) => Err(refusal),
                 Err(error) => Err(DecisionRefusal::from_commit(error)),

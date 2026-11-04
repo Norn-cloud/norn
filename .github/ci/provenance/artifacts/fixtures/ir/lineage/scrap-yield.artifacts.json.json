@@ -1,0 +1,22 @@
+{
+  "sha256": "0c05cfec6245ab82ae39f9e55a51be0a38b71453c93c670b816cbcce5a5eca4d",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts",
+    "tools/norn-ts/src/pack.ts",
+    "tools/norn-ts/src/compiler/definitions.ts",
+    "tools/norn-ts/src/builder/mapping.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

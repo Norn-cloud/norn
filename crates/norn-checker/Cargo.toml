@@ -9,6 +9,10 @@ description = "shared contract/lifecycle diagnostics (ring 0; see AGENTS.md)"
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "jewelry_demo"
+test = true
+
 [[test]]
 name = "canonical_values_kani"
 path = "../../verification/canonical-values-v1/diagnostic_kani.rs"
