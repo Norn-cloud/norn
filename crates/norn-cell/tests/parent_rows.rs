@@ -2845,6 +2845,8 @@ fn val_exact_row_derivation_refuses_another_derived_target_without_writes() {
     for property in &mut child.properties {
         if matches!(property.id.as_str(), "derived_idx" | "double_quantity") {
             property.property_type = norn_ir::PropertyType::Decimal {
+                additivity: norn_ir::PropertyAdditivity::Undeclared {},
+
                 scale: norn_ir::WholeNumber(0),
                 unit: None,
                 currency_source: None,

@@ -5,6 +5,9 @@
       "id": "input",
       "type": {
         "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
         "scale": 3,
         "unit": {
           "system": "ucum",
@@ -16,6 +19,9 @@
       "id": "recovered",
       "type": {
         "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
         "scale": 3,
         "unit": {
           "system": "ucum",
@@ -27,6 +33,9 @@
       "id": "loss",
       "type": {
         "kind": "decimal",
+        "additivity": {
+          "kind": "additive"
+        },
         "scale": 3,
         "unit": {
           "system": "ucum",
