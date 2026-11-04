@@ -172,7 +172,8 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
 
 /** One object type's record page; the submenu lists the others. */
 export function ObjectTypePage() {
-  const { type } = useParams({ from: "/sources/$type" })
+  // Reached at /sources/<type> and, with no identity, through the record route.
+  const { type = "" } = useParams({ strict: false })
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   const concept = catalog?.byName.get(type)

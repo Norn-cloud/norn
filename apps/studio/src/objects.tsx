@@ -12,6 +12,7 @@ import { member, type Read } from "./lib/exact.ts"
 import { day } from "./lib/format.ts"
 import { lifecycleOf, recordTitle } from "./lib/objects.ts"
 import { recordedTransport, type ObjectRecord, type ObjectRead } from "./lib/transport.ts"
+import { ObjectTypePage } from "./sources.tsx"
 
 const RECORDED_HINT = "An object the cell stored, replayed exactly. Not a live connection."
 
@@ -28,7 +29,7 @@ const recordLink = (objectType: string, id: string) => ({ to: "/sources/$type/$"
 
 /** An object type's recorded objects, for its record page. */
 export function RecordsPanel({ objectType }: { readonly objectType: string }) {
-  const read = useQuery({ queryKey: ["objects", objectType], queryFn: () => recordedTransport.objects(objectType) })
+  const read = useQuery({ queryKey: ["objects", objectType], queryFn: async () => (await recordedTransport.objects(objectType)) ?? null })
   const page = read.data?.document
   const held = page?.quarantineCount ?? 0
   return (
@@ -158,10 +159,14 @@ function ObjectRecordView({ read, lifecycles }: { readonly read: ObjectRead; rea
   )
 }
 
-/** A recorded object's page under its object type. */
+/** A recorded object's page under its object type; with no identity, the object type's own page. */
 export function ObjectRecordPage() {
   const { type, _splat: id = "" } = useParams({ from: "/sources/$type/$" })
-  const read = useQuery({ queryKey: ["object", type, id], queryFn: () => recordedTransport.object(type, id) })
+  return id === "" ? <ObjectTypePage /> : <RecordRead type={type} id={id} />
+}
+
+function RecordRead({ type, id }: { readonly type: string; readonly id: string }) {
+  const read = useQuery({ queryKey: ["object", type, id], queryFn: async () => (await recordedTransport.object(type, id)) ?? null })
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const lifecycles = useMemo(() => (catalog.data && catalogOf(catalog.data.document).byName.get(type)?.lifecycles) ?? [], [catalog.data, type])
   return (
