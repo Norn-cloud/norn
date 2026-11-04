@@ -112,7 +112,7 @@ impl AdmissionCache {
                 exact_commitment(b"local-admission", &[self.profile.as_bytes(), hash.as_bytes()])
             });
             let old = self.local.get(&artifact.artifact_id);
-            let reused = key.as_ref().ok().is_some_and(|key| old.is_some_and(|e| e.digest == *key));
+            let reused = key.as_ref().is_ok_and(|key| old.is_some_and(|e| e.digest == *key));
             let findings = if reused {
                 old.map(|entry| entry.findings.clone()).unwrap_or_default()
             } else {
@@ -151,7 +151,7 @@ impl AdmissionCache {
             "registry": context.registry,
             "tenant": context.tenant.map(|t| (t.tenant_id, &t.namespace.0)),
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body).map_err(|_| ChallengeError::Closure)?;
+        let bytes = norn_canonical::serialize_json_verbatim(&body).map_err(|_error| ChallengeError::Closure)?;
         exact_commitment(b"global-admission", &[&bytes])
     }
 }
