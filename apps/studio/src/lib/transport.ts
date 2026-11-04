@@ -9,6 +9,7 @@ export type HistoricalAnswer = Schemas["NornHistoricalQuestionResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
 export type ObjectType = Schemas["NornIrObjectTypeDef"]
 export type Artifact = Schemas["NornArtifactEnvelope"]
+export type Guarantees = Schemas["NornGuaranteesDocument"]
 
 export interface QuestionAnswer {
   readonly question: Read<Question>
@@ -33,9 +34,11 @@ export interface Transport {
   readonly restatement: () => Promise<Restatement>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
+  /** The guarantees the model checker recorded for a law, one document per checked definition, keyed by recording name. */
+  readonly guarantees: () => Promise<readonly { readonly name: string; readonly read: Read<Guarantees> }[]>
 }
 
-const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/*.json"], { query: "?raw", import: "default", eager: true })
+const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
 
 function recorded<T>(name: string): Read<T> {
   const source = recordings[`../../../../fixtures/demo/${name}`]
@@ -62,4 +65,5 @@ export const recordedTransport: Transport = {
     asOf: recorded<HistoricalAnswer>("answers/scrap-yield.k1-as-of.answer.json"),
   }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
+  guarantees: async () => ["original", "mutant"].map((name) => ({ name, read: recorded<Guarantees>(`guarantees/constitution.${name}.guarantees.json`) })),
 }
