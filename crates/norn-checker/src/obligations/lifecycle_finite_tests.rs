@@ -1,4 +1,4 @@
-//! Law-filtered finite relation scenarios; no backend verdict is simulated.
+//! Bounded lifecycle input snapshots; no backend verdict is simulated.
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,

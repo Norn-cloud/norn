@@ -127,9 +127,18 @@ fn unsupported_binding(
     None
 }
 
-fn law_bindings(pool: &[ArtifactEnvelope]) -> Result<Vec<(&ArtifactEnvelope, LawIR)>, ChallengeError> {
-    pool.iter().filter(|artifact| artifact.kind() == ArtifactKind::Law).map(|artifact| {
-        let law = artifact.payload.to_json_value().decode().map_err(|_error| ChallengeError::Closure)?;
-        Ok((artifact, law))
-    }).collect()
+fn law_bindings(
+    pool: &[ArtifactEnvelope],
+) -> Result<Vec<(&ArtifactEnvelope, LawIR)>, ChallengeError> {
+    pool.iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+        .map(|artifact| {
+            let law = artifact
+                .payload
+                .to_json_value()
+                .decode()
+                .map_err(|_error| ChallengeError::Closure)?;
+            Ok((artifact, law))
+        })
+        .collect()
 }
