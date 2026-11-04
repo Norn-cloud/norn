@@ -1,5 +1,5 @@
 //! DATA-LINEAGE / LINEAGE-SUM-1: canonical contributions resolve through admitted bundles.
-#![cfg(feature = "native")]
+#![cfg(not(target_arch = "wasm32"))]
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
