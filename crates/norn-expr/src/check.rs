@@ -345,8 +345,8 @@ pub fn certify_expression(
         b"norn.expression-cost-statement/1\0",
         &(
             expression.source().as_bytes(),
-            env.to_canonical_value(),
-            expected.to_canonical_value(crate::env::TypeEnvVersion::V2),
+            norn_ir::canonical::serialize(&env.to_canonical_value()).map_err(|error| error.to_string())?,
+            norn_ir::canonical::serialize(&expected.to_canonical_value(crate::env::TypeEnvVersion::V2)).map_err(|error| error.to_string())?,
             limits,
         ),
     )

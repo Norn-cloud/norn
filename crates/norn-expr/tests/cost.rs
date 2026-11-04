@@ -1060,7 +1060,7 @@ fn certified_fuel_bounds_exhaustive_small_inputs_and_detects_quadratic_mutant() 
             ]);
             for (expression, bound) in [(&linear, evidence.units), (&quadratic, mutant.units)] {
                 let evaluation = expression
-                    .evaluate(&input, EvaluationBudget::new(bound))
+                    .evaluate(&Value::object([("input", input.clone())]), EvaluationBudget::new(bound))
                     .expect("bound covers every small input");
                 assert!(evaluation.units_used() <= bound);
             }
