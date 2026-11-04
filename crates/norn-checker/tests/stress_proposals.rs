@@ -29,6 +29,7 @@ fn invalid_agent_proposals_have_specific_readable_refusals() {
     let context = EntityArtifactSetContext { registry: &registry, base: &base, tenant: None };
     let mut failures = Vec::new();
     for proposal in corpus.cases {
+        assert!(!proposal.text.is_empty(), "{} needs a readable reason", proposal.name);
         let mut values = original.clone();
         let artifact = values.iter_mut().find(|v| v.get("artifactId").and_then(Value::as_str) == Some(proposal.artifact.as_str())).expect("proposal subject");
         let (parent, field) = proposal.pointer.rsplit_once('/').expect("JSON pointer");

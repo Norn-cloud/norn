@@ -8,7 +8,7 @@
       "pointer": "/payload/response/expression",
       "value": "self.unseen > 0",
       "code": "law.model.predicate_type",
-      "text": ""
+      "text": "`unseen` is not a member"
     },
     {
       "name": "numeric-law",
@@ -16,7 +16,7 @@
       "pointer": "/payload/response/expression",
       "value": "self.ordered",
       "code": "law.model.predicate_type",
-      "text": ""
+      "text": "expected `bool`, found `number`"
     },
     {
       "name": "wrong-scalar",
@@ -24,15 +24,28 @@
       "pointer": "/payload/response/expression",
       "value": "self.ordered == 'four'",
       "code": "law.model.predicate_type",
-      "text": ""
+      "text": "cannot compare `number`"
     },
     {
-      "name": "unknown-nested-path",
-      "artifact": "stress.purchase_positive.law",
-      "pointer": "/payload/response/expression",
-      "value": "self.ordered.missing > 0",
-      "code": "law.model.predicate_type",
-      "text": ""
+      "name": "purchase-law-dependency-cycle",
+      "artifact": "stress.Purchase.entity",
+      "pointer": "/dependencies",
+      "value": [
+        {
+          "artifactId": "stress.purchase_positive.law",
+          "kind": "law",
+          "version": "1.0.0",
+          "required": true
+        },
+        {
+          "artifactId": "core.units",
+          "kind": "entity",
+          "version": "1.0.0",
+          "required": true
+        }
+      ],
+      "code": "artifact_set.resolution.dependency_cycle",
+      "text": "cycle"
     },
     {
       "name": "unknown-law-subject",
@@ -40,7 +53,7 @@
       "pointer": "/payload/subject",
       "value": "stress.Absent",
       "code": "law.model.unknown_binding",
-      "text": ""
+      "text": "entity root must name the subject"
     },
     {
       "name": "unsupported-law-modality",
@@ -50,7 +63,7 @@
         "kind": "next"
       },
       "code": "law.validation.invalid_document",
-      "text": ""
+      "text": "unknown variant `next`"
     },
     {
       "name": "missing-law-response",
@@ -60,7 +73,7 @@
         "kind": "predicate"
       },
       "code": "law.validation.invalid_document",
-      "text": ""
+      "text": "missing field `expression`"
     },
     {
       "name": "missing-law-dependency",
@@ -68,7 +81,7 @@
       "pointer": "/dependencies",
       "value": [],
       "code": "law.model.unknown_binding",
-      "text": ""
+      "text": "required exact-version, visible entity dependency"
     },
     {
       "name": "raw-lifecycle-writer",
@@ -93,8 +106,8 @@
       "artifact": "stress.purchase.record_received.action",
       "pointer": "/payload/slice/0/objectType",
       "value": "stress.Absent",
-      "code": "artifact_set.action.unknown_slice_type",
-      "text": ""
+      "code": "artifact_set.action.unknown_slice_kind",
+      "text": "not an object type"
     },
     {
       "name": "missing-unit-pin",
@@ -117,8 +130,8 @@
       "artifact": "stress.ReceiptLine.entity",
       "pointer": "/payload/objectType/properties/1/type/scale",
       "value": -1,
-      "code": "entity.validation.invalid_property_type",
-      "text": ""
+      "code": "entity.validation.invalid_payload",
+      "text": "non-negative integer"
     },
     {
       "name": "unknown-transition-source",
@@ -128,7 +141,7 @@
         "absent"
       ],
       "code": "lifecycle.validation.unknown_state",
-      "text": ""
+      "text": "not a value of the lifecycle property's enum"
     },
     {
       "name": "unknown-transition-target",
@@ -136,15 +149,15 @@
       "pointer": "/payload/objectType/lifecycles/0/transitions/0/to",
       "value": "absent",
       "code": "lifecycle.validation.unknown_state",
-      "text": ""
+      "text": "not a value of the lifecycle property's enum"
     },
     {
       "name": "unsafe-effect-kind",
       "artifact": "stress.purchase.create.action",
       "pointer": "/payload/effectProgram/kind",
       "value": "execute_script",
-      "code": "action.validation.invalid_effect",
-      "text": ""
+      "code": "action.validation.invalid_effect_program",
+      "text": "must be one of"
     },
     {
       "name": "unsupported-input-schema",
@@ -152,7 +165,7 @@
       "pointer": "/payload/inputSchema/type",
       "value": "gadget",
       "code": "action.validation.invalid_schema",
-      "text": ""
+      "text": "unsupported closed ActionIR schema type 'gadget'"
     },
     {
       "name": "unknown-implemented-interface",
@@ -161,16 +174,16 @@
       "value": [
         "stress.Absent"
       ],
-      "code": "artifact_set.entity.unknown_interface",
-      "text": ""
+      "code": "object_type.validation.unknown_interface",
+      "text": "names no interface"
     },
     {
       "name": "unknown-transition-binding",
       "artifact": "stress.purchase.approve.action",
       "pointer": "/payload/effectProgram/transition",
       "value": "teleport",
-      "code": "artifact_set.action.unknown_transition",
-      "text": ""
+      "code": "artifact_set.lifecycle.unknown_transition",
+      "text": "not a declared transition"
     }
   ]
 }
