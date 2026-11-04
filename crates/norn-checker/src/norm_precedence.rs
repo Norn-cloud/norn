@@ -251,7 +251,7 @@ pub enum ConstitutionLayer {
 /// Diagnostic-only result for a supplied grounding of one action/subject.
 /// This is not source lowering, admission, fulfilment or Datalog evidence.
 pub struct DeclaredOrderReport {
-    /// Exact rule-index cores; all declarations are protected from repair.
+    /// Exact rule-index cores and corrections under the retained editability profile.
     pub diagnosis: crate::consistency::diagnosis::Diagnosis,
     /// Source-located errors and constitutional-policy gap notes (#767).
     pub diagnostics: Vec<crate::Diagnostic>,
