@@ -225,10 +225,13 @@ pub fn check_requirement(
 /// Exhaustive finite grounding for one same-state response and scope. Priority
 /// links remain explicit edges; this value is not an admission or proof result.
 pub struct LoweredNormOrder {
+    /// Source-preserving exhaustive applicability and own-exception masks.
     pub norms: Vec<crate::norm_precedence::GroundedNorm>,
+    /// Exact original declaration locations in catalog order.
     pub origins: Vec<crate::consistency::RuleOrigin>,
     /// Winner, loser indices, derived solely from `defeated_by` identities.
     pub edges: Vec<(usize, usize)>,
+    /// Number of assignments in the explicitly supplied closed schema.
     pub contexts: usize,
 }
 
@@ -262,32 +265,7 @@ pub fn lower_declared_order(
     let mut origins = Vec::new();
     let mut edges = BTreeSet::new();
     for (index, rule) in rules.iter().enumerate() {
-        if rule.law.id.trim().is_empty()
-            || rule.authority_id.trim().is_empty()
-            || rule.authority_version.trim().is_empty()
-            || !valid_source(&rule.source)
-            || ids.insert(rule.law.id.as_str(), index).is_some()
-            || !rule.law.scope.lifecycle_states.is_empty()
-            || !rule.law.scope.commitments.is_empty()
-            || rule.law.scope != first.law.scope
-            || rule.law.subject != first.law.subject
-            || rule.law.response != first.law.response
-            || rule.law.timing.is_some()
-            || !matches!(
-                rule.law.modality,
-                LawModality::Always {} | LawModality::Never {}
-            )
-            || (matches!(rule.modality, DeonticModality::Prohibition)
-                != matches!(rule.law.modality, LawModality::Never {}))
-        {
-            return Err(invalid());
-        }
-        let mut exception_ids = BTreeSet::new();
-        if rule.exceptions.iter().any(|exception| {
-            exception.id.trim().is_empty()
-                || !exception_ids.insert(&exception.id)
-                || !valid_source(&exception.source)
-        }) {
+        if !normative_binding(rule, first) || ids.insert(rule.law.id.as_str(), index).is_some() {
             return Err(invalid());
         }
         origins.push(crate::consistency::RuleOrigin {
@@ -369,8 +347,39 @@ fn normative_boolean(
 ) -> Result<bool, crate::table_analysis::Unknown> {
     match crate::finite::expression(expression, context)? {
         norn_expr::Value::Bool(value) => Ok(value),
-        _ => Err(crate::table_analysis::Unknown::Expression(
+        norn_expr::Value::Null
+        | norn_expr::Value::Number(_)
+        | norn_expr::Value::String(_)
+        | norn_expr::Value::Array(_)
+        | norn_expr::Value::Object(_) => Err(crate::table_analysis::Unknown::Expression(
             "normative predicate is not Boolean".into(),
         )),
     }
+}
+
+fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
+    use std::collections::BTreeSet;
+    let invalid = rule.law.id.trim().is_empty()
+        || rule.authority_id.trim().is_empty()
+        || rule.authority_version.trim().is_empty()
+        || !valid_source(&rule.source)
+        || !rule.law.scope.lifecycle_states.is_empty()
+        || !rule.law.scope.commitments.is_empty()
+        || rule.law.scope != first.law.scope
+        || rule.law.subject != first.law.subject
+        || rule.law.response != first.law.response
+        || rule.law.timing.is_some()
+        || !matches!(
+            rule.law.modality,
+            LawModality::Always {} | LawModality::Never {}
+        )
+        || (matches!(rule.modality, DeonticModality::Prohibition)
+            != matches!(rule.law.modality, LawModality::Never {}));
+    let mut exception_ids = BTreeSet::new();
+    !invalid
+        && !rule.exceptions.iter().any(|exception| {
+            exception.id.trim().is_empty()
+                || !exception_ids.insert(&exception.id)
+                || !valid_source(&exception.source)
+        })
 }
