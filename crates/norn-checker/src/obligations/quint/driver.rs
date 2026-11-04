@@ -269,7 +269,7 @@ fn documents(
             format: GuaranteesFormat::V1, law_artifact_id: artifact_id.into(), law_id: law.id,
             law_version: artifact.version.clone(), verdict, level,
             challenge_sha256: selected.iter().find_map(|g|g.evidence.as_ref()).map_or_else(||batch.challenge.sha256().to_owned(), |record|record.pins.challenge_sha256.clone()),
-            bounds_json: String::from_utf8(norn_canonical::canonical_json_of(shared)?)?,
+            bounds_json: String::from_utf8(norn_canonical::canonical_json_exact_of(shared)?)?,
             tools, total: u32::try_from(selected.len())?, eligible: u32::try_from(eligible)?, discharged: u32::try_from(discharged)?, goals: selected,
             runtime_enforcement: GuaranteeReference::NotYet { reason: "no separate runtime enforcement evidence supplied by the server".into() },
             parity: GuaranteeReference::NotYet { reason: "matching raw backend verdicts are retained per goal; no separate server parity reference supplied".into() },
@@ -324,7 +324,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
         version: "quint-0.32.0/tla-ts-0.0.7/apalache-0.56.1".into(),
         implementation_sha256: format!(
             "{:x}",
-            Sha256::digest(norn_canonical::serialize_json_verbatim(&implementation)?)
+            Sha256::digest(norn_canonical::canonical_json_exact_of(&implementation)?)
         ),
     };
     let mut cases = Vec::new();
@@ -392,9 +392,9 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
                 return Err("stale checked model or challenge".into());
             }
             let bytes = std::fs::read_to_string(&result)?;
-            let evidence_bounds = serde_json::to_string(
+            let evidence_bounds = String::from_utf8(norn_canonical::canonical_json_exact_of(
                 &json!({"declaredBoundsProfile":profile,"profile":batch.bounds,"modelSha256":digest(&path)?,"invariant":invariant,"step":step,"toolchain":implementation,"expectedStates":profile.get("expectedStates"),"workers":1,"exclusions":profile.get("exclusions").ok_or("explicit exclusions required")?}),
-            )?;
+            )?)?;
             let pins = batch.challenge.evidence_pins(
                 u32::try_from(index)?,
                 tool.clone(),
@@ -796,13 +796,14 @@ mod tests {
                     .evidence
                     .clone()
                     .expect("actual evidence");
-                // These are retained run bytes, not a fresh verdict by this test binary.
-                // Feature-specific Serde map order may change a new binary's exact digest.
-                assert_eq!(
-                    serde_json::from_str::<serde_json::Value>(&record.challenge_json)
-                        .expect("retained challenge"),
-                    *batch.challenge.body()
-                );
+                // Retained verdicts must bind a freshly generated Challenge in every build.
+                assert_eq!(record.challenge_json.as_bytes(),
+                    norn_canonical::canonical_json_exact_of(batch.challenge.body()).expect("challenge"));
+                assert_eq!(record.pins.challenge_sha256, batch.challenge.sha256());
+                let fresh = batch.challenge.evidence_pins(index32, record.pins.tool.clone(),
+                    &record.pins.bounds_json, record.pins.seed).expect("fresh pins");
+                assert_eq!(fresh, record.pins);
+                assert_eq!(batch.challenge.evidence_identity(&fresh, &record.result_sha256, &record), EvidenceIdentity::Current);
                 assert_eq!(record.pins.challenge_sha256, recorded.challenge_sha256);
                 assert_eq!(record.pins.goal_index, index32);
                 assert_eq!(

@@ -249,10 +249,11 @@ an effective chart it emits one reachability goal per terminal, one no-stuck
 non-terminal goal, and one non-vacuity goal per transition. Each statement binds
 the concrete object type, lifecycle property, complete effective chart digest,
 one-object bound and chart-state-count depth bound. The existing constitution
-has no lifecycle: its ten obligations and complete challenge stay byte-identical
-to main under each supported JSON map representation. The sorted and insertion
-order wire layouts have separate exact pre-change goldens; neither is normalized
-or accepted as a substitute for the other.
+has no lifecycle: its ten obligations and complete challenge use one sorted-key
+exact-text canonical golden across package, insertion-order, arbitrary-precision
+and workspace builds. PROOF-BIND-1 generated commitments sort keys recursively
+without normalizing Unicode spelling or number tokens. Raw source and solver
+result bytes remain exact; Norn1 artifact identities retain their own profile.
 
 This is conditional transition-only reachability from an admitted initialized
 object. Scalar context and external references stay frozen. All supported
