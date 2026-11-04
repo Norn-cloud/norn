@@ -302,7 +302,14 @@ pub fn lower_path_equations(
                 .filter(|name| catalog.lineage(name).is_some_and(|l| l.contains(&owner)));
             let id = format!("{}:path-equation:{}", artifact.artifact_id, equation.id);
             for instance in instances {
-                match lower_path_equation_instance(&catalog, instance, owner.as_str(), &equation, &id, &origin) {
+                match lower_path_equation_instance(
+                    &catalog,
+                    instance,
+                    owner.as_str(),
+                    &equation,
+                    &id,
+                    &origin,
+                ) {
                     Ok(mut egd) => {
                         if instance != owner.as_str() {
                             egd.id = unique_inherited_id(egd.id, &mut rule_ids);
@@ -345,10 +352,8 @@ fn lower_path_equation_instance(
         relation: format!("concept:{instance}"),
         terms: vec![Term::Var("root".into())],
     }];
-    let (left_type, left) =
-        equation_path(catalog, instance, &equation.left, "l", &mut body)?;
-    let (right_type, right) =
-        equation_path(catalog, instance, &equation.right, "r", &mut body)?;
+    let (left_type, left) = equation_path(catalog, instance, &equation.left, "l", &mut body)?;
+    let (right_type, right) = equation_path(catalog, instance, &equation.right, "r", &mut body)?;
     if instance == owner && left_type != right_type {
         return Err(format!(
             "endpoint types differ: {left_type} vs {right_type}"
