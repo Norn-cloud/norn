@@ -88,6 +88,9 @@ there is no new bounded pure algorithm. LAW-* admission semantics follow.
 LAW-COMPLETE-1 checks an interface law against its required-member environment
 even with no implementors, then checks every concrete subject selected by
 `EffectiveCatalog::target_types`; the original LawIR remains unchanged.
+That subject set is global and fail-closed: an unavailable indexed type refuses
+even outside the retained scope, because an incomplete catalog cannot show that
+no subject was omitted. Retained membership narrows projection afterwards.
 LAW-INTERFACE/EMPTY positives and unknown/unpinned/member refusals exercise
 ordinary admission, including generated missing members with zero implementors.
 Empty implementation sets establish no non-vacuity or proof evidence. Interface
