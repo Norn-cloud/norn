@@ -638,6 +638,10 @@ fn obs_link_pending_subtype_claim_uses_inherited_link_defaults() {
         });
         holding_subtype(artifacts, false);
         edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+            a["dependencies"]
+                .as_array_mut()
+                .expect("dependencies")
+                .push(json!({"artifactId":"canon.SpecialHolding.entity","kind":"entity","required":true,"version":"0.1.0"}));
             for map in a["payload"]["maps"].as_array_mut().expect("maps") {
                 if map["target"]["entity"] == "canon.Holding.entity" {
                     map["target"]["entity"] = json!("canon.SpecialHolding.entity");
