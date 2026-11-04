@@ -43,7 +43,7 @@ function Chart({ workflow, focus, onFocus }: { readonly workflow: Workflow; read
       type: "state",
       data: {
         label: state(name),
-        tone: cn(focus.states.has(name) ? "border-primary font-medium" : initial ? "border-foreground/40" : terminal ? "border-muted-foreground bg-muted" : "border-border", !near.has(name) && "opacity-30"),
+        tone: cn(focus.states.has(name) ? "border-primary font-medium" : initial ? "border-foreground/40" : terminal ? "border-muted-foreground bg-muted" : "border-border", !near.has(name) && "border-dashed border-muted-foreground font-normal text-muted-foreground"),
         onFocus: () => {
           const step = workflow.steps.find(({ transition }) => transition.from.includes(name)) ?? workflow.steps.find(({ transition }) => transition.to === name)
           if (step) onFocus(step.transition.id)
@@ -65,10 +65,12 @@ function Chart({ workflow, focus, onFocus }: { readonly workflow: Workflow; read
       targetHandle: forward ? "in" : "back-in",
       type: forward ? "default" : "smoothstep",
       label: state(transition.id),
-      markerEnd: { type: MarkerType.ArrowClosed, color: focused ? "var(--primary)" : undefined },
+      markerEnd: { type: MarkerType.ArrowClosed, color: focused ? "var(--primary)" : "var(--muted-foreground)" },
       labelBgPadding: [4, 2] as [number, number],
-      labelStyle: { fontSize: 12, fontWeight: focused ? 600 : 400, cursor: "pointer" },
-      style: { stroke: focused ? "var(--primary)" : undefined, strokeWidth: focused ? 2 : 1, opacity: visible ? 1 : 0.2, transition: "opacity 200ms" },
+      // Theme tokens, not React Flow's white defaults, so labels read in dark mode too; a dimmed step stays at muted-text contrast.
+      labelBgStyle: { fill: "var(--card)" },
+      labelStyle: { fontSize: 12, fontWeight: focused ? 600 : 400, cursor: "pointer", fill: visible ? "var(--foreground)" : "var(--muted-foreground)" },
+      style: { stroke: focused ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: focused ? 2 : 1, strokeDasharray: visible ? undefined : "4 3", transition: "stroke 200ms" },
       zIndex: focused ? 1 : 0,
     }
   }))
