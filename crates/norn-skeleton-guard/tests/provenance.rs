@@ -1189,7 +1189,7 @@ fn checkpoint_publication(f: &Fixture, doc: &mut Value) {
     checkpoint_targets(doc);
     let head = doc
         .get("head_sha")
-        .unwrap_or(&doc["merge_group"]["head_sha"])
+        .unwrap_or_else(|| &doc["merge_group"]["head_sha"])
         .as_str()
         .unwrap()
         .to_owned();
