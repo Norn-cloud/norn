@@ -38,6 +38,12 @@
 /// ID-UNIQUE-1: one canonical key binding per declaring root, scope and world.
 pub const IDENTITY_COLLISION: &str = "core.identity.collision";
 
+/// ID-STABLE-1: ordinary authoring cannot restore a deleted identity.
+pub const IDENTITY_REUSE: &str = "core.identity.reuse";
+/// Actionable guidance shared by every authored identity-reuse refusal.
+pub const IDENTITY_REUSE_MESSAGE: &str =
+    "this identity was deleted; restore it explicitly or use a new identity";
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
