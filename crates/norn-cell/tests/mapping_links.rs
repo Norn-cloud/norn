@@ -623,7 +623,7 @@ fn obs_link_partitions_with_identical_row_aliases_are_independent_contributors()
 }
 
 #[test]
-fn obs_link_pending_base_claim_uses_the_live_subtype_link_defaults() {
+fn obs_link_pending_subtype_claim_uses_inherited_link_defaults() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup_with(&directory.path().join("subtype.sqlite"), |artifacts| {
         edit_artifact(artifacts, "canon.Holding.entity", |a| {
@@ -637,31 +637,18 @@ fn obs_link_pending_base_claim_uses_the_live_subtype_link_defaults() {
                 json!([{"id":"marker","type":{"kind":"text"},"default":"special"}]);
         });
         holding_subtype(artifacts, false);
+        edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+            for map in a["payload"]["maps"].as_array_mut().expect("maps") {
+                if map["target"]["entity"] == "canon.Holding.entity" {
+                    map["target"]["entity"] = json!("canon.SpecialHolding.entity");
+                }
+            }
+        });
     });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     capture(&mut cell, "erpnext", &rows[3], "snapshot");
     capture(&mut cell, "erpnext", &rows[4], "snapshot");
-    let holding = cell
-        .store()
-        .read()
-        .object(MAIN_WORLD, "canon.Holding", "demo/holding/owner/north/gold")
-        .expect("read")
-        .expect("holding");
-    norn_kernel::CellHost::commit(
-        &mut cell,
-        norn_kernel::CellCommit {
-            writes: vec![norn_kernel::FactWrite {
-                key: FactKey::new("canon.SpecialHolding", &holding.id),
-                expected: norn_kernel::FactVersion(holding.version),
-                mutation: norn_kernel::FactMutation::Put {
-                    values: holding.values,
-                },
-            }],
-            ..norn_kernel::CellCommit::empty()
-        },
-    )
-    .expect("specialized holding");
     capture(&mut cell, "erpnext", &rows[0], "snapshot");
     let link = cell
         .store()
