@@ -2885,6 +2885,7 @@ mod tests {
         for field in ["amount", "base", "discount"] {
             decimal["payload"]["inputSchema"]["properties"][field] = amount.clone();
         }
+        decimal["payload"]["inputSchema"]["required"] = json!(["code", "base", "discount"]);
         decimal["payload"]["derive"] = json!([{"field":"amount",
             "expression":"actor.subjectId == 'person:vip' ? input.discount : input.base",
             "inputRequired":false}]);
