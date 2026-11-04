@@ -228,7 +228,7 @@ fn pull_frappe(
             text(last, &format!("/{}", keyset.watermark_field))?.to_owned(),
             text(last, &format!("/{}", keyset.tie_breaker_field))?.to_owned(),
         );
-        if cursor.as_ref().is_some_and(|old| next <= *old) {
+        if cursor.as_ref().is_some_and(|old| next == *old) {
             return Err("source keyset cursor did not advance".into());
         }
         cursor = Some(next);
@@ -345,9 +345,9 @@ mod tests {
                 }
                 let keyset = request.contains("or_filters=");
                 let data = match (step, keyset) {
-                    (0, _) => vec![row("ROW-1", "2026-11-04 00:00:00")],
-                    (1, true) => vec![row("ROW-2", "2026-11-04 00:00:00")],
-                    (1, false) | (2, true) => vec![row("ROW-1", "2026-11-04 00:00:01")],
+                    (0, _) => vec![row("row-a", "2026-11-04 00:00:00")],
+                    (1, true) => vec![row("ROW-B", "2026-11-04 00:00:00")],
+                    (1, false) | (2, true) => vec![row("row-a", "2026-11-04 00:00:01")],
                     _ => Vec::new(),
                 };
                 let done = data.is_empty();
@@ -391,7 +391,7 @@ mod tests {
         .expect("sweep");
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-            ["ROW-1", "ROW-2", "ROW-1"]
+            ["row-a", "ROW-B", "row-a"]
         );
         let requests = server.join().expect("server");
         assert_eq!(requests.len(), 4);
@@ -404,7 +404,7 @@ mod tests {
         assert!(
             second.contains("filters=")
                 && second.contains("or_filters=")
-                && second.contains("ROW-1")
+                && second.contains("row-a")
         );
     }
 
