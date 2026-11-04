@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
-import { layout, workflows } from "../src/lib/workflows.ts"
+import { guardedFields, layout, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
@@ -34,4 +34,10 @@ test("states are laid out by their shortest declared path from the start", () =>
 test("a state no step reaches still appears, after the reachable ones", () => {
   const positions = layout({ property: "status", initial: ["a"], transitions: [{ id: "go", from: ["a"], to: "b" }, { id: "back", from: ["c"], to: "a" }] })
   expect(positions.get("c")).toEqual({ column: 2, row: 0 })
+})
+
+test("a guard reads as the fields it requires, in words", () => {
+  const approve = named("core.analytics.Restatement")?.steps.find(({ transition }) => transition.id === "approve")
+  expect(guardedFields(approve?.transition.guards ?? [])).toEqual(["reason", "slice ids", "candidate", "candidate digest"])
+  expect(guardedFields(["(self.candidate != '') and (self.candidate_digest != '')"])).toEqual(["candidate", "candidate digest"])
 })

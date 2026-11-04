@@ -8,7 +8,7 @@ import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { words } from "./lib/format.ts"
 import { recordedTransport } from "./lib/transport.ts"
-import { workflows, type Workflow } from "./lib/workflows.ts"
+import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
 
 const state = (name: string) => words(name)
@@ -56,6 +56,7 @@ function Chart({ workflow }: { readonly workflow: Workflow }) {
       label: state(transition.id),
       markerEnd: { type: MarkerType.ArrowClosed },
       labelBgPadding: [4, 2] as [number, number],
+      labelStyle: { fontSize: 12 },
     }
   }))
   return (
@@ -63,6 +64,22 @@ function Chart({ workflow }: { readonly workflow: Workflow }) {
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
         <Background />
       </ReactFlow>
+    </div>
+  )
+}
+
+/** The step's declared description, else the fields its guard reads, with the declared rule one click away. */
+function Condition({ transition }: { readonly transition: Workflow["steps"][number]["transition"] }) {
+  const guards = transition.guards ?? []
+  if (guards.length === 0) return <span className="text-muted-foreground">Always</span>
+  const fields = guardedFields(guards)
+  return (
+    <div className="space-y-1">
+      <div>{transition.description ?? (fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
+      <details className="text-meta text-muted-foreground">
+        <summary className="cursor-pointer select-none">Declared rule</summary>
+        <code className="block pt-1 font-mono text-xs break-words whitespace-normal">{guards.join(" and ")}</code>
+      </details>
     </div>
   )
 }
@@ -87,13 +104,13 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
       <CardContent className="space-y-6">
         <Chart workflow={workflow} />
         <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Step</TableHead><TableHead>From → to</TableHead><TableHead>Allowed only when (as declared)</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Step</TableHead><TableHead>From → to</TableHead><TableHead>Allowed only when</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
           <TableBody>
             {workflow.steps.map(({ transition, actions }) => (
               <TableRow key={transition.id}>
                 <TableCell className="font-medium">{state(transition.id)}</TableCell>
                 <TableCell>{transition.from.map(state).join(", ")} → {state(transition.to)}</TableCell>
-                <TableCell className="max-w-sm whitespace-normal font-mono text-xs">{transition.guards?.join(" and ") ?? "Always"}</TableCell>
+                <TableCell className="max-w-sm whitespace-normal"><Condition transition={transition} /></TableCell>
                 <TableCell className="space-y-1">
                   {actions.length === 0 && <span className="text-muted-foreground">None declared</span>}
                   {actions.map((action) => (

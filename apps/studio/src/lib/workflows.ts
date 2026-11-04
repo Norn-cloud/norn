@@ -72,3 +72,7 @@ export function workflows(definitions: readonly Envelope[]): Workflow[] {
     }))
   })
 }
+
+/** The fields a declared guard reads, in words: `self.candidate_digest` → `candidate digest`. */
+export const guardedFields = (guards: readonly string[]): string[] =>
+  [...new Set(guards.flatMap((guard) => [...guard.matchAll(/\bself\.([A-Za-z_][A-Za-z0-9_]*)/g)].map(([, field = ""]) => field.replaceAll("_", " "))))]
