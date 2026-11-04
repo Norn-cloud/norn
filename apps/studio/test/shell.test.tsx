@@ -62,3 +62,12 @@ test("a long group shows six entries and offers the rest, keeping the open one i
   expect(html).toContain("Type 8")
   expect(html).toContain("Show more")
 })
+
+test("a rail count sits inside its tile in the theme's destructive pair", async () => {
+  const counted: Section = { ...questions, useBadge: () => 3 }
+  const html = await at("/sources", () => <Shell sections={[sources, counted]} />)
+  const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
+  expect(badge).toContain("text-destructive-foreground")
+  expect(badge).toContain("top-0.5 right-0.5")
+  expect(badge).not.toContain("text-white")
+})

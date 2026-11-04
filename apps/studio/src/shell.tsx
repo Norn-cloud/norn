@@ -57,8 +57,10 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
         <Link to={section.path}>
           <Icon />
           <span className="sr-only">{section.label}</span>
-          {active && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-ring ring-2 ring-background" />}
-          {badge !== undefined && badge > 0 && <span className="absolute -top-1.5 -right-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-medium text-white tabular-nums">{badge}</span>}
+          {/* Inside the tile: the button clips anything outside it. A count replaces the active dot. */}
+          {badge !== undefined && badge > 0
+            ? <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-semibold text-destructive-foreground tabular-nums">{badge > 99 ? "99+" : badge}</span>
+            : active && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-ring ring-2 ring-background" />}
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
