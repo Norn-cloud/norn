@@ -52,7 +52,7 @@ pub struct NornObjectPage {
     pub object_type: String,
     /// Authoritative records on this page.
     pub records: Vec<NornObjectRecord>,
-    /// Candidates on this page held back by open quarantining findings.
+    /// Candidates on this page held back by source disputes or open quarantining findings.
     pub quarantine_count: u64,
     /// The last scanned identity: the next page starts after it.
     #[schema(required = true, nullable = true)]

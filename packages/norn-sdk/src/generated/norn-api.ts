@@ -7097,7 +7097,7 @@ export interface components {
             objectType: string;
             /**
              * Format: int64
-             * @description Candidates on this page held back by open quarantining findings.
+             * @description Candidates on this page held back by source disputes or open quarantining findings.
              */
             quarantineCount: number;
             /** @description Authoritative records on this page. */
