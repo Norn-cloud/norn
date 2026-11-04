@@ -112,7 +112,7 @@ fn closed_source_schema() -> RefOr<Schema> {
     if let RefOr::T(Schema::OneOf(schema)) = &mut source {
         for item in &mut schema.items {
             if let RefOr::T(Schema::Object(variant)) = item {
-                variant.additional_properties = Some(AdditionalProperties::FreeForm(false));
+                variant.additional_properties = Some(AdditionalProperties::FreeForm(false).into());
             }
         }
     }
