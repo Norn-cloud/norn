@@ -183,7 +183,9 @@ pub use lineage::{
 };
 pub use marking::{MARKING_ID_PATTERN, MarkingId, MarkingIr, MarkingSeverity, MaskPolicy};
 pub use members::{EmptyList, IrVersion01, JsonFalse, ProposalMetadata, WholeNumber};
-pub use metric::{MetricDefinition, QuestionIR, metric_ir_schema, question_ir_schema};
+pub use metric::{
+    MetricDefinition, QuestionIR, metric_definition_schema, metric_ir_schema, question_ir_schema,
+};
 pub use osi::MetricIR;
 pub use provenance::{
     FactRef, InstanceProvenance, MappingVersion, ProvenancedInstance, SourceRecordRef,

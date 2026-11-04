@@ -12,29 +12,32 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, bucketLabel, day, headline, period, scope } from "./lib/format.ts"
 import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
+import { measured, operandUnits } from "./lib/units.ts"
 import { MenuItem } from "./shell.tsx"
 
 interface Bucket {
   readonly key: string
   readonly label: string
   readonly value: string
-  /** One sum, or numerator then denominator, as the server wrote them. */
+  /** One sum, or numerator then denominator, as the server wrote them, each with its declared unit. */
   readonly totals: readonly string[]
   readonly members: readonly { readonly id: string; readonly amounts: readonly (string | null)[] }[]
 }
 
-function buckets({ question, answer }: QuestionAnswer): Bucket[] {
+function buckets({ question, answer, metrics, objectType }: QuestionAnswer): Bucket[] {
+  const units = operandUnits(question.document, metrics.document, objectType.document)
   const text = (pointer: string) => answer.numbers.get(pointer) ?? "unavailable"
+  const operand = (pointer: string, index: number) => measured(text(pointer), units[index])
   return Object.entries(answer.document.rows).map(([key, row]) => {
     const at = `/rows/${member(key)}`
     return {
       key,
       label: bucketLabel(row.bucket, question.document),
       value: text(`${at}/value`),
-      totals: row.totals.map((_, index) => text(`${at}/totals/${index}`)),
+      totals: row.totals.map((_, index) => operand(`${at}/totals/${index}`, index)),
       members: Object.entries(row.members).map(([id, { amounts }]) => ({
         id,
-        amounts: amounts.map((amount, index) => amount === null ? null : text(`${at}/members/${member(id)}/amounts/${index}`)),
+        amounts: amounts.map((amount, index) => amount === null ? null : operand(`${at}/members/${member(id)}/amounts/${index}`, index)),
       })),
     }
   })
