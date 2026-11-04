@@ -65,8 +65,13 @@ pub fn check_mapping_artifacts(
         return out;
     }
     let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base));
+    let mut path_refused = false;
     for (artifact, mapping) in &mappings {
-        out.extend(path_findings(artifact, mapping, artifacts, base, &work));
+        if !path_refused {
+            let findings = path_findings(artifact, mapping, artifacts, base, &work);
+            path_refused = findings.iter().any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+            out.extend(findings);
+        }
         out.extend(key_findings(artifact));
         out.extend(dependency_findings(artifact, mapping));
         let findings = match (&model, resolve_source(mapping, artifacts, base)) {
@@ -113,6 +118,10 @@ fn path_findings(
                     .chain(base)
                     .find(|a| {
                         a.artifact_id == *id && matches!(a.payload, ArtifactPayload::Entity(_))
+                            && artifact.dependencies.iter()
+                                .find(|d| d.artifact_id == *id && d.kind == ArtifactKind::Entity)
+                                .and_then(|d| d.version.as_deref())
+                                .is_none_or(|version| a.version == version)
                     })
                     .cloned()
                     .ok_or_else(|| {
