@@ -212,7 +212,11 @@ pub fn decode_mapping(value: &serde_json::Value) -> Result<MappingIr, Vec<Diagno
 pub fn check_mapping_local(mapping: &MappingIr) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     if let Err(reason) = lens::admit(mapping) {
-        out.push(error(codes::INVALID_DOCUMENT, reason, Span::pointer("/extensions")));
+        out.push(error(
+            codes::INVALID_DOCUMENT,
+            reason,
+            Span::pointer("/extensions"),
+        ));
     }
     for (empty, member) in [
         (mapping.interfaces.is_empty(), "interfaces"),

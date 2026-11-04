@@ -47,9 +47,17 @@ impl AdmittedLens {
         source: &BTreeMap<String, bool>,
         view: bool,
     ) -> Result<&BTreeMap<String, bool>, String> {
-        let row = self.sources.iter().position(|s| s == source).ok_or("unknown source state")?;
-        let destination = self.put.get(row).and_then(|r| r.get(usize::from(view)))
-            .and_then(|index| self.sources.get(*index)).ok_or("unknown put-back")?;
+        let row = self
+            .sources
+            .iter()
+            .position(|s| s == source)
+            .ok_or("unknown source state")?;
+        let destination = self
+            .put
+            .get(row)
+            .and_then(|r| r.get(usize::from(view)))
+            .and_then(|index| self.sources.get(*index))
+            .ok_or("unknown put-back")?;
         Ok(destination)
     }
 
@@ -58,8 +66,11 @@ impl AdmittedLens {
     /// # Errors
     /// Returns unknown for a source outside the admitted domain.
     pub fn get(&self, source: &BTreeMap<String, bool>) -> Result<bool, String> {
-        self.sources.iter().position(|s| s == source)
-            .and_then(|row| self.get.get(row).copied()).ok_or("unknown source state".into())
+        self.sources
+            .iter()
+            .position(|s| s == source)
+            .and_then(|row| self.get.get(row).copied())
+            .ok_or("unknown source state".into())
     }
 }
 
@@ -72,7 +83,10 @@ impl AdmittedLens {
 /// # Errors
 /// Malformed, unsupported, unknown or refuted declarations refuse admission.
 pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
-    if mapping.extensions.as_ref().is_some_and(|e| e.keys().any(|k| k.starts_with("norn.write-back/") && k != LENS_SLOT)) {
+    if mapping.extensions.as_ref().is_some_and(|e| {
+        e.keys()
+            .any(|k| k.starts_with("norn.write-back/") && k != LENS_SLOT)
+    }) {
         return Err("unknown: unsupported lens version".into());
     }
     let Some(raw) = mapping.extensions.as_ref().and_then(|e| e.get(LENS_SLOT)) else {
@@ -80,39 +94,69 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     };
     // The enclosing artifact admission bounds serialized input memory. Bound
     // this extension before decoding a second owned representation.
-    let bytes = serde_json::to_vec(raw).map_err(|e| e.to_string())?;
-    if bytes.len() > 65_536 {
-        return Err("unknown: lens declaration exceeds byte bound".into());
-    }
-    let declaration: Declaration = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    let Declaration { map, property, sources, put } = declaration;
+    let mut bytes = vec![0_u8; 65_536];
+    let mut remaining = bytes.as_mut_slice();
+    serde_json::to_writer(&mut remaining, raw)
+        .map_err(|_| "unknown: lens declaration exceeds byte bound")?;
+    let used = 65_536_usize.saturating_sub(remaining.len());
+    let declaration: Declaration =
+        serde_json::from_slice(bytes.get(..used).ok_or("unknown: byte bound")?)
+            .map_err(|e| e.to_string())?;
+    let Declaration {
+        map,
+        property,
+        sources,
+        put,
+    } = declaration;
     if sources.is_empty() || sources.len() > 32 || put.len() != sources.len() {
         return Err("unknown: invalid finite domain or put table size".into());
     }
     for (row, source) in sources.iter().enumerate() {
-        if source.is_empty() || source.len() > 16 || source.keys().any(|k| k.len() > 128)
+        if source.is_empty()
+            || source.len() > 16
+            || source.keys().any(|k| k.len() > 128)
             || sources.iter().take(row).any(|s| s == source)
             || sources.first().is_none_or(|s| !s.keys().eq(source.keys()))
         {
-            return Err("unknown: source domain must contain unique, same-shaped Boolean records".into());
+            return Err(
+                "unknown: source domain must contain unique, same-shaped Boolean records".into(),
+            );
         }
     }
-    let map = mapping.maps.iter().find(|m| m.id == map).ok_or("unknown map")?;
+    let map = mapping
+        .maps
+        .iter()
+        .find(|m| m.id == map)
+        .ok_or("unknown map")?;
     if map.when.is_some() || map.source.nested_in.is_some() {
         return Err("unknown: guarded or nested lens".into());
     }
-    let rule = map.properties.iter().find(|p| p.property.as_str() == property)
+    let rule = map
+        .properties
+        .iter()
+        .find(|p| p.property.as_str() == property)
         .ok_or("unknown property projection")?;
     if rule.nested.is_some() || rule.value.as_str().len() > 4096 {
         return Err("unknown: unsupported or oversized Get".into());
     }
-    norn_expr::validate_evaluation_source(rule.value.as_str(), &norn_ir::ResourceLimitProfile::default())
-        .map_err(|e| format!("unknown: Get outside bounded expression profile: {e:?}"))?;
+    norn_expr::validate_evaluation_source(
+        rule.value.as_str(),
+        &norn_ir::ResourceLimitProfile::default(),
+    )
+    .map_err(|e| format!("unknown: Get outside bounded expression profile: {e:?}"))?;
     let expression = Expression::compile(rule.value.as_str()).map_err(|e| e.to_string())?;
     let mut get = Vec::new();
     for source in &sources {
-        let input = Value::object(source.iter().map(|(key, value)| (key.clone(), Value::Bool(*value))));
-        let evaluation = expression.evaluate(&Value::object([("input", input)]), EvaluationBudget::new(1024))
+        let input = Value::object(
+            source
+                .iter()
+                .map(|(key, value)| (key.clone(), Value::Bool(*value))),
+        );
+        let evaluation = expression
+            .evaluate(
+                &Value::object([("input", input)]),
+                EvaluationBudget::new(1024),
+            )
             .map_err(|e| format!("unknown: {e}"))?;
         let Value::Bool(value) = evaluation.into_value() else {
             return Err("unknown: Get must produce a Boolean".into());
@@ -132,7 +176,9 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
             }
             for last in [false, true] {
                 if lens.put(updated, last)? != lens.put(source, last)? {
-                    return Err(format!("refuted PutPut at source {row}, views {view}, {last}"));
+                    return Err(format!(
+                        "refuted PutPut at source {row}, views {view}, {last}"
+                    ));
                 }
             }
         }
