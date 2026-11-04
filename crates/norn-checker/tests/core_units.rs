@@ -43,6 +43,7 @@ fn property(name: &str) -> EffectiveProperty {
             default: None,
             markings: Vec::new(),
             computed: None,
+            protected: false,
         },
         &catalog(),
     )
