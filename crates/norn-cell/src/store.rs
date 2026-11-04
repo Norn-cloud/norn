@@ -2848,8 +2848,8 @@ impl<E: SqlEngine> CellStore<E> {
                 if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq)
                 {
                     self.transparency.borrow_mut().push(receipt.hash.clone());
-                } else {
-                    self.refresh_transparency().map_err(GuardedError::Store)?;
+                } else if let Err(error) = self.refresh_transparency() {
+                    tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
                 }
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();

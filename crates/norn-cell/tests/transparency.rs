@@ -183,3 +183,64 @@ fn measure_append_and_proofs() {
         consistency.as_bytes().len()
     );
 }
+
+#[test]
+fn cache_read_failure_cannot_turn_a_durable_commit_into_an_error() {
+    use norn_cell::{
+        CellError,
+        engine::{NativeEngine, SqlEngine, SqlValue},
+    };
+    use std::{cell::Cell, rc::Rc};
+    struct FaultEngine(NativeEngine, Rc<Cell<bool>>);
+    impl SqlEngine for FaultEngine {
+        fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+            self.0.execute(sql, params)
+        }
+        fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+            self.0.execute_batch(sql)
+        }
+        fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+            if self.1.get() && sql.starts_with("SELECT receipt_hash FROM _norn_receipt") {
+                return Err(CellError::Engine("injected cache read failure".into()));
+            }
+            self.0.query(sql, params)
+        }
+        fn transaction<T, X: From<CellError>>(
+            &self,
+            f: impl FnOnce() -> Result<T, X>,
+        ) -> Result<T, X> {
+            self.0.transaction(f)
+        }
+    }
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let mut first =
+        CellStore::open(&path, common::corpus_model(), StoreOptions::default()).expect("open");
+    first.bind("scope", "org_demo/dev").expect("scope");
+    let fail = Rc::new(Cell::new(false));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    let mut second =
+        CellStore::from_engine(FaultEngine(engine, fail.clone()), common::corpus_model())
+            .expect("open");
+    first.commit(&batch("one")).expect("commit");
+    fail.set(true);
+    assert!(matches!(
+        second
+            .commit(&batch("two"))
+            .expect("durable commit still succeeds"),
+        CommitOutcome::Committed(_)
+    ));
+    assert!(second.transparency_checkpoint().is_err());
+    fail.set(false);
+    assert_eq!(
+        second
+            .transparency_checkpoint()
+            .expect("catch up")
+            .num_leaves(),
+        2
+    );
+    assert_eq!(
+        second.transparency_checkpoint().expect("root"),
+        first.transparency_checkpoint().expect("root")
+    );
+}
