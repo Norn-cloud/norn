@@ -218,3 +218,7 @@ presentation of the checked driver's result, never proof or activation authority
 Its OpenAPI projection adds new components without modifying existing schemas.
 Named scenarios: exact coefficient roundtrip; unknown requires a reason;
 unknown enum/field, fractional coefficient and invented `proved` level refuse.
+
+### HOST-AUTH-1: explicit server policy before host access
+
+The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.
