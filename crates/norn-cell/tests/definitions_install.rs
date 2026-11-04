@@ -7306,6 +7306,7 @@ fn additivity_migration_model(integer: bool, scale: u64, additive: bool) -> Mode
     snapshot.object_types[0].properties.push(norn_ir::Property {
         id: norn_ir::PropertyId("amount".into()),
         property_type: kind,
+        protected: false,
         description: None,
         constraints: norn_ir::PropertyConstraints::default(),
         default: None,
