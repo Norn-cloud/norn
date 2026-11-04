@@ -1,0 +1,38 @@
+{
+  "sha256": "5e2f83383adc8b041e4190b2e52e6329cac0f08945ec4d168de034a4f71ba4fc",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "Cargo.lock",
+    "crates/norn-cell/tests/fixtures/constitution.json",
+    "crates/norn-checker/src/obligations.rs",
+    "crates/norn-checker/src/obligations/evidence.rs",
+    "crates/norn-checker/src/obligations/finite.rs",
+    "crates/norn-checker/src/obligations/quint.rs",
+    "crates/norn-checker/src/obligations/quint/driver.rs",
+    "crates/norn-ir/src/verification/evidence.rs",
+    "crates/norn-ir/src/verification/finite.rs",
+    "crates/norn-ir/src/verification/guarantees.rs",
+    "registry/core/artifacts/core.Conversion.interface.json",
+    "registry/core/artifacts/core.Process.interface.json",
+    "registry/core/artifacts/core.units.json",
+    "scripts/check-generated-quint.py",
+    "scripts/quint_apalache.py",
+    "scripts/run-generated-proofs.py",
+    "tools/norn-proofs/bun.lock",
+    "tools/norn-proofs/check.test.ts",
+    "tools/norn-proofs/check.ts",
+    "verification/profiles/constitution-one-create.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

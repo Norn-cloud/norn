@@ -8,7 +8,7 @@ use super::quint::*;
 use super::*;
 use proptest::prelude::*;
 
-fn fixture() -> Vec<Value> {
+pub(super) fn fixture() -> Vec<Value> {
     let mut entities: Vec<Value> =
         serde_json::from_str(include_str!("../../../../fixtures/law-ir/entities.json"))
             .expect("generated entities");
@@ -73,7 +73,7 @@ fn fixture() -> Vec<Value> {
         "effectProgram":{"kind":"upsert_input_object","objectIdField":"id","objectKind":"erpnext.SalesOrder","entityArtifactId":"erpnext.SalesOrder.entity","entityArtifactVersion":"0.1.0","writeMode":{"kind":"create_only"}}});
     vec![entities.remove(0), envelope, action]
 }
-fn bounds(artifacts: &[Value]) -> Bounds {
+pub(super) fn bounds(artifacts: &[Value]) -> Bounds {
     Bounds {
         action: artifacts[2]["artifactId"].as_str().expect("id").into(),
         inputs: BTreeMap::from([
@@ -84,7 +84,7 @@ fn bounds(artifacts: &[Value]) -> Bounds {
         seed: 0,
     }
 }
-fn source(artifacts: &[Value]) -> DefinitionSource {
+pub(super) fn source(artifacts: &[Value]) -> DefinitionSource {
     DefinitionSource::parse(&serde_json::to_string(artifacts).expect("source"), "[]")
         .expect("source")
 }
