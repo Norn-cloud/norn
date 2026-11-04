@@ -1,5 +1,5 @@
-//! Deterministic, conservative lowering of normative declarations (#3563/#3320).
-//! This is not signature verification, admission, a proof or an evaluator.
+//! Conservative lowering and finite admission of normative declarations.
+//! Structural authority bindings grant no permissions or proof status.
 use norn_ir::deontic::{DeonticModality, DeonticRule, RuleSourceSpan};
 use norn_ir::{LawIR, LawModality, LawResponse, LawRoot};
 
@@ -610,4 +610,20 @@ fn valid_norm_identity(rule: &DeonticRule) -> bool {
             .into_iter()
             .chain(&law.scope.object_types)
             .all(|id| !id.trim().is_empty())
+}
+
+/// Existing base-to-base resolutions were already admitted. Preserve them;
+/// only newly introduced incoming edges participate in the protection audit.
+pub(crate) fn installed_protection(
+    inherited: &std::collections::BTreeSet<usize>,
+    edges: &[(usize, usize)],
+) -> std::collections::BTreeSet<usize> {
+    inherited
+        .iter()
+        .copied()
+        .filter(|low| {
+            let incoming: Vec<_> = edges.iter().filter(|(_, target)| target == low).collect();
+            incoming.is_empty() || incoming.iter().any(|(high, _)| !inherited.contains(high))
+        })
+        .collect()
 }

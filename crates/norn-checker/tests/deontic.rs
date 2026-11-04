@@ -940,3 +940,114 @@ fn live_diagnosis_pins_reproduce_and_change_with_attempted_source() {
     entity["name"] = json!("edited");
     assert_ne!(original, run(entity));
 }
+
+#[test]
+fn admitted_normative_resolution_survives_installation() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, mut low, high) = admission_fixture();
+    low.defeated_by.push(high.law.id.clone());
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low,high]});
+    let installed: norn_ir::ArtifactEnvelope = serde_json::from_value(entity).expect("installed");
+    let registry = BTreeSet::new();
+    assert!(
+        check_artifact_set(
+            &[installed.clone()],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[],
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    assert!(
+        check_artifact_set(
+            &[],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[installed.clone()],
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    let (mut unrelated, _, _) = admission_fixture();
+    unrelated["artifactId"] = json!("unrelated.entity");
+    unrelated["payload"]["objectType"]["name"] = json!("unrelated.Subject");
+    let unrelated = serde_json::from_value(unrelated).expect("unrelated");
+    assert!(
+        check_artifact_set(
+            &[unrelated],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[installed.clone()],
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    // A candidate cannot rewrite the inherited rule under its existing identity.
+    let (_, mut replacement, _) = admission_fixture();
+    replacement.defeated_by.push("new-winner".into());
+    let mut candidate = serde_json::to_value(&installed).expect("wire");
+    candidate["artifactId"] = json!("candidate.entity");
+    candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+    replacement.source.artifact_id = "candidate.entity".into();
+    replacement.law.subject = "candidate.Subject".into();
+    replacement.law.scope.object_types = vec!["candidate.Subject".into()];
+    candidate["payload"]["extensions"] =
+        json!({norn_checker::deontic::NORMATIVE_SLOT:[replacement]});
+    let candidate = serde_json::from_value(candidate).expect("candidate");
+    assert!(
+        check_artifact_set(
+            &[candidate],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[installed],
+                tenant: None
+            }
+        )
+        .iter()
+        .any(norn_checker::Diagnostic::is_error)
+    );
+}
+
+#[test]
+fn all_four_normative_cores_retain_their_attribution() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    let rules: Vec<_> = (0..4)
+        .map(|index| {
+            let mut rule = if index < 2 { low.clone() } else { high.clone() };
+            rule.law.id = format!("rule-{index}");
+            rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            rule
+        })
+        .collect();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    for left in 0..2 {
+        for right in 2..4 {
+            let pair = format!("rule-{left}, rule-{right}");
+            assert_eq!(
+                findings
+                    .iter()
+                    .filter(|d| d.code.as_str() == "consistency.normative.conflict"
+                        && d.message.contains(&pair))
+                    .count(),
+                2,
+                "{findings:?}"
+            );
+        }
+    }
+}

@@ -386,7 +386,8 @@ pub(crate) fn diagnose_candidate_order(
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, NormRefusal> {
     let editable = (0..norms.len()).filter(|i| !protected.contains(i)).collect();
-    let mut report = diagnose_order(norms, origins, layers, edges, protected, contexts, (max_calls, &editable))?;
+    let audit = crate::deontic::installed_protection(protected, edges);
+    let mut report = diagnose_order(norms, origins, layers, edges, &audit, contexts, (max_calls, &editable))?;
     validate_admission_diagnosis(norms, origins, layers, edges, protected, contexts, &mut report.diagnosis)?;
     if !report.diagnosis.cores.is_empty() {
         let repairs: Vec<Vec<_>> = report.diagnosis.corrections.iter().map(|repair|
@@ -531,7 +532,8 @@ fn validate_admission_diagnosis(
         let priorities: Vec<_> = edges.iter().filter_map(|(a,b)| Some((*indices.get(a)?, *indices.get(b)?))).collect();
         let fixed = protected.iter().filter_map(|i| indices.get(i).copied()).collect();
         let remaining = diagnosis.max_calls.checked_sub(diagnosis.calls).ok_or(NormRefusal::Limit)?;
-        let checked = diagnose_declared_order(&subset, &locations, &levels, &priorities, &fixed, contexts, remaining)?;
+        let audit = crate::deontic::installed_protection(&fixed, &priorities);
+        let checked = diagnose_declared_order(&subset, &locations, &levels, &priorities, &audit, contexts, remaining)?;
         diagnosis.calls = diagnosis.calls.checked_add(checked.diagnosis.calls).ok_or(NormRefusal::Limit)?;
         if checked.diagnosis.cores.is_empty() == conflict { return Err(NormRefusal::InvalidBinding); }
     }
