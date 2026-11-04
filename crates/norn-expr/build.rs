@@ -5,6 +5,24 @@ use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn normalize_source(contents: &str) -> String {
+    contents.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_source;
+
+    #[test]
+    fn line_endings_produce_identical_fingerprint_input() {
+        let lf = "fn example() {\n    // café\n}\n";
+        assert_eq!(normalize_source(lf), lf);
+        assert_eq!(normalize_source(&lf.replace('\n', "\r\n")), lf);
+        assert_eq!(normalize_source(&lf.replace('\n', "\r")), lf);
+        assert_eq!(normalize_source("a\r\nb\rc\n"), "a\nb\nc\n");
+    }
+}
+
 fn sources(
     root: &Path,
     path: &Path,
@@ -28,7 +46,7 @@ fn sources(
             .map(|component| component.to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        let contents = fs::read_to_string(path)?;
+        let contents = normalize_source(&fs::read_to_string(path)?);
         writeln!(output, "({name:?}, {contents:?}),")?;
     }
     Ok(())

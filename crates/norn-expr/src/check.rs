@@ -86,7 +86,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::rc::Rc;
 
-use zen_expression::functions::{ClosureFunction, FunctionKind, InternalFunction};
+use zen_expression::functions::{
+    ClosureFunction, FunctionKind, InternalFunction, MAX_TAKE_SCALARS, MAX_TOKEN_BYTES, MAX_TOKEN_COUNT,
+};
 use zen_expression::intellisense::diagnostic::Severity;
 use zen_expression::intellisense::{AstMetadata, IntelliSense};
 use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
@@ -1745,12 +1747,12 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn bounded_integer_literal(&mut self, node: &Node<'_>, max: u16, name: &str) -> Option<()> {
+    fn bounded_integer_literal(&mut self, node: &Node<'_>, max: usize, name: &str) -> Option<()> {
         match node {
             Node::Number(value)
                 if value
                     .to_string()
-                    .parse::<u16>()
+                    .parse::<usize>()
                     .is_ok_and(|value| value <= max) =>
             {
                 Some(())
@@ -2660,14 +2662,14 @@ impl<'a> Checker<'a> {
                     }
                     None => return None,
                 }
-                self.bounded_integer_literal(arguments.get(2)?, 256, "maxCount")?;
-                self.bounded_integer_literal(arguments.get(3)?, 256, "maxLength")?;
+                self.bounded_integer_literal(arguments.get(2)?, MAX_TOKEN_COUNT, "maxCount")?;
+                self.bounded_integer_literal(arguments.get(3)?, MAX_TOKEN_BYTES, "maxLength")?;
                 Some(T::List(Box::new(T::Str(None))))
             }
             F::Take => {
                 self.arity(node, arguments, 2)?;
                 self.string(first?)?;
-                self.bounded_integer_literal(arguments.get(1)?, 16_384, "maxScalars")?;
+                self.bounded_integer_literal(arguments.get(1)?, MAX_TAKE_SCALARS, "maxScalars")?;
                 Some(T::Str(None))
             }
             F::Join => {
