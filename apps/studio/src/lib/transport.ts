@@ -7,6 +7,7 @@ export type Question = Schemas["NornIrQuestion"]
 export type Answer = Schemas["NornQueryResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
 export type ObjectType = Schemas["NornIrObjectTypeDef"]
+export type Artifact = Schemas["NornArtifactEnvelope"]
 
 export interface QuestionAnswer {
   readonly question: Read<Question>
@@ -22,26 +23,28 @@ export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted core definitions: object types, actions, laws and the rest, as artifact envelopes. */
   readonly definitions: () => Promise<readonly Read<Envelope>[]>
+  /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
+  readonly catalog: () => Promise<Read<readonly Artifact[]>>
 }
 
-const RECORDINGS = "../../../../fixtures/demo/answers/"
-const recordings = import.meta.glob<string>("../../../../fixtures/demo/answers/*.json", { query: "?raw", import: "default", eager: true })
+const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/*.json"], { query: "?raw", import: "default", eager: true })
 
 function recorded<T>(name: string): Read<T> {
-  const source = recordings[RECORDINGS + name]
+  const source = recordings[`../../../../fixtures/demo/${name}`]
   if (source === undefined) throw new Error(`No recorded document ${name}`)
   return readDocument<T>(source, "recorded")
 }
 
 const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
 
-/** Documents the engine produced for the synthetic scrap-yield world, replayed byte for byte. */
+/** Documents the engine produced for the synthetic scrap-yield and three-systems worlds, replayed byte for byte. */
 export const recordedTransport: Transport = {
   definitions: async () => Object.values(DEFINITIONS).map((source) => readDocument<Envelope>(source, "recorded")),
   questionBoard: async () => [{
-    question: recorded<Question>("scrap-yield.question.json"),
-    answer: recorded<Answer>("scrap-yield.k1.answer.json"),
-    metrics: recorded<readonly Metric[]>("scrap-yield.metrics.json"),
-    objectType: recorded<ObjectType>("scrap-yield.object-type.json"),
+    question: recorded<Question>("answers/scrap-yield.question.json"),
+    answer: recorded<Answer>("answers/scrap-yield.k1.answer.json"),
+    metrics: recorded<readonly Metric[]>("answers/scrap-yield.metrics.json"),
+    objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
   }],
+  catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
 }

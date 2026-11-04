@@ -1,0 +1,23 @@
+import alchemy from "alchemy"
+import { Vite } from "alchemy/cloudflare"
+import { FileSystemStateStore } from "alchemy/state"
+
+// The recorded Studio: `vite build` output (synthetic recorded engine documents
+// only) served as static assets on the custom domains in STUDIO_DOMAINS
+// (comma-separated); browser navigations to
+// client-side routes fall back to index.html. Credentials come from
+// CLOUDFLARE_* in the environment. State lives in ALCHEMY_STATE_DIR (outside
+// the repository) or the ignored `.alchemy`.
+const app = await alchemy("norn-studio", {
+  stateStore: (scope) => new FileSystemStateStore(scope, { rootDir: process.env.ALCHEMY_STATE_DIR ?? ".alchemy" }),
+})
+
+export const studio = await Vite("studio", {
+  name: "norn-studio-recorded",
+  assets: "dist",
+  spa: true,
+  url: false,
+  domains: (process.env.STUDIO_DOMAINS ?? "studio.norn.cloud,studio-demo.norn.cloud").split(",").map((domain) => domain.trim()),
+})
+
+await app.finalize()

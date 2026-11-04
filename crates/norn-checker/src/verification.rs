@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Stable law diagnostic codes.
 pub mod codes {
+    /// Retained pack/app membership is unavailable in this cut.
+    pub const UNRESOLVED_SCOPE: &str = "core.laws.unresolved_scope";
     /// Malformed closed `LawIR` document.
     pub const INVALID_DOCUMENT: &str = "law.validation.invalid_document";
     /// Unsupported temporal combination.
@@ -67,7 +69,11 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, String> {
 fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let root = match &law.scope.root {
-        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        LawRoot::Company(id)
+        | LawRoot::App(id)
+        | LawRoot::Pack(id)
+        | LawRoot::Cell(id)
+        | LawRoot::Entity(id) => id,
     };
     if [&law.id, &law.owner, &law.rationale, &law.subject, root]
         .iter()
@@ -220,6 +226,194 @@ struct LawContext<'a> {
     env: Option<&'a ZenTypeEnv>,
 }
 
+/// Exact retained artifact members and every root-to-instance containment path.
+pub type RetainedLawMembership =
+    BTreeMap<norn_ir::definition_catalog::ArtifactKey, Vec<Vec<norn_ir::PackInstanceRef>>>;
+
+type ScopePacks<'a> = BTreeMap<
+    norn_ir::definition_catalog::ArtifactKey,
+    (&'a ArtifactEnvelope, norn_ir::CompositionPackRoot, String),
+>;
+
+/// LAW-CONTAINED-1: resolve only explicit retained instance imports/containment.
+/// This structural query grants no proof, runtime permission or installation authority.
+/// # Errors
+/// Refuses unresolved roots, stale pins, incomplete members, cycles or budget exhaustion.
+pub fn retained_law_membership(
+    law: &ArtifactEnvelope,
+    base: &[ArtifactEnvelope],
+    budget: Budget,
+) -> Result<RetainedLawMembership, Vec<Diagnostic>> {
+    let refused = || {
+        vec![finding(
+            codes::UNRESOLVED_SCOPE,
+            law,
+            "/payload/scope/root",
+            "retained instance membership is missing, ambiguous, stale or exceeds its budget",
+        )]
+    };
+    let declaration = decode(law).map_err(|_error| refused())?;
+    let (LawRoot::App(root) | LawRoot::Pack(root)) = &declaration.scope.root else {
+        return Err(refused());
+    };
+    if base.len() > budget.max_nodes {
+        return Err(refused());
+    }
+    let packs = scope_packs(base).ok_or_else(refused)?;
+    let mut instances = BTreeMap::new();
+    for (owner, pack, _) in packs.values() {
+        for instance in pack.instances.iter().flatten() {
+            if instance.scope == law.scope
+                && (crate::scope_conflict(&instance.scope, &owner.scope).is_some()
+                    || instance.instance_id.trim().is_empty()
+                    || instances
+                        .insert(instance.instance_id.clone(), instance.clone())
+                        .is_some()
+                    || instances.len() > budget.max_nodes)
+            {
+                return Err(refused());
+            }
+        }
+    }
+    let first = instances.get(root).ok_or_else(refused)?;
+    let initial = norn_ir::PackInstanceRef {
+        instance_id: root.clone(),
+        pack: first.pack.clone(),
+    };
+    scope_members(base, &packs, &instances, initial, budget).ok_or_else(refused)
+}
+
+fn scope_packs(base: &[ArtifactEnvelope]) -> Option<ScopePacks<'_>> {
+    use norn_ir::definition_catalog::ArtifactKey;
+    let mut packs = BTreeMap::new();
+    let mut bytes = 0usize;
+    for artifact in base
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::BusinessPack)
+    {
+        let value = serde_json::to_value(artifact.payload.to_json_value()).ok()?;
+        let size = norn_canonical::serialize_json_verbatim(&value).ok()?.len();
+        bytes = bytes.saturating_add(size);
+        if bytes > 8_388_608 {
+            return None;
+        }
+        if let norn_ir::BusinessPackRoot::Composition(pack) = serde_json::from_value(value).ok()? {
+            let key = ArtifactKey {
+                artifact_id: artifact.artifact_id.clone(),
+                version: artifact.version.clone(),
+            };
+            let digest = crate::ArtifactRef::of(artifact).ok()?.sha256;
+            if packs.insert(key, (artifact, pack, digest)).is_some() {
+                return None;
+            }
+        }
+    }
+    Some(packs)
+}
+
+fn scope_members(
+    base: &[ArtifactEnvelope],
+    packs: &ScopePacks<'_>,
+    instances: &BTreeMap<String, norn_ir::PackInstance>,
+    initial: norn_ir::PackInstanceRef,
+    budget: Budget,
+) -> Option<RetainedLawMembership> {
+    use norn_ir::definition_catalog::ArtifactKey;
+    let mut pending = vec![vec![initial]];
+    let mut out: RetainedLawMembership = BTreeMap::new();
+    let mut steps = 0usize;
+    let mut copies = 0usize;
+    let mut bytes = 0usize;
+    while let Some(path) = pending.pop() {
+        steps = steps.saturating_add(1);
+        if steps > budget.max_steps || path.len() > budget.max_nodes {
+            return None;
+        }
+        let last = path.last()?;
+        let instance = instances.get(&last.instance_id)?;
+        if instance.pack != last.pack {
+            return None;
+        }
+        let key = ArtifactKey {
+            artifact_id: last.pack.artifact_id.clone(),
+            version: last.pack.version.clone(),
+        };
+        let (artifact, pack, digest) = packs.get(&key)?;
+        if digest != &last.pack.sha256
+            || crate::scope_conflict(&instance.scope, &artifact.scope).is_some()
+        {
+            return None;
+        }
+        for member in &pack.artifacts {
+            let mut matches = base
+                .iter()
+                .filter(|a| a.artifact_id == member.artifact_id && a.version == member.version);
+            let target = matches.next()?;
+            if matches.next().is_some()
+                || target.kind() != crate::artifact_set::pack_kind(member.kind)
+                || crate::scope_conflict(&instance.scope, &target.scope).is_some()
+            {
+                return None;
+            }
+            if target.kind() == ArtifactKind::BusinessPack {
+                if !instance
+                    .imports
+                    .values()
+                    .chain(&instance.instances)
+                    .any(|r| {
+                        r.pack.artifact_id == member.artifact_id && r.pack.version == member.version
+                    })
+                {
+                    return None;
+                }
+                continue;
+            }
+            copies = copies.saturating_add(path.len());
+            let size = norn_canonical::serialize_json_verbatim(&path).ok()?.len();
+            bytes = bytes.saturating_add(size);
+            if copies > budget.max_edges || bytes > 8_388_608 {
+                return None;
+            }
+            out.entry(ArtifactKey {
+                artifact_id: member.artifact_id.clone(),
+                version: member.version.clone(),
+            })
+            .or_default()
+            .push(path.clone());
+        }
+        for next in instance.imports.values().chain(&instance.instances) {
+            if path
+                .iter()
+                .any(|previous| previous.instance_id == next.instance_id)
+            {
+                return None;
+            }
+            copies = copies.saturating_add(path.len().saturating_add(1));
+            bytes = bytes.saturating_add(
+                norn_canonical::serialize_json_verbatim(&path)
+                    .ok()?
+                    .len()
+                    .saturating_add(norn_canonical::serialize_json_verbatim(next).ok()?.len()),
+            );
+            if copies > budget.max_edges || bytes > 8_388_608 {
+                return None;
+            }
+            let mut child = path.clone();
+            child.push(next.clone());
+            pending.push(child);
+        }
+    }
+    for paths in out.values_mut() {
+        paths.sort_by_cached_key(|path| {
+            path.iter()
+                .map(|p| p.instance_id.clone())
+                .collect::<Vec<_>>()
+        });
+        paths.dedup();
+    }
+    Some(out)
+}
+
 impl LawContext<'_> {
     fn check_bound_law(&self, law: &LawIR, artifact: &ArtifactEnvelope, out: &mut Vec<Diagnostic>) {
         let subject = self
@@ -235,6 +429,15 @@ impl LawContext<'_> {
             ));
             return;
         };
+        if matches!(law.scope.root, LawRoot::Pack(_)) {
+            out.push(finding(
+                codes::UNRESOLVED_SCOPE,
+                artifact,
+                "/payload/scope/root",
+                "retained pack scope resolution is not supported by this cut",
+            ));
+            return;
+        }
         self.check_scope(law, artifact, subject, out);
         self.check_predicates(law, artifact, subject, out);
     }

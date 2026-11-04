@@ -1,109 +1,44 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { Link, Outlet, RouterProvider, createRootRoute, createRoute, createRouter, redirect, useRouterState } from "@tanstack/react-router"
-import { ChartLine, Database, ShieldCheck, Workflow, type LucideIcon } from "lucide-react"
-import { StrictMode, type JSX } from "react"
+import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
+import { ChartLine, Database, ShieldCheck, Workflow } from "lucide-react"
+import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar,
-} from "@/components/ui/sidebar"
-import { TooltipProvider } from "@/components/ui/tooltip"
-import { QuestionsPage } from "./questions.tsx"
-import { WorkflowsPage } from "./workflows.tsx"
+import { EmptyState, Panel, Well } from "@/components/panel"
+import { QuestionsPage, useQuestionsMenu } from "./questions.tsx"
+import { Shell, type Section } from "./shell.tsx"
+import { SourcesPage, useSourcesMenu } from "./sources.tsx"
+import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
-interface Section {
-  readonly path: string
-  readonly label: string
-  readonly icon: LucideIcon
-  readonly summary: string
-}
-
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why." },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number." },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step." },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "Every rule the system keeps, and how strongly each one is checked." },
 ]
 
-function Shell() {
+function NotYet({ label, summary, icon }: Section) {
   return (
-    <TooltipProvider>
-      <SidebarProvider>
-        <Navigation />
-      </SidebarProvider>
-    </TooltipProvider>
-  )
-}
-
-/** The sidebar and page card; on mobile the sidebar is a sheet that closes once a link is followed. */
-function Navigation() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const { setOpenMobile } = useSidebar()
-  const closeMobile = () => setOpenMobile(false)
-  return (
-    <>
-      <Sidebar variant="inset" collapsible="icon">
-        <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton size="lg" asChild>
-                <Link to="/questions" onClick={closeMobile}>
-                  <span className="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground">N</span>
-                  <span className="text-panel font-medium">Norn Studio</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {SECTIONS.map(({ path, label, icon: Icon }) => (
-                  <SidebarMenuItem key={path}>
-                    <SidebarMenuButton asChild isActive={pathname === path} tooltip={label}>
-                      <Link to={path} onClick={closeMobile}><Icon /><span>{label}</span></Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarRail />
-      </Sidebar>
-      <SidebarInset>
-        <header className="flex h-12 items-center gap-2 border-b px-4">
-          <SidebarTrigger />
-          <span className="text-meta text-muted-foreground">{SECTIONS.find(({ path }) => path === pathname)?.label}</span>
-        </header>
-        <div className="mx-auto w-full max-w-6xl p-6 md:p-10"><Outlet /></div>
-      </SidebarInset>
-    </>
-  )
-}
-
-function NotYet({ label, summary }: Section) {
-  return (
-    <section className="space-y-2">
-      <h1 className="text-title font-medium">{label}</h1>
-      <p className="max-w-2xl text-muted-foreground">{summary}</p>
-      <p className="pt-6 text-sm text-muted-foreground">This section is not available yet.</p>
+    <section className="space-y-6">
+      <div className="space-y-2">
+        <h1 className="text-title font-medium">{label}</h1>
+        <p className="max-w-2xl text-muted-foreground">{summary}</p>
+      </div>
+      <Panel icon={icon} label={label}>
+        <Well><EmptyState icon={icon}>The server does not publish this section's documents yet.</EmptyState></Well>
+      </Panel>
     </section>
   )
 }
 
-const PAGES: Readonly<Record<string, () => JSX.Element>> = { "/questions": QuestionsPage, "/workflows": WorkflowsPage }
-
-const root = createRootRoute({ component: Shell })
+const root = createRootRoute({ component: () => <Shell sections={SECTIONS} /> })
 const router = createRouter({
   routeTree: root.addChildren([
     createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ to: "/questions" }) } }),
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: PAGES[section.path] ?? (() => <NotYet {...section} />),
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : () => <NotYet {...section} />,
     })),
   ]),
 })

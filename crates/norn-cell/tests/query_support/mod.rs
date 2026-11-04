@@ -168,8 +168,8 @@ pub(crate) fn put(key: &str, input: i64, recovered: i64, at: &str, metal: &str) 
         ]),
     }
 }
-pub(crate) fn load(store: &mut CellStore) {
-    let writes = include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
+pub(crate) fn fixture_writes() -> Vec<FactWriteRow> {
+    include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
         .lines()
         .skip(1)
         .map(|line| {
@@ -182,13 +182,23 @@ pub(crate) fn load(store: &mut CellStore) {
                 fields[3],
             )
         })
-        .collect();
+        .collect()
+}
+pub(crate) fn signed_delta(before: &Decimal, after: &Decimal) -> Decimal {
+    use norn_checker::metric::compute::contribution::coefficient;
+    let difference = coefficient(after)
+        .expect("bounded coefficient")
+        .checked_sub(coefficient(before).expect("bounded coefficient"))
+        .expect("bounded difference");
+    Decimal::parse(&format!("{difference}e-6")).expect("exact signed difference")
+}
+pub(crate) fn load(store: &mut CellStore) {
     store
         .commit(&CommitBatch {
             world: WORLD.into(),
             scope: "synthetic".into(),
             logical_time: CLOCK,
-            writes,
+            writes: fixture_writes(),
             ..CommitBatch::default()
         })
         .expect("native fixture commit");

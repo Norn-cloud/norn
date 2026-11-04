@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { words } from "./lib/format.ts"
 import { recordedTransport } from "./lib/transport.ts"
 import { workflows, type Workflow } from "./lib/workflows.ts"
+import type { MenuEntry } from "./shell.tsx"
 
 const state = (name: string) => words(name)
 
@@ -69,7 +70,7 @@ function Chart({ workflow }: { readonly workflow: Workflow }) {
 function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
   const { lifecycle } = workflow
   return (
-    <Card>
+    <Card id={anchor(workflow)} className="scroll-mt-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="text-section font-medium">{words(workflow.objectType)}: {words(lifecycle.property).toLowerCase()}</CardTitle>
@@ -126,6 +127,15 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
       </CardContent>
     </Card>
   )
+}
+
+const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
+
+/** The admitted lifecycles, for the submenu island. */
+export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  return definitions.data && workflows(definitions.data.map(({ document }) => document))
+    .map((workflow) => ({ href: `#${anchor(workflow)}`, label: words(workflow.objectType) }))
 }
 
 export function WorkflowsPage() {
