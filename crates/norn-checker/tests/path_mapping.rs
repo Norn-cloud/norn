@@ -444,7 +444,7 @@ fn runtime_admission_enforces_required_paths_and_budget() {
     let identity = mapping("identity", "t", "s", &[]);
     let good = runtime_set(std::slice::from_ref(&identity));
     let findings = runtime_check(&good);
-    assert!(!findings.iter().any(|d| d.is_error()), "{findings:?}");
+    assert!(!findings.iter().any(norn_checker::Diagnostic::is_error), "{findings:?}");
     let evidence = findings
         .iter()
         .find(|d| d.code == "consistency.path_mapping.preserved")
@@ -500,7 +500,7 @@ fn runtime_admission_cost_before_and_after() {
     for (label, set) in [("without-paths", baseline), ("with-paths", enforced)] {
         let start = std::time::Instant::now();
         for _ in 0..20 {
-            assert!(!runtime_check(&set).iter().any(|d| d.is_error()));
+            assert!(!runtime_check(&set).iter().any(norn_checker::Diagnostic::is_error));
         }
         eprintln!(
             "RUNTIME-PATH-COST {label} {:?}/admission",
