@@ -1344,7 +1344,7 @@
           "coefficient": {
             "type": "string",
             "description": "Signed integer text; never a binary64 quantity.",
-            "pattern": "^(0|([1-9][0-9]{0,17}|9223372036854775807|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0})|-([1-9][0-9]{0,17}|9223372036854775808|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7][0-9]{0}))$"
+            "pattern": "^(0|([1-9][0-9]{0,17}|9223372036854775807|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0})|-([1-9][0-9]{0,17}|9223372036854775808|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7][0-9]{0}))(?![\\s\\S])"
           },
           "scale": {
             "type": "integer",
@@ -5627,6 +5627,76 @@
         },
         "additionalProperties": false
       },
+      "NornIrEffectiveLawInstance": {
+        "type": "object",
+        "title": "EffectiveLawInstance",
+        "description": "LAW-INSTANCE-CONTRACT-1: an application of a law retains its original\nidentity, concrete subject, attachment and complete origin paths.\nThis projection is not a new law or evidence of preservation.",
+        "required": [
+          "law",
+          "lawDigest",
+          "subject",
+          "subjectDigest",
+          "attachment",
+          "origin",
+          "paths",
+          "instancePaths",
+          "bindings"
+        ],
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/NornIrLawRoot",
+            "description": "Declared governing boundary, including retained pack/app attachments."
+          },
+          "bindings": {
+            "type": "object",
+            "description": "Explicit typed member substitutions; no rewritten child LawIR.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornIrMemberRef"
+            }
+          },
+          "instancePaths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrPackInstanceRef"
+              }
+            },
+            "description": "LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope."
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original law artifact/version and stable law member ID."
+          },
+          "lawDigest": {
+            "type": "string",
+            "description": "Norn1 identity of the unchanged law artifact."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Original governed concept/interface/container identity."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/NornIrMemberRef"
+              }
+            },
+            "description": "Every inheritance, containment or mapping path; a diamond retains all."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Concrete implementing type, independently pinned."
+          },
+          "subjectDigest": {
+            "type": "string",
+            "description": "Norn1 identity of that concrete type artifact."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrEntitlementActionMap": {
         "type": "object",
         "description": "A recognized source action and the checked predicate that admits it.",
@@ -7665,6 +7735,26 @@
         },
         "additionalProperties": false
       },
+      "NornIrInterpretationFormat": {
+        "type": "string",
+        "description": "Only the interpretation wire format decodes here.",
+        "enum": [
+          "norn.interpretation/1"
+        ],
+        "x-enumDescriptions": [
+          "First interpretation contract."
+        ]
+      },
+      "NornIrInterpretationRole": {
+        "type": "string",
+        "description": "A law interpretation is neither source evidence nor term correspondence.",
+        "enum": [
+          "law_interpretation"
+        ],
+        "x-enumDescriptions": [
+          "Subject to contract totality and preservation obligations."
+        ]
+      },
       "NornIrInvariant": {
         "type": "object",
         "description": "One declared invariant of an object type or interface.",
@@ -8577,6 +8667,55 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawInterpretationIr": {
+        "type": "object",
+        "description": "Typed interpretation contract. Admission refuses until conformance exists.",
+        "required": [
+          "format",
+          "role",
+          "sourceLayer",
+          "targetLayer",
+          "members"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Closed format discriminator.",
+            "enum": [
+              "norn.interpretation/1"
+            ],
+            "x-enumDescriptions": [
+              "First interpretation contract."
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMemberInterpretation"
+            },
+            "description": "MAP-MEMBER-CONTRACT-1: retain every explicit member binding.\nRequired coverage and unit/link contracts come from pinned definitions."
+          },
+          "role": {
+            "type": "string",
+            "description": "Explicit semantic role.",
+            "enum": [
+              "law_interpretation"
+            ],
+            "x-enumDescriptions": [
+              "Subject to contract totality and preservation obligations."
+            ]
+          },
+          "sourceLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer whose contract must be preserved."
+          },
+          "targetLayer": {
+            "$ref": "#/components/schemas/NornIrInterpretationEndpoint",
+            "description": "Layer interpreting that contract."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawModality": {
         "oneOf": [
           {
@@ -8903,6 +9042,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrLawRootOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawRootOneOf4"
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -8982,6 +9124,26 @@
             "type": "string",
             "enum": [
               "entity"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrLawRootOneOf4": {
+        "type": "object",
+        "description": "Exact retained composition-pack boundary.",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pack"
             ]
           }
         },
@@ -9714,9 +9876,9 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayload": {
+      "NornIrMappingIr": {
         "type": "object",
-        "description": "The payload of a `mapping` artifact: an interface-scoped mapping\n([`mapping::MappingIr`], T8-MAP-1a).",
+        "description": "An interface-scoped mapping from one source schema: the payload of a\n`mapping` artifact. The envelope's `artifactId` and `version` identify\nthe mapping; its provenance key is `<artifactId>@<version>` (both\nchecked so the key is unambiguous). See the module docs.",
         "required": [
           "format",
           "source",
@@ -9732,7 +9894,7 @@
             "description": "Declarative permission-row maps. These emit ordinary upsert actions\nfor `core.Entitlement`; joins are applied only from a caller-declared\ncomplete snapshot of every `requiredSnapshot` dataset."
           },
           "extensions": {
-            "$ref": "#/components/schemas/NornIrMappingPayloadPropertyExtensions"
+            "$ref": "#/components/schemas/NornIrMappingIrPropertyExtensions"
           },
           "format": {
             "type": "string",
@@ -9772,12 +9934,25 @@
         },
         "additionalProperties": false
       },
-      "NornIrMappingPayloadPropertyExtensions": {
+      "NornIrMappingIrPropertyExtensions": {
         "type": "object",
         "description": "Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.",
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
+      },
+      "NornIrMappingPayload": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrMappingIr",
+            "description": "Source records produce ordinary entity facts, never inherited laws."
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLawInterpretationIr",
+            "description": "A separately checked interpretation between exact ontology layers."
+          }
+        ],
+        "description": "The payload of a `mapping` artifact: source-record transforms or a\nseparately checked law interpretation ([`mapping::MappingDocument`])."
       },
       "NornIrMappingRelation": {
         "type": "string",
@@ -10032,6 +10207,29 @@
           }
         ],
         "description": "A member of a definition. Names are the IR's own: an object type or\ninterface name, a property, link, lifecycle-property, or transition id,\nan object-map id, a law id."
+      },
+      "NornIrMemberInterpretation": {
+        "type": "object",
+        "description": "One interpretation between exact catalog members, never a coverage claim.",
+        "required": [
+          "source",
+          "target"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Source type, property, link, lifecycle state or transition identity."
+          },
+          "target": {
+            "$ref": "#/components/schemas/NornIrMemberRef",
+            "description": "Corresponding target identity, resolved within the pinned target layer."
+          },
+          "transform": {
+            "type": "string",
+            "description": "Absent means identity. Expressions require checked conformance;\ndeclaring one does not establish preservation."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrMemberOneOf0": {
         "type": "object",
@@ -13271,6 +13469,26 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Exact retained composition-pack boundary.",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "pack"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "Named application boundary; authorization still comes from the envelope."
@@ -13549,6 +13767,14 @@
           },
           "obligation": {
             "type": "string",
+            "pattern": "\\S"
+          },
+          "pack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a pack-rooted law; other roots never read it.",
             "pattern": "\\S"
           },
           "permission": {

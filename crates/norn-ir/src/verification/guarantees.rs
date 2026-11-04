@@ -269,7 +269,8 @@ mod integer_text {
             }
             format!("({})", alternatives.join("|"))
         }
-        schemars::json_schema!({"type": "string", "pattern": format!("^(0|{}|-{})$",
+        // ECMAScript `$` admits a final line terminator; require actual end of input.
+        schemars::json_schema!({"type": "string", "pattern": format!("^(0|{}|-{})(?![\\s\\S])",
             magnitude(i64::MAX.unsigned_abs()), magnitude(i64::MIN.unsigned_abs()))})
     }
     pub(super) fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
@@ -321,6 +322,7 @@ mod tests {
             json!("+1"),
             json!("01"),
             json!("-0"),
+            json!("1\n"),
             json!("9223372036854775808"),
             json!("-9223372036854775809"),
         ] {
