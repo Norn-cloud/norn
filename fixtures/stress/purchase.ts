@@ -51,7 +51,6 @@ export const CreatePurchase = Norn.action({
   dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   input: Schema.Struct({ id: Schema.String,
     ordered: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
-    received: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
   }), output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Purchase, change: "created" }],
   effect: { kind: "upsert_input_object", type: Purchase, objectIdField: "id", writeMode: { kind: "create_only" } },

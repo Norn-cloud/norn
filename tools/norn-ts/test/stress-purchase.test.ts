@@ -20,7 +20,7 @@ test("STRESS-PURCHASE compiles the complete workflow and immutable inspection", 
   mkdirSync(scratch, { recursive: true })
   const dir = mkdtempSync(join(scratch, "mutant-"))
   try {
-    const source = readFileSync(join(root, sourcePath), "utf8")
+    const source = readFileSync(join(root, sourcePath), "utf8").replace(/\r\n/g, "\n")
     const derive = '  derive: [{ field: "rejected", inputRequired: false,\n    expression: Norn.expression(LineInput, x => x.delivered - x.accepted) }],\n'
     expect(source.split(derive).length).toBe(2)
     const mutant = join(dir, "purchase.ts")
