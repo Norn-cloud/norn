@@ -229,8 +229,10 @@ commit path. The consumed mapping-bundle journal retains pending claims and
 recomputable multi-source provenance; a transaction guard rechecks the planned
 links against that journal before admission. Each source record/role/mapping
 contribution retains its latest consumed claim for planning, while historical
-claims remain evidence. Scans refuse above 1,000 bundles, 4 MiB of bundle evidence
-or 20,000 claims; budget exhaustion cannot silently omit a claim.
+claims remain evidence. A plan or link provenance read selects only bundles naming
+its commit's objects or claim endpoints, so unrelated bundles spend no budget. The
+selected set refuses above 1,000 bundles, 4 MiB of bundle evidence or 20,000 claims;
+budget exhaustion cannot silently omit a claim.
 Contradiction and horizon findings require the subsequent runtime unit.
 The claim's registry `evidence` scalar contains its canonical serialized typed
 preimage; endpoint columns permit lookup without treating serialized claims as authority.

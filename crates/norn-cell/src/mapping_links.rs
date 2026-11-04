@@ -21,28 +21,61 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// # Errors
     /// Missing/corrupt pins or an exhausted bounded evidence scan.
     pub fn observed_link_claims(&self) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        self.retained_link_claims(None, false)
+        self.retained_link_claims(None, None, false)
+    }
+
+    /// Consumed bundles in commit order, within the journal or naming a scoped key.
+    /// The claim budgets bound this selection, so unrelated bundles never exhaust them.
+    fn claim_bundles(
+        &self,
+        scope: Option<&BTreeSet<String>>,
+        limit: usize,
+    ) -> Result<Vec<String>, CellError> {
+        let select = "SELECT consumed_commit_seq, observation_id, octet_length(observed)";
+        let order = "ORDER BY consumed_commit_seq, observation_id";
+        let journal = format!(
+            "FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND consumed_commit_seq IS NOT NULL"
+        );
+        let cap = limit + 1;
+        let mut rows = Vec::new();
+        if let Some(scope) = scope {
+            for key in scope {
+                // Keys appear in stored JSON with their JSON escapes.
+                let encoded = serde_json::to_string(key)?;
+                rows.extend(self.conn.query(
+                    &format!("{select} {journal} AND instr(observed, ?1) > 0 {order} LIMIT {cap}"),
+                    params![&encoded],
+                )?);
+            }
+        } else {
+            rows = self
+                .conn
+                .query(&format!("{select} {journal} {order} LIMIT {cap}"), params![])?;
+        }
+        let mut selected = BTreeMap::new();
+        for row in rows {
+            let row = crate::engine::SqlRow(row);
+            let order = crate::read::to_u64(row.get(0)?, "claim commit sequence")?;
+            let length = crate::read::to_u64(row.get(2)?, "claim evidence bytes")?;
+            selected.insert((order, row.get::<String>(1)?), length);
+        }
+        if selected.len() > limit {
+            return Err(CellError::OutOfRange("link claim bundles"));
+        }
+        if selected.values().fold(0u64, |sum, length| sum.saturating_add(*length)) > 4 * 1024 * 1024
+        {
+            return Err(CellError::OutOfRange("link claim evidence bytes"));
+        }
+        Ok(selected.into_keys().map(|(_, id)| id).collect())
     }
 
     fn retained_link_claims(
         &self,
         current: Option<&MappingBundle>,
+        scope: Option<&BTreeSet<String>>,
         latest: bool,
     ) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let lengths = self.conn.query(&format!("SELECT observation_id, octet_length(observed) FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND consumed_commit_seq IS NOT NULL ORDER BY consumed_commit_seq, observation_id LIMIT 1001"), params![])?;
-        if lengths.len() > 1000 {
-            return Err(CellError::OutOfRange("link claim bundles"));
-        }
-        let mut bytes = 0u64;
-        let mut ids = Vec::new();
-        for row in lengths {
-            let row = crate::engine::SqlRow(row);
-            bytes = bytes.saturating_add(crate::read::to_u64(row.get(1)?, "claim evidence bytes")?);
-            if bytes > 4 * 1024 * 1024 {
-                return Err(CellError::OutOfRange("link claim evidence bytes"));
-            }
-            ids.push(row.get::<String>(0)?);
-        }
+        let ids = self.claim_bundles(scope, 1000)?;
         let mut claims = BTreeMap::new();
         let insert = |claims: &mut BTreeMap<String, ObservedLinkClaim>,
                       claim: ObservedLinkClaim|
@@ -101,8 +134,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let key = model.canonical_link(key);
+        let scope = BTreeSet::from([key.source.key.clone(), key.target.key.clone()]);
         Ok(self
-            .observed_link_claims()?
+            .retained_link_claims(None, Some(&scope), false)?
             .into_iter()
             .filter(|claim| {
                 claim.target.as_ref().is_some_and(|target| {
@@ -124,7 +158,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
-        let mut claims = self.retained_link_claims(Some(bundle), true)?;
+        // A plan changes only links touching this commit's objects or this bundle's claims.
+        let current = bundle.link_claims()?;
+        let scope: BTreeSet<String> = bundle
+            .records
+            .iter()
+            .map(|record| record.key.clone())
+            .chain(current.iter().map(|claim| claim.source_key.clone()))
+            .chain(current.iter().filter_map(|c| c.target.as_ref().map(|t| t.key.clone())))
+            .collect();
+        let mut claims = self.retained_link_claims(Some(bundle), Some(&scope), true)?;
         let model = CommitModel::new(&catalog);
         let mut intents = BTreeMap::<_, BTreeSet<_>>::new();
         let mut latest = BTreeMap::new();
@@ -180,7 +223,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 }
             }
         }
-        for claim in self.retained_link_claims(None, false)? {
+        for claim in self.retained_link_claims(None, Some(&scope), false)? {
             let Some(target) = &claim.target else {
                 continue;
             };
@@ -321,5 +364,48 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         )
         .and_then(|prepared| prepared.append_to(commit, authority))
         .map_err(|e| CellError::ObservationPreparation(Box::new(e)))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "inbox selection fixture")]
+mod tests {
+    use super::*;
+    use crate::{CellStore, Model};
+
+    fn consumed(store: &CellStore, position: i64, key: &str) {
+        let id = format!("mapping-bundle:{position}");
+        let observed = serde_json::json!({ "records": [{ "key": key }] }).to_string();
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO {INBOX} (position, observation_id, observed, consumed_commit_seq) VALUES (?1, ?2, ?3, ?1)"
+                ),
+                params![position, &id, &observed],
+            )
+            .expect("consumed bundle");
+    }
+
+    #[test]
+    fn obs_link_budget_bounds_the_scoped_claim_set_not_the_journal() {
+        let store = CellStore::open_in_memory(Model::from_definitions_with_interfaces(&[], &[], &[]).expect("model")).expect("store");
+        consumed(&store, 1, "demo/\"quoted\"");
+        for position in 2..=1002 {
+            consumed(&store, position, &format!("demo/other/{position}"));
+        }
+        consumed(&store, 1003, "demo/\"quoted\"");
+        let reader = store.read();
+        let scope = BTreeSet::from(["demo/\"quoted\"".to_owned()]);
+        assert_eq!(
+            reader.claim_bundles(Some(&scope), 1000).expect("scoped"),
+            ["mapping-bundle:1", "mapping-bundle:1003"],
+        );
+        for refused in [reader.claim_bundles(None, 1000), reader.claim_bundles(Some(&scope), 1)] {
+            assert!(matches!(
+                refused,
+                Err(CellError::OutOfRange("link claim bundles"))
+            ));
+        }
     }
 }
