@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, getViewportForBounds, useNodesInitialized, useReactFlow, useStore, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { useMemo, useState, type KeyboardEvent } from "react"
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -84,6 +84,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
   // The first view: the start and the first steps along the spine, at a readable size.
   const start = tree.nodes.filter((node) => node.column <= 4 && shown.has(node.id)).map(({ id }) => id)
+  const focusIds = pinned === undefined ? start : pathTo(tree, pinned).path.filter((id) => shown.has(id))
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
     const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active, onPick: onPin, onHover: setHover }
@@ -113,34 +114,18 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   }
   return (
     <div className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
+      {/* Remounted per pin: React Flow fits reliably on mount, which keeps the start or the pinned path in view. */}
+      <ReactFlow key={pinned ?? "start"} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
         // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
         // Pinning happens on pointer down: hover re-renders the cards, which can swallow a click.
         onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: start.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
+        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: focusIds.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
         <Background />
         <Controls showInteractive={false} />
-        <Follow ids={pinned === undefined ? start : pathTo(tree, pinned).path} />
         {tree.nodes.filter(({ kind }) => kind === "state").length > 8 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
       </ReactFlow>
     </div>
   )
-}
-
-/** Keep the focus in view: the start on mount, the pinned path whenever the pin changes, once the cards are measured. */
-function Follow({ ids }: { readonly ids: readonly string[] }) {
-  const flow = useReactFlow()
-  const measured = useNodesInitialized()
-  const width = useStore((store) => store.width)
-  const height = useStore((store) => store.height)
-  const key = ids.join(">")
-  // fitView() waits for the next node change, which a pin does not make; set the viewport from the path's bounds instead.
-  useEffect(() => {
-    if (!measured || ids.length === 0 || width === 0 || height === 0) return
-    const viewport = getViewportForBounds(flow.getNodesBounds([...ids]), width, height, 0.3, 1, 0.2)
-    void flow.setViewport(viewport, { duration: 250 })
-  }, [key, measured, width, height])
-  return null
 }
 
 /** The pinned element's place on its path, as a breadcrumb. */
