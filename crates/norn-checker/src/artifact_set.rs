@@ -368,7 +368,11 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_base,
                 ))
-                .chain(crate::verification::check_law_set(
+                .chain(crate::deontic::check_declared_order_set(
+                &normalized_artifacts,
+                &normalized_base,
+            ))
+            .chain(crate::verification::check_law_set(
                     &normalized_artifacts,
                     &normalized_base,
                     normalized_context.registry,

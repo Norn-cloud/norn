@@ -706,3 +706,55 @@ fn native_order_refuses_unbounded_and_temporal_grounding() {
     rule.law.timing = None;
     assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
 }
+
+#[test]
+fn ordinary_admission_runs_native_declared_order() {
+    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use std::collections::BTreeSet;
+    let mut wire: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("fixture");
+    let mut entity = wire.remove(0);
+    entity["payload"]["objectType"] = json!({"name":"erpnext.SalesOrder","properties":[{"id":"paid","type":{"kind":"boolean"}}]});
+    let mut low = obligation().expect("rule");
+    low.law.modality = LawModality::Always {};
+    low.law.timing = None;
+    low.law.condition = None;
+    low.law.subject = "erpnext.SalesOrder".into();
+    low.law.scope.object_types = vec!["erpnext.SalesOrder".into()];
+    low.law.response = norn_ir::LawResponse::Predicate { expression:norn_ir::ZenExpression("self.paid".into()) };
+    low.source.artifact_id = "erpnext.SalesOrder.entity".into();
+    low.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+    let mut high = low.clone(); high.law.id = "sales.block".into();
+    high.source.pointer = "/payload/extensions/norn.normative~11.0.0/1".into();
+    high.modality = DeonticModality::Prohibition; high.law.modality = LawModality::Never {};
+    let registry = BTreeSet::new();
+    let run = |rules: &[DeonticRule]| {
+        let mut candidate = entity.clone();
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+        let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(candidate).expect("artifact");
+        check_artifact_set(&[artifact], &EntityArtifactSetContext { registry:&registry, base:&[], tenant:None })
+    };
+    assert!(run(&[]).is_empty(), "no declarations unchanged");
+    let tie = run(&[low.clone(),high.clone()]);
+    assert!(tie.iter().any(|d| d.message.contains("sales.approve") && d.message.contains("sales.block")), "{tie:?}");
+    low.defeated_by.push(high.law.id.clone());
+    assert!(run(&[low.clone(),high.clone()]).is_empty());
+    high.defeated_by.push(low.law.id.clone());
+    assert!(run(&[low.clone(),high.clone()]).iter().any(norn_checker::Diagnostic::is_error));
+    high.defeated_by.clear(); low.defeated_by.clear();
+    low.exceptions.push(norn_ir::deontic::RuleException { id:"exempt".into(), condition:norn_ir::ZenExpression("true".into()),source:low.source.clone() });
+    assert!(run(&[low.clone(),high.clone()]).is_empty());
+    // A separately retained law cannot be defeated by a candidate, even if
+    // its own exception masks every state.
+    let mut installed = entity.clone();
+    installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low.clone()]});
+    let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
+    let mut candidate = entity.clone(); candidate["artifactId"] = json!("candidate.entity");
+    candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+    high.source.artifact_id = "candidate.entity".into();
+    high.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+    candidate["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
+    candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[high]});
+    let artifact = serde_json::from_value(candidate).expect("candidate");
+    let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&registry,base:&[base],tenant:None});
+    assert!(findings.iter().any(norn_checker::Diagnostic::is_error));
+}
