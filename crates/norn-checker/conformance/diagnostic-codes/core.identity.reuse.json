@@ -1,0 +1,7 @@
+{
+  "code": "core.identity.reuse",
+  "message": "this identity was deleted; restore it explicitly or use a new identity",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T6"
+}
