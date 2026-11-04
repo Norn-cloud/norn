@@ -65,6 +65,10 @@ mod tests {
         ValidatedPolicySet,
         symbolic::{Analysis, Property, analyze_in_worker},
     };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::task::{Poll, Waker};
     fn ready<F: Future>(future: F) -> F::Output {
         let mut future = std::pin::pin!(future);
@@ -92,12 +96,13 @@ mod tests {
         (set, empty)
     }
 
-    struct Double(DecisionWithModel);
+    struct Double(DecisionWithModel, Arc<AtomicUsize>);
     impl WasmModule for Double {
         fn solve(
             &mut self,
             input: Vec<u8>,
         ) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send {
+            self.1.fetch_add(1, Ordering::Relaxed);
             let text = String::from_utf8(input).expect("SMTLib is UTF8");
             assert!(text.contains("(check-sat)"));
             std::future::ready(Ok(self.0.clone()))
@@ -107,21 +112,25 @@ mod tests {
     #[test]
     fn upstream_queries_use_memory_transport_for_every_environment() {
         let (candidate, previous) = sets();
+        let calls = Arc::new(AtomicUsize::new(0));
         for property in [Property::Refinement, Property::Equivalence] {
             let result = ready(analyze_in_worker(
-                MemorySolver::new(Double(DecisionWithModel::Unsat)),
+                MemorySolver::new(Double(DecisionWithModel::Unsat, Arc::clone(&calls))),
                 &candidate,
-                &candidate,
+                &previous,
                 property,
             ));
             assert_eq!(result, Analysis::Unsat);
         }
+        assert!(calls.load(Ordering::Relaxed) > 0);
+        let before = calls.load(Ordering::Relaxed);
         let result = ready(analyze_in_worker(
-            MemorySolver::new(Double(DecisionWithModel::Unknown)),
+            MemorySolver::new(Double(DecisionWithModel::Unknown, Arc::clone(&calls))),
             &candidate,
             &previous,
             Property::Refinement,
         ));
         assert_eq!(result, Analysis::Unknown);
+        assert!(calls.load(Ordering::Relaxed) > before);
     }
 }
