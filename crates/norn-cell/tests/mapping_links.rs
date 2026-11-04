@@ -425,7 +425,7 @@ fn edit_artifact(artifacts: &mut [ArtifactEnvelope], id: &str, edit: impl FnOnce
 }
 
 /// A separate to-many relation keeps the production owner contract unchanged.
-fn many_holding(artifacts: &mut Vec<ArtifactEnvelope>) {
+fn many_holding(artifacts: &mut [ArtifactEnvelope]) {
     edit_artifact(artifacts, "canon.Holding.entity", |a| {
         a["payload"]["objectType"]["links"]
             .as_array_mut()
