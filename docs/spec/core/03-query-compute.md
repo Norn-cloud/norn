@@ -86,6 +86,7 @@ Current evidence: structural typing and narrow induction substrate at the baseli
 ## Named acceptance scenarios
 
 - **FOLD-ALLOCATE:** Given ordered layers `2×10`, `3×20`, when consuming 4, then FIFO cost 60 and residual 1 valued 20; reorder physical input and obtain the same result.
+- **FOLD-MEMBERSHIP:** A declared fold consumes only complete captured members. An incomplete first page (including an empty prefix) refuses before evaluation/preparation; complete empty and populated sets retain their membership fence through commit, so a concurrent insertion cannot publish the folded result. The reference-host witness uses the existing typed accumulation declaration; it does not claim a native paginated backend.
 - **FOLD-CAPACITY:** Given credits 2 and 3, when allocating 4 using the same evaluator, then residual 1; no stock opcode or branch exists.
 - **QUERY-FANOUT:** Given one holding worth 80 linked to two tags, when summing at holding grain, then total 80; an unspecified expanded grain refuses.
 - **QUERY-STALE:** Given source frontier E=10/S=7 with Shopify heartbeat past max lag, when reading bounded-fresh inventory value, then label stale or refuse per policy; commit-law use refuses.

@@ -1,0 +1,62 @@
+{
+  "format": "norn.stock-dump/1",
+  "engine": "norn",
+  "versions": {},
+  "cases": [
+    {
+      "case": "synthetic",
+      "method": "fifo",
+      "status": "complete",
+      "initial": {
+        "step": -1,
+        "attempts": [],
+        "stock": [],
+        "gl": [],
+        "documents": []
+      },
+      "checkpoints": [
+        {
+          "step": 0,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "receive",
+              "outcome": "accepted",
+              "reason": null
+            }
+          ],
+          "stock": [
+            {
+              "id": "native-stock",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "cancelled": false,
+              "quantityDelta": "10",
+              "valueDelta": "20",
+              "quantity": "10",
+              "value": "20"
+            }
+          ],
+          "gl": [
+            {
+              "id": "native-gl",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
