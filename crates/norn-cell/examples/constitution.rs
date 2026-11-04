@@ -34,6 +34,7 @@ fn base() -> Result<Vec<ArtifactEnvelope>> {
         include_str!("../../../registry/core/artifacts/core.units.json"),
         include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.law.conversion_conservation.law.json"),
     ]
     .into_iter()
     .map(|s| serde_json::from_str(s).map_err(Into::into))
@@ -113,15 +114,101 @@ fn interfaces(base: &[ArtifactEnvelope]) -> Result<Vec<InterfaceDef>> {
         .map_err(Into::into)
 }
 
+fn check_refusal_journal(cell: &Cell, before: &BTreeMap<String, Vec<String>>) -> Result<()> {
+    let read = cell.store().read();
+    let mut after = read.dump()?;
+    let mut unchanged = before.clone();
+    for table in [
+        "_norn_ledger",
+        "_norn_receipt",
+        "_norn_export_journal",
+        "_norn_export_payload",
+        "_norn_payload",
+    ] {
+        after.remove(table);
+        unchanged.remove(table);
+    }
+    let clock = after.remove("_norn_clock");
+    let initial_clock = unchanged.remove("_norn_clock");
+    if after != unchanged {
+        let changed: BTreeSet<_> = after
+            .keys()
+            .chain(unchanged.keys())
+            .filter(|name| after.get(*name) != unchanged.get(*name))
+            .collect();
+        return Err(format!("refusal changed non-journal tables: {changed:?}").into());
+    }
+    let receipts = read.receipts()?;
+    let [receipt] = receipts.as_slice() else {
+        return Err("refusal must record exactly one audit receipt".into());
+    };
+    let body = &receipt.body;
+    if initial_clock != Some(vec![json!([1, 0, 0, ""]).to_string()])
+        || clock
+            != Some(vec![
+                json!([1, body.logical_time, body.commit_seq, receipt.hash]).to_string(),
+            ])
+    {
+        return Err("refusal clock must bind exactly its audit receipt".into());
+    }
+    if !body.written.is_empty()
+        || !body.linked.is_empty()
+        || !body.enqueued.is_empty()
+        || !body.scheduled.is_empty()
+        || body.consumed.is_some()
+        || body.quantity.is_some()
+        || body.quantity_result.is_some()
+        || body.quantity_intent.is_some()
+        || body.event_count != 1
+    {
+        return Err("refusal receipt contains effects beyond its audit event".into());
+    }
+    let ledger = read.ledger(0)?;
+    let [entry] = ledger.as_slice() else {
+        return Err("refusal must record exactly one audit event".into());
+    };
+    let event: FactEvent = serde_json::from_value(serde_json::to_value(&entry.event)?)?;
+    if !matches!(event, FactEvent::InvariantRefused { key, owner, id, outcome, attempt_id, .. }
+        if key == FactKey::new(MELT, "melt")
+            && owner == norn_ir::InvariantOwner::Interface(norn_ir::InterfaceName("core.Conversion".into()))
+            && id.as_str() == "conversion_conservation"
+            && outcome == norn_ir::DataQualityOutcome::NotSatisfied
+            && attempt_id == "constitution.melt.convert/convert")
+    {
+        return Err("refusal audit does not identify the retained conservation invariant".into());
+    }
+    let exported = cell
+        .store()
+        .export_record(1)?
+        .ok_or("missing refusal export")?;
+    let expected = norn_cell::CommitBatch {
+        world: "main".into(),
+        scope: "org_demo/dev".into(),
+        logical_time: body.logical_time,
+        events: vec![entry.event.clone()],
+        ..norn_cell::CommitBatch::default()
+    };
+    if exported.receipt != *receipt || exported.entries != ledger || exported.batch != expected {
+        return Err("refusal export contains more than the verified audit event".into());
+    }
+    exported.advance(&norn_cell::export::ExportManifest::default())?;
+    let head = read.verify_ledger()?;
+    if head.seq != 1 || head.commits != 1 || head.hash != body.ledger_head {
+        return Err("refusal audit must be the only committed history".into());
+    }
+    Ok(())
+}
+
 fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result<Value> {
     let (object, action) = authored(artifacts)?;
     let interfaces = interfaces(base)?;
+    let governing: Vec<_> = base.iter().chain(artifacts).cloned().collect();
     let definitions = [object.clone(), audit_type(object)];
     let model = Model::from_definitions_with_interfaces(&definitions, &[], &interfaces)?
-        .with_governing_laws(artifacts)?;
+        .with_governing_laws(&governing)?;
     let catalog = TypeCatalog::new(definitions.iter().take(1))
         .with_interfaces(&interfaces)
-        .with_governing_laws(artifacts);
+        .with_governing_laws(&governing);
     let mut checked = 0_u32;
     let mut committed = 0_u32;
     let mut nonzero_loss = 0_u32;
@@ -147,7 +234,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                 ]),
                 actor: "driver:operator".into(),
                 input: serde_json::from_value(
-                    json!({"id":"melt", "input_fine_g":input,"output_fine_g":output}),
+                    json!({"id":"melt", "input_quantity":input,"output_quantity":output}),
                 )?,
                 idempotency_key: "convert".into(),
                 object_type: None,
@@ -166,7 +253,7 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                         .values
                         .ok_or("missing committed conversion")?;
                     let expected = RuntimeValue::from_json_text(required_loss.to_string())?;
-                    if values.get("loss_fine_g") != Some(&expected) {
+                    if values.get("loss_quantity") != Some(&expected) {
                         return Err(
                             "committed mass does not satisfy the independent integer oracle".into(),
                         );
@@ -183,11 +270,9 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     if error.code() != "core.laws.violated" {
                         return Err(format!("unexpected refusal: {error:?}").into());
                     }
-                    if before != cell.store().read().dump()? {
-                        return Err("refusal changed the complete SQLite state".into());
-                    }
+                    check_refusal_journal(&cell, &before)?;
                     counterexamples.push(json!({"inputFineG":input,"outputFineG":output,"requiredLossFineG":required_loss,
-                        "code":error.code(),"explanation":error.to_string(),"atomicUnchanged":true}));
+                        "code":error.code(),"explanation":error.to_string(),"businessAndOutboxUnchanged":true,"refusalJournal":"one retained invariant refusal"}));
                 }
             }
         }
@@ -259,7 +344,7 @@ fn bind(
         records.push(record);
         checked_digests.push(checked_digest);
     }
-    if records.len() != 3 {
+    if records.len() != 6 {
         return Err("unexpected generated goal inventory; driver scope must be reviewed".into());
     }
     Ok((records, checked_digests))

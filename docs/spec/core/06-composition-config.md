@@ -30,6 +30,8 @@ This cut checks structure only. Generic type/unit substitution, B2 law instantia
 
 ## Semantics
 
+The stable app ID is the root composition-pack instance’s `instance_id`, resolved through its exact retained pin and explicit imports/instances closure; `LawRoot::App(id)` has no separate app→pack binding and refuses unresolved IDs.
+
 1. Resolve an acyclic exact dependency graph and explicit instances. Type/unit substitutions instantiate inherited laws and member contracts before checking executable writers. Two instances of one generic ledger may use USD and fine grams; currency-specific laws never apply to grams by accident.
 2. B1 checks source-required totality, member kind, relation role/target/cardinality, identity and unit/scale compatibility. B3 reconstructs each admitted layer using `verify_admission_receipt` against already checked predecessors. Reject forged/reordered/missing receipts, same-version byte changes and lossy numbers; flat multilayer input still refuses without retained authority.
 3. Generate mapping totality/domain coverage, identity/unit preservation, transition simulation and law-preservation goals, plus per-writer refinement over all layers. Neither a reviewed mapping nor a receipt proves those goals. Bind complete paths and source/member interpretations into the challenge.

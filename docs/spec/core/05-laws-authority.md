@@ -21,6 +21,8 @@ B0 #316 admits a closed pointwise safety/commit fragment. #322 renders EN/AR wit
 
 ## Semantics and obligations
 
+An app is its retained root composition-pack instance: `LawRoot::App(id)` resolves that stable instance ID through its exact retained pin and explicit imports/instances closure, refusing an unresolved ID without a separate app→pack binding.
+
 Admission validates structured slots and grounded normative precedence, then resolves law subjects through `EffectiveCatalog::target_types` and explicit retained pack/app membership. Add a pack root while retaining `LawRoot::App`; unknown roots never mean global. Check interfaces even with zero implementors. Deduplicate a diamond's identical binding by law identity + concrete subject + substitutions, preserving all paths. Different substitutions remain distinct instances.
 
 Specialisation/containment adds conjunctions. Refuse inherited-law replacement, precondition strengthening, input-domain narrowing or removal through changed containment. A solver result cannot authorize weakening. Permissions do not require an event, defeat physical laws or grant runtime access. Default deny and mandatory scope are enforced by the existing server/kernel authority; no UI-specific permission engine.
@@ -42,6 +44,8 @@ At governed commit evaluate supported safety requirements on the whole proposed 
 **LAW-INTERFACE-1:** a retained law whose subject, entity root and sole scoped object type name one object type or interface T governs T and every type that extends or implements T, directly or transitively, as one instance per governed type; a diamond adds no second instance. An `Invariant` response binds only when T's effective contract and the governed type's effective contract each hold exactly one invariant with that id and both name the same owner. Findings keep the law's own pin and the invariant's original owner. Every other inherited, mixed or effective-instance scope still refuses with `core.laws.unsupported_semantics`.
 
 **LAW-COMMIT-1 / LAW-SUPPORTED-1:** an unconditional always `Invariant` response resolves exactly one named invariant in its retained subject's effective contract and uses the shared invariant evaluator and budget; a violation retains the governing law pin and existing refusal-journal/delivery-consumption behavior, missing or misbound references refuse, and other unsupported responses remain unsupported.
+
+**LAW-COMMIT-1 (severity):** Only Error-severity law violations enter refusal journaling and delivery consumption; Warning violations remain quality findings and do not enter that refusal path.
 
 **PROPERTY-RULE-PIN-1:** Decimal/Record observation failures name `norn.values.property_validity` and the exact retained property-domain declaration digest, including inherited, referenced-type and interface constraints; stale or forged pins are Unverified and never attributed to an unrelated conservation law.
 
@@ -100,6 +104,8 @@ These scenarios do not simulate a solver or claim a completed constitution drop.
 - **AUTH-REVOKE:** Given delegated approval at generation 1, when revoked before commit/dispatch, then no new governed action/external attempt; already dispatched results are recorded and reconciled.
 - **PROOF-STALE:** Given a passing old statement, when a writer/unit/mapping changes, then old evidence is unknown for the new goal, never proved.
 
+**LAW-CONVERSION-1 (first B4 cut):** `core.Conversion` carries the single `core.law.conversion_conservation` invariant over nonnegative accepted input/output/loss measurements; its Decimal binding group requires one identical concrete unit and scale from each implementor (Melt: UCUM `g`, scale 3), with no scalar or sibling-unit fallback. Its LawIR references that invariant, and effective instances retain its core origin on a Melt implementor without copying the predicate. A balanced measurement is accepted; omitted loss, negative loss and wrong scale refuse. The shared commit invariant check rejects every write and outbox effect in the proposal on failure. Measurement conservation does not establish stock/value effect closure or derive totals from allocations; those aggregate obligations remain unknown until the declared fold/effect bindings are implemented.
+
 ## Main and gaps
 
 Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-checker/src/{deontic,verification,law_enrollment}.rs`, `obligations/`, `crates/norn-authz/src/grants.rs`, `crates/norn-kernel/src/decision_commit.rs`. #316 merged; #322 open. Narrow induction generation exists; general aggregate laws, retained interface/containment closure, generated solver dispatch and full delegation chains are not established. Core physics declarations in `registry/core/src/physics.ts` are not complete runtime law enforcement.
@@ -112,6 +118,8 @@ Present: `crates/norn-ir/src/{verification,deontic,access}.rs`, `crates/norn-che
 4. B5 generate initialization/writer/non-vacuity statements; B6 generated Quint jobs; B7 exact result binding; B8 scenario/explanation projection, each separately gated.
 5. Attenuation/revocation chain contract and commit/dispatch enforcement in separate cuts; AUTH-REVOKE and independent-person approvals.
 6. Bind law evaluation to observed finding/quarantine mode under 07, then analytical publication guards under 08; preserve governing law identity in both modes.
+
+
 
 ## Shared refusal diagnostics (#517)
 

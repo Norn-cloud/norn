@@ -17,7 +17,7 @@ const options = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath
 
 test("MVP-CONSTITUTION compiles removal and restoration of the loss writer", () => {
   const original = readFileSync(join(root, sourcePath), "utf8")
-  const line = '    { field: "loss_fine_g", inputRequired: false, expression: Norn.expression(Measurements, x => x.input_fine_g - x.output_fine_g) },\n'
+  const line = '    { field: "loss_quantity", inputRequired: false, expression: Norn.expression(Measurements, x => x.input_quantity - x.output_quantity) },\n'
   expect(original.split(line).length).toBe(2)
   const dir = mkdtempSync(join(tmpdir(), "norn-constitution-"))
   try {

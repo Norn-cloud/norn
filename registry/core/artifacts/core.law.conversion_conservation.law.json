@@ -1,0 +1,57 @@
+{
+  "artifactId": "core.law.conversion_conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "core.Conversion.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "core.Process.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Conversion quantity conservation",
+  "namespace": "core",
+  "payload": {
+    "id": "core.law.conversion_conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "norn.core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/physics.ts"
+    },
+    "rationale": "A conversion retains its input as output and explicit loss.",
+    "response": {
+      "invariantId": "conversion_conservation",
+      "kind": "invariant",
+      "objectType": "core.Conversion"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.Conversion"
+      ],
+      "root": {
+        "id": "core.Conversion",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.Conversion"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.law.conversion_conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

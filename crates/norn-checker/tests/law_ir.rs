@@ -1204,3 +1204,81 @@ fn interface_decimal_binding_inherited_contract_rechecks_effective_members() {
             .any(|finding| finding.code.as_str() == "core.values.unit_mismatch")
     );
 }
+
+#[test]
+fn law_conversion_melt_retains_the_shipped_core_law_without_restatement() {
+    let law: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))
+    .expect("generated law");
+    let interface: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Conversion.interface.json"
+    ))
+    .expect("generated interface");
+    let process: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.Process.interface.json"
+    ))
+    .expect("generated parent interface");
+    let property_types: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/std.value_types.entity.json"
+    ))
+    .expect("shared unit vocabulary");
+    let units: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.units.json"
+    ))
+    .expect("pinned unit catalog");
+    let mut melt = interface.clone();
+    melt.dependencies.push(norn_ir::ArtifactDependency {
+        artifact_id: units.artifact_id.clone(),
+        kind: units.kind(),
+        version: Some(units.version.clone()),
+        required: true,
+    });
+    melt.artifact_id = "jewelry.Melt.entity".into();
+    melt.namespace = "jewelry".into();
+    melt.name = "Melt".into();
+    let properties = ["input_quantity", "output_quantity", "loss_quantity"].map(|id|
+        json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}}));
+    melt.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(json!({"entityVersion":"2.0", "objectType":{
+            "name":"jewelry.Melt", "role":"happening", "implements":["core.Conversion"],
+            "properties": properties
+        }}))
+        .expect("exact payload"),
+    )
+    .expect("Melt");
+    let base = vec![process, interface, property_types, units, melt];
+    assert_eq!(
+        check_artifact_set(
+            &base,
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            }
+        ),
+        vec![],
+        "concrete schema and unit catalog must admit before projecting laws"
+    );
+    assert_eq!(
+        check_artifact_set(
+            std::slice::from_ref(&law),
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            }
+        ),
+        vec![]
+    );
+    let instances = projected(&law, &base);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].subject.artifact_id, "jewelry.Melt.entity");
+    assert_eq!(instances[0].origin.artifact_id, "core.Conversion.interface");
+    assert_eq!(instances[0].law.artifact_id, law.artifact_id);
+    assert_eq!(
+        instances[0].law_digest,
+        norn_checker::ArtifactRef::of(&law).expect("digest").sha256
+    );
+}
