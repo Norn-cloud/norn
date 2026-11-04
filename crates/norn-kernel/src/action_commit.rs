@@ -4273,7 +4273,8 @@ fn precondition_read_refusal<X>(
             .iter()
             .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
             .cloned(),
-        CommitError::IdentityCollision { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }
@@ -4309,7 +4310,8 @@ fn precondition_read_refusal<X>(
         | CommitError::UnsupportedLinkRead { source_key, link } => {
             Some((source_key.clone(), link.clone()))
         }
-        CommitError::IdentityCollision { .. }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::OwnedRowsProtected { .. }

@@ -991,6 +991,14 @@ fn observe_delete(
     .unwrap();
     let events = prepared.events.clone();
     let (commit, authorization) = prepared.into_parts();
+    if commit
+        .writes
+        .iter()
+        .any(|write| write.key == tombstone_key(key) && write.expected != FactVersion::ABSENT)
+    {
+        let refusal = cell.commit(commit.clone()).unwrap_err();
+        assert_eq!(refusal, CommitError::IdentityReuse);
+    }
     cell.commit_observed(commit, authorization).unwrap();
     events
 }
@@ -1210,6 +1218,11 @@ fn an_observed_delete_without_a_declared_path_tombstones_and_a_recreate_lifts_it
     let (commit, authorization) = prepared.into_parts();
     cell.commit_observed(commit, authorization).unwrap();
     assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+    let before = cell.load(&tombstone_key(&key)).unwrap().version;
+    observe_delete(&mut cell, &object_type, &key, None);
+    let deleted_again = cell.load(&tombstone_key(&key)).unwrap();
+    assert!(deleted_again.exists());
+    assert!(deleted_again.version > before);
 }
 
 #[test]
