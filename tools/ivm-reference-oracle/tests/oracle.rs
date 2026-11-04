@@ -75,7 +75,8 @@ impl Oracle {
                                 output.remove(&(*week, *totals));
                             }
                         })
-                        .probe().0
+                        .probe()
+                        .0
                 });
                 while let Ok(changes) = updates.recv() {
                     for (row, weight) in changes {
@@ -228,7 +229,7 @@ proptest::proptest! {
         }
         let mut view = IncrementalQuestion::rebuild(&store, &plan, context.clone(), |_| Ok(true)).expect("rebuild");
         proptest::prop_assert_eq!(norn_view(view.result()), oracle.view());
-        for (index, step) in steps.into_iter().enumerate() {
+        for (index, step) in steps.into_iter().chain(std::iter::once(Step::Restart)).enumerate() {
             match step {
                 Step::Commit(writes) => {
                     let mut seen = BTreeSet::new();
