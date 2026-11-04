@@ -39,7 +39,7 @@ fn atom(relation: String, terms: Vec<Term>) -> Atom {
     Atom { relation, terms }
 }
 
-fn refuse(mapping: &str, message: String) -> Vec<Diagnostic> {
+fn refuse(mapping: &str, message: &str) -> Vec<Diagnostic> {
     vec![super::finding(
         PATH_MAPPING_INVALID,
         DiagnosticSeverity::Error,
@@ -125,13 +125,13 @@ fn lower_mapping(
         if !concrete(target_catalog, to) || !concrete(source_catalog, from) {
             return Err(refuse(
                 &mapping.id,
-                format!("{to} -> {from} is not between concrete types"),
+                &format!("{to} -> {from} is not between concrete types"),
             ));
         }
         if concrete(source_catalog, to) || concrete(target_catalog, from) {
             return Err(refuse(
                 &mapping.id,
-                format!("{to} -> {from}: catalogs must be disjoint"),
+                &format!("{to} -> {from}: catalogs must be disjoint"),
             ));
         }
         lowered.dependencies.push(Dependency::Tgd(Tgd {
@@ -150,7 +150,7 @@ fn lower_mapping(
         },
     ) in mapping.links.iter().enumerate()
     {
-        let image = |message: String| refuse(&mapping.id, format!("{concept}.{link}: {message}"));
+        let image = |message: String| refuse(&mapping.id, &format!("{concept}.{link}: {message}"));
         let declared = target_catalog
             .links_for_object_type(concept)
             .and_then(|links| links.iter().find(|l| l.id.as_str() == link))
