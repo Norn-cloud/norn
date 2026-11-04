@@ -89,7 +89,11 @@ jobs:
               }
               const sourceId=context.payload.workflow_run?.id||context.runId;
               const {data:source}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:sourceId});
-              const started=Date.parse(source.created_at), deadline=started+7200000;
+              const attempt=Number(process.env.GITHUB_RUN_ATTEMPT);
+              if(!Number.isSafeInteger(attempt)||attempt<1)throw new Error('Missing authority attempt');
+              const {data:authority}=await github.rest.actions.getWorkflowRunAttempt({owner,repo,run_id:context.runId,attempt_number:attempt});
+              if(authority.run_attempt!==attempt)throw new Error('Wrong authority attempt');
+              const started=Date.parse(attempt>1?authority.run_started_at:authority.created_at), deadline=started+7200000;
               if (!Number.isFinite(started)||Date.now()>deadline) throw new Error('Rights authority queue deadline exceeded');
               const until=()=>{if(Date.now()>deadline)throw new Error('Rights authority deadline exceeded')};
               const permissionCache=new Map(), permission=async username=>{

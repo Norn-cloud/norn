@@ -1761,7 +1761,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   const prA={number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:base}};
   const prB={...prA,number:8};
   const makeRun=(id,event='issue_comment',epoch='protocol')=>({id,run_number:id,run_attempt:1,event,head_sha:epoch,
-    status:'completed',created_at:new Date(virtualNow).toISOString(),head_repository:{full_name:'Norn-cloud/norn'},repository:{full_name:'Norn-cloud/norn'}});
+    status:'completed',created_at:new Date(virtualNow).toISOString(),run_started_at:new Date(virtualNow).toISOString(),head_repository:{full_name:'Norn-cloud/norn'},repository:{full_name:'Norn-cloud/norn'}});
   const github={rest:{repos:{
     getCollaboratorPermissionLevel:async({username})=>({data:{permission:username==='owner'?'admin':'read'}}),
     createCommitStatus:async value=>{
@@ -1793,6 +1793,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   issues:{listComments:function comments(){},getComment:async({comment_id})=>{if(!live.has(comment_id))throw {status:404};return {data:live.get(comment_id)}}},
   actions:{
     getWorkflowRun:async({run_id})=>{const run=runs.find(r=>r.id===run_id);if(!run)throw {status:404};return {data:run}},
+    getWorkflowRunAttempt:async({run_id,attempt_number})=>{const run=runs.find(r=>r.id===run_id);assert.equal(run?.run_attempt,attempt_number);return {data:run}},
     listWorkflowRuns:async({page})=>{
       if(readFailure)throw {status:503};
       if(paging&&page===2&&!shifted){runs.unshift(makeRun(nextRun++,'push'));shifted=true}
@@ -1826,6 +1827,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     const data=JSON.parse(outputs.payload);
     if(!payloads.has(id)){payloads.set(id,p);runs.unshift(makeRun(id));nextRun=Math.max(nextRun,id+1)}
     runs.find(r=>r.id===id).run_attempt=attempt;
+    if(attempt>1)runs.find(r=>r.id===id).run_started_at=new Date(virtualNow).toISOString();
     const possible=[p.comment.body,p.changes?.body?.from].some(body=>(body||'').includes('/ack-rights')||(body||'').includes('/revoke-rights'));
     const capture={id:id*10+attempt,name:'Capture immutable rights event '+outputs.kind+' '+(possible?'possible':'none'),status:'completed',conclusion:'success',
       steps:[{name:'Rights event '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'}]};
@@ -1846,6 +1848,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   }
   async function collect(kind) {
     context.runId=admission;context.payload=kind==='group'?{workflow_run:{id:groupAdmission}}:{};
+    process.env.GITHUB_RUN_ATTEMPT='1';
     jobReads=0;const hadCheckpoint=!!retained;
     await execute(programs[kind==='pr'?modeShared?'prB':'pr':'group']);
     if(largeHistory&&hadCheckpoint)assert(jobReads<50,'checkpoint must bound ordinary-comment history');
@@ -1865,6 +1868,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   async function publishFailure(){context.runId=admission;context.payload={};await execute(programs.publisher)}
   async function publishSaved(kind,doc,runId,groupId){
     context.runId=runId;context.payload=kind==='group'?{workflow_run:{id:groupId}}:{};
+    process.env.GITHUB_RUN_ATTEMPT='1';
     fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-parameters.json',JSON.stringify(
       {kind:kind==='group'?'group':'pr',head:kind==='group'?groupHead:head,base,repository:'Norn-cloud/norn',number:modeShared?8:7}));
     fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-decision.json',JSON.stringify(doc.publication));
@@ -1910,11 +1914,11 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     clock='2026-11-03T00:01:30Z';
     const premature=comment(3,'/ack-rights '+head,clock);live.set(3,premature);await record(nextRun++,payload(premature,'created',true,undefined,modeShared?8:7));
     await snapshot(prefix+'premature');assert.equal(pending(evidence[prefix+'premature'].pr).length,2);
-    clock='2026-11-03T00:02:00Z';await record(revokeRun,payloads.get(revokeRun),2);
+    clock='2026-11-03T03:02:00Z';await record(revokeRun,payloads.get(revokeRun),2);
     await snapshot(prefix+'partial');assert.deepEqual(pending(evidence[prefix+'partial'].pr),[removedRun]);
-    clock='2026-11-03T00:02:01Z';await record(removedRun,payloads.get(removedRun),2);
+    clock='2026-11-03T03:02:01Z';await record(removedRun,payloads.get(removedRun),2);
     await snapshot(prefix+'reconciled');assert.deepEqual(pending(evidence[prefix+'reconciled'].pr),[]);
-    clock='2026-11-03T00:03:00Z';
+    clock='2026-11-03T03:03:00Z';
     const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
     await snapshot(prefix+'fresh');
     const freshAdmission=admission,freshGroup=groupAdmission,freshDocs=evidence[prefix+'fresh'];

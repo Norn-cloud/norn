@@ -46,9 +46,11 @@ ignored even when their journal job is skipped under an unexpanded name.
 All rights writers and both trusted admission jobs share the
 `rights-authority-v4` GitHub Actions mutex, with queued work retained and active
 work never cancelled by another rights event. Test jobs remain outside this
-mutex. The source run's server creation time sets a two-hour end-to-end deadline: an
+mutex. The authority attempt's server creation/start time sets a two-hour deadline: an
 expired authority run publishes failure and cannot publish success. The same
 deadline is checked immediately before publication.
+Admin reconciliation uses the new attempt's server timestamp, so a failed event
+can still be reconciled after its original attempt expires.
 
 A reconciled cursor bounds history to new runs. Its append-only Git journal
 retains each target's saved event identities; a bot receipt binds the immutable
