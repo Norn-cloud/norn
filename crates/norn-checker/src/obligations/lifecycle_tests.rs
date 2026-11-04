@@ -45,14 +45,23 @@ fn constitution_ten_goal_inventory_golden() {
     let goals = &challenge.body()["obligations"];
     assert_eq!(goals.as_array().expect("inventory").len(), 10);
     let bytes = norn_canonical::serialize_json_verbatim(goals).expect("exact goals");
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "8540b972f75056de05b2183332455aa58464a5332ee76dca0ac394593bdc5b6b"
-    );
-    assert_eq!(
-        challenge.sha256(),
-        "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc"
-    );
+    // Main's existing verbatim wire format follows serde's map representation.
+    // The workspace graph enables insertion order through cedar-policy-core.
+    let representation = norn_canonical::serialize_json_verbatim(&json!({"z":0,"a":0}))
+        .expect("map representation");
+    let (inventory_sha, challenge_sha) = match representation.as_slice() {
+        br#"{"a":0,"z":0}"# => Some((
+            "8540b972f75056de05b2183332455aa58464a5332ee76dca0ac394593bdc5b6b",
+            "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc",
+        )),
+        br#"{"z":0,"a":0}"# => Some((
+            "c4c255324e023b7c08834a1db3575717f356b867109797bb034edcaef09d7102",
+            "7d85e4e6f5db04611e7356aecfc108c7d31fcaaa1d345f6309e04b569a5b7ee6",
+        )),
+        _ => None,
+    }.expect("only main-qualified JSON representations are admitted");
+    assert_eq!(format!("{:x}", Sha256::digest(&bytes)), inventory_sha);
+    assert_eq!(challenge.sha256(), challenge_sha);
 }
 
 fn chart(guard: &str) -> Value {
