@@ -217,11 +217,11 @@ mod tests {
         let mut work = WORK;
         assert!(compile("self.status == true", &mut work, &fields).is_ok());
         for expression in [
-            "false && actor.role == 'operator'",
+            "false and actor.role == 'operator'",
             "self.supplier.balance > 0",
             "self",
         ] {
-            assert!(Expression::compile(expression).is_ok());
+            assert!(Expression::compile(expression).is_ok(), "{expression}");
             assert!(compile(expression, &mut work, &fields).is_err());
         }
     }
