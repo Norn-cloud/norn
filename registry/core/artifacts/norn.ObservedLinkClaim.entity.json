@@ -19,6 +19,12 @@
           }
         },
         {
+          "id": "source_scope",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
           "id": "source_type",
           "type": {
             "kind": "text"
