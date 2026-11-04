@@ -207,7 +207,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             );
             claims.push(claim);
         }
-        Ok((links.into_values().collect(), claims))
+        let mut links: Vec<_> = links.into_values().collect();
+        links.sort_by_key(|w| matches!(&w.mutation, LinkMutation::Add { .. }));
+        Ok((links, claims))
     }
 
     fn mapping_link_exists(
