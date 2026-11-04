@@ -1,6 +1,9 @@
 //! HOST-READ-1 / QUERY-ENGINE-1: admitted questions through the shared read authority.
 use crate::{
-    authz::{ReadCapability, ReadRequest, read_denied},
+    authz::{
+        ReadCapability::{self, Population, Sources, Values},
+        ReadRequest, read_denied,
+    },
     host::DevHost,
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
@@ -95,18 +98,11 @@ pub fn get_answer<E: SqlEngine>(
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<QuestionAnswer, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(
-        host,
-        runtime,
-        actor,
-        question,
-        ReadCapability::Population,
-        None,
-    )?;
+    let access = mapped(host, runtime, actor, question, Population, None)?;
     let _epoch = host.read_access(
         scope,
         &ReadRequest {
-            capability: ReadCapability::Population,
+            capability: Population,
             access: &access,
         },
     )?;
@@ -120,7 +116,7 @@ pub fn get_answer<E: SqlEngine>(
         return Err(read_denied());
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    let visible = |row: &ObjectRecord| permits(row, ReadCapability::Population);
+    let visible = |row: &ObjectRecord| permits(row, Population);
     match snapshot.cutoff {
         Some(cutoff) => cell
             .store()
@@ -146,14 +142,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<NumericTrace, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(
-        host,
-        runtime,
-        actor,
-        question,
-        ReadCapability::Population,
-        None,
-    )?;
+    let access = mapped(host, runtime, actor, question, Population, None)?;
     let scope = ScopeQuery {
         org_id: query.org_id.clone(),
         environment_id: query.environment_id.clone(),
@@ -161,7 +150,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
     let _epoch = host.read_access(
         &scope,
         &ReadRequest {
-            capability: ReadCapability::Population,
+            capability: Population,
             access: &access,
         },
     )?;
@@ -194,10 +183,10 @@ pub fn get_numeric_trace<E: SqlEngine>(
             snapshot.context,
             lineage,
             bucket,
-            |row| permits(row, ReadCapability::Population),
+            |row| permits(row, Population),
             LineageDisclosure {
-                values: &mut |row| permits(row, ReadCapability::Values),
-                source: &mut |row| permits(row, ReadCapability::Sources),
+                values: &mut |row| permits(row, Values),
+                source: &mut |row| permits(row, Sources),
             },
         )
         .map_err(Refusal::from_compute)

@@ -1,9 +1,9 @@
 //! Schema projection of the native trace; the engine serializes the actual document.
 use std::collections::BTreeMap;
 use utoipa::{
-    ToSchema,
+    PartialSchema, ToSchema,
     openapi::{
-        Ref,
+        Ref, RefOr,
         schema::{AdditionalProperties, ObjectBuilder, Schema},
     },
 };
@@ -35,6 +35,7 @@ pub struct NornNumericContribution {
     #[schema(required = true, nullable = true)]
     pub fact_digest: Option<String>,
     /// Independent source state.
+    #[schema(schema_with = closed_source_schema)]
     pub source: NornContributionSource,
     /// Writer's immutable commit position.
     pub commit_seq: u64,
@@ -56,9 +57,9 @@ pub enum NornContributionSource {
         provenance: Box<NornInstanceSourceProvenance>,
     },
     /// Source disclosure was denied.
-    Restricted {},
+    Restricted,
     /// No retained source bundle exists.
-    Unavailable {},
+    Unavailable,
 }
 /// Exact Core 07 source evidence; no physical storage locators.
 #[derive(Debug, ToSchema)]
@@ -104,4 +105,16 @@ fn fields_schema() -> Schema {
         )))
         .build()
         .into()
+}
+
+fn closed_source_schema() -> RefOr<Schema> {
+    let mut source = NornContributionSource::schema();
+    if let RefOr::T(Schema::OneOf(schema)) = &mut source {
+        for item in &mut schema.items {
+            if let RefOr::T(Schema::Object(variant)) = item {
+                variant.additional_properties = Some(AdditionalProperties::FreeForm(false));
+            }
+        }
+    }
+    source
 }
