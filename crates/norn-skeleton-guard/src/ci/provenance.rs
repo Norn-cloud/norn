@@ -134,7 +134,8 @@ struct Artifact {
     /// Derived from the record file path; never a claim inside the record.
     #[serde(skip)]
     path: String,
-    sha256: String,
+    #[serde(default, rename = "sha256", deserialize_with = "legacy_digest")]
+    legacy_sha256: Option<String>,
     origin: Origin,
     category: Category,
     license: String,
@@ -144,6 +145,10 @@ struct Artifact {
     rights_evidence: Vec<FileRef>,
     notices: Vec<FileRef>,
     connector: Option<Connector>,
+}
+
+fn legacy_digest<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(input).map(Some)
 }
 
 struct Source {
@@ -162,6 +167,8 @@ struct Source {
 pub struct Report {
     /// Number of inspected shipped file paths.
     pub checked_paths: usize,
+    /// Immutable admission identity; absent only in explicit legacy-strict mode.
+    pub binding: Option<Binding>,
     /// Exact rejected paths and all local/ancestry reasons.
     pub rejected_paths: BTreeMap<String, Vec<String>>,
     /// Factual source IDs whose payload rights do not clear admission.
@@ -192,7 +199,7 @@ impl Report {
     }
 }
 
-fn safe_path(path: &str) -> bool {
+pub(super) fn safe_path(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\\', '\0', '\n', '\r'])
         && !path
@@ -452,7 +459,10 @@ fn validate_sources(
                         }
                         if a.origin == Origin::Upstream
                             && !s.files.is_empty()
-                            && !s.files.iter().any(|f| f.sha256 == a.sha256)
+                            && !s
+                                .files
+                                .iter()
+                                .any(|f| hashes.get(&a.path) == Some(&f.sha256))
                         {
                             errors.push(format!(
                                 "upstream content differs from pinned source {}",
@@ -534,9 +544,14 @@ fn validate_record(
     a: &Artifact,
     sources: &BTreeMap<String, Source>,
     hashes: &BTreeMap<String, String>,
+    bound: bool,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    if !hash_valid(&a.sha256) || hashes.get(&a.path) != Some(&a.sha256) {
+    if a.legacy_sha256.as_ref().is_some_and(|h| !hash_valid(h))
+        || !hashes.contains_key(&a.path)
+        || (!bound
+            && (a.legacy_sha256.is_none() || hashes.get(&a.path) != a.legacy_sha256.as_ref()))
+    {
         errors.push("missing artifact or content hash drift".to_owned());
     }
     if !permissive(&a.license) {
@@ -602,7 +617,7 @@ fn validate_record(
     for (id, s) in sources {
         if s.files
             .iter()
-            .any(|f| f.path == a.path || f.sha256 == a.sha256)
+            .any(|f| f.path == a.path || hashes.get(&a.path) == Some(&f.sha256))
             && !a.sources.iter().any(|r| &r.id == id)
         {
             errors.push(format!(
@@ -857,16 +872,23 @@ fn close_ancestry(records: &BTreeMap<String, &Artifact>, report: &mut Report) {
     }
 }
 
-fn close_artifacts(records: &BTreeMap<String, &Artifact>, report: &mut Report) {
+fn close_artifacts(
+    records: &BTreeMap<String, &Artifact>,
+    hashes: &BTreeMap<String, String>,
+    report: &mut Report,
+) {
     loop {
         let prior = report.rejected_paths.len();
         close_ancestry(records, report);
         let tainted: BTreeSet<_> = records
             .values()
             .filter(|a| report.rejected_paths.contains_key(&a.path))
-            .map(|a| &a.sha256)
+            .filter_map(|a| hashes.get(&a.path))
             .collect();
-        for a in records.values().filter(|a| tainted.contains(&a.sha256)) {
+        for a in records
+            .values()
+            .filter(|a| hashes.get(&a.path).is_some_and(|h| tainted.contains(h)))
+        {
             report.reject(
                 &a.path,
                 "content matches a rejected artifact; renamed copies inherit rejection",
@@ -905,7 +927,7 @@ fn load_records(root: &Path, paths: &[String], report: &mut Report) -> Vec<Artif
     artifacts
 }
 
-fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
+fn inspect(root: &Path, paths: &[String], base: Option<&Path>, bound: bool) -> Report {
     let mut report = Report {
         checked_paths: paths.len(),
         ..Report::default()
@@ -954,7 +976,7 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
             report.reject(&a.path, "control file/self hash or non-exact artifact path");
         }
         records.insert(a.path.clone(), a);
-        for e in validate_record(a, &sources, &hashes) {
+        for e in validate_record(a, &sources, &hashes, bound) {
             report.reject(&a.path, e);
         }
         if let Err(e) = payload_category(root, a) {
@@ -982,16 +1004,17 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
             report.reject(path, "missing shipped-artifact admission record");
         }
     }
-    close_artifacts(&records, &mut report);
+    close_artifacts(&records, &hashes, &mut report);
     report
 }
 
+/// Legacy-strict repository compatibility check. The CLI requires `check_bound`.
 /// Check the entire tracked candidate tree. No include/exclude globs and no
 /// directory-wide claims: the exporter must actually remove held-out payloads.
 #[must_use]
 pub fn check(root: &Path) -> Report {
     match super::git::tracked(root) {
-        Ok(paths) => inspect(root, &paths, None),
+        Ok(paths) => inspect(root, &paths, None, false),
         Err(e) => Report {
             policy_errors: vec![e],
             ..Report::default()
@@ -999,12 +1022,12 @@ pub fn check(root: &Path) -> Report {
     }
 }
 
-/// Trusted/base-aware admission: source evidence cannot be removed or
+/// Legacy-strict trusted/base-aware admission: source evidence cannot be removed or
 /// relabelled to sever known lineage. No executable content from root is run.
 #[must_use]
 pub fn check_against(root: &Path, base: &Path) -> Report {
     match super::git::tracked(root) {
-        Ok(paths) => inspect(root, &paths, Some(base)),
+        Ok(paths) => inspect(root, &paths, Some(base), false),
         Err(e) => Report {
             policy_errors: vec![e],
             ..Report::default()
@@ -1027,29 +1050,184 @@ pub fn check_distribution_against(root: &Path, base: &Path) -> Report {
 }
 
 fn distribution(root: &Path, base: Option<&Path>) -> Report {
+    match distribution_paths(root) {
+        Ok(paths) => inspect(root, &paths, base, false),
+        Err(e) => Report {
+            policy_errors: vec![e],
+            ..Report::default()
+        },
+    }
+}
+
+fn distribution_paths(root: &Path) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
     for entry in walkdir::WalkDir::new(root).follow_links(false) {
-        match entry {
-            Ok(e) if !e.file_type().is_dir() => {
-                match e.path().strip_prefix(root).ok().and_then(Path::to_str) {
-                    Some(path) => paths.push(path.to_owned()),
-                    None => {
-                        return Report {
-                            policy_errors: vec!["non-UTF8 distribution path".to_owned()],
-                            ..Report::default()
-                        };
-                    }
-                }
-            }
-            Ok(_) => (),
-            Err(e) => {
-                return Report {
-                    policy_errors: vec![e.to_string()],
-                    ..Report::default()
-                };
-            }
+        let entry = entry.map_err(|e| e.to_string())?;
+        if !entry.file_type().is_dir() {
+            paths.push(
+                entry
+                    .path()
+                    .strip_prefix(root)
+                    .ok()
+                    .and_then(Path::to_str)
+                    .ok_or("non-UTF8 distribution path")?
+                    .to_owned(),
+            );
         }
     }
     paths.sort();
-    inspect(root, &paths, base)
+    Ok(paths)
+}
+
+/// Identity of the independently expected inventory, retained with the gate result.
+#[derive(Serialize)]
+pub struct Binding {
+    /// Repository owning the candidate.
+    pub repository: String,
+    /// Trusted base commit.
+    pub base: String,
+    /// Candidate source commit.
+    pub head: String,
+    /// Commit owning the checker.
+    pub policy: String,
+    /// Complete path/mode/observed digest inventory, including rights records.
+    pub inventory_sha256: String,
+    /// All changed payload and metadata paths covered by an exact-head acknowledgment.
+    pub changed_paths: Vec<String>,
+}
+
+/// Explicit immutable-source contract for repositories and expanded git archives.
+pub struct BoundSource<'a> {
+    /// Checkout containing independently expected Git objects.
+    pub source: &'a Path,
+    /// Full candidate commit SHA supplied by the event.
+    pub head: &'a str,
+    /// Base-owned checkout (also supplies source catalog protection).
+    pub base: &'a Path,
+    /// Repository from trusted event context.
+    pub repository: &'a str,
+}
+
+/// Check a repository or expanded archive against independently expected Git blobs.
+/// No inventory supplied by the distribution is an authority.
+#[must_use]
+pub fn check_bound(root: &Path, binding: &BoundSource<'_>, distribution: bool) -> Report {
+    let checked = || -> Result<Report, String> {
+        if binding.repository != "Norn-cloud/norn" {
+            return Err("wrong binding repository".into());
+        }
+        let expected = super::git::tree(binding.source, binding.head)?;
+        let paths: Vec<_> = expected.keys().cloned().collect();
+        let verify = || -> Result<(), String> {
+            let actual: BTreeSet<_> = if distribution {
+                distribution_paths(root)?.into_iter().collect()
+            } else {
+                if super::git::head(root)? != binding.head {
+                    return Err("candidate HEAD differs from event binding".into());
+                }
+                super::git::tracked(root)?.into_iter().collect()
+            };
+            if actual != paths.iter().cloned().collect() {
+                return Err("bound member inventory differs (addition/deletion)".into());
+            }
+            for (path, entry) in &expected {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    let executable = std::fs::metadata(root.join(path))
+                        .map_err(|e| e.to_string())?
+                        .permissions()
+                        .mode()
+                        & 0o111
+                        != 0;
+                    if executable != (entry.mode == "100755") {
+                        return Err(format!("bound mode drift: {path}"));
+                    }
+                }
+                if digest(&bytes(root, path)?) != entry.sha256 {
+                    return Err(format!("bound byte drift: {path}"));
+                }
+            }
+            if !distribution {
+                super::git::clean_index(root, binding.head)?;
+            }
+            Ok(())
+        };
+        verify()?;
+        // Inspect only immutable object bytes. A candidate cannot race individual
+        // metadata/evidence reads by changing its working tree or index.
+        let snapshot = Snapshot::new(&expected)?;
+        let mut report = inspect(&snapshot.0, &paths, Some(binding.base), true);
+        verify()?;
+        let base_head = super::git::head(binding.base)?;
+        let previous = super::git::tree(binding.base, &base_head)?;
+        let changed_paths = previous
+            .keys()
+            .chain(expected.keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter(|path| previous.get(*path) != expected.get(*path))
+            .cloned()
+            .collect();
+        report.binding = Some(Binding {
+            changed_paths,
+            repository: binding.repository.into(),
+            base: super::git::head(binding.base)?,
+            head: binding.head.into(),
+            policy: super::git::head(binding.base)?,
+            inventory_sha256: inventory_digest(&expected)?,
+        });
+        Ok(report)
+    };
+    checked().unwrap_or_else(|e| Report {
+        policy_errors: vec![e],
+        ..Report::default()
+    })
+}
+
+struct Snapshot(std::path::PathBuf);
+impl Snapshot {
+    fn new(entries: &BTreeMap<String, super::git::TreeEntry>) -> Result<Self, String> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let parent = std::env::var_os("RUNNER_TEMP")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+        let nonce = NEXT
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |id| id.checked_add(1),
+            )
+            .map_err(|_current| "snapshot identity exhausted")?;
+        let path = parent.join(format!("norn-bound-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+        let snapshot = Self(path);
+        for (path, entry) in entries {
+            let target = snapshot.0.join(path);
+            std::fs::create_dir_all(target.parent().ok_or("missing blob parent")?)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(target, &entry.bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(snapshot)
+    }
+}
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        let _cleanup = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn inventory_digest(entries: &BTreeMap<String, super::git::TreeEntry>) -> Result<String, String> {
+    let mut hash = Sha256::new();
+    hash.update(b"norn.provenance.inventory.v1\0");
+    for (path, entry) in entries {
+        hash.update(
+            u64::try_from(path.len())
+                .map_err(|e| e.to_string())?
+                .to_be_bytes(),
+        );
+        hash.update(path.as_bytes());
+        hash.update(entry.mode.as_bytes());
+        hash.update(entry.sha256.as_bytes());
+    }
+    Ok(hex::encode(hash.finalize()))
 }
