@@ -145,6 +145,7 @@ impl Schema {
         }
         let decimal = decimal_expression_type(value)?;
         let allowed: &[&str] = match schema_type {
+            "number" if action_input => &["type", "nornType", "description"],
             "number" => &["type", "nornType"],
             "object" => &["type", "properties", "required", "additionalProperties"],
             "array" => &["type", "items"],
@@ -156,6 +157,12 @@ impl Schema {
                 path,
                 format!("`{unknown}` is not admitted in a closed `{schema_type}` schema"),
             ));
+        }
+        if schema
+            .get("description")
+            .is_some_and(|description| description.as_string().is_none())
+        {
+            return Err(Violation::new(path, "description must be a string"));
         }
         let child = depth.saturating_add(1);
         match schema_type {
