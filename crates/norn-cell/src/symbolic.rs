@@ -59,7 +59,11 @@ impl<M: WasmModule> Solver for MemorySolver<M> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, clippy::panic, reason = "fixture assertions and deliberately synchronous test doubles")]
+#[expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixture assertions and deliberately synchronous test doubles"
+)]
 mod tests {
     use super::*;
     use norn_authz::{
