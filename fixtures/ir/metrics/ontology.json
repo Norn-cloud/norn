@@ -43,7 +43,10 @@
             "id": "qty",
             "type": {
               "kind": "decimal",
-              "scale": 3.0
+              "scale": 3.0,
+              "additivity": {
+                "kind": "additive"
+              }
             }
           },
           {
@@ -80,6 +83,9 @@
                   "parent_sales_invoice"
                 ],
                 "property": "currency"
+              },
+              "additivity": {
+                "kind": "additive"
               }
             }
           },
@@ -98,6 +104,9 @@
               "unit": {
                 "system": "ucum",
                 "code": "kg"
+              },
+              "additivity": {
+                "kind": "additive"
               }
             }
           },
@@ -109,6 +118,9 @@
               "unit": {
                 "system": "ucum",
                 "code": "L"
+              },
+              "additivity": {
+                "kind": "additive"
               }
             }
           }
@@ -206,7 +218,13 @@
             "id": "grand_total",
             "type": {
               "kind": "decimal",
-              "scale": 2.0
+              "scale": 2.0,
+              "additivity": {
+                "kind": "additive"
+              },
+              "currencySource": {
+                "property": "currency"
+              }
             }
           },
           {

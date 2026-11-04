@@ -24,9 +24,9 @@ pub(crate) const CLOCK: u64 = 1_792_972_800_000;
 /// The object type the cell is opened with, measured in grams.
 pub(crate) fn object_type() -> ObjectTypeDef {
     serde_json::from_value(json!({"name":TYPE,"properties":[
-        {"id":"input","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
-        {"id":"recovered","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
-        {"id":"loss","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
+        {"id":"input","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"g"}}},
+        {"id":"recovered","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"g"}}},
+        {"id":"loss","type":{"kind":"decimal","additivity":{"kind":"additive"},"scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"occurred_at","type":{"kind":"timestamp","timezone":"utc"}},
         {"id":"metal","type":{"kind":"text"}}
     ]}))

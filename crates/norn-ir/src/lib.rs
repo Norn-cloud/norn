@@ -151,8 +151,8 @@ pub use entity_v2::object::{
 };
 pub use entity_v2::property::{
     DECIMAL_LITERAL_PATTERN, DecimalLiteral, EnumValue, PROPERTY_TYPE_NAME_PATTERN,
-    PropertyConstraints, PropertyKind, PropertyType, PropertyTypeDef, PropertyTypeName,
-    RecordMember, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
+    PropertyAdditivity, PropertyConstraints, PropertyKind, PropertyType, PropertyTypeDef,
+    PropertyTypeName, RecordMember, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
 };
 pub use entity_v2::status::{CALENDAR_DATE_PATTERN, CalendarDate, ResourceStatus};
 pub use entity_v2::{
