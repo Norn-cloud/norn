@@ -24,8 +24,8 @@ fn source(entity_root: bool) -> DefinitionSource {
     ))
     .expect("units");
     DefinitionSource::parse(
-        &serde_json::to_string(&declarations).expect("source"),
-        &serde_json::to_string(&vec![units]).expect("base"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&declarations).expect("source")).expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&vec![units]).expect("base")).expect("UTF8"),
     )
     .expect("exact source")
 }
@@ -110,6 +110,10 @@ fn lifecycle_input_refusals_never_clip_the_domain() {
         .snapshot
         .expect_err("full product refused");
     assert!(reason.contains("4096") || reason.contains("budget"));
+    profile = bounds();
+    profile.frozen.insert("id".into(),vec![format!("\"{}\"","x".repeat(4096))]);
+    profile.frozen.insert("input_fine_g".into(),(0..128).map(|i|i.to_string()).collect());
+    assert!(batch(&source(true),&profile).snapshot.expect_err("byte product refuses as a whole").contains("budget"));
 }
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(32))]

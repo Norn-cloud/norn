@@ -164,6 +164,14 @@ the original/omitted-derivation update correspondence. Original/mutant model
 bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
+Each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
@@ -200,8 +208,8 @@ installation paths. Compiler stages retain exit codes; oracle records retain ver
 trace values in state order. Run-specific diagnostics and ITF creation metadata
 stay outside recorded evidence. Structured primary results remain bound.
 The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
-Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
-count, worker count and exclusions. Model digests, invariant selectors and step
+Law-level bounds use sorted-key exact-text canonical JSON and retain the complete
+shared profile, toolchain, expected state count, worker count and exclusions. Model digests, invariant selectors and step
 selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
 
 **PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
@@ -249,7 +257,11 @@ an effective chart it emits one reachability goal per terminal, one no-stuck
 non-terminal goal, and one non-vacuity goal per transition. Each statement binds
 the concrete object type, lifecycle property, complete effective chart digest,
 one-object bound and chart-state-count depth bound. The existing constitution
-has no lifecycle: its ten obligations and complete challenge stay byte-identical.
+has no lifecycle: its ten obligations and complete challenge use one sorted-key
+exact-text canonical golden across package, insertion-order, arbitrary-precision
+and workspace builds. PROOF-BIND-1 generated commitments sort keys recursively
+without normalizing Unicode spelling or number tokens. Raw source and solver
+result bytes remain exact; Norn1 artifact identities retain their own profile.
 
 This is conditional transition-only reachability from an admitted initialized
 object. Scalar context and external references stay frozen. All supported

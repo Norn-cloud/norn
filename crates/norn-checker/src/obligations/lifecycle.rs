@@ -34,7 +34,7 @@ pub(super) fn append(
             if goals.len().saturating_add(count) > 8_192 {
                 return Err(ChallengeError::Limit);
             }
-            let source = norn_canonical::serialize_json_verbatim(
+            let source = norn_canonical::canonical_json_exact_of(
                 &json!({"states":machine.states,"lifecycle":chart}),
             )
             .map_err(|_error| ChallengeError::Closure)?;
@@ -91,7 +91,7 @@ fn push(
 ) -> Result<(), ChallengeError> {
     let value = json!({"goal":goal,"statement":statement,"assessment":"unknown",
         "reason":reason});
-    let encoded = norn_canonical::serialize_json_verbatim(&value)
+    let encoded = norn_canonical::canonical_json_exact_of(&value)
         .map_err(|_error| ChallengeError::Closure)?;
     *bytes = bytes.saturating_add(encoded.len());
     if *bytes > 8_388_608 {

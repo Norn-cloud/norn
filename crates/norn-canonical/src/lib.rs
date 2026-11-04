@@ -431,6 +431,59 @@ pub fn serialize_json_verbatim<T: Serialize + ?Sized>(
     })
 }
 
+/// Sort generated JSON object keys without normalizing Unicode or number tokens.
+///
+/// PROOF-BIND-1: generated commitments have identical bytes under either Serde
+/// map backend. Arrays retain order; strings retain their exact Unicode spelling,
+/// and numbers retain the serialized token, without floating-point conversion.
+/// This is distinct from Norn1 equivalence and from raw source-byte commitments.
+///
+/// # Errors
+/// Returns serialization errors or the validation errors of [`parse_json_verbatim`].
+pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Vec<u8>, CanonicalJsonError> {
+    let bytes = serialize_json_verbatim(value)?;
+    parse_json_verbatim(&bytes)?;
+    let sorted = sort_exact_json(
+        serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?,
+    )
+    .map_err(|error| json_encoding_error(&error))?;
+    Ok(sorted.get().as_bytes().to_vec())
+}
+
+fn json_encoding_error(error: &serde_json::Error) -> CanonicalJsonError {
+    CanonicalJsonError::Serialize {
+        message: error.to_string(),
+    }
+}
+
+fn sort_exact_json(
+    raw: &serde_json::value::RawValue,
+) -> Result<Box<serde_json::value::RawValue>, serde_json::Error> {
+    let bytes = match raw.get().as_bytes().first() {
+        Some(b'{') => {
+            let fields: BTreeMap<String, &serde_json::value::RawValue> =
+                serde_json::from_str(raw.get())?;
+            let sorted = fields
+                .into_iter()
+                .map(|(key, value)| sort_exact_json(value).map(|value| (key, value)))
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
+            serde_json::to_string(&sorted)?
+        }
+        Some(b'[') => {
+            let values: Vec<&serde_json::value::RawValue> = serde_json::from_str(raw.get())?;
+            let sorted = values
+                .into_iter()
+                .map(sort_exact_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            serde_json::to_string(&sorted)?
+        }
+        _ => return Ok(raw.to_owned()),
+    };
+    serde_json::value::RawValue::from_string(bytes)
+}
+
 /// Alias for [`parse`].
 ///
 /// # Errors
@@ -1739,5 +1792,51 @@ mod tests {
             HashProfile::Legacy0.hash_json(with_nulls),
             HashProfile::Legacy0.hash_json(without_nulls)
         );
+    }
+    #[test]
+    fn generated_commitments_sort_keys_without_changing_exact_text_or_numbers() {
+        let left: &serde_json::value::RawValue = serde_json::from_str(
+            r#"{"z":[{"b":1.2300e+2,"a":900719925474099312345}],"e\u0301":"e\u0301","é":"é"}"#,
+        )
+        .expect("raw");
+        let right: &serde_json::value::RawValue = serde_json::from_str(
+            r#"{"é":"é","e\u0301":"e\u0301","z":[{"a":900719925474099312345,"b":1.2300e+2}]}"#,
+        )
+        .expect("raw");
+        let bytes = canonical_json_exact_of(left).expect("canonical");
+        assert_eq!(bytes, canonical_json_exact_of(right).expect("reordered"));
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("1.2300e+2")
+        );
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("900719925474099312345")
+        );
+        let roundtrip: &serde_json::value::RawValue = serde_json::from_slice(&bytes).expect("raw");
+        assert_eq!(
+            bytes,
+            canonical_json_exact_of(roundtrip).expect("idempotent")
+        );
+        assert_ne!(
+            canonical_json_exact_of("é"),
+            canonical_json_exact_of("e\u{301}")
+        );
+        let duplicate: &serde_json::value::RawValue =
+            serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
+        assert!(canonical_json_exact_of(duplicate).is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn generated_commitments_ignore_member_order(value in proptest::prelude::any::<i64>()) {
+            let left: &serde_json::value::RawValue = &serde_json::value::RawValue::from_string(
+                format!(r#"{{"z":{value},"a":{{"y":1,"x":0}}}}"#)).expect("raw");
+            let right: &serde_json::value::RawValue = &serde_json::value::RawValue::from_string(
+                format!(r#"{{"a":{{"x":0,"y":1}},"z":{value}}}"#)).expect("raw");
+            proptest::prop_assert_eq!(canonical_json_exact_of(left).expect("left"), canonical_json_exact_of(right).expect("right"));
+        }
     }
 }

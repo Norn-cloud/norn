@@ -48,7 +48,6 @@ fn require(ok: bool, reason: &str) -> Result<(), String> {
 fn freeze(
     object: &EffectiveObjectType,
     bounds: &Bounds,
-    domain_bytes: usize,
     laws: Vec<(String,LawIR)>,
 ) -> Result<Snapshot, String> {
     require(
@@ -75,8 +74,7 @@ fn freeze(
         .map(|state| state.len().saturating_mul(6))
         .max()
         .unwrap_or(0);
-    let row_bytes = domain_bytes
-        .saturating_add(state_bytes)
+    let row_bytes = state_bytes
         .saturating_add(bounds.property.len().saturating_mul(6))
         .saturating_add(32);
     require(
@@ -151,7 +149,14 @@ fn extend_rows(rows: Vec<Row>, property: &crate::EffectiveProperty, literals: &[
         require(property.canonical_runtime_value(value)==*value,"frozen scalar requires storage materialization")?;
     }
     let mut expanded=Vec::new();
-    for row in rows { for value in &values { let mut next=row.clone();next.insert(property.id.as_str().to_owned(),value.clone());expanded.push(next); } }
+    let mut bytes=0_usize;
+    for row in rows { for value in &values {
+        let mut next=row.clone();next.insert(property.id.as_str().to_owned(),value.clone());
+        let encoded=norn_canonical::serialize_json_verbatim(&next).map_err(|error|error.to_string())?;
+        bytes=bytes.saturating_add(encoded.len().saturating_add(row_bytes));
+        require(bytes.saturating_mul(states)<=4_194_304,"finite snapshot byte budget exceeded")?;
+        expanded.push(next);
+    } }
     Ok(expanded)
 }
 
@@ -180,7 +185,7 @@ impl ApprovedContract {
         if raw_bytes > 10_000 {
             return Err(ChallengeError::Limit);
         }
-        let domains = norn_canonical::serialize_json_verbatim(&bounds.frozen)
+        let domains = norn_canonical::canonical_json_exact_of(&bounds.frozen)
             .map_err(|_error| ChallengeError::LossyInput)?;
         let pool: Vec<_> = source
             .base
@@ -213,10 +218,10 @@ impl ApprovedContract {
                     })
                     .map(|(artifact, law)| (artifact.artifact_id.clone(), law.clone()))
                     .collect();
-                freeze(object, bounds, domains.len(), applicable)
+                freeze(object, bounds, applicable)
             });
         let document = serde_json::json!({"profile":"norn.lifecycle.frozen/1","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
-        let bytes = norn_canonical::serialize_json_verbatim(&document)
+        let bytes = norn_canonical::canonical_json_exact_of(&document)
             .map_err(|_error| ChallengeError::LossyInput)?;
         if bytes.len() > 65_536 {
             return Err(ChallengeError::Limit);
