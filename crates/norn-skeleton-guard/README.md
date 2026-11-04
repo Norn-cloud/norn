@@ -43,13 +43,38 @@ for every admission of that target, including admission through another PR.
 Unknown uncaptured events fail closed for all targets. Plain-issue captures are
 ignored even when their journal job is skipped under an unexpanded name.
 
-Both collectors read one repository-wide event history from protocol activation,
-deduplicate repeated run IDs before checking continuity, and read the append-only
-ledger for each exact head/tree. Real gaps, missing receipts and failed jobs
-refuse admission. Re-run the whole original event as an admin to reconcile it:
-retries conservatively record a revocation, then require a fresh review after
-the successful receipt. Same-second review fails closed. All reads and receipts
-remain base-owned; no candidate code executes in this lane.
+All rights writers and both trusted admission jobs share the
+`rights-authority-v4` GitHub Actions mutex, with queued work retained and active
+work never cancelled by another rights event. Test jobs remain outside this
+mutex. The source run's server creation time sets a ten-minute deadline: an
+expired authority run publishes failure and cannot publish success. The same
+deadline is checked immediately before publication.
+
+A reconciled cursor bounds history to new runs. Its append-only Git journal
+retains each target's saved event identities; a bot receipt binds the immutable
+checkpoint commit. The `ci/rights-ledger-v1` ref retains those tool-managed
+metadata objects and only advances without force. It is separate from shipped
+source. A failed write cannot advance the cursor; an unpublished journal commit
+is reconstructed from the last published checkpoint. No fixed date or page
+count cuts off history. Each target's live rights ledger, including pending
+events and failure generation, has its own SHA/tree-bound checkpoint digest.
+
+Both collectors deduplicate offset pages, wait up to thirty seconds for capture
+and five seconds for an in-flight ledger, and fail closed at their deadline.
+Known pending events remain scoped to their target. Re-run the whole original
+event as an admin to reconcile it: retries conservatively record a revocation,
+then require a fresh review after the successful receipt. Same-second review
+fails closed. Missing source runs and changed saved identities refuse admission.
+
+Publication re-collects the ledger, compares its digest with the decision, and
+re-reads the target and publication checkpoints immediately before writing.
+Success records the digest and latest failure generation. The evaluator rejects
+a late success carrying a generation older than the latest failure. The global
+authority mutex covers this entire validation/publication transaction, including
+all constituents of a merge group. Per-target concurrency is deferred to Phase 2.
+The PR records the measured duration and resulting single-authority throughput
+bound; API and runner delays can reduce it. All reads and receipts remain
+base-owned; no candidate code executes in this lane.
 The base-owned lane checks identity and current evidence; CI cannot infer all
 third-party origins. Merge groups require every constituent head's acknowledgment
 and exactly the independently recomputed clean merge, including combined edits
@@ -58,7 +83,7 @@ changes also require renewed review, including metadata already on the queue
 base; a clean textual merge alone does not review their combined meaning.
 
 For `git archive`, add `--distribution --root <expanded> --source-root <git>
---base-root <trusted> --head 69ffae65225a6784ebcb96696fc88c65d810fa4f --repository Norn-cloud/norn`.
+--base-root <trusted> --head <full lowercase source commit SHA> --repository Norn-cloud/norn`.
 Member sets and bytes, including control files, must match that independent
 source. Inventories generated from the distribution itself are never accepted.
 Generated release members need a separately verified export binding (unsupported

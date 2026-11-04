@@ -1168,6 +1168,61 @@ fn ack_entry(id: u64, head: &str, created: &str) -> Value {
         "created_at":created,"updated_at":created}})
 }
 
+fn checkpoint_targets(doc: &mut Value) {
+    for trees in doc["rights"].as_object_mut().unwrap().values_mut() {
+        for ledger in trees.as_object_mut().unwrap().values_mut() {
+            if ledger.get("failure_version").is_none() {
+                ledger["failure_version"] = json!(0);
+            }
+            if ledger.get("verdicts").is_none() {
+                ledger["verdicts"] = json!([]);
+            }
+            let data = json!({"head_sha":ledger["head_sha"],"tree_sha":ledger["tree_sha"],"pending":ledger["pending"],
+                "entries":ledger["entries"],"failure_version":ledger["failure_version"]});
+            ledger["checkpoint"] =
+                json!({"digest":norn_skeleton_guard::ci::rights_digest(&data).unwrap()});
+        }
+    }
+}
+
+fn checkpoint_publication(f: &Fixture, doc: &mut Value) {
+    checkpoint_targets(doc);
+    let head = doc
+        .get("head_sha")
+        .unwrap_or(&doc["merge_group"]["head_sha"])
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let tree = git_in(f, &["rev-parse", &format!("{head}^{{tree}}")]);
+    let targets: serde_json::Map<String, Value> = doc["rights"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(head, trees)| {
+            (
+                head.clone(),
+                trees.as_object().unwrap().values().next().unwrap()["checkpoint"]["digest"].clone(),
+            )
+        })
+        .collect();
+    let data = json!({"head_sha":head,"tree_sha":tree,"failure_version":0,"targets":targets});
+    doc["publication"] = data.clone();
+    doc["publication"]["digest"] = json!(norn_skeleton_guard::ci::rights_digest(&data).unwrap());
+    doc["publication"]["verdicts"] = json!([]);
+}
+
+fn rights_evidence(f: &Fixture, doc: &Value) -> String {
+    let mut doc = doc.clone();
+    checkpoint_publication(f, &mut doc);
+    doc.to_string()
+}
+
+fn fixture_rights_acknowledgment(doc: &Value, head: &str, tree: &str) -> Result<String, String> {
+    let mut doc = doc.clone();
+    checkpoint_targets(&mut doc);
+    norn_skeleton_guard::ci::rights_acknowledgment(&doc, head, tree)
+}
+
 fn rights_document(head: &str, base: &str) -> Value {
     let tree = "3".repeat(40);
     let mut doc = json!({"repository":"Norn-cloud/norn","head_repository":"Norn-cloud/norn",
@@ -1187,6 +1242,7 @@ fn rights_for(f: &Fixture, head: &str, base: &str) -> Value {
         .unwrap();
     ledger["tree_sha"] = json!(tree);
     doc["rights"][head][&tree] = ledger;
+    checkpoint_publication(f, &mut doc);
     doc
 }
 
@@ -1224,7 +1280,7 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
     assert!(bound_report(&f, &head).errors().is_empty());
     let document = rights_for(&f, &head, &base);
     let tree = git_in(&f, &["rev-parse", &format!("{head}^{{tree}}")]);
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&document, &head, &tree).is_ok());
+    assert!(fixture_rights_acknowledgment(&document, &head, &tree).is_ok());
     for mutation in [
         "missing",
         "repository",
@@ -1272,22 +1328,21 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
             _ => unreachable!(),
         }
         assert!(
-            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_err(),
+            fixture_rights_acknowledgment(&doc, &head, &tree).is_err(),
             "{mutation}"
         );
     }
     let mut gate_only = document;
     target_ledger(&mut gate_only, &head)["entries"][0]["comment"]["body"] =
         json!(format!("/approve-gates {head}"));
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&gate_only, &head, &tree).is_err());
+    assert!(fixture_rights_acknowledgment(&gate_only, &head, &tree).is_err());
 }
 
 #[test]
 fn deleting_a_live_rights_acknowledgment_cannot_revive_an_older_review() {
     let head = "1".repeat(40);
     let mut doc = rights_document(&head, &"2".repeat(40));
-    let check =
-        |doc: &Value| norn_skeleton_guard::ci::rights_acknowledgment(doc, &head, &"3".repeat(40));
+    let check = |doc: &Value| fixture_rights_acknowledgment(doc, &head, &"3".repeat(40));
     assert!(check(&doc).is_ok());
     target_ledger(&mut doc, &head)["entries"]
         .as_array_mut()
@@ -1529,11 +1584,13 @@ fn merge_group_rights_cover_clean_same_file_hunks_and_refuse_unreviewed_integrat
     let doc = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":head},
         "pull_requests":heads.iter().map(|h| rights_for(&f, h, &base)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &heads, &base)});
     let admission = |doc: &Value, head: &str| {
-        norn_skeleton_guard::ci::rights_admission(doc, f.root(), &trusted, head)
+        let mut doc = doc.clone();
+        checkpoint_publication(&f, &mut doc);
+        norn_skeleton_guard::ci::rights_admission(&doc, f.root(), &trusted, head)
     };
     assert!(admission(&doc, &head).is_ok());
     let evidence = trusted_dir.path().join("group-evidence.json");
-    fs::write(&evidence, doc.to_string()).unwrap();
+    fs::write(&evidence, rights_evidence(&f, &doc)).unwrap();
     let report = norn_skeleton_guard::ci::check_with_rights(
         f.root(),
         &trusted,
@@ -1594,7 +1651,7 @@ fn assert_durable_group_revocation(
             target_ledger(&mut revoked, pull)["entries"][0]["comment"]["body"] =
                 json!("ordinary text");
         }
-        fs::write(evidence, revoked.to_string()).unwrap();
+        fs::write(evidence, rights_evidence(f, &revoked)).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
             trusted,
@@ -1613,7 +1670,7 @@ fn assert_durable_group_revocation(
             .as_array_mut()
             .unwrap()
             .push(ack_entry(3, pull, "2026-11-03T00:01:01Z"));
-        fs::write(evidence, revoked.to_string()).unwrap();
+        fs::write(evidence, rights_evidence(f, &revoked)).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
             trusted,
@@ -1859,7 +1916,7 @@ fn trusted_groups_refuse_unreviewed_payload_rights_pairs_in_either_order_or_on_b
         let group = git_in(&f, &["rev-parse", "HEAD"]);
         let document = json!({"repository":"Norn-cloud/norn", "merge_group":{"base_sha":base,"head_sha":group},
             "pull_requests":queued.iter().map(|head| rights_for(&f, head, &original)).collect::<Vec<_>>(), "rights":group_ledgers(&f, &queued, &original)});
-        fs::write(&evidence, document.to_string()).unwrap();
+        fs::write(&evidence, rights_evidence(&f, &document)).unwrap();
         let report = norn_skeleton_guard::ci::check_with_rights(
             f.root(),
             &trusted,
@@ -1891,23 +1948,17 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
         if edited {
             target_ledger(&mut doc, &head)["entries"][0]["comment"] = Value::Null;
         }
-        assert!(
-            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err()
-        );
+        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err());
         target_ledger(&mut doc, &head)["entries"]
             .as_array_mut()
             .unwrap()
             .push(ack_entry(3, &head, "2026-11-03T00:01:01Z"));
-        assert!(
-            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok()
-        );
+        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
         target_ledger(&mut doc, &head)["entries"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":11,"kind":"revoke","recorded_at":"2026-11-03T00:01:01Z"}));
-        assert!(
-            norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err()
-        );
+        assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_err());
     }
 }
 
@@ -1915,12 +1966,9 @@ fn durable_revocation_survives_deleted_or_edited_comments_and_requires_a_fresh_a
 fn rights_ledger_requires_an_independently_expected_head_and_tree() {
     let head = "1".repeat(40);
     let doc = rights_document(&head, &"2".repeat(40));
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
-    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &"4".repeat(40)).is_err());
-    assert!(
-        norn_skeleton_guard::ci::rights_acknowledgment(&doc, &"5".repeat(40), &"3".repeat(40))
-            .is_err()
-    );
+    assert!(fixture_rights_acknowledgment(&doc, &head, &"3".repeat(40)).is_ok());
+    assert!(fixture_rights_acknowledgment(&doc, &head, &"4".repeat(40)).is_err());
+    assert!(fixture_rights_acknowledgment(&doc, &"5".repeat(40), &"3".repeat(40)).is_err());
 }
 
 #[test]
@@ -1983,6 +2031,7 @@ fn assert_global_rights_recovery(layout: &str) {
         for stage in [
             "initial",
             "pending",
+            "interleaving",
             "premature",
             "partial",
             "reconciled",
@@ -2020,4 +2069,25 @@ fn assert_global_rights_recovery(layout: &str) {
             }
         }
     }
+}
+
+#[test]
+fn a_late_success_cannot_override_a_newer_failure_generation() {
+    let head = "1".repeat(40);
+    let tree = "3".repeat(40);
+    let mut doc = rights_document(&head, &"2".repeat(40));
+    let ledger = target_ledger(&mut doc, &head);
+    ledger["failure_version"] = json!(10);
+    ledger["verdicts"] = json!([
+        {"id":10,"state":"failure","description":"rights event failed"},
+        {"id":11,"state":"success","description":json!({"v":4,"d":"a".repeat(64),"f":0}).to_string()}
+    ]);
+    checkpoint_targets(&mut doc);
+    let refusal = norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).unwrap_err();
+    assert!(refusal.contains("stale success"));
+    target_ledger(&mut doc, &head)["verdicts"][1]["description"] =
+        json!(json!({"v":4,"d":"a".repeat(64),"f":10}).to_string());
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_ok());
+    target_ledger(&mut doc, &head)["checkpoint"]["digest"] = json!("0".repeat(64));
+    assert!(norn_skeleton_guard::ci::rights_acknowledgment(&doc, &head, &tree).is_err());
 }

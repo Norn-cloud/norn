@@ -70,6 +70,10 @@ pending events independently of PR numbers; any failed or missing receipt blocks
 that target until an admin reconciles the event and posts a fresh review.
 `/revoke-rights <SHA>` revokes the target across all PRs. `/approve-gates` remains
 a separate PR-scoped approval. New heads invalidate rights acknowledgments.
+Rights validation and publication serialize through a global authority mutex;
+test jobs remain parallel. Append-only SHA/tree checkpoints retain reconciled
+event history. Every publication re-reads them and binds its ledger digest and
+failure generation; expired or changed decisions publish failure.
 Human source review remains necessary. The gate binds all
 inspected bytes and records to the immutable candidate tree. Expanded archives
 must match that source commit exactly; generated exports require an independently

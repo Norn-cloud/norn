@@ -868,6 +868,137 @@ pub fn rights_acknowledgment(
     }
 }
 
+/// Canonical digest used by the base-owned checkpoint and publisher.
+///
+/// # Errors
+/// Refuses values that cannot be serialized as JSON.
+pub fn rights_digest(value: &serde_json::Value) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    fn canonical(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(fields) => {
+                let ordered: std::collections::BTreeMap<_, _> = fields.iter().collect();
+                serde_json::Value::Object(
+                    ordered
+                        .into_iter()
+                        .map(|(key, value)| (key.clone(), canonical(value)))
+                        .collect(),
+                )
+            }
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.iter().map(canonical).collect())
+            }
+            value => value.clone(),
+        }
+    }
+    serde_json::to_vec(&canonical(value))
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        .map_err(|error| error.to_string())
+}
+
+fn rights_projection(value: &serde_json::Value, digest: Option<&str>) -> Result<(), String> {
+    let statuses = value
+        .get("verdicts")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing publication history")?;
+    let version = value
+        .get("failure_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing failure version")?;
+    let latest = statuses.iter().max_by_key(|status| {
+        status
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default()
+    });
+    let failure = statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status.get("state").and_then(serde_json::Value::as_str),
+                Some("failure" | "error")
+            )
+        })
+        .filter_map(|status| status.get("id").and_then(serde_json::Value::as_u64))
+        .max()
+        .unwrap_or_default();
+    if version != failure {
+        return Err("wrong failure version".into());
+    }
+    if let Some(status) = latest
+        .filter(|status| status.get("state").and_then(serde_json::Value::as_str) == Some("success"))
+    {
+        let row: serde_json::Value = serde_json::from_str(
+            status
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("missing success checkpoint")?,
+        )
+        .map_err(|_| "unbound success checkpoint")?;
+        if row.get("v").and_then(serde_json::Value::as_u64) != Some(4)
+            || row.get("f").and_then(serde_json::Value::as_u64) != Some(failure)
+            || !row
+                .get("d")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+            || digest.is_some_and(|expected| {
+                row.get("d").and_then(serde_json::Value::as_str) != Some(expected)
+            })
+        {
+            return Err("stale success cannot override a newer failure or ledger".into());
+        }
+    }
+    Ok(())
+}
+
+fn rights_publication(evidence: &serde_json::Value, root: &Path, head: &str) -> Result<(), String> {
+    let publication = evidence
+        .get("publication")
+        .ok_or("missing publication checkpoint")?;
+    let tree = git::tree_oid(root, head)?;
+    if commit_sha(publication, "head_sha").as_deref() != Some(head)
+        || commit_sha(publication, "tree_sha").as_deref() != Some(tree.as_str())
+    {
+        return Err("wrong publication target".into());
+    }
+    let mut targets = serde_json::Map::new();
+    for (head, trees) in evidence
+        .get("rights")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("missing publication rights")?
+    {
+        let trees = trees
+            .as_object()
+            .filter(|trees| trees.len() == 1)
+            .ok_or("ambiguous publication tree")?;
+        let ledger = trees.values().next().ok_or("missing target checkpoint")?;
+        let digest = ledger
+            .get("checkpoint")
+            .and_then(|value| value.get("digest"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing target digest")?;
+        targets.insert(head.clone(), digest.into());
+    }
+    if publication.get("targets") != Some(&serde_json::Value::Object(targets)) {
+        return Err("wrong publication coverage".into());
+    }
+    let data = serde_json::json!({"head_sha":head,"tree_sha":tree,"failure_version":publication.get("failure_version"),"targets":publication.get("targets")});
+    let digest = rights_digest(&data)?;
+    if publication
+        .get("digest")
+        .and_then(serde_json::Value::as_str)
+        != Some(digest.as_str())
+    {
+        return Err("publication digest mismatch".into());
+    }
+    rights_projection(publication, Some(&digest))
+}
+
 fn rights_entries<'a>(
     evidence: &'a serde_json::Value,
     head: &str,
@@ -887,6 +1018,18 @@ fn rights_entries<'a>(
     {
         return Err("wrong rights ledger target".into());
     }
+    let data = serde_json::json!({"head_sha":ledger.get("head_sha"),"tree_sha":ledger.get("tree_sha"),
+        "pending":ledger.get("pending"),"entries":ledger.get("entries"),"failure_version":ledger.get("failure_version")});
+    let digest = rights_digest(&data)?;
+    if ledger
+        .get("checkpoint")
+        .and_then(|value| value.get("digest"))
+        .and_then(serde_json::Value::as_str)
+        != Some(digest.as_str())
+    {
+        return Err("target checkpoint digest mismatch".into());
+    }
+    rights_projection(ledger, None)?;
     let pending = ledger
         .get("pending")
         .and_then(serde_json::Value::as_array)
@@ -969,6 +1112,7 @@ pub fn rights_admission(
         return Err("candidate differs from rights head".into());
     }
     let base = git::head(base_root)?;
+    rights_publication(evidence, root, head)?;
     if let Some(group) = evidence.get("merge_group") {
         if evidence
             .get("repository")

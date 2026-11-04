@@ -430,8 +430,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
     trusted = jobs["trusted-policy"]
     require(trusted.get("concurrency") == {
-        "group": "trusted-policy-${{ github.event.pull_request.number || github.event.issue.number }}",
-        "cancel-in-progress": True,
+        "group": "rights-authority-v4",
+        "cancel-in-progress": False, "queue": "max",
     }, "trusted-policy: superseded approvals and revocations must share a cancelling group")
     require(" ".join(trusted.get("if", "").split()) == "!cancelled() && ( "
             "github.event_name == 'pull_request_target' || "
@@ -439,29 +439,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "(contains(github.event.comment.body, '/approve-gates') || contains(github.event.comment.body, '/ack-rights') || contains(github.event.comment.body, '/revoke-rights') || "
             "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
             "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
-    trusted_reporter = '''// If resolution failed there is no validated head: look it up again so
-// the failure still replaces any earlier success on that head.
-let sha = '${{ steps.pr.outputs.head_sha }}';
-if (!sha) {
-  const number = context.payload.pull_request ? context.payload.pull_request.number : context.payload.issue.number;
-  sha = (await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: number })).data.head.sha;
-}
-await github.rest.repos.createCommitStatus({
-  owner: context.repo.owner,
-  repo: context.repo.repo,
-  sha,
-  state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
-  context: 'trusted-policy',
-  description: 'Base-owned policy over candidate data',
-  target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-});'''
-    reporters = [step for step in trusted.get("steps", [])
-                 if step.get("name") == "Report trusted policy on the exact PR head"]
-    require(len(reporters) == 1 and reporters[0] == {
-        "name": "Report trusted policy on the exact PR head", "if": "always()",
-        "uses": "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
-        "with": {"retries": 3, "script": trusted_reporter + "\n"},
-    }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
+    # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
     merge_runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = merge_runner if name in {"core", "test"} else "ubuntu-24.04"
@@ -643,11 +621,11 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
     programs = {
         'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
         'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
-        'Persist the target rights ledger': ('54f784ea5601a9facc857f03c248fae7ae502d860449f107acb233ba1ec5fe0c', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('12cf19ffc6e5bac286c9807944a715f737a039f424990caf6b8d6fda2716ab95', ['script'], False, None),
-        'Report trusted policy on the exact PR head': ('f8afd6626283818c4046e02ea5e3a47e10e073a543523f62bdd4fc9c0f2a99c3', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('36e5460a130bf69db7a693eb7e065c41d62a519849bf771fa0eba5afce7178fb', ['script'], False, None),
-        'Report trusted policy on the group head': ('006a4ebe5ab690da267c9b0665a11c68b979fd4f9d53b73aac2054642c53cb27', ['script', 'retries'], False, 'always()'),
+        'Persist the target rights ledger': ('3bbca1ff26afec854e7ea71623cb177fb78a5dbe346867b64c1776848321586c', ['script', 'retries'], False, None),
+        'Record admin approvals of the exact PR head': ('495988324da6cfdb9c0116bca9780b6ec0bbcff3fd69faacaa22141c25fc4cb4', ['script'], False, None),
+        'Report trusted policy on the exact PR head': ('2c72199e078490c06392a6f7dcf2f2e6d3b695b5b253eea956acb30ccbaa6fe6', ['script', 'retries'], False, 'always()'),
+        'Record admin approvals of the queued heads': ('fa7bc95cfc6858a27850f1a69271be59ea62c55521c2aee639abe0bc007c3232', ['script'], False, None),
+        'Report trusted policy on the group head': ('6104cf82130a82851d55df4a95c0247d59b2b23e2de207cbedb87129c475779f', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
         digest, inputs, tolerated_failure, condition = programs[step["name"]]
@@ -685,7 +663,9 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         "name": "Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}",
         "needs": "rights-capture",
         "if": "!cancelled() && needs.rights-capture.result == 'success' && needs.rights-capture.outputs.kind == 'pull'",
-        "permissions": {"contents": "read", "statuses": "write"}, "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+        "permissions": {"actions": "read", "contents": "read", "statuses": "write"},
+        "concurrency": {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
     }
     require({k:v for k,v in ledger.items() if k != "steps"} == expected_ledger,
             "target ledger must be base-owned and never superseded")
@@ -728,13 +708,12 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
                     "failed/cancelled recording must fail policy before admission")
         scripts = "\n".join(step.get("with", {}).get("script", "") for step in steps)
         compact = re.sub(r"\s+", "", scripts)
-        for contract in ("base_sha:pr.base.sha", "head_sha:pr.head.sha", "targetLedger",
-                         "github.rest.issues.getComment", "github.rest.actions.listJobsForWorkflowRunAttempt",
-                         "github.rest.repos.listCommitStatusesForRef", "github.rest.repos.getCollaboratorPermissionLevel",
-                         "seen.has(run.id)", "rights[head]"):
-            require(contract in compact, f"trusted target ledger contract missing: {contract}")
-        require(job.get("concurrency", {}).get("cancel-in-progress") is True,
-                "trusted rights: revocation must supersede old evaluations")
+        for contract in ("rights-authority-v4", "github.rest.git.createCommit", "force:false",
+                         "rights-checkpoint/target/", "rights-checkpoint/publication/",
+                         "Rights capture incomplete after bounded wait", "Rights authority queue deadline exceeded"):
+            require(contract in scripts, f"trusted authority contract missing: {contract}")
+        require(job.get("concurrency") == {"group": "rights-authority-v4", "cancel-in-progress": False, "queue": "max"},
+                "all rights authority must serialize without cancelling active or queued work")
     condition = yaml.load(source, Loader=WorkflowLoader)["jobs"]["trusted-policy"]["if"]
     for command in ("/ack-rights", "/revoke-rights"):
         require(f"contains(github.event.comment.body, '{command}')" in condition
