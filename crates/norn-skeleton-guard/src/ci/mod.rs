@@ -871,29 +871,59 @@ pub fn rights_acknowledgment(
 /// Canonical digest used by the base-owned checkpoint and publisher.
 ///
 /// # Errors
-/// Refuses values that cannot be serialized as JSON.
+/// Refuses numbers outside GitHub's safe integer range or oversized framing.
 pub fn rights_digest(value: &serde_json::Value) -> Result<String, String> {
     use sha2::{Digest as _, Sha256};
-    fn canonical(value: &serde_json::Value) -> serde_json::Value {
+    fn count(hash: &mut Sha256, value: usize) -> Result<(), String> {
+        hash.update(
+            u64::try_from(value)
+                .map_err(|_| "checkpoint length overflow")?
+                .to_be_bytes(),
+        );
+        Ok(())
+    }
+    fn walk(hash: &mut Sha256, value: &serde_json::Value) -> Result<(), String> {
         match value {
-            serde_json::Value::Object(fields) => {
-                let ordered: std::collections::BTreeMap<_, _> = fields.iter().collect();
-                serde_json::Value::Object(
-                    ordered
-                        .into_iter()
-                        .map(|(key, value)| (key.clone(), canonical(value)))
-                        .collect(),
-                )
+            serde_json::Value::Null => hash.update([0]),
+            serde_json::Value::Bool(value) => hash.update([if *value { 2 } else { 1 }]),
+            serde_json::Value::Number(value) => {
+                let number = value
+                    .as_i64()
+                    .filter(|value| value.unsigned_abs() <= 9_007_199_254_740_991)
+                    .ok_or("unsafe checkpoint number")?
+                    .to_string();
+                hash.update([3]);
+                count(hash, number.len())?;
+                hash.update(number.as_bytes());
+            }
+            serde_json::Value::String(value) => {
+                hash.update([4]);
+                count(hash, value.len())?;
+                hash.update(value.as_bytes());
             }
             serde_json::Value::Array(values) => {
-                serde_json::Value::Array(values.iter().map(canonical).collect())
+                hash.update([5]);
+                count(hash, values.len())?;
+                for value in values {
+                    walk(hash, value)?;
+                }
             }
-            value => value.clone(),
+            serde_json::Value::Object(values) => {
+                let ordered: std::collections::BTreeMap<_, _> = values.iter().collect();
+                hash.update([6]);
+                count(hash, ordered.len())?;
+                for (key, value) in ordered {
+                    walk(hash, &serde_json::Value::String(key.clone()))?;
+                    walk(hash, value)?;
+                }
+            }
         }
+        Ok(())
     }
-    serde_json::to_vec(&canonical(value))
-        .map(|bytes| hex::encode(Sha256::digest(bytes)))
-        .map_err(|error| error.to_string())
+    let mut hash = Sha256::new();
+    hash.update(b"norn-rights-checkpoint-v4\0");
+    walk(&mut hash, value)?;
+    Ok(hex::encode(hash.finalize()))
 }
 
 fn rights_projection(value: &serde_json::Value, digest: Option<&str>) -> Result<(), String> {

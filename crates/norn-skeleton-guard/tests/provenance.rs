@@ -2036,6 +2036,7 @@ fn assert_global_rights_recovery(layout: &str) {
             "partial",
             "reconciled",
             "fresh",
+            "inflight",
             "plain",
             "paging",
             "withdrawn",
@@ -2063,7 +2064,10 @@ fn assert_global_rights_recovery(layout: &str) {
                 );
                 assert_eq!(
                     report.errors.is_empty(),
-                    matches!(stage, "initial" | "fresh" | "plain" | "paging" | "case"),
+                    matches!(
+                        stage,
+                        "initial" | "fresh" | "inflight" | "plain" | "paging" | "case"
+                    ),
                     "{removal}/{stage}/{kind}"
                 );
             }

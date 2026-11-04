@@ -660,7 +660,10 @@ def execute_rights_publisher(script: str) -> dict[str, Any]:
 serverUrl:'https://example.invalid',runId:42,sha:'default-branch-head'};
 const core={warning:()=>{},setFailed:()=>{}};
 const github={rest:{pulls:{get:async()=>({data:{head:{sha:'head'}}})},
-repos:{createCommitStatus:async row=>console.log(JSON.stringify(row))}}};
+repos:{getCommit:async()=>({data:{commit:{tree:{sha:'tree'}}}}),listCommitStatusesForRef:()=>{},
+createCommitStatus:async row=>console.log(JSON.stringify(row))}},
+paginate:async()=>[{id:1,state:'success',creator:{login:'github-actions[bot]'},
+context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:'"+"a"*64+"'})}]};
 (async()=>{
 """ + script + "\n})().catch(error=>{console.error(error);process.exit(1)});"
         result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10,
@@ -1745,10 +1748,11 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   const assert=require('assert'), fs=require('fs');
   const {head,base,groupHead,tree,programs}=JSON.parse(process.env.RIGHTS_CASE);
   const context={repo:{owner:'Norn-cloud',repo:'norn'},payload:{},runId:105,serverUrl:'https://github.com'};
+  process.env.GITHUB_WORKFLOW_SHA='e'.repeat(40);
   const path=process.env.RUNNER_TEMP+'/maintainer-approval.json', evidence={};
   let runs,jobs,history,live,payloads,clock,nextRun,modeShared,unavailable=false,readFailure=false,paging=false,shifted=false;
   let outputs={}, admission=0, groupAdmission=0, virtualNow=0;
-  let objects,retained,objectCounter,jobReads=0,largeHistory=false;
+  let objects,retained,objectCounter,jobReads=0,largeHistory=false,releasing=0,releaseReads=0;
   Date.now=()=>virtualNow;
   globalThis.setTimeout=(callback,ms)=>{virtualNow+=ms;queueMicrotask(callback);return 0};
   const core={setOutput:(name,value)=>{outputs[name]=value},warning:()=>{},setFailed:()=>{}};
@@ -1774,6 +1778,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
       }else content=ref==='legacy'?'name: Public core':'rights-authority-v4';
       return {data:{type:'file',encoding:'base64',content:Buffer.from(content).toString('base64')}};
     },
+    compareCommits:async()=>({data:{status:'ahead'}}),
     getCommit:async({ref})=>({data:{commit:{tree:{sha:tree}},parents:ref===groupHead?[{sha:base},{sha:head}]:[{sha:base}]}}),
     listPullRequestsAssociatedWithCommit:async()=>({data:[modeShared?prB:prA]})
   },git:{
@@ -1798,7 +1803,16 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
   }},
   paginate:async(method,args)=>{
     if(method===github.rest.repos.listCommitStatusesForRef)return history.filter(row=>row.sha===args.ref).slice().reverse();
-    if(method===github.rest.actions.listJobsForWorkflowRunAttempt){jobReads++;return jobs.get(args.run_id)?.get(args.attempt_number)||[];}
+    if(method===github.rest.actions.listJobsForWorkflowRunAttempt){
+      jobReads++;
+      if(args.run_id===releasing&&++releaseReads===2){
+        const value=jobs.get(releasing).get(1);
+        value[0].status='completed';value[1].status='completed';value[1].conclusion='success';
+        value[1].name='Rights ledger none comment 13';
+        runs.find(r=>r.id===releasing).status='completed';
+      }
+      return jobs.get(args.run_id)?.get(args.attempt_number)||[];
+    }
     assert.equal(method,github.rest.issues.listComments);return [];
   }};
   const payload=(comment,action='created',pull=true,prior,number=7)=>({action,
@@ -1906,6 +1920,22 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     await publishSaved('pr',freshDocs.pr,freshAdmission,freshGroup);
     await publishSaved('group',freshDocs.group,freshAdmission,freshGroup);
     virtualNow=normalNow;
+    const waitingRun=nextRun++;
+    await record(waitingRun,payload(comment(13,'ordinary PR comment',clock)));
+    const waitingJobs=jobs.get(waitingRun).get(1);
+    waitingJobs[0].status='queued';waitingJobs[1].status='queued';
+    waitingJobs[1].name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
+    runs.find(r=>r.id===waitingRun).status='in_progress';
+    releasing=waitingRun;releaseReads=0;
+    await snapshot(prefix+'inflight');
+    assert(releaseReads>=2,'an in-flight capture must be awaited');
+    releasing=0;
+    // A failed cursor write leaves its retention commit unpublished. Recovery replays
+    // from the last authenticated cursor and advances the retention ref without force.
+    admission=nextRun++;groupAdmission=nextRun++;
+    runs.unshift(makeRun(groupAdmission,'merge_group'),makeRun(admission,'pull_request_target'));
+    unavailable=true;await assert.rejects(()=>collect('pr'));assert(!fs.existsSync(path));unavailable=false;
+    await collect('pr');
     // A plain issue with a skipped, unexpanded journal is attributed by the saved capture payload.
     await record(nextRun++,payload(comment(12,'/revoke-rights '+head,clock),'created',false));
     await snapshot(prefix+'plain');assert.deepEqual(pending(evidence[prefix+'plain'].pr),[]);

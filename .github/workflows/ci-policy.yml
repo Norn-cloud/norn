@@ -379,8 +379,23 @@ jobs:
           script: |
             const collect=async function collectRights(github, context, core, parameters, probe) {
               const fs=require('fs'), crypto=require('crypto'), {owner,repo}=context.repo;
-              const canon=v=>Array.isArray(v)?v.map(canon):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canon(v[k])])):v;
-              const digest=v=>crypto.createHash('sha256').update(JSON.stringify(canon(v))).digest('hex');
+              const digest=value=>{
+                const hash=crypto.createHash('sha256').update('norn-rights-checkpoint-v4\0');
+                const count=n=>{const bytes=Buffer.alloc(8);bytes.writeBigUInt64BE(BigInt(n));hash.update(bytes)};
+                const walk=v=>{
+                  if(v===null){hash.update(Buffer.from([0]));return}
+                  if(typeof v==='boolean'){hash.update(Buffer.from([v?2:1]));return}
+                  if(typeof v==='number'){
+                    if(!Number.isSafeInteger(v))throw new Error('Unsafe checkpoint number');
+                    const bytes=Buffer.from(String(v));hash.update(Buffer.from([3]));count(bytes.length);hash.update(bytes);return;
+                  }
+                  if(typeof v==='string'){const bytes=Buffer.from(v);hash.update(Buffer.from([4]));count(bytes.length);hash.update(bytes);return}
+                  if(Array.isArray(v)){hash.update(Buffer.from([5]));count(v.length);for(const item of v)walk(item);return}
+                  const keys=Object.keys(v).sort((a,b)=>Buffer.compare(Buffer.from(a),Buffer.from(b)));
+                  hash.update(Buffer.from([6]));count(keys.length);for(const key of keys){walk(key);walk(v[key])}
+                };
+                walk(value);return hash.digest('hex');
+              };
               const sha=s=>typeof s==='string'&&/^[0-9a-f]{40}$/.test(s);
               const anchor='69ffae65225a6784ebcb96696fc88c65d810fa4f', retention='heads/ci/rights-ledger-v1';
               const statusRows=async head=>github.paginate(github.rest.repos.listCommitStatusesForRef,{owner,repo,ref:head,per_page:100});
@@ -426,12 +441,15 @@ jobs:
                 const {data:producer}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:row.r});
                 if(!['issue_comment','pull_request_target','workflow_run'].includes(producer.event)||
                     producer.repository?.full_name!==`${owner}/${repo}`)throw new Error('Untrusted checkpoint producer');
-                const {data:definition}=await github.rest.repos.getContent({owner,repo,path:producer.event==='workflow_run'?'.github/workflows/trusted-merge-group.yml':'.github/workflows/ci-policy.yml',ref:producer.head_sha});
-                if(definition.type!=='file'||definition.encoding!=='base64'||
-                    !Buffer.from(definition.content,'base64').toString('utf8').includes('rights-authority-v4'))throw new Error('Checkpoint producer policy unavailable');
                 const {data:commit}=await github.rest.git.getCommit({owner,repo,commit_sha:row.c});
                 const {data:file}=await github.rest.repos.getContent({owner,repo,path:'metadata.json',ref:row.c});
                 metadata=JSON.parse(Buffer.from(file.content,'base64').toString('utf8'));
+                if(!sha(metadata.policy_sha))throw new Error('Missing checkpoint policy identity');
+                const {data:comparison}=await github.rest.repos.compareCommits({owner,repo,base:metadata.policy_sha,head:producer.repository.default_branch||'main'});
+                if(!['ahead','identical'].includes(comparison.status))throw new Error('Checkpoint policy is not base-owned');
+                const {data:definition}=await github.rest.repos.getContent({owner,repo,path:producer.event==='workflow_run'?'.github/workflows/trusted-merge-group.yml':'.github/workflows/ci-policy.yml',ref:metadata.policy_sha});
+                if(definition.type!=='file'||definition.encoding!=='base64'||
+                    !Buffer.from(definition.content,'base64').toString('utf8').includes('rights-authority-v4'))throw new Error('Checkpoint producer policy unavailable');
                 if(metadata.version!==4||!metadata.cursor||!Number.isSafeInteger(metadata.cursor.number)||
                     !Number.isSafeInteger(metadata.cursor.id)||metadata.parent!==row.p||
                     (row.p&&!commit.parents.some(p=>p.sha===row.p)))throw new Error('Unbound rights checkpoint');
@@ -519,7 +537,9 @@ jobs:
               }
               const newest=suffix[0];
               if(newest&&(!before||newest.run_number>before.number)){
-                const next={version:4,parent:prior,cursor:{id:newest.id,number:newest.run_number}};
+                const policy=process.env.GITHUB_WORKFLOW_SHA;
+                if(!sha(policy))throw new Error('Missing trusted workflow commit');
+                const next={version:4,parent:prior,policy_sha:policy,cursor:{id:newest.id,number:newest.run_number}};
                 const nodes=[];
                 const put=async(path,value)=>{
                   const {data:blob}=await github.rest.git.createBlob({owner,repo,content:JSON.stringify(value),encoding:'utf-8'});
@@ -660,6 +680,14 @@ jobs:
               await collect(github,context,core,parameters,current);
               if('${{ job.status }}'==='success'&&!pending&&decision.digest===d&&Date.now()<=current.authority_deadline)state='success';
             }catch(error){core.warning('Rights publication refused: checkpoint unavailable, changed or expired')}
+            try{
+              const {data:commit}=await github.rest.repos.getCommit({...context.repo,ref:head});
+              const rows=await github.paginate(github.rest.repos.listCommitStatusesForRef,{...context.repo,ref:head,per_page:100});
+              const cp=rows.filter(row=>row.creator?.login==='github-actions[bot]'&&row.state==='success'&&row.context.toLowerCase().startsWith('rights-checkpoint/publication/'+commit.commit.tree.sha+'/')).sort((a,b)=>b.id-a.id)[0];
+              const latestFailure=Math.max(0,...rows.filter(row=>row.creator?.login==='github-actions[bot]'&&row.context==='trusted-policy'&&['failure','error'].includes(row.state)).map(row=>row.id));
+              if(state==='success'&&(!cp||JSON.parse(cp.description).d!==d||latestFailure!==f))state='failure';
+              if(state==='failure'){d=cp?JSON.parse(cp.description).d:'0'.repeat(64);f=latestFailure}
+            }catch(error){state='failure';d='0'.repeat(64)}
             await github.rest.repos.createCommitStatus({...context.repo,sha:head,state,context:'trusted-policy',
               description:JSON.stringify({v:4,d,f}),
               target_url:context.serverUrl+'/'+context.repo.owner+'/'+context.repo.repo+'/actions/runs/'+context.runId});

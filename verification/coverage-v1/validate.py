@@ -622,10 +622,10 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         'Resolve the pull request': ('6a0efef21e1a4aa9ac444b976856fdb27f43ef1a07bdfb34e004cad59c241032', ['script', 'retries'], False, None),
         'Capture the saved rights payload': ('748661200b99a0ebf6859d5638816d6ba7b60af7fb1818d2aabe9d14ff46883d', ['script'], False, None),
         'Persist the target rights ledger': ('3bbca1ff26afec854e7ea71623cb177fb78a5dbe346867b64c1776848321586c', ['script', 'retries'], False, None),
-        'Record admin approvals of the exact PR head': ('495988324da6cfdb9c0116bca9780b6ec0bbcff3fd69faacaa22141c25fc4cb4', ['script'], False, None),
-        'Report trusted policy on the exact PR head': ('2c72199e078490c06392a6f7dcf2f2e6d3b695b5b253eea956acb30ccbaa6fe6', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('fa7bc95cfc6858a27850f1a69271be59ea62c55521c2aee639abe0bc007c3232', ['script'], False, None),
-        'Report trusted policy on the group head': ('6104cf82130a82851d55df4a95c0247d59b2b23e2de207cbedb87129c475779f', ['script', 'retries'], False, 'always()'),
+        'Record admin approvals of the exact PR head': ('6328309c1417bc193d6119d859606de123706c803467bdcd51d059ec22670c9a', ['script'], False, None),
+        'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always()'),
+        'Record admin approvals of the queued heads': ('b1bdc554898de23a304cc5420034b3a789d4ebb806ecf48f83b74e089ed3fdb0', ['script'], False, None),
+        'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
         digest, inputs, tolerated_failure, condition = programs[step["name"]]
