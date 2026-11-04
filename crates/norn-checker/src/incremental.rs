@@ -185,7 +185,10 @@ impl AdmissionCache {
         });
         let bytes = norn_canonical::serialize_json_verbatim(&body)
             .map_err(|_error| ChallengeError::Closure)?;
-        Ok((exact_commitment(b"global-admission", &[&bytes])?, context_digest))
+        Ok((
+            exact_commitment(b"global-admission", &[&bytes])?,
+            context_digest,
+        ))
     }
 }
 
@@ -255,17 +258,27 @@ mod tests {
                 registry: &other_registry,
                 ..original
             },
-            EntityArtifactSetContext { tenant: None, ..original },
+            EntityArtifactSetContext {
+                tenant: None,
+                ..original
+            },
         ] {
             let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
             let cold = cache.check(&artifacts, &original);
             let warm = cache.check(&artifacts, &original);
             assert!(warm.evidence.iter().any(|job| job.artifact_id.is_some()));
-            assert!(warm.evidence.iter().all(|job| matches!(
-                job.origin, EvidenceOrigin::ReusedFromDigest(_)
-            )));
+            assert!(
+                warm.evidence
+                    .iter()
+                    .all(|job| matches!(job.origin, EvidenceOrigin::ReusedFromDigest(_)))
+            );
             let switched = cache.check(&artifacts, &changed);
-            assert!(switched.evidence.iter().any(|job| job.artifact_id.is_some()));
+            assert!(
+                switched
+                    .evidence
+                    .iter()
+                    .any(|job| job.artifact_id.is_some())
+            );
             for (before, after) in cold.evidence.iter().zip(&switched.evidence) {
                 assert_ne!(before.closure_digest, after.closure_digest);
                 assert_eq!(after.origin, EvidenceOrigin::Rechecked);
