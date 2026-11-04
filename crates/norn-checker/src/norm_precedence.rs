@@ -486,7 +486,11 @@ fn diagnose_order(
         return Err(NormRefusal::InvalidBinding);
     }
     let all: BTreeSet<_> = (0..norms.len()).collect();
-    let conflicts = order_conflicts(norms, layers, edges, protected, contexts, &all);
+    let conflicts = if budget.1.is_none() {
+        order_conflicts(norms, layers, edges, protected, contexts, &all)
+    } else {
+        Vec::new()
+    };
     let mut oracle = OrderOracle {
         edges,
         conflicts,
