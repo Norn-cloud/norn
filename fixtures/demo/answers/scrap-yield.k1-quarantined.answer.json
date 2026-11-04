@@ -1,5 +1,5 @@
 {
-  "queryPin": "5428f5a7ae04b269bfdb82874606ee9fcee507428dc34a0d472e65113162c79f",
+  "queryPin": "27b8021003dca6a2a5e9845fa52cb15ea730541eaa6753c29f99fb1b4dfb73f4",
   "definitionPin": "synthetic-quality-v1",
   "engine": "cell",
   "revision": {
@@ -10,7 +10,7 @@
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 3,
   "grain": "demo.Conversion",
-  "lineageRef": "32c035cb6b3b5cbe26ba294652054fb857fa4100b677314230188de4034cf006",
+  "lineageRef": "0397b22ab60477523ff0f817945b3af8652227ef8ebe5dd10fe4b3e5f93599a2",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
