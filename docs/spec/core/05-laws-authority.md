@@ -184,3 +184,20 @@ Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
 The mapping bridge must additionally reproduce #574's swapped roles, dropped
 join, non-functional mapping and bad composite, plus identity/equivalent-path
 controls without hand-authored EGDs before #712 can close.
+
+### Conditional declared normative order (#737, first cut)
+
+LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `diagnose_declared_order` checks trusted exhaustive
+masks for one action/subject. Declared priorities must be acyclic. Opposing pairs
+need declared comparability within a layer; cross-layer clashes always diagnose.
+Lower-to-higher overrides and any defeat of an explicitly protected law refuse,
+even when inactive/excepted. CD returns exact
+protected cores and source locations; limits/malformed inputs remain unknown.
+Legacy cross-authority clashes remain in defeats, not survivor conflicts (#767).
+Superior wins first; posterior/specialis require identical authority/version/level.
+No implicit tie-break is enabled in this profile. Specialis needs proven strict
+containment; equal specificity has no winner. Exceptions belong to their own rule.
+Select effective versions before grounding; latest recorded is not lex posterior.
+Discrepancy notes use `consistency.normative.legacy_resolution`; admission is unchanged.
+Tests cover cycles, protection, layers, deletion, transitivity and unknowns.
+DeonticIR lowering, fulfilment, CTD, Datalog and proof are outside this cut.
