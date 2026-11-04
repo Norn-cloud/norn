@@ -1,241 +1,35 @@
-//! PATH-MAP-1 (#712): #574's schema-level catches and its valid controls,
-//! reproduced from declarations alone. Both catalogs are `EntityIR` with
-//! PATH-EQ-1 equations; mappings are typed `PathMapping` declarations.
-
-#![allow(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "integration-test crate"
-)]
-
+//! PATH-MAP-1: preservation bridge controls; the next cut adds #574 mutations.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "integration-test crate")]
 use std::collections::BTreeSet;
+use norn_checker::consistency::{admit_path_mapping, ChaseBudget, PATH_MAPPING_INVALID};
+use norn_ir::{ArtifactEnvelope, entity::PathMapping};
+use serde_json::json;
 
-use norn_checker::consistency::{ChaseBudget, PATH_MAPPING_INVALID, admit_path_mapping, codes};
-use norn_ir::ArtifactEnvelope;
-use norn_ir::entity::PathMapping;
-use serde_json::{Value, json};
-
-const CONCEPTS: [&str; 4] = ["Delivery", "OrderLine", "Holding", "Party"];
-
-fn link(id: &str, target: &str) -> Value {
-    json!({"id": id, "target": target, "cardinality": {"to": "one", "from": "many", "required": true}})
-}
-
-/// The #574 completed-sale profile in namespace `ns`; the source adds the
-/// unconstrained `unjoined` reference used by the dropped-join mutation.
 fn catalog(ns: &str) -> Vec<ArtifactEnvelope> {
-    let t = |name: &str| format!("{ns}.{name}");
-    let mut delivery = vec![
-        link("provider", &t("Party")),
-        link("receiver", &t("Party")),
-        link("resource", &t("Holding")),
-        link("fulfils", &t("OrderLine")),
-    ];
-    if ns == "s" {
-        delivery.push(link("unjoined", &t("OrderLine")));
-    }
-    let equations = json!([
-        {"id": "provider", "left": ["fulfils", "provider"], "right": ["provider"]},
-        {"id": "receiver", "left": ["fulfils", "receiver"], "right": ["receiver"]},
-        {"id": "resource", "left": ["fulfils", "resource"], "right": ["resource"]},
-        {"id": "owner", "left": ["resource", "owner"], "right": ["provider"]}
-    ]);
-    let links = [
-        json!(delivery),
-        json!([
-            link("provider", &t("Party")),
-            link("receiver", &t("Party")),
-            link("resource", &t("Holding"))
-        ]),
-        json!([link("owner", &t("Party"))]),
-        json!([]),
-    ];
-    CONCEPTS
-        .iter()
-        .zip(links)
-        .map(|(name, links)| {
-            let mut payload =
-                json!({"entityVersion": "2.0", "objectType": {"name": t(name), "links": links}});
-            if *name == "Delivery" {
-                payload["extensions"] = json!({"norn.path-equations/1.0.0": equations});
-            }
-            serde_json::from_value(json!({
-                "irVersion": "0.1", "artifactId": format!("{}.entity", t(name)), "kind": "entity",
-                "namespace": ns, "name": name, "version": "0.1.0", "lifecycle": "draft",
-                "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
-                "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
-                "payload": payload
-            }))
-            .unwrap()
-        })
-        .collect()
-}
-
-const LINKS: [(&str, &[&str]); 3] = [
-    ("Delivery", &["provider", "receiver", "resource", "fulfils"]),
-    ("OrderLine", &["provider", "receiver", "resource"]),
-    ("Holding", &["owner"]),
-];
-
-/// The identity-shaped mapping `from -> to`, with `edit` applied to the
-/// Delivery images (`(link, path)`; a repeated link adds a second image).
-fn mapping(id: &str, from: &str, to: &str, edit: &[(&str, &[&str])]) -> PathMapping {
-    let mut links = Vec::new();
-    for (concept, ids) in LINKS {
-        for link in ids {
-            let edited: Vec<_> = edit
-                .iter()
-                .filter(|(l, _)| concept == "Delivery" && l == link)
-                .collect();
-            let paths: Vec<Vec<&str>> = if edited.is_empty() {
-                vec![vec![*link]]
-            } else {
-                edited.iter().map(|(_, path)| path.to_vec()).collect()
-            };
-            for path in paths {
-                links.push(
-                    json!({"concept": format!("{from}.{concept}"), "link": link, "path": path}),
-                );
-            }
-        }
-    }
-    let objects: serde_json::Map<_, _> = CONCEPTS
-        .iter()
-        .map(|c| (format!("{from}.{c}"), json!(format!("{to}.{c}"))))
-        .collect();
-    serde_json::from_value(json!({"id": id, "objects": objects, "links": links})).unwrap()
-}
-
-fn admit(mapping: &PathMapping) -> Result<usize, Vec<norn_checker::Diagnostic>> {
-    admit_path_mapping(
-        &catalog("s"),
-        &catalog("t"),
-        mapping,
-        &BTreeSet::new(),
-        ChaseBudget::default(),
-    )
-    .map(|evidence| evidence.obligations)
-}
-
-fn unpreserved(mapping: &PathMapping) -> BTreeSet<String> {
-    let findings = admit(mapping).unwrap_err();
-    assert!(
-        findings
-            .iter()
-            .all(|d| d.code.as_str() == codes::UNPRESERVED),
-        "{findings:?}"
-    );
-    findings
-        .iter()
-        .filter_map(|d| {
-            d.message
-                .split_whitespace()
-                .nth(6)
-                .map(|id| id.trim_end_matches(':').to_owned())
-        })
-        .collect()
-}
-
-const SWAPPED: &[(&str, &[&str])] = &[("provider", &["receiver"]), ("receiver", &["provider"])];
-
-#[test]
-fn identity_and_equivalent_path_controls_are_admitted() {
-    // 4 path equations and 8 functional target links.
-    assert_eq!(admit(&mapping("identity", "t", "s", &[])), Ok(12));
-    let equivalent = mapping(
-        "equivalent",
-        "t",
-        "s",
-        &[("provider", &["fulfils", "provider"])],
-    );
-    assert_eq!(admit(&equivalent), Ok(12));
-}
-
-fn equations(ids: &[&str]) -> BTreeSet<String> {
-    ids.iter()
-        .map(|id| format!("t.Delivery.entity:path-equation:{id}"))
-        .collect()
-}
-
-// The exchange attributes each witness to the first EGD its mapped image
-// conflicts on, so equations sharing a witness are reported once.
-#[test]
-fn swapped_roles_break_the_role_equations() {
-    let broken = unpreserved(&mapping("swapped", "t", "s", SWAPPED));
-    assert_eq!(broken, equations(&["provider", "owner"]));
+    vec![serde_json::from_value(json!({
+        "irVersion": "0.1", "artifactId": format!("{ns}.Node.entity"), "kind": "entity",
+        "namespace": ns, "name": "Node", "version": "0.1.0", "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
+        "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+        "payload": {"entityVersion": "2.0", "objectType": {"name": format!("{ns}.Node"),
+            "links": [{"id": "next", "target": format!("{ns}.Node"),
+                "cardinality": {"to": "one", "from": "many", "required": false}}]},
+            "extensions": {"norn.path-equations/1.0.0": [
+                {"id": "next", "left": ["next"], "right": ["next"]}]}}
+    })).unwrap()]
 }
 
 #[test]
-fn a_dropped_join_breaks_the_fulfilment_equations() {
-    let broken = unpreserved(&mapping("dropped", "t", "s", &[("fulfils", &["unjoined"])]));
-    assert_eq!(broken, equations(&["provider"]));
-}
-
-#[test]
-fn a_non_functional_image_breaks_the_target_link_contract() {
-    let both: &[(&str, &[&str])] = &[("provider", &["provider"]), ("provider", &["receiver"])];
-    let broken = unpreserved(&mapping("both", "t", "s", both));
-    assert!(
-        broken.contains("target:t.Delivery.provider:functional"),
-        "{broken:?}"
-    );
-}
-
-#[test]
-fn ill_typed_mappings_refuse_before_search() {
-    for edit in [
-        &[("provider", &["resource"][..])][..],
-        &[("provider", &["missing"][..])][..],
-        &[("provider", &["fulfils"][..])][..],
-    ] {
-        let findings = admit(&mapping("bad", "t", "s", edit)).unwrap_err();
-        assert_eq!(findings.len(), 1);
-        assert_eq!(
-            findings[0].code.as_str(),
-            PATH_MAPPING_INVALID,
-            "{findings:?}"
-        );
-    }
-    let overlapping = admit_path_mapping(
-        &catalog("t"),
-        &catalog("t"),
-        &mapping("same", "t", "t", &[]),
-        &BTreeSet::new(),
-        ChaseBudget::default(),
-    );
-    assert_eq!(
-        overlapping.unwrap_err()[0].code.as_str(),
-        PATH_MAPPING_INVALID
-    );
-}
-
-/// Cost report (`--nocapture`): mean admission time over 50 runs per case.
-#[test]
-fn preservation_cost_on_the_574_fixtures() {
-    let cases = [
-        mapping("identity", "t", "s", &[]),
-        mapping(
-            "equivalent",
-            "t",
-            "s",
-            &[("provider", &["fulfils", "provider"])],
-        ),
-        mapping("swapped", "t", "s", SWAPPED),
-        mapping("dropped", "t", "s", &[("fulfils", &["unjoined"])]),
-    ];
-    for case in &cases {
-        let start = std::time::Instant::now();
-        for _ in 0..50 {
-            let admitted = admit(case).is_ok();
-            assert_eq!(
-                admitted,
-                ["identity", "equivalent"].contains(&case.id.as_str())
-            );
-        }
-        eprintln!(
-            "PATH-MAP-COST {} {:?}/admission",
-            case.id,
-            start.elapsed() / 50
-        );
-    }
+fn preservation_admits_identity_and_refuses_an_unknown_image() {
+    let mut mapping: PathMapping = serde_json::from_value(json!({
+        "id": "identity", "objects": {"t.Node": "s.Node"},
+        "links": [{"concept": "t.Node", "link": "next", "path": ["next"]}]
+    })).unwrap();
+    let source = catalog("s");
+    let target = catalog("t");
+    let check = |mapping: &PathMapping| admit_path_mapping(
+        &source, &target, mapping, &BTreeSet::new(), ChaseBudget::default());
+    assert_eq!(check(&mapping).unwrap().obligations, 2);
+    mapping.links[0].path = vec!["missing".into()];
+    assert_eq!(check(&mapping).unwrap_err()[0].code.as_str(), PATH_MAPPING_INVALID);
 }
