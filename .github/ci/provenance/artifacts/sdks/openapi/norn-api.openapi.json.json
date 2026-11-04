@@ -1,5 +1,5 @@
 {
-  "sha256": "9e1453edec7ad614d9855c083eca4fedd407df56730f4f7e49468bd38e517901",
+  "sha256": "da8356bf14c6812356a06bb7ee39802a4133bc3085bff1a49efb27064808a753",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -59,6 +59,8 @@
     "crates/norn-ir/src/source_schema.rs",
     "crates/norn-ir/src/technical_view.rs",
     "crates/norn-ir/src/verification.rs",
+    "crates/norn-ir/src/verification/evidence.rs",
+    "crates/norn-ir/src/verification/guarantees.rs",
     "crates/norn-ir/src/view.rs",
     "crates/norn-ir/src/widget.rs",
     "crates/norn-ir/src/widget_ux.rs",
