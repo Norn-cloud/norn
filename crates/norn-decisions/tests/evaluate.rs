@@ -1824,6 +1824,12 @@ scale:WholeNumber(scale),unit,currency_source,per_unit,rounding:Some(Rounding::R
 #[test]
 fn val_rate_graph_uses_shared_exact_vm_and_refuses_mixed_currency_or_unit() {
     let decision = admit_inline(&bounded_rate_rule("g", "USD"));
+    assert!(!decision.assignment_fuel().is_empty());
+    for assignment in decision.assignment_fuel() {
+        assert!(assignment.fuel.units > 0);
+        assert_eq!(assignment.fuel.semantics.len(), 64);
+        assert!(!assignment.source.is_empty());
+    }
     let slice = Value::object([
         ("currency", Value::String("USD".into())),
         ("rate", num("15")),

@@ -70,6 +70,7 @@ pub struct DecisionBinding {
 /// handler is installed.
 #[derive(Clone, Debug)]
 pub struct AdmittedDecision {
+    assignment_fuel: Vec<norn_expr::graph::BoundAssignment>,
     rule_id: String,
     binding: DecisionBinding,
     decision: Decision,
@@ -185,11 +186,13 @@ impl AdmittedDecision {
         }
         let content = graph_content(&root.rule_id, root_graph)?;
         let loader = Arc::new(loader);
+        let assignment_fuel = contracts.assignment_fuel.clone();
         let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
         let (slice_schema, event_schema) = decide_input(root)?;
         let output_schema = decide_output(root)?;
         let defaults = defaults(root, &output_schema, exact_defaults)?;
         Ok(Self {
+            assignment_fuel,
             rule_id: root.rule_id.clone(),
             binding,
             decision: Decision::from(Arc::new(content))
@@ -200,6 +203,14 @@ impl AdmittedDecision {
             output_schema,
             defaults,
         })
+    }
+
+    /// Fuel evidence for exact-schema assignments checked at live admission.
+    /// Empty means this profile supplied no assignment certificates; it is not
+    /// evidence that the decision is free. Graph and contract costs are residual.
+    #[must_use]
+    pub fn assignment_fuel(&self) -> &[norn_expr::graph::BoundAssignment] {
+        &self.assignment_fuel
     }
 
     /// The root rule's id.
@@ -984,6 +995,7 @@ fn fold_policies(
         }
     }
     Ok(Arc::new(crate::step::StepContracts {
+        assignment_fuel: Vec::new(),
         schemas: contracts.schemas.clone(),
         expressions: contracts.expressions.clone(),
         folds,

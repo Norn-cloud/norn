@@ -227,6 +227,7 @@ declare module "@norn/authoring" {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
+      readonly pathEquations?: ReadonlyArray<import("../src/builder/entity.ts").PathEquation>
       readonly links?: ReadonlyArray<LinkSpec>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
