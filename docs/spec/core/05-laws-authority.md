@@ -176,14 +176,16 @@ Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown
 Authors declare `pathEquations: [{ id: "provider", left: ["fulfils", "provider"],
 right: ["provider"] }]` on `Norn.type`. EntityIR retains these declarations in
 `extensions["norn.path-equations/1.0.0"]`. Each path begins at the declaring
-concept, traverses functional forward links, and ends at the same concrete type;
-empty paths denote identity. Missing links, ambiguous interface targets,
+concept, traverses functional forward links with concrete targets, and ends at the same concrete type;
+empty paths denote identity. Missing links, interface targets (including those with one implementor),
 non-functional steps, duplicate IDs and different endpoint types refuse.
 
 PATH-EQ-1 lowers each equation to an existing chase EGD, with one shared root
 variable and equality between the two endpoints. Optional links give conditional
 equality when both paths exist; equations do not assert existence. Inherited
-link contracts resolve through the effective catalog. This declaration/lowering
+link contracts resolve through the effective catalog. Admission limits are 128
+equations per concept and 64 links per path: at most 128 path-link atoms plus
+one shared-root concept atom (129 body atoms) per generated EGD. This declaration/lowering
 unit establishes structural evidence only: mapping preservation requires the
 exchange admission bridge and its separately qualified source/mapping lowering.
 No successful declaration is a preservation proof. The existing exchange search
