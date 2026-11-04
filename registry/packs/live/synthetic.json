@@ -1,0 +1,53 @@
+{
+  "profile": "synthetic-live-shape/1",
+  "capability": "adapter_output_shape",
+  "productionCdc": false,
+  "shopify": [
+    {
+      "dataset": "ProductVariant",
+      "record": {
+        "id": "gid://shopify/ProductVariant/1",
+        "norn_ref": "demo/item/synthetic-ring",
+        "code": "SYN-RING",
+        "sku": "SYN-RING",
+        "label": "Synthetic ring",
+        "price": "12.50"
+      }
+    },
+    {
+      "dataset": "InventoryLevel",
+      "record": {
+        "id": "gid://shopify/InventoryLevel/1",
+        "norn_ref": "demo/item/synthetic-ring/holding/shopify/north",
+        "resource_code": "SYN-RING",
+        "quantity": 7,
+        "location": "north",
+        "item_ref": "demo/item/synthetic-ring"
+      }
+    }
+  ],
+  "erpnext": [
+    {
+      "dataset": "Item",
+      "record": {
+        "name": "SYN-RING",
+        "norn_ref": "demo/item/synthetic-ring",
+        "code": "SYN-RING",
+        "label": "Synthetic ring",
+        "uom": "Nos"
+      }
+    },
+    {
+      "dataset": "Bin",
+      "record": {
+        "name": "SYN-BIN-1",
+        "norn_ref": "demo/item/synthetic-ring/holding/erpnext/north",
+        "resource_code": "SYN-RING",
+        "quantity": 9.0,
+        "uom": "Nos",
+        "location": "north",
+        "item_ref": "demo/item/synthetic-ring"
+      }
+    }
+  ]
+}
