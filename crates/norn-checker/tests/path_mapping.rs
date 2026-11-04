@@ -67,22 +67,25 @@ fn preservation_admits_identity_and_refuses_an_unknown_image() {
 
 fn inherited_equation_mapping(preserves: bool) -> Result<(), Vec<norn_checker::Diagnostic>> {
     let entity = |name: &str, extends: Option<&str>, constrained: bool| -> ArtifactEnvelope {
-        serde_json::from_value(json!({
+        let mut value = json!({
             "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
             "namespace": name.split('.').next().unwrap(), "name": name.split('.').nth(1).unwrap(),
             "version": "0.1.0", "lifecycle": "draft",
             "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
             "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
             "payload": {"entityVersion": "2.0", "objectType": {
-                "name": name, "extends": extends,
+                "name": name,
                 "links": if extends.is_some() || name.ends_with(".End") { vec![] } else {
                     ["f", "g"].map(|id| json!({"id": id, "target": format!("{}.End", name.split('.').next().unwrap()),
                         "cardinality": {"to": "one", "from": "many", "required": false}})).to_vec()
                 }}, "extensions": {"norn.path-equations/1.0.0": if constrained {
                     vec![json!({"id": "fg", "left": ["f"], "right": ["g"]})]
                 } else { vec![] }}}
-        }))
-        .unwrap()
+        });
+        if let Some(parent) = extends {
+            value["payload"]["objectType"]["extends"] = json!(parent);
+        }
+        serde_json::from_value(value).unwrap()
     };
     let source = vec![
         entity("s.Parent", None, true),
@@ -96,8 +99,8 @@ fn inherited_equation_mapping(preserves: bool) -> Result<(), Vec<norn_checker::D
     ];
     let mapping = serde_json::from_value(json!({
         "id": "inherited", "objects": {"t.Parent": "s.Parent", "t.Child": "s.Child", "t.End": "s.End"},
-        "links": ["Parent", "Child"].into_iter().flat_map(|name| ["f", "g"].map(|link|
-            json!({"concept": format!("t.{name}"), "link": link, "path": [link]}))).collect::<Vec<_>>()
+        "links": (["Parent", "Child"].into_iter().flat_map(|name| ["f", "g"].map(|link|
+            json!({"concept": format!("t.{name}"), "link": link, "path": [link]}))).collect::<Vec<_>>())
     })).unwrap();
     admit_path_mapping(
         &source,
