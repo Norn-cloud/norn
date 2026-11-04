@@ -402,6 +402,25 @@ pins the old inventory and challenge; `jewelry_app_law_keeps_all_lifecycle_goals
 uses the actual authored source golden without rewriting its App-scoped law;
 `lifecycle_goal_cap_is_checked_before_append` refuses an overflowing denominator.
 
+
+**PROOF-LIFECYCLE-2:** the finite input layer reconstructs admission and the
+Challenge before selecting one effective lifecycle. Its enum stays complete;
+every other stored scalar has explicit finite choices, parsed as exact runtime
+JSON literals and validated against its effective contract. Fields retain their
+scale and unit. Context products exceeding node, byte or document budgets are
+refused as a whole; no clipping, inferred defaults or sampling is permitted.
+A lifecycle-dependent identity, computed/nullable context, owned effects or
+unqualified invariant is outside this profile. Applicable unsupported law roots
+remain Unknown with the law identity. Retained snapshots include law-refused
+valuations: relation consumers must separately filter initialization and
+post-states through every supported governing law. Input snapshots alone never
+discharge a goal.
+
+Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
+`lifecycle_input_refusals_never_clip_the_domain`, and the generated
+`every_frozen_choice_keeps_the_complete_chart` property. Native commit
+correspondence and checked backend evidence are subsequent qualification units.
+
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 
 The runtime `norn_cell::mining::suggest_conservation` question discovers one

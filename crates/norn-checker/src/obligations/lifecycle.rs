@@ -1,4 +1,7 @@
 //! PROOF-LIFECYCLE-1: append source-bound conditional chart goals; never solver evidence.
+/// Exact frozen input snapshots for transition consumers; no solver authority.
+pub mod finite;
+
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, LawRoot};
@@ -9,18 +12,7 @@ pub(super) fn append(
     pool: &[ArtifactEnvelope],
     goals: &mut Vec<Value>,
 ) -> Result<(), ChallengeError> {
-    let laws = pool
-        .iter()
-        .filter(|a| a.kind() == ArtifactKind::Law)
-        .map(|artifact| {
-            let law: LawIR = artifact
-                .payload
-                .to_json_value()
-                .decode()
-                .map_err(|_error| ChallengeError::Closure)?;
-            Ok((artifact, law))
-        })
-        .collect::<Result<Vec<_>, ChallengeError>>()?;
+    let laws = law_bindings(pool)?;
     let mut bytes = 0_usize;
     for name in catalog.object_type_names() {
         let object = catalog
@@ -133,4 +125,20 @@ fn unsupported_binding(
         }
     }
     None
+}
+
+fn law_bindings(
+    pool: &[ArtifactEnvelope],
+) -> Result<Vec<(&ArtifactEnvelope, LawIR)>, ChallengeError> {
+    pool.iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Law)
+        .map(|artifact| {
+            let law = artifact
+                .payload
+                .to_json_value()
+                .decode()
+                .map_err(|_error| ChallengeError::Closure)?;
+            Ok((artifact, law))
+        })
+        .collect()
 }
