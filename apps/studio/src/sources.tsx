@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { ArrowRight, Database, Search, Shapes } from "lucide-react"
+import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile } from "@/components/kpi-tile"
 import { EmptyState, Panel, Well } from "@/components/panel"
@@ -191,7 +191,7 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog && (["concept", "core idea"] as const).flatMap((kind) => catalog.concepts.filter((concept) => concept.kind === kind)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces" })))
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces", icon: kind === "concept" ? Box : Layers })))
 }
 
 export function SourcesPage() {

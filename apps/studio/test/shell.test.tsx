@@ -4,7 +4,7 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -42,4 +42,14 @@ test("an entry is a route, or an anchor on its section's page", () => {
 test("a submenu offers a search over its entries", async () => {
   const html = await at("/sources", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
   expect(html).toContain('placeholder="Find in Sources"')
+})
+
+test("the rail divides its groups once, and the page bar holds search, shortcuts and notifications", async () => {
+  const rules: Section = { path: "/workflows", label: "Workflows", icon: Database, summary: "", group: "rules" }
+  const html = await at("/sources", () => <Shell sections={[{ ...sources, group: "model" }, { ...questions, group: "model" }, rules]} />)
+  expect(html.match(/data-slot="separator"/g)?.length).toBe(1)
+  expect(html).toContain("Search or add…")
+  expect(html).toContain("Keyboard shortcuts")
+  expect(html).toContain("Notifications")
+  expect(html).not.toContain(">RD<")
 })
