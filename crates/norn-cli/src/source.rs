@@ -296,6 +296,7 @@ pub(super) fn execute(args: &SourceArgs) -> Result<(String, bool), String> {
         let line = observation(&pipeline, row, extracted_at)?;
         writeln!(output, "{line}").map_err(|e| e.to_string())?;
     }
+    let _ = output.pop();
     Ok((output, true))
 }
 
