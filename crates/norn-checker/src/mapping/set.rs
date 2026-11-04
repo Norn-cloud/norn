@@ -117,7 +117,7 @@ fn path_findings(
     let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
         ids.iter()
             .map(|id| {
-                artifacts
+                let entity = artifacts
                     .iter()
                     .chain(base)
                     .find(|a| {
@@ -130,14 +130,20 @@ fn path_findings(
                                 .and_then(|d| d.version.as_deref())
                                 .is_none_or(|version| a.version == version)
                     })
-                    .cloned()
                     .ok_or_else(|| {
                         vec![error(
                             PATH_MAPPING_INVALID,
                             format!("unresolved path catalog entity {id:?}"),
                             Span::pointer("/pathMappings"),
                         )]
-                    })
+                    })?;
+                // Reserve bytes before cloning, including repeated catalog IDs.
+                serde_json::to_writer(work, entity).map_err(|cause| vec![error(
+                    crate::consistency::codes::CHASE_REFUSED,
+                    format!("path catalog metering refused: {cause}; consistency is unknown"),
+                    Span::pointer("/pathMappings"),
+                )])?;
+                Ok(entity.clone())
             })
             .collect()
     };
