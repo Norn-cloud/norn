@@ -1539,24 +1539,7 @@ pub fn prepare_observed_delete(
     if buried.exists() {
         return unchanged();
     }
-    if let Some(property) = catalog
-        .effective_type(&key.object_type)
-        .and_then(|effective| {
-            effective
-                .properties
-                .iter()
-                .find(|property| property.protected())
-        })
-    {
-        return Err(ObservationRefusal::Properties(Box::new(
-            DecisionRefusal::InvalidOutput {
-                reason: format!(
-                    "protected property `{}` of {key} may be deleted only by rules",
-                    property.id.as_str()
-                ),
-            },
-        )));
-    }
+    reject_protected_observed_delete(catalog, key)?;
     let before = effective_observed_values(catalog, key, values)?;
     let mut current = before.clone();
     let reached = reach_on_delete(catalog, key, &mut current, lifecycles)?;
@@ -1628,6 +1611,31 @@ pub fn prepare_observed_delete(
         },
         authorization,
     })
+}
+
+fn reject_protected_observed_delete(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+) -> Result<(), ObservationRefusal> {
+    if let Some(property) = catalog
+        .effective_type(&key.object_type)
+        .and_then(|effective| {
+            effective
+                .properties
+                .iter()
+                .find(|property| property.protected())
+        })
+    {
+        return Err(ObservationRefusal::Properties(Box::new(
+            DecisionRefusal::InvalidOutput {
+                reason: format!(
+                    "protected property `{}` of {key} may be deleted only by rules",
+                    property.id.as_str()
+                ),
+            },
+        )));
+    }
+    Ok(())
 }
 
 fn append_observed_modification(
