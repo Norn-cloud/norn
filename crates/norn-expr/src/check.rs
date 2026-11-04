@@ -284,6 +284,90 @@ impl fmt::Display for CostEstimate {
     }
 }
 
+/// Replayable fuel claim for one expression, conditional on conforming slice bounds.
+/// This is not a whole graph, writer, IO or allocation certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FuelCertificate {
+    /// Exact bound, not a floating-point estimate or an unchecked solver answer.
+    pub units: u64,
+    /// Identity of the exact source, environment, expected type and declared limits.
+    pub statement: String,
+    /// Content identity of the checker and metered implementation.
+    pub semantics: String,
+}
+
+impl FuelCertificate {
+    /// Reconstruct the derivation from authoritative source, environment and limits.
+    /// Unknown expressions and over-budget claims never produce evidence.
+    ///
+    /// # Errors
+    /// Refuses a stale semantics identity, changed bound, or failed admission.
+    pub fn verify(
+        &self,
+        expression: &Expression,
+        env: &ZenTypeEnv,
+        expected: &Type,
+        limits: &ResourceLimitProfile,
+    ) -> Result<CheckedExpression, String> {
+        if self.semantics.len() != 64 || self.semantics != fuel_semantics()? {
+            return Err("stale expression fuel semantics".into());
+        }
+        let (checked, reconstructed) = certify_expression(expression, env, expected, limits)?;
+        if self.statement != reconstructed.statement {
+            return Err("expression fuel certificate statement changed".into());
+        }
+        if checked.cost().units() != self.units || self.units == u64::MAX {
+            return Err("expression fuel certificate bound differs from derivation".into());
+        }
+        Ok(checked)
+    }
+}
+
+/// Admit one assignment and retain replayable cost evidence. All limits and
+/// types are supplied by admission authority, never taken from a certificate.
+///
+/// # Errors
+/// Refuses unsupported expressions, over-budget or overflowing bounds.
+pub fn certify_expression(
+    expression: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+) -> Result<(CheckedExpression, FuelCertificate), String> {
+    let checked = check_expression_with(expression, env, expected, limits)
+        .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
+    if checked.cost().units() == u64::MAX {
+        return Err("unknown or overflowing expression cost".into());
+    }
+    let statement = norn_ir::canonical::domain_hash_hex(b"norn.expression-cost-statement/1\0",
+        &(expression.source(), env.to_canonical_value(),
+          expected.to_canonical_value(crate::env::TypeEnvVersion::V2), limits))
+        .map_err(|error| error.to_string())?;
+    let certificate = FuelCertificate {
+        units: checked.cost().units(), statement, semantics: fuel_semantics()?,
+    };
+    Ok((checked, certificate))
+}
+
+/// Fingerprint cost-bearing implementation sources once per process. Source edits
+/// invalidate old evidence even when an author forgets to bump the profile name.
+fn fuel_semantics() -> Result<String, String> {
+    static IDENTITY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        norn_ir::canonical::domain_hash_hex(b"norn.expression-fuel/1\0", &[
+            include_str!("check.rs"),
+            include_str!("check/cost.rs"),
+            include_str!("expression.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/meter.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/compiler/compiler.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/compiler/opcode.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/vm/vm.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/functions/internal.rs"),
+            include_str!("../../../vendor/zen/core/expression/src/functions/method.rs"),
+        ]).map_err(|error| error.to_string())
+    }).clone()
+}
+
 /// An admitted expression: its proved type and its static cost bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedExpression {
