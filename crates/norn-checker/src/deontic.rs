@@ -393,21 +393,31 @@ pub(crate) fn check_declared_order_set(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> Vec<crate::Diagnostic> {
-    match admission_order(artifacts, base) {
+    let mut findings = match admission_order(artifacts, base) {
         Ok(Some(report)) => report.diagnostics,
         Ok(None) => Vec::new(),
         Err(error) => vec![crate::consistency::finding(
             "consistency.diagnosis.unknown", crate::DiagnosticSeverity::Error,
             format!("Normative admission refused: {error}. Limits: 64 declarations, 256 contexts, 8192 evaluations, {ADMISSION_CALLS} diagnosis queries."), None,
         )],
+    };
+    if !findings.is_empty() {
+        use sha2::Digest;
+        let source = norn_canonical::canonical_json_of(&artifacts);
+        let installed = norn_canonical::canonical_json_of(&base);
+        if let (Ok(source), Ok(installed)) = (source, installed) {
+            let pins = format!(" Canonical attempted/base SHA256: {:x}/{:x}. Profile norn.normative-admission/1; closed domains derived from the exact pinned subject definitions.", sha2::Sha256::digest(source), sha2::Sha256::digest(installed));
+            for finding in &mut findings { finding.message.push_str(&pins); }
+        }
     }
+    findings
 }
 
 fn admission_order(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> Result<Option<crate::norm_precedence::DeclaredOrderReport>, String> {
-    use crate::norm_precedence::{ConstitutionLayer, diagnose_declared_order};
+    use crate::norm_precedence::{ConstitutionLayer, diagnose_candidate_order};
     use std::collections::BTreeSet;
     let mut rules = Vec::new();
     let mut layers = Vec::new();
@@ -449,7 +459,7 @@ fn admission_order(
     if rules.is_empty() { return Ok(None); }
     let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
         .map_err(|e| format!("{e:?}"))?;
-    diagnose_declared_order(&lowered.norms, &lowered.origins, &layers, &lowered.edges,
+    diagnose_candidate_order(&lowered.norms, &lowered.origins, &layers, &lowered.edges,
         &protected, lowered.contexts, ADMISSION_CALLS).map(Some).map_err(|e| format!("{e:?}"))
 }
 
