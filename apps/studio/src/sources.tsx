@@ -3,7 +3,6 @@ import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Database, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile } from "@/components/kpi-tile"
-import { ListDetail } from "@/components/list-detail"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -169,22 +168,18 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
   )
 }
 
-/** Object types, listed beside the selected one's record page. */
+/** One object type's record page; the submenu lists the others. */
 export function ObjectTypePage() {
   const { type } = useParams({ from: "/sources/$type" })
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   const concept = catalog?.byName.get(type)
   return (
-    <ListDetail title="Object types" placeholder="Find an object type" selected={type}
-      items={(catalog?.concepts ?? []).map((item) => ({
-        id: item.name, to: `/sources/${item.name}`, title: item.title,
-        subtitle: item.description, group: item.kind === "concept" ? "Fed by connected systems" : "Shared interfaces",
-      }))}>
+    <>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-    </ListDetail>
+    </>
   )
 }
 
@@ -192,7 +187,8 @@ export function ObjectTypePage() {
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
-  return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: "Object types" }))
+  return catalog && (["concept", "core idea"] as const).flatMap((kind) => catalog.concepts.filter((concept) => concept.kind === kind)
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces" })))
 }
 
 export function SourcesPage() {

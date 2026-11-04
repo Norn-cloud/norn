@@ -3,7 +3,6 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ListDetail } from "@/components/list-detail"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
 
@@ -40,14 +39,7 @@ test("an entry is a route, or an anchor on its section's page", () => {
   expect(target(questions, "#corrections")).toEqual({ to: "/questions", hash: "corrections" })
 })
 
-test("a list beside a record groups its items in order and marks the open one", async () => {
-  const html = await at("/questions/b", () => (
-    <ListDetail title="Questions" placeholder="Find a question" selected="b" items={[
-      { id: "a", to: "/questions/a", title: "Alpha", group: "Holding" },
-      { id: "b", to: "/questions/b", title: "Beta", group: "Lot" },
-    ]}>detail</ListDetail>
-  ))
-  expect(html.indexOf("Holding")).toBeLessThan(html.indexOf("Lot"))
-  expect(html).toMatch(/aria-current="page"[^>]*href="\/questions\/b"|href="\/questions\/b"[^>]*aria-current="page"/)
-  expect(html).toContain("detail")
+test("a submenu offers a search over its entries", async () => {
+  const html = await at("/sources", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
+  expect(html).toContain('placeholder="Find in Sources"')
 })

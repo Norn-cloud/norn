@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { ListDetail } from "@/components/list-detail"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -172,21 +171,17 @@ export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
 /** The object type a question counts, which is how the list groups questions. */
 const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.document.name)
 
-/** One question as a record page, listed beside the others grouped by the object type it counts. */
+/** One question as a record page; the submenu lists the others by the object type they count. */
 export function QuestionPage() {
   const { name } = useParams({ from: "/questions/$name" })
   const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
   const read = board.data?.find(({ question }) => question.document.name === name)
   return (
-    <ListDetail title="Questions" placeholder="Find a question" selected={name}
-      items={(board.data ?? []).map((item) => ({
-        id: item.question.document.name, to: `/questions/${item.question.document.name}`,
-        title: headline(item.question.document), subtitle: scope(item.question.document), group: subject(item),
-      }))}>
+    <>
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}
       {board.data && (read ? <QuestionCard read={read} heading="h1" /> : <EmptyState icon={ChartLine}>No question named {name} is on the board.</EmptyState>)}
-    </ListDetail>
+    </>
   )
 }
 

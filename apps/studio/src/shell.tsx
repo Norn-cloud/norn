@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import {
-  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -52,7 +52,10 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
  * No server document declares a section action yet, so none is shown.
  */
 export function Submenu({ section }: { readonly section: Section }) {
-  const entries = (section.useMenu ?? none)() ?? []
+  const [search, setSearch] = useState("")
+  const all = (section.useMenu ?? none)() ?? []
+  const query = search.trim().toLowerCase()
+  const entries = all.filter(({ label }) => typeof label !== "string" || label.toLowerCase().includes(query))
   const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   return (
@@ -69,8 +72,16 @@ export function Submenu({ section }: { readonly section: Section }) {
             <DropdownMenuItem disabled>Live, once the read host is up</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {all.length > 0 && (
+          <label className="relative block">
+            <span className="sr-only">Find in {section.label}</span>
+            <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <SidebarInput type="search" placeholder={`Find in ${section.label}`} value={search} onChange={(event) => setSearch(event.target.value)} className="ps-8" />
+          </label>
+        )}
       </SidebarHeader>
       <SidebarContent>
+        {all.length > 0 && entries.length === 0 && <p className="px-4 py-2 text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>}
         {groups.map((group) => (
           <SidebarGroup key={group}>
             <SidebarGroupLabel>{group}</SidebarGroupLabel>
