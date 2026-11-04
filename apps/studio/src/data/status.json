@@ -4,17 +4,17 @@
     {
       "area": "Thesis core",
       "percent": 55,
-      "detail": "Working end to end on the demo profile; proofs don't yet cover workflow (lifecycle) subjects or multiple laws per subject; that extension is next."
+      "detail": "Working end to end on the demo profile; proofs don't yet cover workflow (lifecycle) subjects or multiple laws per subject. That extension is next; re-proof at admission inside Workers (#757) in review."
     },
     {
       "area": "Engine core",
       "percent": 70,
-      "detail": "Cell, kernel and checker run exact typed answers, as-of reads and restatements."
+      "detail": "Values, identity, queries/IVM, lineage, restatement, as-of; exact decimals everywhere."
     },
     {
       "area": "Safety & authz",
       "percent": 65,
-      "detail": "Refusals carry the law; server-only authority; scope and authorization checks on every read."
+      "detail": "Cedar, default-deny, writer authz, structured laws, refusals with reasons, identical on UI/API/MCP/CLI."
     },
     {
       "area": "Proofs",
@@ -24,27 +24,27 @@
     {
       "area": "Workflows & actions",
       "percent": 55,
-      "detail": "Lifecycles, guards and laws are declared and checked; the live action route is pending."
+      "detail": "Native receive→transfer→FIFO-sell runs and matches ERPNext 7/7; UI action wiring open."
     },
     {
       "area": "Studio UI",
       "percent": 45,
-      "detail": "Sources, questions, workflows and guarantees render recorded server documents; live reads are pending."
+      "detail": "Live at studio.norn.cloud on recorded data; live mode waits on the read host."
     },
     {
       "area": "Connectors & live data",
       "percent": 20,
-      "detail": "Source mappings are declared and recorded; live ingestion is not wired yet."
+      "detail": "ERPNext/Shopify definitions; real ERPNext on Boat; Shopify store unavailable (402); no live ingestion yet."
     },
     {
       "area": "Production",
       "percent": 15,
-      "detail": "Demo deploy only; hosting, tenancy and operations are not in place yet."
+      "detail": "Better Auth deferred (#817); cell host not deployed."
     },
     {
       "area": "Agent + canvas",
       "percent": 5,
-      "detail": "Design spike written (#772); nothing built yet."
+      "detail": "Stack chosen (AI Elements, AI SDK, AG-UI, json-render, xyflow); smallest slice in build."
     }
   ],
   "footnote": "Estimates of alpha scope from merged PRs vs open issues, 2026-11-04."
