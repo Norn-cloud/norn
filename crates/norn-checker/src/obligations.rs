@@ -17,6 +17,8 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
+/// Source-bound Core 06 overlay obligation generation.
+pub mod overlay;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;

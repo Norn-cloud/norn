@@ -92,6 +92,7 @@ pub mod naming_series;
 pub mod norm_precedence;
 pub mod object_types;
 pub mod obligations;
+pub use obligations::overlay;
 #[allow(
     missing_docs,
     clippy::pedantic,
