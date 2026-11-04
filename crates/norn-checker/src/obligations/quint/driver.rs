@@ -263,7 +263,7 @@ fn documents(
             format: GuaranteesFormat::V1, law_artifact_id: artifact_id.into(), law_id: law.id,
             law_version: artifact.version.clone(), verdict, level,
             challenge_sha256: selected.iter().find_map(|g|g.evidence.as_ref()).map_or_else(||batch.challenge.sha256().to_owned(), |record|record.pins.challenge_sha256.clone()),
-            bounds_json: serde_json::to_string(shared)?,
+            bounds_json: String::from_utf8(norn_canonical::canonical_json_of(shared)?)?,
             tools, total: u32::try_from(selected.len())?, eligible: u32::try_from(eligible)?, discharged: u32::try_from(discharged)?, goals: selected,
             runtime_enforcement: GuaranteeReference::NotYet { reason: "no separate runtime enforcement evidence supplied by the server".into() },
             parity: GuaranteeReference::NotYet { reason: "matching raw backend verdicts are retained per goal; no separate server parity reference supplied".into() },
