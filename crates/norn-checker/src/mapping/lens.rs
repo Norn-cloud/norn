@@ -59,7 +59,7 @@ impl AdmittedLens {
             .iter()
             .position(|s| s == source)
             .and_then(|row| self.get.get(row).copied())
-            .ok_or("unknown source state".into())
+            .ok_or_else(|| "unknown source state".into())
     }
 }
 
@@ -67,7 +67,7 @@ impl AdmittedLens {
 ///
 /// At most 32 states, 16 Boolean fields per state, 128-byte field names,
 /// 4096 expression bytes and 1024 evaluation units per state are admitted.
-/// PutPut is always required. No sampling or solver success is accepted.
+/// `PutPut` is always required. No sampling or solver success is accepted.
 ///
 /// # Errors
 /// Malformed, unsupported, unknown or refuted declarations refuse admission.
@@ -86,7 +86,7 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     let mut bytes = vec![0_u8; 65_536];
     let mut remaining = bytes.as_mut_slice();
     serde_json::to_writer(&mut remaining, raw)
-        .map_err(|_| "unknown: lens declaration exceeds byte bound")?;
+        .map_err(|_error| "unknown: lens declaration exceeds byte bound")?;
     let used = 65_536_usize.saturating_sub(remaining.len());
     let declaration: FiniteWriteBackLens =
         serde_json::from_slice(bytes.get(..used).ok_or("unknown: byte bound")?)
@@ -104,8 +104,8 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
         .into_iter()
         .map(|[no, yes]| {
             Ok([
-                no.parse::<usize>().map_err(|_| "unknown: put index")?,
-                yes.parse::<usize>().map_err(|_| "unknown: put index")?,
+                no.parse::<usize>().map_err(|_error| "unknown: put index")?,
+                yes.parse::<usize>().map_err(|_error| "unknown: put index")?,
             ])
         })
         .collect::<Result<Vec<_>, String>>()?;
