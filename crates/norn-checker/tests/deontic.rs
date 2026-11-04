@@ -707,7 +707,11 @@ fn native_order_refuses_unbounded_and_temporal_grounding() {
     assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
 }
 
-#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "typed admission test fixture")]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "typed admission test fixture"
+)]
 fn admission_fixture() -> (serde_json::Value, DeonticRule, DeonticRule) {
     let mut wire: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
