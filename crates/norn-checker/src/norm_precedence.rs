@@ -714,7 +714,7 @@ mod admission_tests {
             active: &BTreeSet<usize>,
         ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
             use crate::consistency::diagnosis::Verdict;
-            self.calls += 1;
+            self.calls = self.calls.saturating_add(1);
             if active.contains(&1) && (active.contains(&0) || active.contains(&2)) {
                 Verdict::Unsat
             } else {
@@ -747,7 +747,7 @@ mod admission_tests {
             &mut self,
             _active: &BTreeSet<usize>,
         ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
-            self.calls += 1;
+            self.calls = self.calls.saturating_add(1);
             crate::consistency::diagnosis::Verdict::Sat
         }
     }
