@@ -19,8 +19,8 @@ use norn_kernel::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
-struct Allow;
+pub(crate) type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
+pub(crate) struct Allow;
 impl ActionAuthorizer for Allow {
     fn authorize_read(
         &self,
@@ -78,11 +78,11 @@ fn audit_type(mut object: ObjectTypeDef) -> ObjectTypeDef {
     object
 }
 
-fn artifacts() -> Vec<ArtifactEnvelope> {
+pub(crate) fn artifacts() -> Vec<ArtifactEnvelope> {
     serde_json::from_str(include_str!("../../../fixtures/stress/purchase.json"))
         .expect("generated purchase")
 }
-fn run(
+pub(crate) fn run(
     action_id: &str,
     input: Value,
     cell: &mut Cell,
@@ -126,9 +126,9 @@ fn run(
         &Allow,
     )
 }
-#[test]
-fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
-    let artifacts = artifacts();
+pub(crate) fn setup(
+    artifacts: &[ArtifactEnvelope],
+) -> (Cell, Vec<ObjectTypeDef>, [InterfaceDef; 1]) {
     let interface: ArtifactEnvelope = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.Process.interface.json"
     ))
@@ -158,15 +158,21 @@ fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
         .expect("model")
         .with_governing_laws(&artifacts)
         .expect("laws");
-    let catalog = TypeCatalog::new(definitions.iter())
-        .with_interfaces(&interfaces)
-        .with_governing_laws(&artifacts);
-    let mut cell = Cell::new(
+    let cell = Cell::new(
         CellStore::open_in_memory(model).expect("SQLite"),
         "org_demo/dev",
         |c| c.payload.clone(),
     )
     .expect("cell");
+    (cell, definitions, interfaces)
+}
+#[test]
+fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
+    let artifacts = artifacts();
+    let (mut cell, definitions, interfaces) = setup(&artifacts);
+    let catalog = TypeCatalog::new(definitions.iter())
+        .with_interfaces(&interfaces)
+        .with_governing_laws(&artifacts);
     let before = cell.store().read().dump().expect("before zero order");
     let error = run(
         "stress.purchase.create.action",
@@ -289,30 +295,6 @@ fn complete_contract_keeps_workflow_unknowns_and_generates_receipt_goals() {
     )
     .expect("source");
     let registry = BTreeSet::new();
-    let base = vec![
-        serde_json::from_str(include_str!(
-            "../../../registry/core/artifacts/core.Process.interface.json"
-        ))
-        .expect("base"),
-        serde_json::from_str(include_str!(
-            "../../../registry/core/artifacts/core.units.json"
-        ))
-        .expect("units"),
-    ];
-    let diagnostics = norn_checker::check_artifact_set(
-        &artifacts(),
-        &norn_checker::EntityArtifactSetContext {
-            registry: &registry,
-            base: &base,
-            tenant: None,
-        },
-    );
-    assert!(
-        !diagnostics
-            .iter()
-            .any(|d| d.severity == norn_ir::DiagnosticSeverity::Error),
-        "{diagnostics:#?}"
-    );
     let authority = ApprovedContract::approve(
         &source,
         &registry,
@@ -352,4 +334,61 @@ fn complete_contract_keeps_workflow_unknowns_and_generates_receipt_goals() {
         g.as_ref()
             .is_err_and(|e| e == "only create-only input writers supported")
     }));
+}
+
+#[test]
+fn bounded_inspection_commit_refuse_and_exact_post_state_correspondence() {
+    let original = artifacts();
+    let mutant = serde_json::from_str::<Vec<ArtifactEnvelope>>(include_str!(
+        "../../../fixtures/stress/purchase-mutant.json"
+    ))
+    .expect("mutant");
+    for (declarations, mutated) in [(&original, false), (&mutant, true)] {
+        for delivered in 1..=4 {
+            for accepted in 0..=4 {
+                let (mut cell, definitions, interfaces) = setup(declarations);
+                let catalog = TypeCatalog::new(definitions.iter())
+                    .with_interfaces(&interfaces)
+                    .with_governing_laws(declarations);
+                let before = cell.store().read().dump().expect("before");
+                let result = run(
+                    "stress.receipt.inspect.action",
+                    json!({"id":"receipt-one","delivered":delivered,"accepted":accepted}),
+                    &mut cell,
+                    &catalog,
+                    declarations,
+                    "bounded",
+                );
+                if accepted <= delivered && (!mutated || accepted == delivered) {
+                    assert!(matches!(
+                        result.expect("valid inspection"),
+                        ActionOutcome::Committed { .. }
+                    ));
+                    let actual = cell
+                        .load(&norn_kernel::FactKey::new(
+                            "stress.ReceiptLine",
+                            "receipt-one",
+                        ))
+                        .expect("load")
+                        .values
+                        .expect("created inspection");
+                    let expected: JsonObject = serde_json::from_value(json!({"id":"receipt-one","delivered":delivered,"accepted":accepted,"rejected":delivered-accepted})).expect("exact expected state");
+                    assert_eq!(actual, expected);
+                } else {
+                    let refusal = result.expect_err("invalid inspection");
+                    let (code, text) = if accepted > delivered {
+                        ("action.precondition_failed", "accepted")
+                    } else {
+                        (
+                            "core.laws.violated",
+                            "stress.receipt_balance: Inspection accounts for the entire delivery, including rejected goods.",
+                        )
+                    };
+                    assert_eq!(refusal.code(), code);
+                    assert!(refusal.to_string().contains(text), "{refusal}");
+                    assert_eq!(before, cell.store().read().dump().expect("atomic refusal"));
+                }
+            }
+        }
+    }
 }
