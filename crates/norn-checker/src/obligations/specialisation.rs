@@ -99,60 +99,12 @@ impl ApprovedContract {
             {
                 continue;
             }
-            let Some(old) = usize::try_from(evidence.pins.goal_index)
-                .ok()
-                .and_then(|index| goals(&base).get(index))
-            else {
-                continue;
-            };
-            let kind = old["goal"]["kind"].as_str().unwrap_or("");
-            if !matches!(kind, "initialization" | "preservation") {
-                continue;
-            }
-            let Some(law_index) = old["law"].as_u64().and_then(|i| usize::try_from(i).ok()) else {
-                continue;
-            };
-            let Some(law_identity) = base.body()["lawStatements"]
-                .as_array()
-                .and_then(|a| a.get(law_index))
-            else {
-                continue;
-            };
-            let safety = base_source
-                .artifacts
-                .iter()
-                .find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
-                .and_then(|a| {
-                    serde_json::to_value(a.payload.to_json_value())
-                        .ok()
-                        .and_then(|v| serde_json::from_value::<LawIR>(v).ok())
-                })
-                .is_some_and(|law| {
-                    matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-                });
-            if !safety {
-                continue;
-            }
-            let Some(target_law) = result.challenge.body()["lawStatements"]
-                .as_array()
-                .and_then(|laws| laws.iter().position(|law| law == law_identity))
-            else {
-                continue;
-            };
-            let mut target = old.clone();
-            target["law"] = target_law.into();
-            target["statement"]["law"] = target_law.into();
-            let Some(index) = goals(&result.challenge)
-                .iter()
-                .position(|goal| goal == &target)
-            else {
-                continue;
-            };
+            let Some(index) = matching_goal(base_source, &base, &result.challenge, evidence.pins.goal_index) else { continue };
             if result.reused.iter().any(|r| r.goal_index == index) {
                 continue;
             }
             let bytes = norn_canonical::serialize_json_verbatim(evidence.record)
-                .map_err(|_| ChallengeError::Closure)?;
+                .map_err(|_error| ChallengeError::Closure)?;
             let base_evidence_sha256 = exact_commitment(b"specialisation-evidence", &[&bytes])?;
             let extension_sha256 = source.exact_digest.clone();
             let index_bytes = index.to_string();
@@ -178,6 +130,59 @@ impl ApprovedContract {
             .retain(|index| !result.reused.iter().any(|r| r.goal_index == *index));
         Ok(result)
     }
+}
+
+fn matching_goal(base_source: &DefinitionSource, base: &Challenge, target_challenge: &Challenge, goal_index: u32) -> Option<usize> {
+            let Some(old) = usize::try_from(goal_index)
+                .ok()
+                .and_then(|index| goals(base).get(index))
+            else {
+                return None;
+            };
+            let kind = old.pointer("/goal/kind").and_then(Value::as_str).unwrap_or("");
+            if !matches!(kind, "initialization" | "preservation") {
+                return None;
+            }
+            let Some(law_index) = old["law"].as_u64().and_then(|i| usize::try_from(i).ok()) else {
+                return None;
+            };
+            let Some(law_identity) = base.body()["lawStatements"]
+                .as_array()
+                .and_then(|a| a.get(law_index))
+            else {
+                return None;
+            };
+            let safety = base_source
+                .artifacts
+                .iter()
+                .find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
+                .and_then(|a| {
+                    serde_json::to_value(a.payload.to_json_value())
+                        .ok()
+                        .and_then(|v| serde_json::from_value::<LawIR>(v).ok())
+                })
+                .is_some_and(|law| {
+                    matches!(law.modality, LawModality::Always {} | LawModality::Never {})
+                });
+            if !safety {
+                return None;
+            }
+            let Some(target_law) = target_challenge.body()["lawStatements"]
+                .as_array()
+                .and_then(|laws| laws.iter().position(|law| law == law_identity))
+            else {
+                return None;
+            };
+            let mut target = old.clone();
+            *target.get_mut("law")? = target_law.into();
+            *target.pointer_mut("/statement/law")? = target_law.into();
+            let Some(index) = goals(&target_challenge)
+                .iter()
+                .position(|goal| goal == &target)
+            else {
+                return None;
+            };
+    Some(index)
 }
 
 fn goals(challenge: &Challenge) -> &[Value] {
