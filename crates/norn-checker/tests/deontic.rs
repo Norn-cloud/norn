@@ -707,6 +707,7 @@ fn native_order_refuses_unbounded_and_temporal_grounding() {
     assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
 }
 
+#[allow(clippy::expect_used, clippy::indexing_slicing, reason = "typed admission test fixture")]
 fn admission_fixture() -> (serde_json::Value, DeonticRule, DeonticRule) {
     let mut wire: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
@@ -735,7 +736,7 @@ fn admission_fixture() -> (serde_json::Value, DeonticRule, DeonticRule) {
 
 #[test]
 fn ordinary_admission_runs_native_declared_order() {
-    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
     use std::collections::BTreeSet;
     let (entity, mut low, mut high) = admission_fixture();
     let registry = BTreeSet::new();
@@ -776,22 +777,37 @@ fn ordinary_admission_runs_native_declared_order() {
         source: low.source.clone(),
     });
     assert!(run(&[low.clone(), high.clone()]).is_empty());
-    let mut missing = low.clone(); missing.defeated_by = vec!["missing".into()];
-    assert!(run(&[missing]).iter().any(norn_checker::Diagnostic::is_error));
+    let mut missing = low.clone();
+    missing.defeated_by = vec!["missing".into()];
+    assert!(
+        run(&[missing])
+            .iter()
+            .any(norn_checker::Diagnostic::is_error)
+    );
     let many: Vec<_> = (0..65).map(|_| low.clone()).collect();
-    assert!(run(&many).iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"));
+    assert!(
+        run(&many)
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown")
+    );
 }
 
 #[test]
 fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
-    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
     use std::collections::BTreeSet;
     for scenario in ["protected", "higher-wins", "undeclared"] {
         let (entity, mut low, mut high) = admission_fixture();
         if scenario == "protected" {
             low.defeated_by.push(high.law.id.clone());
-            low.exceptions.push(norn_ir::deontic::RuleException { id:"masked".into(), condition:norn_ir::ZenExpression("true".into()),source:low.source.clone() });
-        } else if scenario == "higher-wins" { high.defeated_by.push(low.law.id.clone()); }
+            low.exceptions.push(norn_ir::deontic::RuleException {
+                id: "masked".into(),
+                condition: norn_ir::ZenExpression("true".into()),
+                source: low.source.clone(),
+            });
+        } else if scenario == "higher-wins" {
+            high.defeated_by.push(low.law.id.clone());
+        }
         let mut installed = entity.clone();
         installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
         let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
@@ -803,8 +819,22 @@ fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
         candidate["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
         candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[high]});
         let artifact = serde_json::from_value(candidate).expect("candidate");
-        let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext { registry:&BTreeSet::new(),base:&[base],tenant:None });
-        assert!(findings.iter().any(|d| d.code.as_str() == "consistency.normative.conflict" && d.message.contains("sales.approve") && d.message.contains("sales.block")), "{scenario}: {findings:?}");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[base],
+                tenant: None,
+            },
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "consistency.normative.conflict"
+                    && d.message.contains("sales.approve")
+                    && d.message.contains("sales.block")),
+            "{scenario}: {findings:?}"
+        );
     }
 }
 
