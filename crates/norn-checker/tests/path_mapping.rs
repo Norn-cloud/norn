@@ -601,3 +601,82 @@ fn runtime_admission_cost_before_and_after() {
         );
     }
 }
+
+fn edit_artifact(set: &mut [ArtifactEnvelope], id: &str, edit: impl FnOnce(&mut Value)) {
+    let artifact = set.iter_mut().find(|a| a.artifact_id == id).unwrap();
+    let mut value = serde_json::to_value(&*artifact).unwrap();
+    edit(&mut value);
+    *artifact = serde_json::from_value(value).unwrap();
+}
+
+fn constrain(set: &mut [ArtifactEnvelope], id: &str) {
+    edit_artifact(set, id, |v| {
+        v["payload"]["extensions"] = json!({"norn.path-equations/1.0.0": [
+            {"id": "identity", "left": [], "right": []}
+        ]});
+    });
+}
+
+#[test]
+fn runtime_requires_bindings_for_actual_mapped_targets() {
+    let mut set = runtime_set(&[]);
+    assert!(!runtime_check(&set).iter().any(norn_checker::Diagnostic::is_error));
+    constrain(&mut set, "party.Customer.entity");
+    let findings = runtime_check(&set);
+    assert!(findings.iter().any(|d| d.is_error()
+        && d.code == "consistency.path_mapping.missing_binding"
+        && d.message.contains("party.Customer.entity (equation identity)")), "{findings:?}");
+
+    // A valid binding for another catalog cannot discharge the mapped target.
+    let mut partial = runtime_set(&[mapping("unrelated", "t", "s", &[])]);
+    constrain(&mut partial, "party.Customer.entity");
+    assert!(runtime_check(&partial).iter().any(|d| d.code == "consistency.path_mapping.missing_binding"));
+}
+
+#[test]
+fn runtime_requires_inherited_only_binding() {
+    let mut set = runtime_set(&[]);
+    let mut parent = serde_json::to_value(set.iter().find(|a| a.artifact_id == "party.Customer.entity").unwrap()).unwrap();
+    parent["artifactId"] = json!("party.Parent.entity");
+    parent["name"] = json!("Parent");
+    parent["payload"] = json!({"entityVersion":"2.0", "objectType":{"name":"party.Parent"}});
+    set.push(serde_json::from_value(parent).unwrap());
+    constrain(&mut set, "party.Parent.entity");
+    edit_artifact(&mut set, "party.Customer.entity", |v| {
+        v["payload"]["objectType"]["extends"] = json!("party.Parent");
+        v["dependencies"] = json!([{"artifactId":"party.Parent.entity", "kind":"entity", "version":"0.1.0", "required":true}]);
+    });
+    let findings = runtime_check(&set);
+    assert!(findings.iter().any(|d| d.is_error()
+        && d.code == "consistency.path_mapping.missing_binding"
+        && d.message.contains("party.Customer.entity (equation identity)")), "{findings:?}");
+    assert!(findings.iter().filter(|d| d.is_error()).all(|d| d.code == "consistency.path_mapping.missing_binding"), "{findings:?}");
+}
+
+#[test]
+fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
+    let mut set = runtime_set(&[mapping("first", "t", "s", &[])]);
+    let sources = catalog("u");
+    let targets = catalog("v");
+    edit_artifact(&mut set, "erpnext.mapping", |v| {
+        v["payload"]["pathMappings"].as_array_mut().unwrap().push(json!({
+            "sourceEntities":sources.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
+            "targetEntities":targets.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
+            "mapping":mapping("second", "v", "u", &[])
+        }));
+        for a in sources.iter().chain(&targets) {
+            v["dependencies"].as_array_mut().unwrap().push(json!({"artifactId":a.artifact_id,"kind":"entity","version":a.version,"required":true}));
+        }
+    });
+    set.extend(sources);
+    set.extend(targets);
+    let findings = runtime_check(&set);
+    assert!(!findings.iter().any(norn_checker::Diagnostic::is_error), "{findings:?}");
+    let evidence: Vec<_> = findings.iter().filter(|d| d.code == "consistency.path_mapping.preserved").collect();
+    assert_eq!(evidence.len(), 2, "{findings:?}");
+    for (index, ns) in ["t", "v"].iter().enumerate() {
+        let d = evidence.iter().find(|d| d.span.as_ref().unwrap().pointer == format!("/payload/pathMappings/{index}")).unwrap();
+        let declaration = set.iter().find(|a| a.artifact_id == format!("{ns}.Delivery.entity")).unwrap();
+        assert!(d.message.contains(&norn_checker::receipt::ArtifactRef::of(declaration).unwrap().sha256));
+    }
+}
