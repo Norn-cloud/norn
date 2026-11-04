@@ -1,7 +1,8 @@
 //! Identity and wire-boundary checks; these do not exercise runtime authorization.
 use norn_ir::{
     decision_question::{
-        DecisionFamily, DecisionQuestion, DecisionQuestionState, DecisionSource, QuestionRequirement,
+        DecisionFamily, DecisionQuestion, DecisionQuestionState, DecisionSource,
+        QuestionRequirement,
     },
     function::Digest,
 };

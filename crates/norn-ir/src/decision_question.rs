@@ -127,7 +127,7 @@ pub struct DecisionApproval {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DecisionQuestionState {
-    Open,
+    Open {},
     Proposed {
         proposal: DecisionProposal,
     },
