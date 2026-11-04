@@ -55,6 +55,7 @@ pub struct AdmissionCache {
     profile: String,
     local: BTreeMap<String, Entry>,
     global: Option<Entry>,
+    jobs: Vec<JobEvidence>,
 }
 
 impl AdmissionCache {
@@ -66,6 +67,7 @@ impl AdmissionCache {
             profile: format!("norn.incremental-structural/1:{tool_sha256:?}:{policy:?}:{assumptions:?}"),
             local: BTreeMap::new(),
             global: None,
+            jobs: Vec::new(),
         }
     }
 
@@ -80,6 +82,7 @@ impl AdmissionCache {
         let Ok(digest) = self.global_digest(artifacts, context) else {
             self.local.clear();
             self.global = None;
+            self.jobs.clear();
             return Admission {
                 findings: crate::check_artifact_set(artifacts, context),
                 evidence: vec![JobEvidence {
@@ -92,11 +95,12 @@ impl AdmissionCache {
         if let Some(entry) = &self.global
             && entry.digest == digest
         {
-            let mut evidence: Vec<_> = self.local.iter().map(|(id, entry)| JobEvidence {
-                artifact_id: Some(id.clone()),
-                closure_digest: Some(entry.digest.clone()),
-                origin: EvidenceOrigin::ReusedFromDigest(entry.digest.clone()),
-            }).collect();
+            let mut evidence = self.jobs.clone();
+            for job in &mut evidence {
+                if let Some(digest) = &job.closure_digest {
+                    job.origin = EvidenceOrigin::ReusedFromDigest(digest.clone());
+                }
+            }
             evidence.push(global_evidence(&digest, true));
             return Admission { findings: entry.findings.clone(), evidence };
         }
@@ -125,6 +129,7 @@ impl AdmissionCache {
             findings
         };
         let findings = crate::artifact_set::check_artifact_set_using(artifacts, context, &mut local);
+        self.jobs.clone_from(&evidence);
         self.local = next;
         self.global = Some(Entry { digest: digest.clone(), findings: findings.clone() });
         evidence.push(global_evidence(&digest, false));

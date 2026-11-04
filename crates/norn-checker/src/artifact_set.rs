@@ -291,7 +291,7 @@ pub fn resolve_artifact_set<'a>(
 /// Resolve `artifacts` against `context.base` and run the per-kind set
 /// checks over the resolved set: the recommended T3 entry point.
 ///
-/// When resolution succeeds this is [`check_entity_artifacts`] over the set
+/// When resolution succeeds this is [`crate::check_entity_artifacts`] over the set
 /// (the per-artifact check of every artifact plus the `EntityIR` v2
 /// whole-model check), the scope compatibility of every resolved reference,
 /// the `RuleIR` v2 sub-decision closure check
