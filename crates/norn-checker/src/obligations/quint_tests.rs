@@ -324,7 +324,9 @@ fn check_affine_origins(
     let mut coefficients = BTreeMap::<String, i128>::new();
     for (symbol, delta) in &symbolic.deltas {
         for (input, value) in &delta.as_ref().expect("affine delta").coefficients {
-            let contribution = residual.coefficients[symbol].checked_mul(*value).expect("bounded coefficient");
+            let contribution = residual.coefficients[symbol]
+                .checked_mul(*value)
+                .expect("bounded coefficient");
             let coefficient = coefficients.entry(input.clone()).or_default();
             *coefficient = coefficient.checked_add(contribution).expect("bounded sum");
         }
