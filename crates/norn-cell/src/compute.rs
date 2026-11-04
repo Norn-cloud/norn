@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
+/// Exact result membership and native fact evidence.
+pub mod lineage;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
@@ -134,6 +136,29 @@ pub struct QueryResult {
 }
 
 pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
+/// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
+/// instant; sub-millisecond declarations never match a millisecond clock.
+fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
+    plan.as_of_instant()
+        .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
+}
+fn check_question_cutoff(
+    plan: &QuestionPlan,
+    cutoff: Option<crate::KnowledgeCutoff>,
+) -> Result<(), CellError> {
+    if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
+        let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        if !asof_matches(plan, point.recorded_at.as_millis()) {
+            return Err(refused("core.compute.stale_input"));
+        }
+    }
+    Ok(())
+}
+fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
+    let seconds = i64::try_from(millis.div_euclid(1000)).ok()?;
+    let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
+    Some((seconds, u32::try_from(nanos).ok()?))
+}
 fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
@@ -186,11 +211,28 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+    }
+    fn question_snapshot_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.question_snapshot_at_with(plan, context, None, visible, consume)
+    }
+    fn question_snapshot_at_with<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
-            if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
+            check_question_cutoff(plan, cutoff)?;
             self.check_question_model(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
@@ -275,12 +317,15 @@ impl<E: SqlEngine> CellStore<E> {
                 definition_pin,
                 &contributions,
             )?;
-            Ok(Snapshot {
-                historical_receipt,
-                result,
-                contributions,
-                members,
-            })
+            consume(
+                Snapshot {
+                    historical_receipt,
+                    result,
+                    contributions,
+                    members,
+                },
+                &mut budget,
+            )
         })
     }
     fn check_question_model(&self, plan: &QuestionPlan) -> Result<(), CellError> {
@@ -433,9 +478,9 @@ pub(crate) fn finish(
     let (mut stale, mut aged) = (false, false);
     let age = match plan.question().freshness {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
-            max_age_ms.0
+            Some(max_age_ms.0)
         }
-        FreshnessPolicy::AsOf { .. } => return Err(refused(UNSUPPORTED_ENGINE)),
+        FreshnessPolicy::AsOf { .. } => None,
     };
     for (source, partitions) in &context.source_cursors {
         complete &= !partitions.is_empty();
@@ -448,8 +493,8 @@ pub(crate) fn finish(
                 Some(w) => {
                     complete &= w.complete && &w.observed == consumed && w.heartbeat_ms.is_some();
                     let lag = w.heartbeat_ms.and_then(|at| context.now_ms.checked_sub(at));
-                    stale |= lag.is_none_or(|lag| lag > age);
-                    aged |= lag.is_some_and(|lag| lag > 0);
+                    stale |= lag.is_none_or(|lag| age.is_some_and(|age| lag > age));
+                    aged |= age.is_some() && lag.is_some_and(|lag| lag > 0);
                 }
                 None => complete = false,
             }
@@ -484,6 +529,17 @@ pub(crate) fn finish(
 #[allow(clippy::expect_used, reason = "bounded delta property assertions")]
 mod tests {
     use super::*;
+    proptest::proptest! {
+        #[test]
+        fn asof_millisecond_coordinates_are_exact(offset in 0u32..86_400_000) {
+            let millis=1_792_972_800_000u64.checked_add(u64::from(offset)).expect("bounded timestamp");
+            let at=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp");
+            let expected=(at.timestamp(),at.timestamp_subsec_nanos());
+            proptest::prop_assert_eq!(millis_coordinates(millis),Some(expected));
+            proptest::prop_assert_ne!(millis_coordinates(millis.checked_add(1).expect("bounded successor")),Some(expected));
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn delta_retraction_restores_exact_totals(values in proptest::collection::vec(proptest::option::of(proptest::num::i32::ANY), 0..100)) {

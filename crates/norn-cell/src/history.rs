@@ -12,7 +12,7 @@ use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
 use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
 use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
-use crate::{CellStore, CommitOutcome, InstalledDefinitionInput, Model, Receipt};
+use crate::{CellStore, CommitOutcome, Model, Receipt};
 
 /// The commitment preimage; absence is a tombstone, not an empty live object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,7 +252,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
             .ok_or_else(unproven_event)?;
         let installation = record.definition_install.ok_or_else(unproven_event)?;
-        let model = Model::from_snapshot(&installation.model)?;
+        let model = Model::from_retained_snapshot(&installation.model)?;
         if installation.installed != installed
             || model.model_hash() != installed.model_hash
             || self.receipt_at(installed.commit_seq)?.as_ref() != Some(&record.receipt)
@@ -862,7 +862,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
                     .ok_or_else(unproven_event)?;
                 let installation = record.definition_install.ok_or_else(unproven_event)?;
-                historical_model = Model::from_snapshot(&installation.model)?;
+                historical_model = Model::from_retained_snapshot(&installation.model)?;
                 if installation.installed != installed
                     || historical_model.model_hash() != installed.model_hash
                     || record.model_hash != installed.model_hash
@@ -1984,7 +1984,8 @@ impl<E: SqlEngine> CellStore<E> {
         if previous != expected_head_hash {
             return Err(refused());
         }
-        let mut store = Self::from_engine(engine, Model::from_snapshot(initial)?)?;
+        let mut store =
+            Self::from_retained_engine(engine, Model::from_retained_snapshot(initial)?)?;
         if store.export_commit_count()? != 0 {
             return Err(refused());
         }
@@ -1993,21 +1994,7 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
-                let installed = store.install_definitions(
-                    Model::from_snapshot(&install.model)?,
-                    InstalledDefinitionInput {
-                        canonical_set: install.installed.canonical_set.clone(),
-                        registry: install.installed.registry.clone(),
-                        receipt_sha256: install.installed.receipt_sha256.clone(),
-                        admission_receipt: install.installed.admission_receipt.clone(),
-                        readmission: install.readmission.clone(),
-                        installed_at: install.installed.installed_at,
-                        diff: install.diff.clone(),
-                        layout: install.installed.layout.clone(),
-                    },
-                    Some(install.installed.version.saturating_sub(1)),
-                    &record.batch.scope,
-                )?;
+                let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(refused());
                 }
@@ -2019,17 +2006,7 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
-                let ((), outcome) = store
-                    .commit_guarded_submitted(
-                        &record.batch,
-                        record.quantity_input.as_ref(),
-                        |_reader| Ok::<(), CellError>(()),
-                        &mut |_point| Ok(()),
-                    )
-                    .map_err(|error| match error {
-                        crate::store::GuardedError::Guard(error)
-                        | crate::store::GuardedError::Store(error) => error,
-                    })?;
+                let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
                 {
@@ -2049,6 +2026,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
         }
         store.read().verify_ledger()?;
+        store.admit_reconstructed_model()?;
         Ok(store)
     }
 }

@@ -312,3 +312,96 @@ fn jewel_price_milligram_denominator_refuses_before_execution() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn identity_collision_details_require_existing_collection_and_object_read_authority() {
+    use norn_kernel::action_commit::{ActionReadAuthzRequest, ActionReadTypeAuthzRequest};
+    use norn_kernel::{NOT_FOUND_MESSAGE, Refusable, RefusalCategory};
+    struct ReadPolicy {
+        collection: bool,
+        object: bool,
+    }
+    impl ActionAuthorizer for ReadPolicy {
+        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+        fn authorize_read_type(
+            &self,
+            _: &ActionReadTypeAuthzRequest<'_>,
+        ) -> Result<(), ActionDenial> {
+            if self.collection {
+                Ok(())
+            } else {
+                Err(ActionDenial::Invisible)
+            }
+        }
+        fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            if self.object {
+                Ok(())
+            } else {
+                Err(ActionDenial::Invisible)
+            }
+        }
+    }
+    let (mut quote, action) = pricing(&artifacts());
+    quote.identity.push(norn_ir::KeySpec {
+        name: norn_ir::KeyName("by_side".into()),
+        properties: vec![PropertyId("side".into())],
+        naming_series: None,
+        rule: Some(norn_ir::IdentityRule {
+            normalize: vec![norn_ir::ComponentNormalization {
+                property: PropertyId("side".into()),
+                steps: vec![
+                    norn_ir::Normalization::Trim,
+                    norn_ir::Normalization::Uppercase,
+                ],
+            }],
+            match_policy: None,
+        }),
+    });
+    let definitions = [quote.clone(), audit_type(quote)];
+    let model = Model::from_definitions(&definitions, &[]).expect("normalized pricing model");
+    let catalog = TypeCatalog::new(definitions.iter().take(1));
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = Cell::open(
+        &directory.path().join("private-key.sqlite"),
+        model,
+        StoreOptions::default(),
+        "org_demo/dev",
+        |command| command.payload.clone(),
+    )
+    .expect("cell");
+    commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &action,
+            input("earlier", " sell ", "15", "20", "USD"),
+            "seed",
+        ),
+        &Allow,
+    )
+    .expect("seed");
+    let before = cell.store().read().dump().expect("before");
+    for (index, collection, object) in [(0, false, true), (1, true, false), (2, true, true)] {
+        let id = format!("candidate-{index}");
+        let error = commit_action(
+            &mut cell,
+            &catalog,
+            &call(&action, input(&id, "SELL", "15", "20", "USD"), &id),
+            &ReadPolicy { collection, object },
+        )
+        .expect_err("normalized collision");
+        let refusal = error.refusal();
+        if collection && object {
+            assert_eq!(refusal.code, "core.identity.collision");
+            assert_eq!(refusal.category, RefusalCategory::Precondition);
+        } else {
+            assert_eq!(refusal.code, "action.target_not_found");
+            assert_eq!(refusal.category, RefusalCategory::Visibility);
+            assert_eq!(refusal.message, NOT_FOUND_MESSAGE);
+        }
+        assert!(!refusal.message.contains("earlier"));
+        assert_eq!(cell.store().read().dump().expect("after"), before);
+    }
+}

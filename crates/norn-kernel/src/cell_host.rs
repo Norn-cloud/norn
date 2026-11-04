@@ -599,6 +599,16 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// ID-UNIQUE-1: a normalized business key is occupied in this root/scope/world.
+    #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
+    IdentityCollision {
+        /// The declaring root; no object IDs or key values are exposed.
+        owner: String,
+        /// Declared business-key name.
+        key: String,
+        /// Internal lookup subjects for authorized diagnostics; never displayed.
+        conflicts: Box<[FactKey; 2]>,
+    },
     /// Atomic closure includes another cell or unknown ownership.
     #[error("core.txn.atomic_boundary: dependency {key} is outside the supported local profile")]
     AtomicBoundary {
@@ -849,6 +859,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
             }
