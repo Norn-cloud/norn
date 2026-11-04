@@ -2,7 +2,6 @@
 """PROOF-QUINT-RUN-1: result availability never overrides timeout/exit policy."""
 import importlib.util
 import copy
-import hashlib
 import json
 import os
 import subprocess
