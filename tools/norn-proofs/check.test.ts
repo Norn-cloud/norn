@@ -25,21 +25,28 @@ test("tla_ts_apalache_parity", async () => {
       base.push(await Bun.file(join(root, `registry/core/artifacts/${name}.json`)).json())
     }
     await Bun.write(join(work, "base.json"), JSON.stringify(base))
-    const process = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
+    const child = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
       join(work, "original.json"), join(work, "mutant.json"), join(work, "base.json"),
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
-    const output = await new Response(process.stdout).text()
+    const output = await new Response(child.stdout).text()
     console.info(output)
-    expect(await process.exited).toBe(0)
+    expect(await child.exited).toBe(0)
     const report: unknown = JSON.parse(output)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
       {case: "original", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
       {case: "mutant", total: 10, eligible: 3, discharged: 2, acceptancePassed: true,
-        goals: expect.arrayContaining([expect.objectContaining({kind: "preservation", status: "refuted",
-          scenario: expect.objectContaining({law: "constitution.fine_mass.law", writer: "constitution.melt.convert.action"})})])},
+        documents: expect.arrayContaining([expect.objectContaining({lawArtifactId: "constitution.fine_mass.law", verdict: {kind: "refuted"},
+          goals: expect.arrayContaining([expect.objectContaining({goalKind: "preservation", verdict: {kind: "refuted"},
+            scenario: expect.objectContaining({kind: "counterexample", writerArtifactId: "constitution.melt.convert.action"})})])})])},
       {case: "restored", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
     ]})
+    if (process.env.NORN_BLESS === "1") {
+      for (const label of ["original", "mutant"]) {
+        const bytes = await Bun.file(join(work, "jobs", `${label}-law-0.guarantees.json`)).arrayBuffer()
+        await Bun.write(join(root, "fixtures/demo/guarantees", `constitution.${label}.guarantees.json`), bytes)
+      }
+    }
   } finally {
     await rm(work, {recursive: true, force: true})
   }

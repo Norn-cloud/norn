@@ -8,6 +8,8 @@ export interface Field {
   readonly id: string
   readonly type: string
   readonly optional: boolean
+  /** Declared exact-decimal facts, with the unit or currency fact their type names. */
+  readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
 }
 
 export interface Relationship {
@@ -105,6 +107,14 @@ function typeText(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef
   }
 }
 
+function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>): Field["decimal"] {
+  if (type.kind === "ref") {
+    const def = types.get(type.name)
+    return def ? decimalOf(def.type, types) : undefined
+  }
+  return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
+}
+
 /** Index the server's admitted artifacts; nothing is inferred beyond what they declare. */
 export function catalogOf(artifacts: readonly Artifact[]): Catalog {
   const types = new Map<string, PropertyTypeDef>()
@@ -172,7 +182,7 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       kind: fed.length > 0 ? "concept" : "core idea",
       description: def.description ?? ([def.name, title].includes(artifact.name) ? undefined : artifact.name),
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true })),
+      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types) })),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,

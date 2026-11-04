@@ -21,6 +21,8 @@ pub struct BoundAssignment {
     pub exact: bool,
     /// Informational unit inference evidence.
     pub notes: Vec<crate::Diagnostic>,
+    /// Admission-derived assignment fuel evidence; graph overhead remains residual.
+    pub fuel: crate::check::FuelCertificate,
 }
 
 /// Derive typed assignments only when a schema declares exact numeric sites.
@@ -112,14 +114,15 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
             .ok_or("exact assignment must name a declared output field")?
             .ty;
         let compiled = Expression::compile(expression.value.as_str()).map_err(|e| e.to_string())?;
-        let checked = compiled.check_typed(&env, expected).map_err(|errors| {
-            errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; ")
-        })?;
+        let (checked, fuel) = crate::check::certify_expression(
+            &compiled,
+            &env,
+            expected,
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        )
+        .map_err(|reason| format!("node {id} assignment {}: {reason}", expression.key))?;
         result.push(BoundAssignment {
+            fuel,
             node: id.clone(),
             key: expression.key.clone(),
             source: expression.value.as_str().to_owned(),
