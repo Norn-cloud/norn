@@ -228,6 +228,10 @@ pub(crate) fn admit_with_work(
     source: &[ArtifactEnvelope], target: &[ArtifactEnvelope], mapping: &PathMapping,
     registry: &BTreeSet<PropertyTypeName>, budget: ChaseBudget, work: &AdmissionWork,
 ) -> Result<PreservationEvidence, Vec<Diagnostic>> {
+    // Charge input bytes before lowering; large theories and long paths
+    // consume the same admission allowance as search and unfolding work.
+    let bytes = serde_json::to_vec(&(source, target, mapping)).map_err(|_| refuse(&mapping.id, "cannot encode path inputs"))?;
+    work.charge_units(bytes.len()).map_err(|e| vec![super::refusal(&Theory::default(), &e)])?;
     let source_catalog = EffectiveCatalog::from_artifacts_with_registry(source, registry);
     let target_catalog = EffectiveCatalog::from_artifacts_with_registry(target, registry);
     let mut source_theory = lower_path_equations(source, registry)?;

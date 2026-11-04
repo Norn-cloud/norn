@@ -90,13 +90,17 @@ impl AdmissionWork {
     }
 
     pub(crate) fn charge(&self) -> Result<(), ChaseError> {
+        self.charge_units(1)
+    }
+
+    pub(crate) fn charge_units(&self, units: usize) -> Result<(), ChaseError> {
         let remaining = self.0.get();
-        if remaining == 0 {
+        if remaining < units {
             return Err(ChaseError::BudgetExceeded {
                 resource: "whole-admission work", limit: 0,
             });
         }
-        self.0.set(remaining - 1);
+        self.0.set(remaining - units);
         Ok(())
     }
 }
