@@ -54,6 +54,7 @@ def profile(path):
         raise ValueError("profile requires the pinned original bytes")
     counts = collections.Counter()
     keys = collections.Counter()
+    trace_keys = collections.Counter()
     activities = collections.Counter()
     stack = []
     for event, node in ET.iterparse(path, events=("start", "end")):
@@ -71,11 +72,12 @@ def profile(path):
         if tag in ("event", "trace"):
             if tag == "trace":
                 counts["traces"] += 1
+                trace_keys.update(attr.get("key", "") for attr in node)
             node.clear()
             if parent is not None:
                 parent.remove(node)
         stack.pop()
-    print(json.dumps(dict(counts=counts, event_keys=keys, activities=activities, sha256=SHA256), sort_keys=True))
+    print(json.dumps(dict(counts=counts, event_keys=keys, trace_keys=trace_keys, activities=activities, sha256=SHA256), sort_keys=True))
 
 
 if __name__ == "__main__":
@@ -83,4 +85,6 @@ if __name__ == "__main__":
     parser.add_argument("command", choices=("fetch", "profile"))
     parser.add_argument("path", type=Path, help="existing task scratch directory; never a repo path")
     args = parser.parse_args()
+    if args.path.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        parser.error("raw data must remain outside the source checkout")
     {"fetch": fetch, "profile": profile}[args.command](args.path)
