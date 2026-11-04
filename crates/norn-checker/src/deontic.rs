@@ -390,6 +390,8 @@ fn valid_norm_identity(rule: &DeonticRule) -> bool {
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
     };
     !law.scope.object_types.is_empty()
-        && [&law.id, &law.owner, &law.subject, root].into_iter()
-            .chain(&law.scope.object_types).all(|id| !id.trim().is_empty())
+        && [&law.id, &law.owner, &law.subject, root]
+            .into_iter()
+            .chain(&law.scope.object_types)
+            .all(|id| !id.trim().is_empty())
 }
