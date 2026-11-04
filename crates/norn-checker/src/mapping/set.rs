@@ -146,7 +146,7 @@ fn path_findings(
                 .chain([artifact])
                 .map(ArtifactRef::of)
                 .collect::<Result<_, _>>()
-                .map_err(|_| {
+                .map_err(|_error| {
                     vec![error(
                         PATH_MAPPING_INVALID,
                         "cannot hash path inputs".into(),

@@ -101,7 +101,7 @@ impl AdmissionWork {
                 limit: self.1,
             });
         }
-        self.0.set(remaining - units);
+        self.0.set(remaining.saturating_sub(units));
         Ok(())
     }
 }
