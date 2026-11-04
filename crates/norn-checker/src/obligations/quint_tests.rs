@@ -394,7 +394,7 @@ fn law_failures(
 fn two_laws() -> Vec<Value> {
     let mut artifacts = fixture();
     let mut second = artifacts[1].clone();
-    second["artifactId"] = json!("erpnext.nonnegative_difference.law");
+    second["artifactId"] = json!("erpnext_nonnegative_difference_law");
     second["payload"]["id"] = json!("erpnext.nonnegative_difference");
     second["payload"]["response"]["expression"] = json!("self.difference >= 0");
     artifacts.push(second);
@@ -479,7 +479,7 @@ fn an_unsupported_governing_law_does_not_suppress_supported_laws() {
             .expect("law");
         let identity = &batch.challenge.body()["lawStatements"]
             [usize::try_from(law).expect("index")]["artifactId"];
-        if identity == "erpnext.nonnegative_difference.law" {
+        if identity == "erpnext_nonnegative_difference_law" {
             assert_eq!(
                 goal.as_ref().expect_err("opaque law remains Unknown"),
                 "unsupported expression syntax"
