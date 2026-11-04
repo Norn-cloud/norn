@@ -395,7 +395,7 @@ pub(crate) fn check_declared_order_set(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> Vec<crate::Diagnostic> {
-    match admission_order(artifacts, base) {
+    let mut findings = match admission_order(artifacts, base) {
         Ok(Some(report)) => report.diagnostics,
         Ok(None) => Vec::new(),
         Err(error) => vec![crate::consistency::finding(
@@ -406,14 +406,45 @@ pub(crate) fn check_declared_order_set(
             ),
             None,
         )],
+    };
+    if !findings.is_empty() {
+        use sha2::Digest;
+        let source = norn_canonical::canonical_json_of(&artifacts);
+        let installed = norn_canonical::canonical_json_of(&base);
+        if let (Ok(source), Ok(installed)) = (source, installed) {
+            let source_hash = format!("{:x}", sha2::Sha256::digest(source));
+            let base_hash = format!("{:x}", sha2::Sha256::digest(installed));
+            let profile = serde_json::json!([
+                "norn.normative-admission/1",
+                env!("CARGO_PKG_VERSION"),
+                crate::receipt::EXPR_PROFILE,
+                ADMISSION_CALLS,
+                crate::consistency::diagnosis::MAX_DECLARATIONS,
+                crate::consistency::finite::FiniteOracle::bounds(),
+                "structural-base-protected/candidate-editable",
+                source_hash,
+                base_hash
+            ]);
+            let Ok(profile) = norn_canonical::canonical_json_of(&profile) else {
+                return findings;
+            };
+            let pins = format!(
+                " Canonical attempted/base SHA256: {source_hash}/{base_hash}; profile SHA256: {:x}. Profile norn.normative-admission/1; closed domains derived from the exact pinned subject definitions.",
+                sha2::Sha256::digest(&profile)
+            );
+            for finding in &mut findings {
+                finding.message.push_str(&pins);
+            }
+        }
     }
+    findings
 }
 
 fn admission_order(
     artifacts: &[norn_ir::ArtifactEnvelope],
     base: &[norn_ir::ArtifactEnvelope],
 ) -> Result<Option<crate::norm_precedence::DeclaredOrderReport>, String> {
-    use crate::norm_precedence::{ConstitutionLayer, diagnose_declared_order};
+    use crate::norm_precedence::{ConstitutionLayer, diagnose_candidate_order};
     use std::collections::BTreeSet;
     let mut rules = Vec::new();
     let mut layers = Vec::new();
@@ -502,12 +533,12 @@ fn admission_order(
     }
     let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
         .map_err(|e| format!("{e:?}"))?;
-    diagnose_declared_order(
+    diagnose_candidate_order(
         &lowered.norms,
         &lowered.origins,
         &layers,
         &lowered.edges,
-        &installed_protection(&protected, &lowered.edges),
+        &protected,
         lowered.contexts,
         ADMISSION_CALLS,
     )

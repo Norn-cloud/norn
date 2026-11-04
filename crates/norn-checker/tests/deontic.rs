@@ -765,6 +765,11 @@ fn ordinary_admission_runs_native_declared_order() {
             .any(|d| d.message.contains("sales.approve") && d.message.contains("sales.block")),
         "{tie:?}"
     );
+    assert!(tie.iter().filter(|d| d.is_error()).all(|d| {
+        d.message.contains("Canonical attempted/base SHA256:")
+            && d.message.contains("candidate-only relaxation proposals")
+            && d.message.contains("Query budget:")
+    }));
     low.defeated_by.push(high.law.id.clone());
     assert!(run(&[low.clone(), high.clone()]).is_empty());
     high.defeated_by.push(low.law.id.clone());
@@ -867,6 +872,46 @@ fn native_order_rejects_incomplete_law_identities() {
 }
 
 #[test]
+fn live_diagnosis_exhaustion_refuses_without_partial_repairs() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    let rules: Vec<_> = (0..32)
+        .map(|index| {
+            let mut rule = if index % 2 == 0 {
+                low.clone()
+            } else {
+                high.clone()
+            };
+            rule.law.id = format!("rule-{index}");
+            rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            rule
+        })
+        .collect();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|d| !d.message.contains("relaxation proposals"))
+    );
+}
+
+#[test]
 fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
     use norn_checker::{EntityArtifactSetContext, check_artifact_set};
     use std::collections::BTreeSet;
@@ -905,6 +950,37 @@ fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
             "{scenario}: {findings:?}"
         );
     }
+}
+
+#[test]
+fn live_diagnosis_pins_reproduce_and_change_with_attempted_source() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low, high]});
+    let run = |value| {
+        let artifact = serde_json::from_value(value).expect("candidate");
+        check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        )
+        .into_iter()
+        .map(|d| d.message)
+        .collect::<Vec<_>>()
+    };
+    let original = run(entity.clone());
+    assert_eq!(original, run(entity.clone()));
+    assert!(
+        original
+            .iter()
+            .all(|message| message.contains("profile SHA256:"))
+    );
+    entity["name"] = json!("edited");
+    assert_ne!(original, run(entity));
 }
 
 #[test]
@@ -982,7 +1058,11 @@ fn admitted_normative_resolution_survives_installation() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].code.as_str(), "consistency.diagnosis.unknown");
     assert_eq!(
-        findings[0].message,
+        findings[0]
+            .message
+            .split_once(" Canonical attempted/base SHA256:")
+            .expect("diagnosis provenance")
+            .0,
         "Normative admission refused: Expression(\"invalid normative source or binding\"). Limits: 64 declarations, 256 contexts, 8192 evaluations, 4096 diagnosis queries."
     );
     // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
@@ -1034,6 +1114,44 @@ fn all_four_normative_cores_retain_their_attribution() {
             );
         }
     }
+}
+
+#[test]
+fn live_repairs_account_for_removed_transitive_priorities() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, mut a, mut c) = admission_fixture();
+    let mut b = a.clone();
+    a.law.id = "A".into();
+    b.law.id = "B".into();
+    c.law.id = "C".into();
+    a.defeated_by.clear();
+    b.defeated_by = vec!["A".into(), "B".into()];
+    c.defeated_by = vec!["B".into()];
+    b.source.pointer = "/payload/extensions/norn.normative~11.0.0/1".into();
+    c.source.pointer = "/payload/extensions/norn.normative~11.0.0/2".into();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[a,b,c]});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        !findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.message.contains(r#"[["A", "B"], ["B", "C"]]"#)),
+        "{findings:?}"
+    );
 }
 
 #[test]
