@@ -1667,6 +1667,27 @@ export interface components {
             value: components["schemas"]["NornIrAccessLiteral"];
         };
         /**
+         * @description Conversion outputs.
+         * @enum {string}
+         */
+        NornIrConversionCalculation: "conversions" | "conversion_rate";
+        /** @description MetricFlow cohort conversion parameters. */
+        NornIrConversionTypeParams: {
+            /** @description Base population metric. */
+            base_metric: string;
+            /**
+             * @description Conversion count or rate.
+             * @enum {string}
+             */
+            calculation: "conversions" | "conversion_rate";
+            /** @description Converted population metric. */
+            conversion_metric: string;
+            /** @description Join entity. */
+            entity: string;
+            /** @description Allowed conversion interval. */
+            window: string;
+        };
+        /**
          * @description How a source term relates to its target terms.
          * @enum {string}
          */
@@ -1681,6 +1702,18 @@ export interface components {
          * @enum {string}
          */
         NornIrCsvDelimiter: "," | ";" | "\t";
+        /** @description MetricFlow cumulative window parameters. */
+        NornIrCumulativeTypeParams: {
+            /**
+             * @description Calendar grain to date.
+             * @enum {string}
+             */
+            grain_to_date?: "day" | "week" | "month" | "quarter" | "year";
+            /** @description Underlying metric. */
+            metric: string;
+            /** @description Rolling window, e.g. `7 days`. */
+            window?: string;
+        };
         /** @description Explicit source-to-target conversion, before any aggregation. */
         NornIrCurrencyConversion: {
             /** @description Dimensionless decimal rate (target units per source unit) at measure grain. */
@@ -4111,6 +4144,20 @@ export interface components {
             /** @enum {string} */
             kind: "non_additive";
         };
+        /** @description Aggregate parameters use MetricFlow field names. */
+        NornIrMetricAggregationParams: {
+            /**
+             * @description Aggregate operator.
+             * @enum {string}
+             */
+            agg: "sum" | "count" | "min" | "max" | "average" | "count_distinct";
+            /** @description Generated scalar field name; directional ontology paths bind in `x-norn`. */
+            agg_time_dimension: string;
+            /** @description Snapshot dimension and series groupings. */
+            non_additive_dimension?: components["schemas"]["NornIrNonAdditiveDimension"];
+            /** @description Ontology-bound semantic model. */
+            semantic_model: string;
+        };
         /** @description Authorization remains a runtime boundary; checker admission never grants access. */
         NornIrMetricAuthorization: {
             /** @description Named authorization action evaluated for the object population. */
@@ -4128,6 +4175,26 @@ export interface components {
             /** @description ISO 4217 registry property or a closed currency-code enum. */
             property: components["schemas"]["NornIrDimensionPath"];
         };
+        /**
+         * MetricDefinition
+         * @description A MetricFlow definition carried by the OSI DBT extension.
+         *     Norn-specific policy is isolated in `x-norn`.
+         */
+        NornIrMetricDefinition: {
+            /** @description Human-readable MetricFlow label. */
+            label: string;
+            /** @description Stable metric identifier. */
+            name: string;
+            /**
+             * @description MetricFlow metric type.
+             * @enum {string}
+             */
+            type: "simple" | "ratio" | "cumulative" | "derived" | "conversion";
+            /** @description Closure-free MetricFlow calculation parameters. */
+            type_params: components["schemas"]["NornIrMetricTypeParams"];
+            /** @description Policies which do not belong to OSI or MetricFlow. */
+            "x-norn": components["schemas"]["NornIrMetricNorn"];
+        };
         /** @description A predicate over a resolved property; numeric values retain exact decimals. */
         NornIrMetricFilter: {
             /**
@@ -4139,6 +4206,13 @@ export interface components {
             path: components["schemas"]["NornIrDimensionPath"];
             /** @description Exact runtime literal checked against the effective property contract. */
             value: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description Named metric input in a derived calculation. */
+        NornIrMetricInput: {
+            /** @description Expression alias. */
+            alias?: string;
+            /** @description Metric name. */
+            name: string;
         };
         /** @description Norn policy extension. Units are derived from typed properties, never asserted here. */
         NornIrMetricNorn: {
@@ -4194,6 +4268,28 @@ export interface components {
             aggregate: "sum" | "first" | "last" | "min" | "max";
             /** @description Also collapse the metric's time axis (even if not in dimensions). */
             overTime: boolean;
+        };
+        /**
+         * @description MetricFlow's five metric types; conversion means cohort conversion, not FX.
+         * @enum {string}
+         */
+        NornIrMetricType: "simple" | "ratio" | "cumulative" | "derived" | "conversion";
+        /** @description MetricFlow calculation parameters. The checker enforces the fields for each type. */
+        NornIrMetricTypeParams: {
+            /** @description Conversion parameters. */
+            conversion_type_params?: components["schemas"]["NornIrConversionTypeParams"];
+            /** @description Cumulative parameters. */
+            cumulative_type_params?: components["schemas"]["NornIrCumulativeTypeParams"];
+            /** @description Denominator metric. */
+            denominator?: string;
+            /** @description Stored property for a simple metric, or derived expression. */
+            expr?: string;
+            /** @description Modern MetricFlow aggregate specification. */
+            metric_aggregation_params?: components["schemas"]["NornIrMetricAggregationParams"];
+            /** @description Derived metric inputs. */
+            metrics?: components["schemas"]["NornIrMetricInput"][];
+            /** @description Numerator metric. */
+            numerator?: string;
         };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
@@ -4258,6 +4354,21 @@ export interface components {
             dataset: string;
             /** @description The parent's field holding the rows (a Frappe `Table` field). */
             field: string;
+        };
+        /** @description MetricFlow snapshot metadata. Admission does not promise snapshot evaluation. */
+        NornIrNonAdditiveDimension: {
+            /** @description Time dimension. */
+            name: string;
+            /**
+             * @description Choose the earliest/latest timestamp, rather than a min/max amount.
+             * @enum {string}
+             */
+            window_choice: "min" | "max";
+            /**
+             * @description Snapshot series keys.
+             * @default []
+             */
+            window_groupings: string[];
         };
         /**
          * @description A deterministic text normalization step.
@@ -7358,6 +7469,11 @@ export interface components {
          * @enum {string}
          */
         NornIrWidgetViewStateKind: "empty" | "loading" | "ready" | "error" | "preview";
+        /**
+         * @description MetricFlow timestamp selection.
+         * @enum {string}
+         */
+        NornIrWindowChoice: "min" | "max";
         /**
          * @description How an action changes an entity kind in its write set.
          * @enum {string}
