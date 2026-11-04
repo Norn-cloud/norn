@@ -81,3 +81,7 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Host read authority
+
+**HOST-READ-1:** configured host reads distinguish Population, Values and Sources. Metadata/action grants imply none of them. The shared authorizer receives only physical-cell scope, and mismatched original bindings still deny. Authorization and explicit scope admission both execute before storage access under one held definition epoch; every failed read gate returns identical static 403 bytes. Named correspondences: `metadata_grants_do_not_grant_read_capabilities`, `read_gate_checks_policy_and_scope_before_reading`, `physical_scope_is_the_only_policy_scope`, and `denied_read_documents_do_not_reveal_the_physical_scope`.
