@@ -7487,7 +7487,8 @@ mod decimal_wire_tests {
             let text = format!("{coefficient}.{fraction:02}");
             proptest::prop_assert!(accepts(&InferredType::Const(text.clone())).is_ok());
             proptest::prop_assert!(accepts(&InferredType::Enum(vec![text.clone()])).is_ok());
-            proptest::prop_assert!(accepts(&InferredType::Const(format!("{text}1"))).is_err());
+            let invalid = format!("{text}1");
+            proptest::prop_assert!(accepts(&InferredType::Const(invalid)).is_err());
         }
     }
 }
