@@ -82,12 +82,15 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         {
             return Err(format!("unsupported lifecycle law {identity}: timing, scope, modality or advisory severity"));
         }
-        laws.push((identity, law.condition.as_ref().map(|condition| compile(condition.as_str(), &mut work, &inputs.fields)).transpose()?,
-            compile(expression.as_str(), &mut work, &inputs.fields)?, matches!(law.modality, LawModality::Always {})));
+        let condition = law.condition.as_ref().map(|condition| compile(condition.as_str(), &mut work, &inputs.fields)).transpose()
+            .map_err(|error| format!("law {identity}: {error}"))?;
+        let response = compile(expression.as_str(), &mut work, &inputs.fields).map_err(|error| format!("law {identity}: {error}"))?;
+        laws.push((identity, condition, response, matches!(law.modality, LawModality::Always {})));
     }
     let chart = &inputs.machine.lifecycle;
     let transitions = chart.transitions.iter().map(|transition| {
-        let guards = transition.guards.iter().map(|guard| compile(guard.as_str(), &mut work, &inputs.fields)).collect::<Result<Vec<_>, _>>()?;
+        let guards = transition.guards.iter().map(|guard| compile(guard.as_str(), &mut work, &inputs.fields)
+            .map_err(|error| format!("transition {}: {error}", transition.id.as_str()))).collect::<Result<Vec<_>, _>>()?;
         Ok((transition, guards))
     }).collect::<Result<Vec<_>, String>>()?;
     let mut rows = BTreeMap::new();
