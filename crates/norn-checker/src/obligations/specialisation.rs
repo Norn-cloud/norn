@@ -68,7 +68,8 @@ impl ApprovedContract {
             challenge,
         };
         // Bound input work and never use a failed reconstruction to skip work.
-        if prior.len() > 8_192
+        if prior.iter().fold(0_usize, |total, e| total.saturating_add(e.record.challenge_json.len()).saturating_add(e.record.result_json.len()).saturating_add(e.pins.bounds_json.len())) > 8_388_608
+            || prior.len() > 8_192
             || !base_source.base.is_empty()
             || source.base_sources != base_source.receipt_sources
             || source.artifacts.iter().any(|a| a.kind() != ArtifactKind::Law)
