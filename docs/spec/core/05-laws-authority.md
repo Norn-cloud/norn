@@ -183,6 +183,9 @@ policy are pinned together. The report type has no Challenge/EvidencePins or
 PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
 must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
 incomplete source identities are unknown rather than an unbound explanation.
+Generated profiles use sorted-key exact-text canonical serialization. If encoding
+fails, diagnosis is unknown with a reason and its profile digest is absent (the
+last native digest slot is empty); exact source/base digests remain available.
 Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
 
 ### Path equations (PATH-EQ-1, #712)
@@ -328,8 +331,8 @@ installation paths. Compiler stages retain exit codes; oracle records retain ver
 trace values in state order. Run-specific diagnostics and ITF creation metadata
 stay outside recorded evidence. Structured primary results remain bound.
 The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
-Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
-count, worker count and exclusions. Model digests, invariant selectors and step
+Law-level bounds use sorted-key exact-text canonical JSON and retain the complete
+shared profile, toolchain, expected state count, worker count and exclusions. Model digests, invariant selectors and step
 selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
 
 **PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
@@ -368,6 +371,55 @@ The host authorizer denies every operation unless a trusted server policy admits
 Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
 
 Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
+
+
+### Conditional lifecycle goals (PROOF-LIFECYCLE-1)
+
+The challenge appends lifecycle goals after every existing law obligation. For
+an effective chart it emits one reachability goal per terminal, one no-stuck
+non-terminal goal, and one non-vacuity goal per transition. Each statement binds
+the concrete object type, lifecycle property, complete effective chart digest,
+one-object bound and chart-state-count depth bound. The existing constitution
+has no lifecycle: its ten obligations and complete challenge use one sorted-key
+exact-text canonical golden across package, insertion-order, arbitrary-precision
+and workspace builds. PROOF-BIND-1 generated commitments sort keys recursively
+without normalizing Unicode spelling or number tokens. Raw source and solver
+result bytes remain exact; Norn1 artifact identities retain their own profile.
+
+This is conditional transition-only reachability from an admitted initialized
+object. Scalar context and external references stay frozen. All supported
+applicable pointwise laws filter initialization and post-states. Unsupported
+guards, laws, timing, cross-lifecycle reads and extra effects yield Unknown with
+a reason. Inventory reasons name an applicable unsupported governing-law root
+and its law identity (the native `UnsupportedUntilB2` boundary); otherwise they
+state that qualification or checked results are missing. A generated goal alone
+is Unknown; it never authorizes discharge.
+The full action/writer closure is a separate qualification profile (#951).
+
+Named scenarios: `generated_lifecycle_reachability` retains a disabled transition
+in the inventory and binds exact guard changes; `constitution_ten_goal_inventory_golden`
+pins the old inventory and challenge; `jewelry_app_law_keeps_all_lifecycle_goals_unknown`
+uses the actual authored source golden without rewriting its App-scoped law;
+`lifecycle_goal_cap_is_checked_before_append` refuses an overflowing denominator.
+
+
+**PROOF-LIFECYCLE-2:** the finite input layer reconstructs admission and the
+Challenge before selecting one effective lifecycle. Its enum stays complete;
+every other stored scalar has explicit finite choices, parsed as exact runtime
+JSON literals and validated against its effective contract. Fields retain their
+scale and unit. Context products exceeding node, byte or document budgets are
+refused as a whole; no clipping, inferred defaults or sampling is permitted.
+A lifecycle-dependent identity, computed/nullable context, owned effects or
+unqualified invariant is outside this profile. Applicable unsupported law roots
+remain Unknown with the law identity. Retained snapshots include law-refused
+valuations: relation consumers must separately filter initialization and
+post-states through every supported governing law. Input snapshots alone never
+discharge a goal.
+
+Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
+`lifecycle_input_refusals_never_clip_the_domain`, and the generated
+`every_frozen_choice_keeps_the_complete_chart` property. Native commit
+correspondence and checked backend evidence are subsequent qualification units.
 
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 
