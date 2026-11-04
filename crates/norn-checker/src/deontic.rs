@@ -359,7 +359,8 @@ fn normative_boolean(
 
 fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
     use std::collections::BTreeSet;
-    let invalid = !valid_norm_identity(rule)
+    let invalid = rule.law.id.len() > 256
+        || !valid_norm_identity(rule)
         || rule.authority_id.trim().is_empty()
         || rule.authority_version.trim().is_empty()
         || !valid_source(&rule.source)
