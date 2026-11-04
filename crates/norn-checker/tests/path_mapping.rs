@@ -699,18 +699,18 @@ fn runtime_requires_inherited_only_binding() {
 
 #[test]
 fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
-    let mut set = runtime_set(&[mapping("first", "t", "s", &[])]);
-    let sources = catalog("u");
-    let targets = catalog("v");
+    let mut set = runtime_set(&[]);
+    constrain(&mut set, "t.Party.entity");
+    let sources: Vec<_> = catalog("u").into_iter().filter(|a| a.artifact_id == "u.Party.entity").collect();
+    let mut targets: Vec<_> = catalog("v").into_iter().filter(|a| a.artifact_id == "v.Party.entity").collect();
+    constrain(&mut targets, "v.Party.entity");
     edit_artifact(&mut set, "erpnext.mapping", |v| {
-        v["payload"]["pathMappings"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({
-                "sourceEntities":sources.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
-                "targetEntities":targets.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
-                "mapping":mapping("second", "v", "u", &[])
-            }));
+        v["payload"]["pathMappings"] = json!([
+            {"sourceEntities":["s.Party.entity"], "targetEntities":["t.Party.entity"],
+             "mapping":{"id":"first","objects":{"t.Party":"s.Party"},"links":[]}},
+            {"sourceEntities":["u.Party.entity"], "targetEntities":["v.Party.entity"],
+             "mapping":{"id":"second","objects":{"v.Party":"u.Party"},"links":[]}}
+        ]);
         for a in sources.iter().chain(&targets) {
             v["dependencies"].as_array_mut().unwrap().push(json!({"artifactId":a.artifact_id,"kind":"entity","version":a.version,"required":true}));
         }
@@ -734,7 +734,7 @@ fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
             .unwrap();
         let declaration = set
             .iter()
-            .find(|a| a.artifact_id == format!("{ns}.Delivery.entity"))
+            .find(|a| a.artifact_id == format!("{ns}.Party.entity"))
             .unwrap();
         assert!(
             d.message.contains(
