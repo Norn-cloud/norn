@@ -147,7 +147,7 @@ pub const CRATES: &[CrateRule] = &[
     r0(
         "norn-authz",
         &["norn-ir", "norn-projections"],
-        &["cedar-policy", "cedar-policy-symcc", "tokio"],
+        &["cedar-policy", "cedar-policy-symcc"],
     ),
     r0(
         "norn-kernel",
