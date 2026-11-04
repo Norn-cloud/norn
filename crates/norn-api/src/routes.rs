@@ -118,7 +118,10 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
     })
 }
 
-fn verify_retained(installed: &InstalledDefinitionSet, scope: &CellScope) -> Result<(), Refusal> {
+pub(crate) fn verify_retained(
+    installed: &InstalledDefinitionSet,
+    scope: &CellScope,
+) -> Result<(), Refusal> {
     let receipt = installed
         .admission_receipt
         .as_deref()
