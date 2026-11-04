@@ -649,3 +649,74 @@ fn interface_case(
     .expect("root");
     (artifact, base)
 }
+
+#[test]
+fn law_interface_and_empty_validate_the_declared_contract_without_vacuous_evidence() {
+    for implemented in [false, true] {
+        let (artifact, base) = interface_case(implemented, "self.total_amount >= 0");
+        let wire = serde_json::to_value(&artifact).expect("wire");
+        assert!(run(vec![wire.clone()], &base).is_empty());
+        assert_eq!(serde_json::to_value(&artifact).expect("original law"), wire);
+        let (invalid, base) = interface_case(implemented, "self.implementation_only >= 0");
+        assert!(
+            run(vec![serde_json::to_value(invalid).expect("wire")], &base)
+                .contains(&codes::PREDICATE_TYPE.to_owned())
+        );
+    }
+}
+
+#[test]
+fn law_interface_missing_subject_and_unpinned_contract_refuse() {
+    let (mut artifact, _) = interface_case(false, "self.total_amount >= 0");
+    artifact.dependencies.clear();
+    assert!(
+        run(vec![serde_json::to_value(&artifact).expect("wire")], &[])
+            .contains(&codes::UNKNOWN_BINDING.to_owned())
+    );
+    let (_, base) = interface_case(false, "self.total_amount >= 0");
+    artifact.dependencies.clear();
+    assert!(
+        run(vec![serde_json::to_value(artifact).expect("wire")], &base)
+            .contains(&codes::UNKNOWN_BINDING.to_owned())
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn law_empty_generated_undeclared_members_cannot_escape_declaration_check(name in "[a-z]{1,12}") {
+        let expression = format!("self.{name}_missing >= 0");
+        let (artifact, base) = interface_case(false, &expression);
+        proptest::prop_assert!(run(vec![serde_json::to_value(artifact).expect("wire")], &base).contains(&codes::PREDICATE_TYPE.to_owned()));
+    }
+}
+
+#[test]
+fn law_weaken_candidate_containment_cannot_replace_retained_membership() {
+    let (law, base) = membership_case();
+    let mut owner = base.last().expect("holder").clone();
+    let mut root: CompositionPackRoot =
+        serde_json::from_value(serde_json::to_value(owner.payload.to_json_value()).expect("wire"))
+            .expect("pack");
+    root.instances.as_mut().expect("instances")[0]
+        .imports
+        .clear();
+    owner.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::BusinessPack,
+        serde_json::from_value(serde_json::to_value(root).expect("root")).expect("tree"),
+    )
+    .expect("payload");
+    let errors = check_artifact_set(
+        &[law, owner],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.code.as_str() == "artifact_set.resolution.shadows_base")
+    );
+}
