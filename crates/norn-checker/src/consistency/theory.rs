@@ -341,9 +341,7 @@ pub fn lower_path_equations(
                 match lower(instance) {
                     Ok(mut egd) => {
                         if instance != owner.as_str() {
-                            while !rule_ids.insert(egd.id.clone()) {
-                                egd.id.push_str(":inherited");
-                            }
+                            egd.id = unique_inherited_id(egd.id, &mut rule_ids);
                         }
                         theory.dependencies.push(Dependency::Egd(egd));
                     }
@@ -353,6 +351,13 @@ pub fn lower_path_equations(
         }
     }
     findings.is_empty().then_some(theory).ok_or(findings)
+}
+
+fn unique_inherited_id(mut id: String, used: &mut BTreeSet<String>) -> String {
+    while !used.insert(id.clone()) {
+        id.push_str(":inherited");
+    }
+    id
 }
 
 fn declared_equation_rule_ids(artifact: &str, value: &norn_ir::JsonValue) -> Vec<String> {
