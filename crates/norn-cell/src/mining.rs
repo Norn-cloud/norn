@@ -225,7 +225,6 @@ mod tests {
         assert!(suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]).is_err());
     }
     #[test]
-    #[expect(clippy::print_stderr, reason = "bounded fixture cost measurement")]
     fn fixture_cost() {
         let (c, o) = fixture(256);
         let start = std::time::Instant::now();
