@@ -499,3 +499,30 @@ pub struct PathEquation {
     /// Forward link IDs from the same concept, ending at the same type.
     pub right: Vec<String>,
 }
+
+/// PATH-MAP-1: a declared mapping `F: target -> source` between two concept
+/// catalogs. Each target concept names its source concept and each mapped
+/// target link a forward source path; source data moves to the target by
+/// pullback along these paths. Unmapped target links are never produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathMapping {
+    /// Stable declaration identity, retained by generated TGDs.
+    pub id: String,
+    /// Target concept name to source concept name.
+    pub objects: BTreeMap<String, String>,
+    /// Images of target links. Two images of one link make it non-functional.
+    pub links: Vec<LinkImage>,
+}
+
+/// The source path a [`PathMapping`] assigns to one target link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkImage {
+    /// The target concept declaring the link.
+    pub concept: String,
+    /// The target link ID.
+    pub link: String,
+    /// Forward source link IDs from the image of `concept`; empty is identity.
+    pub path: Vec<String>,
+}

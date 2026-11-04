@@ -192,9 +192,22 @@ No successful declaration is a preservation proof. The existing exchange search
 is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
 
 Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
-The mapping bridge must additionally reproduce #574's swapped roles, dropped
-join, non-functional mapping and bad composite, plus identity/equivalent-path
-controls without hand-authored EGDs before #712 can close.
+
+PATH-MAP-1: a `PathMapping` `F: target -> source` names a source concept per
+target concept and a functional source path per mapped target link; data moves
+by pullback. `admit_path_mapping` lowers both catalogs' PATH-EQ-1 equations,
+functional EGDs for every reachable to-one link, source totality TGDs for
+required links, and one TGD per object and link image into an `Exchange`, then
+runs the existing schema-compatibility search. Ill-typed images and overlapping
+catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
+refuses as `consistency.schema.unpreserved_constraint`.
+Admission is bounded-no-counterexample, never exhaustive. A witness is
+attributed to the first EGD its mapped image breaks, so equations sharing a
+witness are named once; the mapping still refuses. Target totality and
+source endpoint typing are not lowered: the first leaves existence unchecked,
+the second can only add spurious witnesses. Named scenarios reproduce #574:
+swapped roles, dropped join and non-functional image refuse; identity and
+equivalent path admit. Composition is the next unit.
 
 ### Declared-only normative resolution (D1, #767)
 
