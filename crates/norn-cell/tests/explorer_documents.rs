@@ -1,6 +1,5 @@
 //! Studio's Data Explorer documents are the cell's exact output for the
-//! synthetic ERPNext and Shopify demo world, retained as bytes. The Odoo pack
-//! stays in the registry and in `three_systems.rs`, outside the demo.
+//! synthetic three-systems world (Drop 9), retained as bytes.
 //! `NORN_BLESS=1` rewrites them; review the diff.
 #![allow(
     clippy::expect_used,
@@ -37,7 +36,8 @@ fn retained(name: &str, text: &str) {
     );
 }
 
-/// The admitted demo set, selected as `crates/norn-checker/tests/three_systems.rs` does, without Odoo.
+/// The admitted three-systems set, as `crates/norn-checker/tests/three_systems.rs` selects it,
+/// without the Odoo pack, which the demo leaves out for now.
 fn artifacts() -> Vec<ArtifactEnvelope> {
     let excluded = [
         "commerce.SalesOrder.entity",
