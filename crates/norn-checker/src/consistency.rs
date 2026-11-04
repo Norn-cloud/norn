@@ -188,7 +188,7 @@ fn origin_of<'a>(theory: &'a Theory, rule: &str) -> Option<&'a RuleOrigin> {
         .map(Dependency::origin)
 }
 
-fn finding(
+pub(crate) fn finding(
     code: &str,
     severity: DiagnosticSeverity,
     message: String,

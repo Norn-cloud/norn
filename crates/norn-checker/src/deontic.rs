@@ -180,7 +180,7 @@ pub fn check_requirement(
         .chain(&law.scope.commitments)
         .chain(&rule.defeated_by);
     if ids.any(|s| s.trim().is_empty())
-        || law.scope.object_types.is_empty()
+        || !valid_norm_identity(rule)
         || !valid_source(&rule.source)
         || rule.exceptions.iter().any(|e| {
             e.id.trim().is_empty() || !valid_source(&e.source) || !exceptions.insert(&e.id)
@@ -359,7 +359,7 @@ fn normative_boolean(
 
 fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
     use std::collections::BTreeSet;
-    let invalid = rule.law.id.trim().is_empty()
+    let invalid = !valid_norm_identity(rule)
         || rule.authority_id.trim().is_empty()
         || rule.authority_version.trim().is_empty()
         || !valid_source(&rule.source)
@@ -489,4 +489,16 @@ fn admission_schema(
         return normative_schema(&root.object_type);
     }
     Err("normative subject is not installed or admitted".into())
+}
+
+fn valid_norm_identity(rule: &DeonticRule) -> bool {
+    let law = &rule.law;
+    let root = match &law.scope.root {
+        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+    };
+    !law.scope.object_types.is_empty()
+        && [&law.id, &law.owner, &law.subject, root]
+            .into_iter()
+            .chain(&law.scope.object_types)
+            .all(|id| !id.trim().is_empty())
 }

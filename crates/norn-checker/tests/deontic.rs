@@ -745,6 +745,7 @@ fn ordinary_admission_runs_native_declared_order() {
     assert!(run(&[low.clone(),high.clone()]).is_empty());
     // A separately retained law cannot be defeated by a candidate, even if
     // its own exception masks every state.
+    low.defeated_by.push(high.law.id.clone());
     let mut installed = entity.clone();
     installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low.clone()]});
     let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
@@ -757,4 +758,22 @@ fn ordinary_admission_runs_native_declared_order() {
     let artifact = serde_json::from_value(candidate).expect("candidate");
     let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&registry,base:&[base],tenant:None});
     assert!(findings.iter().any(norn_checker::Diagnostic::is_error));
+}
+
+#[test]
+fn native_order_rejects_incomplete_law_identities() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut rule = obligation().expect("fixture");
+    rule.law.timing = None;
+    rule.law.modality = LawModality::Always {};
+    for slot in ["owner", "subject", "root", "types"] {
+        let mut broken = rule.clone();
+        match slot {
+            "owner" => broken.law.owner.clear(),
+            "subject" => broken.law.subject.clear(),
+            "root" => broken.law.scope.root = norn_ir::LawRoot::App(String::new()),
+            _ => broken.law.scope.object_types.clear(),
+        }
+        assert!(lower_declared_order(&[broken], &norn_expr::schema::Schema::Boolean).is_err());
+    }
 }
