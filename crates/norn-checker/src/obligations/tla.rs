@@ -223,6 +223,10 @@ fn emit(model: &CreateRelation, kind: &str) -> Result<String, String> {
         .map(|name| format!("{name} = 0"))
         .collect::<Vec<_>>()
         .join(" /\\ ");
+    let declarations = state
+        .iter()
+        .map(|name| format!("VARIABLE\n  \\* @type: Int;\n  {name}\n"))
+        .collect::<String>();
     let updates = model
         .updates
         .iter()
@@ -257,8 +261,7 @@ fn emit(model: &CreateRelation, kind: &str) -> Result<String, String> {
         _ => return Err("unsupported TLA goal kind".into()),
     };
     Ok(format!(
-        "---- MODULE generated ----\nEXTENDS Integers\nVARIABLES present, {}\ninit == present = FALSE /\\ {initial}\nwrite == {quantifier}(~present /\\ ({}) /\\ present' = TRUE /\\ {updates})\nidle == UNCHANGED <<present, {}>>\nstep == write \\/ idle\nlaw == ~present \\/ ~({condition}) \\/ ({response})\nunreachable == ~(present /\\ ({condition}) /\\ ({response}))\nq_init == init\nq_step == {step}\nq_inv == {invariant}\n====\n",
-        state.join(", "),
+        "---- MODULE generated ----\nEXTENDS Integers\nVARIABLE\n  \\* @type: Bool;\n  present\n{declarations}init == present = FALSE /\\ {initial}\nwrite == {quantifier}(~present /\\ ({}) /\\ present' = TRUE /\\ {updates})\nidle == UNCHANGED <<present, {}>>\nstep == write \\/ idle\nlaw == ~present \\/ ~({condition}) \\/ ({response})\nunreachable == ~(present /\\ ({condition}) /\\ ({response}))\nq_init == init\nq_step == {step}\nq_inv == {invariant}\n====\n",
         if guards.is_empty() {
             "TRUE".into()
         } else {

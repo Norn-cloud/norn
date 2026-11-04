@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { array, object } from "./protocol"
 
 test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
@@ -27,9 +28,16 @@ test("tla_ts_apalache_parity", async () => {
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
     const output = await new Response(child.stdout).text()
-    process.stdout.write(output)
-    expect(await child.exited).toBe(0)
     const report: unknown = JSON.parse(output)
+    if (object(report) && array(report.cases)) process.stdout.write(`${JSON.stringify({
+      acceptancePassed: report.acceptancePassed, staleRejected: report.staleRejected,
+      cases: report.cases.map(value => object(value) ? { case: value.case, total: value.total,
+        eligible: value.eligible, discharged: value.discharged, acceptancePassed: value.acceptancePassed,
+        goals: array(value.goals) ? value.goals.map(goal => object(goal) ? {
+          goal: goal.goal, kind: goal.kind, status: goal.status, reason: goal.reason, scenario: goal.scenario,
+        } : goal) : value.goals } : value),
+    })}\n`)
+    expect(await child.exited).toBe(0)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
       {case: "original", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
       {case: "mutant", total: 10, eligible: 3, discharged: 2, acceptancePassed: true,

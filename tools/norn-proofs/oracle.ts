@@ -47,11 +47,13 @@ export function oracleVerdict(result: ProcessResult, trace: unknown): Verdict {
     try { return { status: "violation", trace: decodeTrace(trace) } }
     catch (error) { return { status: "unknown", reason: String(error) } }
   }
-  return { status: "unknown", reason: "unqualified Apalache exit/outcome" }
+  return { status: "unknown", reason: `unqualified Apalache exit ${result.code}/outcome` }
 }
 
 export function parity(primary: unknown, oracle: Verdict, expected: number): Verdict {
   if (!object(primary) || !Number.isSafeInteger(expected) || expected < 1) return { status: "unknown", reason: "malformed primary result or cardinality" }
+  if (oracle.status === "unknown") return oracle
+  if (primary.status === "unknown" && typeof primary.reason === "string") return { status: "unknown", reason: `primary: ${primary.reason}` }
   if (primary.status === "success" && primary.distinctStates === expected && primary.queuedStates === 0 &&
       object(primary.initialStates) && typeof primary.initialStates.distinct === "number" &&
       primary.initialStates.distinct > 0 && oracle.status === "ok") return { status: "ok" }
