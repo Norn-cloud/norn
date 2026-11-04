@@ -371,31 +371,45 @@ pub fn certify_expression(
 /// invalidate old evidence even when an author forgets to bump the profile name.
 fn fuel_semantics() -> Result<String, String> {
     static IDENTITY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    IDENTITY
-        .get_or_init(|| {
-            norn_ir::canonical::domain_hash_hex(
-                b"norn.expression-fuel/1\0",
-                &[
-                    include_str!("check.rs"),
-                    include_str!("check/cost.rs"),
-                    include_str!("expression.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/meter.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/compiler/compiler.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/compiler/opcode.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/vm/vm.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/functions/internal.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/functions/method.rs"),
-                    include_str!(
-                        "../../../vendor/zen/core/expression/src/functions/date_method.rs"
-                    ),
-                    include_str!("../../../vendor/zen/core/expression/src/functions/arguments.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/functions/deprecated.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/vm/helpers.rs"),
-                ],
-            )
-            .map_err(|error| error.to_string())
-        })
-        .clone()
+    IDENTITY.get_or_init(|| fuel_semantics_for(FUEL_SOURCES)).clone()
+}
+
+const FUEL_SOURCES: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/fuel_sources.rs"));
+
+fn fuel_semantics_for(sources: &[(&str, &str)]) -> Result<String, String> {
+    norn_ir::canonical::domain_hash_hex(b"norn.expression-fuel/1\0", &sources)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "regression assertions")]
+mod fuel_identity_tests {
+    use super::*;
+
+    #[test]
+    fn dependency_changes_invalidate_old_evidence() {
+        let env = ZenTypeEnv::input_only(BTreeMap::new(), Default::default()).expect("environment");
+        let expression = Expression::compile("1").expect("compile");
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let (_, certificate) = certify_expression(&expression, &env, &Type::Number, &limits)
+            .expect("certificate");
+        certificate.verify(&expression, &env, &Type::Number, &limits).expect("replay");
+        for (path, before, after) in [
+            ("vendor/zen/core/expression/src/functions/mod.rs", "MAX_JOIN_BYTES: usize = 16_384", "MAX_JOIN_BYTES: usize = 32_768"),
+            ("vendor/zen/core/expression/src/functions/defs.rs", "", "// changed definition\n"),
+            ("crates/norn-expr/src/check/sites.rs", "", "// changed lowering\n"),
+        ] {
+            let mut sources = FUEL_SOURCES.to_vec();
+            let entry = sources.iter_mut().find(|(name, _)| *name == path).expect("dependency included");
+            let changed = entry.1.replacen(before, after, 1);
+            assert_ne!(changed, entry.1);
+            entry.1 = &changed;
+            let mut old = certificate.clone();
+            old.semantics = fuel_semantics_for(&sources).expect("changed identity");
+            assert_ne!(old.semantics, certificate.semantics);
+            assert_eq!(old.verify(&expression, &env, &Type::Number, &limits), Err("stale expression fuel semantics".into()));
+        }
+    }
 }
 
 /// An admitted expression: its proved type and its static cost bound.
