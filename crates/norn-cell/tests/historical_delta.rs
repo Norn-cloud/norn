@@ -39,7 +39,7 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn restatement_delta_equals_rebuild_and_old_answers_reproduce(
-        corrections in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY,proptest::bool::ANY),1..6)
+        corrections in proptest::collection::vec((0i64..75_000,14u8..28,proptest::bool::ANY),1..6)
     ) {
         let (base,plan,original)=fixture();let model=base.model().clone();drop(base);
         let directory=tempfile::tempdir().expect("restart fixture");let path=directory.path().join("cell.sqlite");
@@ -49,12 +49,11 @@ proptest::proptest! {
         let old_bytes=serde_json::to_vec(&old).expect("old answer");
         let mut context=original.clone();
         let mut view=IncrementalQuestion::rebuild_known_at(&store,&plan,context.clone(),first,|_|Ok(true)).expect("historical rebuild");
-        for (index,(amount,day,excluded,restart)) in corrections.into_iter().enumerate() {
+        for (index,(amount,day,restart)) in corrections.into_iter().enumerate() {
             let at=CLOCK.checked_add(u64::try_from(index).expect("index").checked_add(1).expect("bounded")).expect("clock");
             store.commit(&CommitBatch{world:WORLD.into(),scope:"synthetic".into(),logical_time:at,writes:vec![put("SYN-MELT-15-1",75_000,amount,&format!("2026-10-{day:02}T12:01:00Z"),"gold")],..CommitBatch::default()}).expect("source correction");
             let cutoff=KnowledgeCutoff{recorded_at:LogicalTime::from_millis(at),frontier:store.verified_head().expect("head").commits};
             progress(&mut context,at,cutoff.frontier);
-            if excluded {context.exclusions.insert("SYN-MELT-15-1".into(),"recorded-finding".into());} else {context.exclusions.remove("SYN-MELT-15-1");}
             view.advance_known_at(&store,context.clone(),cutoff,|_|Ok(true)).expect("receipt delta");
             let mut rebuilt=store.evaluate_question_known_at(&plan,context.clone(),cutoff,|_|Ok(true)).expect("full same-slice rebuild").result;
             rebuilt.engine=Engine::Ivm;
@@ -128,4 +127,55 @@ fn showcase_restatement_retracts_recovered_mass_and_refusal_keeps_the_old_genera
         ))
     ));
     assert_eq!(view.result(), &current);
+}
+
+#[test]
+fn quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pins() {
+    let (mut host, plan, context) = quality_fixture();
+    capture_quality(&mut host, 80_000, "bad-source");
+    let prior = coordinate(host.store(), &context);
+    let old = host
+        .store()
+        .evaluate_question_known_at(&plan, context.clone(), prior, |_| Ok(true))
+        .expect("quarantined historical answer");
+    let wire = serde_json::to_value(&old.result).expect("answer wire");
+    assert_eq!(
+        serde_json::from_value::<norn_cell::compute::QueryResult>(wire).expect("answer roundtrip"),
+        old.result
+    );
+    let pins = old.result.exclusions.clone();
+    assert_eq!(pins.len(), 1);
+    // Same result-context reuse as check_restatement_delta, with no manual clearing.
+    let mut restated = IncrementalQuestion::rebuild_known_at(
+        host.store(),
+        &plan,
+        old.result.context.clone(),
+        prior,
+        |_| Ok(true),
+    )
+    .expect("rebuild prior quarantined generation");
+    assert_eq!(restated.result().exclusions, pins);
+    capture_quality(&mut host, 73_500, "corrected-source");
+    let next = coordinate(host.store(), &context);
+    let delta = restated
+        .advance_known_at(host.store(), context.clone(), next, |_| Ok(true))
+        .expect("restate correction");
+    let mut exact = host
+        .store()
+        .evaluate_question_known_at(&plan, context, next, |_| Ok(true))
+        .expect("recompute restatement")
+        .result;
+    exact.engine = Engine::Ivm;
+    assert_eq!(delta, &exact);
+    assert!(delta.exclusions.is_empty());
+    let historical = IncrementalQuestion::rebuild_known_at(
+        host.store(),
+        &plan,
+        old.result.context,
+        prior,
+        |_| Ok(true),
+    )
+    .expect("rebuild historical frontier after restatement");
+    assert_eq!(historical.result().exclusions, pins);
+    assert_eq!(historical.result().rows, old.result.rows);
 }

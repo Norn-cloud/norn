@@ -1,12 +1,17 @@
 # cargo nextest run --config-file .config/economist-nextest.toml --profile economist-rehearsal
-# Requires Rust 1.98 and nextest 0.9.150.
+# Requires Rust 1.98, nextest 0.9.150, Bun 1.3.14 and frozen dependencies
+# in apps/studio and tools/norn-ts.
 # Proof screen: not yet #784 / #772; show a recorded model-check result once landed.
 # Focused witnesses from published drops; no drop's complete selection is replaced.
 # Nextest runs setup phases in declaration order and stops on any failed phase.
 # Every test filter has one required name: an empty selection must fail.
-# All current phases are native runs; Studio replaces a phase only after landing.
+# Studio phases check recorded engine documents; the other phases are native runs.
 
 experimental = ["setup-scripts"]
+
+[scripts.setup."beat-1-recorded-engine-document-concepts"]
+command = ["bun", "test", "./apps/studio/test/catalog.test.ts", "--test-name-pattern", "^three systems feed one business model$"]
+slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-three-systems"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-checker", "--test", "three_systems", "-E", "test(=mvp_map_three_aliases_roles_and_one_economic_identity)"]
@@ -24,6 +29,10 @@ slow-timeout = { period = "120s", terminate-after = 10 }
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "definitions_install", "-E", "test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
+[scripts.setup."beat-2-recorded-engine-document-exact-answer"]
+command = ["bun", "test", "./apps/studio/test/format.test.ts", "--test-name-pattern", "^the showcase week reads as the engine wrote it: 294 / 300 = 0[.]98$"]
+slow-timeout = { period = "120s", terminate-after = 10 }
+
 [scripts.setup."beat-2-native-run-exact-question-and-contributions"]
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "exact_question", "-E", "test(=scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
@@ -36,12 +45,12 @@ slow-timeout = { period = "120s", terminate-after = 10 }
 command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "restatement_activation", "-E", "test(=governed_activation_switches_all_slices_and_preserves_old_answers)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."beat-3-native-run-allocation-plans"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-decisions", "--test", "evaluate", "-E", "test(=cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations)"]
+[scripts.setup."beat-3-native-run-authored-stock-closure"]
+command = ["bun", "test", "./tools/norn-ts/test/inventory-fixture.test.ts", "--test-name-pattern", "^INV-CP1 stock closure compiles independently of jewelry conversion$"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-[scripts.setup."beat-3-native-run-committed-pricing"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "jewelry_pricing", "-E", "test(=jewel_price_sell_and_scrap_commit_exactly_once_and_reopen)"]
+[scripts.setup."beat-3-native-run-receive-transfer-fifo-sell"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "rea_inventory", "-E", "test(=inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-4-native-run-refused-conservation-transaction"]
@@ -62,15 +71,17 @@ success-output = "immediate"
 [[profile.economist-rehearsal.scripts]]
 filter = "all()"
 setup = [
+  "beat-1-recorded-engine-document-concepts",
   "beat-1-native-run-three-systems",
   "beat-1-native-run-ambiguous-identity-refuses",
   "beat-1-native-run-sales-price-is-not-stock-cost",
   "beat-1-native-run-quarantine-reason",
+  "beat-2-recorded-engine-document-exact-answer",
   "beat-2-native-run-exact-question-and-contributions",
   "beat-2-native-run-incremental-equals-recompute",
   "beat-2-native-run-restatement-and-old-as-of-answer",
-  "beat-3-native-run-allocation-plans",
-  "beat-3-native-run-committed-pricing",
+  "beat-3-native-run-authored-stock-closure",
+  "beat-3-native-run-receive-transfer-fifo-sell",
   "beat-4-native-run-refused-conservation-transaction",
   "beat-4-native-run-retained-invariant-responses",
 ]

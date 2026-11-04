@@ -339,3 +339,8 @@ fn main() -> Result<()> {
     )?;
     Ok(())
 }
+
+#[test]
+fn constitution_loss_mutation_refusal_and_restoration() -> Result<()> {
+    main()
+}
