@@ -7,6 +7,10 @@ export interface DeployTarget {
 
 const PRODUCTION_DOMAINS = "studio.norn.cloud,studio-demo.norn.cloud"
 
+/** A hostname of at least two DNS labels, each 1–63 lowercase letters, digits or inner dashes. */
+const hostname = (domain: string): boolean =>
+  domain.length <= 253 && domain.split(".").length >= 2 && domain.split(".").every((label) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+
 export function deployTarget(env: Readonly<Record<string, string | undefined>>): DeployTarget {
   const stage = env.ALCHEMY_STAGE ?? "prod"
   if (!/^[a-z0-9-]+$/.test(stage)) throw new Error(`ALCHEMY_STAGE must be lowercase letters, digits or dashes, got ${JSON.stringify(stage)}`)
@@ -14,8 +18,8 @@ export function deployTarget(env: Readonly<Record<string, string | undefined>>):
   const listed = env.STUDIO_DOMAINS ?? (production ? PRODUCTION_DOMAINS : undefined)
   if (listed === undefined) throw new Error(`STUDIO_DOMAINS is required for stage ${stage}`)
   const domains = listed.split(",").map((domain) => domain.trim())
-  if (domains.some((domain) => !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain))) {
-    throw new Error(`STUDIO_DOMAINS must be comma-separated hostnames, got ${JSON.stringify(listed)}`)
-  }
+  if (!domains.every(hostname)) throw new Error(`STUDIO_DOMAINS must be comma-separated hostnames, got ${JSON.stringify(listed)}`)
+  const taken = domains.filter((domain) => !production && PRODUCTION_DOMAINS.split(",").includes(domain))
+  if (taken.length > 0) throw new Error(`Stage ${stage} cannot take the production domains ${taken.join(", ")}`)
   return { stage, worker: production ? "norn-studio-recorded" : `norn-studio-recorded-${stage}`, domains }
 }
