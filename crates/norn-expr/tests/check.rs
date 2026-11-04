@@ -1876,6 +1876,29 @@ fn rate_environment(currency: &str, denominator: &str) -> (ZenTypeEnv, Type) {
 }
 
 #[test]
+fn val_round_conditional_at_a_decimal_destination_rounds_each_branch() {
+    let money = Type::Decimal {
+        scale: 2,
+        unit: None,
+        currency_source: None,
+        per_unit: None,
+        rounding: norn_ir::Rounding::Refuse,
+    };
+    let fields = std::collections::BTreeMap::from([
+        ("flag".into(), Type::Bool),
+        ("low".into(), money.clone()),
+        ("high".into(), money.clone()),
+    ]);
+    let env = ZenTypeEnv::input_only(fields, norn_expr::EnvOptions::default()).unwrap();
+    let source = Expression::compile("input.flag ? input.low : input.high").unwrap();
+    let checked = source.check_typed(&env, &money).expect("conditional site");
+    assert_eq!(
+        checked.runtime_source(),
+        "input.flag ? round((input.low), 2, 'refuse') : round((input.high), 2, 'refuse')"
+    );
+}
+
+#[test]
 fn val_rate_usd_per_gram_times_grams_uses_destination_and_literal_unit_note() {
     let (env, money) = rate_environment("USD", "g");
     let source = Expression::compile("input.rate * input.grams").unwrap();
