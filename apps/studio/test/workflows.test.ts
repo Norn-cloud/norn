@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
-import { backOf, pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
+import { anchorOf, backOf, pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
 import { guardedFields, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
@@ -84,4 +84,19 @@ test("a step back is found by its id, so its chip can open the step itself", () 
   const amend = backOf(tree, stepId({ id: "amend", from: ["submitted"], to: "draft" }, "submitted"))
   expect(amend && { id: amend.transition.id, from: amend.from, to: amend.to }).toEqual({ id: "amend", from: "submitted", to: "draft" })
   expect(backOf(tree, "draft")).toBeUndefined()
+})
+
+test("pinning a step back on a folded lifecycle keeps its source path in view", () => {
+  const states = Array.from({ length: 20 }, (_, index) => `s${index}`)
+  const lifecycle = { property: "status", initial: ["s0"], terminal: ["s19"], transitions: [
+    ...states.slice(1).map((to, index) => ({ id: `next${index}`, from: [`s${index}`], to })),
+    ...states.slice(2).map((from, index) => ({ id: `cancel${index}`, from: [from], to: "s0" })),
+  ] }
+  const tree = treeOf(lifecycle)
+  const back = stepId({ id: "cancel8", from: ["s10"], to: "s0" }, "s10")
+  expect(backOf(tree, back)?.from).toBe("s10")
+  expect(anchorOf(tree, back)).toBe("s10")
+  const { shown, hidden } = visibleOf(tree, back, false)
+  for (const state of ["s0", "s5", "s10", "s11", "s12"]) expect(shown.has(state)).toBe(true)
+  expect(hidden).toBe(7)
 })

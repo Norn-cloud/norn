@@ -130,7 +130,7 @@ export function pathTo(tree: Tree, id: string): { readonly path: readonly string
 export function visibleOf(tree: Tree, focus: string | undefined, expanded: boolean): { readonly shown: ReadonlySet<string>; readonly hidden: number } {
   const states = tree.nodes.filter(({ kind }) => kind === "state").length
   if (expanded || states <= 8) return { shown: new Set(tree.nodes.map(({ id }) => id)), hidden: 0 }
-  const shown = new Set<string>(focus === undefined ? tree.spine.slice(0, 3) : pathTo(tree, focus).path)
+  const shown = new Set<string>(focus === undefined ? tree.spine.slice(0, 3) : pathTo(tree, anchorOf(tree, focus)).path)
   // Two states on: four connectors (step, state, step, state), one ring at a time.
   for (let hop = 0; hop < 4; hop += 1) {
     const ring = tree.edges.filter(({ source }) => shown.has(source)).map(({ target }) => target)
@@ -147,3 +147,6 @@ export function backOf(tree: Tree, id: string | undefined): { readonly transitio
   for (const [from, list] of tree.backs) for (const { transition, to } of list) if (stepId(transition, from) === id) return { transition, from, to }
   return undefined
 }
+
+/** The tree element a pin stands for: a step back (a chip, not a node) stands for its source state. */
+export const anchorOf = (tree: Tree, id: string): string => backOf(tree, id)?.from ?? id
