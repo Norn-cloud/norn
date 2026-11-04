@@ -1,0 +1,60 @@
+{
+  "obligations": {
+    "$entries": "obligations"
+  },
+  "obligationClaims": {
+    "$entries": "obligationClaims"
+  },
+  "runtime": {
+    "status": "missing",
+    "artifacts": {
+      "$entries": "runtime.artifacts"
+    },
+    "commands": {
+      "$entries": "runtime.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "runtime.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "runtime.resultArtifacts"
+    }
+  },
+  "model": {
+    "status": "missing",
+    "artifacts": {
+      "$entries": "model.artifacts"
+    },
+    "commands": {
+      "$entries": "model.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "model.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "model.resultArtifacts"
+    }
+  },
+  "proof": {
+    "status": "reference_proved",
+    "scope": "reference",
+    "artifacts": {
+      "$entries": "proof.artifacts"
+    },
+    "commands": {
+      "$entries": "proof.commands"
+    },
+    "generatedArtifacts": {
+      "$entries": "proof.generatedArtifacts"
+    },
+    "resultArtifacts": {
+      "$entries": "proof.resultArtifacts"
+    }
+  },
+  "limitations": {
+    "$entries": "limitations"
+  },
+  "sourceFiles": {
+    "$entries": "sourceFiles"
+  }
+}

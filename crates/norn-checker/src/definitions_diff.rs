@@ -8,11 +8,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ConstraintClass, InterfaceName, InvariantId, InvariantOwner,
-    ObjectTypeName,
+    ObjectTypeName, PropertyAdditivity,
 };
 use serde_json::{Value, json};
 
-use crate::entity_instance::{EffectiveCatalog, EffectiveKey, EffectiveLink};
+use crate::entity_instance::{
+    EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLink, EffectiveProperty,
+};
+
+/// A governed aggregation-contract change, independent of value narrowing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdditivityChange {
+    /// The entity artifact declaring the affected effective member.
+    pub artifact_id: String,
+    /// Effective object type.
+    pub object_type: String,
+    /// Link carrying the property, when applicable.
+    pub link: Option<String>,
+    /// Dotted property path, including nested record members.
+    pub property: String,
+    /// Previously declared aggregation class.
+    pub previous: PropertyAdditivity,
+    /// Candidate aggregation class.
+    pub candidate: PropertyAdditivity,
+}
 
 /// The maximum number of IDs included for each ledger diff section.
 pub const LEDGER_DIFF_ID_LIMIT: usize = 100;
@@ -87,6 +106,8 @@ pub struct DefinitionDiff {
     pub removed: Vec<DefinitionId>,
     /// Semantically changed artifacts (provenance-only changes are excluded).
     pub changed: Vec<DefinitionId>,
+    /// Declared aggregation changes; these do not require live-value scans.
+    pub additivity_changes: Vec<AdditivityChange>,
     /// Every removed structure or tighter lifecycle rule.
     pub narrowing: Vec<Narrowing>,
 }
@@ -130,7 +151,7 @@ impl DefinitionDiff {
                 })
             })
             .collect::<Vec<_>>();
-        json!({
+        let mut summary = json!({
             "addedCount": self.added.len(),
             "added": ids(&self.added),
             "removedCount": self.removed.len(),
@@ -139,13 +160,55 @@ impl DefinitionDiff {
             "changed": ids(&self.changed),
             "narrowingCount": self.narrowing.len(),
             "narrowing": narrowing,
-        })
+        });
+        if !self.additivity_changes.is_empty()
+            && let Value::Object(fields) = &mut summary
+        {
+            fields.insert(
+                "additivityChangeCount".to_owned(),
+                json!(self.additivity_changes.len()),
+            );
+            fields.insert(
+                "additivityChanges".to_owned(),
+                json!(
+                    self.additivity_changes
+                        .iter()
+                        .take(LEDGER_DIFF_NARROWING_LIMIT)
+                        .map(|change| json!({
+                            "artifactId": bounded(&change.artifact_id, 128),
+                            "objectType": bounded(&change.object_type, 128),
+                            "link": change.link.as_deref().map(|id| bounded(id, 128)),
+                            "property": bounded(&change.property, 128),
+                            "previous": bounded_additivity(&change.previous),
+                            "candidate": bounded_additivity(&change.candidate),
+                        }))
+                        .collect::<Vec<_>>()
+                ),
+            );
+        }
+        summary
     }
 
     /// Full narrowing entries for an install refusal response.
     #[must_use]
     pub fn narrowing_json(&self) -> Vec<Value> {
         self.narrowing.iter().map(Narrowing::to_json).collect()
+    }
+}
+
+fn bounded_additivity(class: &PropertyAdditivity) -> Value {
+    match class {
+        PropertyAdditivity::Ratio {
+            numerator,
+            denominator,
+        } => json!({
+            "kind": "ratio", "numerator": bounded(numerator.as_str(), 128),
+            "denominator": bounded(denominator.as_str(), 128),
+        }),
+        PropertyAdditivity::Undeclared {} => json!({"kind":"undeclared"}),
+        PropertyAdditivity::Additive {} => json!({"kind":"additive"}),
+        PropertyAdditivity::SemiAdditive {} => json!({"kind":"semi_additive"}),
+        PropertyAdditivity::NonAdditive {} => json!({"kind":"non_additive"}),
     }
 }
 
@@ -198,6 +261,7 @@ pub fn diff_definition_sets(
         &previous_model,
         &candidate_model,
         &mut diff.narrowing,
+        &mut diff.additivity_changes,
     );
     diff_effective_lifecycles(&previous_model, &candidate_model, &mut diff.narrowing);
     diff_effective_invariants(&previous_model, &candidate_model, &mut diff.narrowing);
@@ -205,6 +269,21 @@ pub fn diff_definition_sets(
     diff.added.sort();
     diff.removed.sort();
     diff.changed.sort();
+    diff.additivity_changes.sort_by(|left, right| {
+        (
+            &left.artifact_id,
+            &left.object_type,
+            &left.link,
+            &left.property,
+        )
+            .cmp(&(
+                &right.artifact_id,
+                &right.object_type,
+                &right.link,
+                &right.property,
+            ))
+    });
+    diff.additivity_changes.dedup();
     diff.narrowing.sort_by(|left, right| {
         (
             left.artifact_id.as_str(),
@@ -235,6 +314,7 @@ fn diff_effective_contracts(
     previous: &EntityModelSnapshot,
     candidate: &EntityModelSnapshot,
     out: &mut Vec<Narrowing>,
+    additivity: &mut Vec<AdditivityChange>,
 ) {
     let previous_catalog = EffectiveCatalog::from_artifacts(previous_artifacts);
     let candidate_catalog = EffectiveCatalog::from_artifacts(candidate_artifacts);
@@ -258,6 +338,13 @@ fn diff_effective_contracts(
             let Some(previous_property) = old_properties.get(property.id.as_str()) else {
                 continue;
             };
+            collect_additivity_changes(
+                (artifact_id, name, None),
+                previous_property,
+                property,
+                property.id.as_str(),
+                additivity,
+            );
             let reasons = property.narrowing_reasons_from(previous_property);
             if !reasons.is_empty() {
                 push_narrowing(
@@ -347,6 +434,21 @@ fn diff_effective_contracts(
                 }
                 continue;
             };
+            for property in &link.properties {
+                if let Some(previous) = previous_link
+                    .properties
+                    .iter()
+                    .find(|old| old.id == property.id)
+                {
+                    collect_additivity_changes(
+                        (artifact_id, name, Some(link.id.as_str())),
+                        previous,
+                        property,
+                        property.id.as_str(),
+                        additivity,
+                    );
+                }
+            }
             diff_effective_link(
                 name,
                 artifact_id,
@@ -354,6 +456,42 @@ fn diff_effective_contracts(
                 link,
                 &previous_catalog,
                 &candidate_catalog,
+                out,
+            );
+        }
+    }
+}
+
+fn collect_additivity_changes(
+    (artifact, object, link): (&str, &str, Option<&str>),
+    previous: &EffectiveProperty,
+    candidate: &EffectiveProperty,
+    path: &str,
+    out: &mut Vec<AdditivityChange>,
+) {
+    if let (EffectiveKind::Base(old), EffectiveKind::Base(new)) = (&previous.kind, &candidate.kind)
+        && old.additivity() != new.additivity()
+    {
+        out.push(AdditivityChange {
+            artifact_id: artifact.to_owned(),
+            object_type: object.to_owned(),
+            link: link.map(str::to_owned),
+            property: path.to_owned(),
+            previous: old.additivity().clone(),
+            candidate: new.additivity().clone(),
+        });
+    }
+    for member in candidate.record_members() {
+        if let Some(old) = previous
+            .record_members()
+            .iter()
+            .find(|old| old.id == member.id)
+        {
+            collect_additivity_changes(
+                (artifact, object, link),
+                old,
+                member,
+                &format!("{path}.{}", member.id.as_str()),
                 out,
             );
         }

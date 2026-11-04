@@ -51,6 +51,14 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "Compile build-script unit tests in the library test harness"
+)]
+#[path = "../build.rs"]
+mod build_script;
+
 pub mod actor;
 pub mod check;
 mod convert;
