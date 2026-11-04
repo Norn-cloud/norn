@@ -769,8 +769,9 @@ def validate_claim_evidence_shape(
                         harness.suffix == ".rs" and harness.is_file()
                         and re.search(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b", harness.read_text()) is not None
                         and "kani" in shlex.split(command)
-                        and artifact in shlex.split(command)
-                        and not ({"--no-unwinding-checks", "--no-assertion-checks"} & set(shlex.split(command))),
+                        and shlex.split(command)[shlex.split(command).index("kani"):] == [
+                            "kani", "--fail-fast", "--output-format", "terse", artifact
+                        ],
                         f"{subsystem_id}.{claim_id}: implementation harness must be an executed Kani proof with safety checks",
                     )
                 observed_selector_kinds.add(selector_kind)

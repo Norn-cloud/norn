@@ -634,6 +634,13 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
+run_gate full integer-negation-kani \
+  "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
+  command env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup \
+    KANI_HOME=target/verification-tools/kani-home \
+    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    verification/implementation-v1/rational_neg_kani.rs
+
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \
@@ -810,10 +817,3 @@ else
     'Fast verification profile completed: every fast manifest gate ran and its registration was checked against the passed-command log.' \
     'It does not write a formal-results record or attest full-only gates, generated evidence, complete evidence hashes, or a merge-blocking GitHub status.'
 fi
-
-run_gate full integer-negation-kani \
-  "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
-  command env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup \
-    KANI_HOME=target/verification-tools/kani-home \
-    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
-    verification/implementation-v1/rational_neg_kani.rs
