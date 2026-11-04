@@ -64,7 +64,9 @@ impl AdmissionCache {
     #[must_use]
     pub fn new(tool_sha256: &[u8; 32], policy: &str, assumptions: &str) -> Self {
         Self {
-            profile: format!("norn.incremental-structural/1:{tool_sha256:?}:{policy:?}:{assumptions:?}"),
+            profile: format!(
+                "norn.incremental-structural/1:{tool_sha256:?}:{policy:?}:{assumptions:?}"
+            ),
             local: BTreeMap::new(),
             global: None,
             jobs: Vec::new(),
@@ -102,36 +104,58 @@ impl AdmissionCache {
                 }
             }
             evidence.push(global_evidence(&digest, true));
-            return Admission { findings: entry.findings.clone(), evidence };
+            return Admission {
+                findings: entry.findings.clone(),
+                evidence,
+            };
         }
         let mut evidence = Vec::new();
         let mut next = BTreeMap::new();
         let mut local = |artifact: &ArtifactEnvelope| {
             // This callback receives the same normalized envelope as full admission.
             let key = exact_artifact_digest(artifact).and_then(|hash| {
-                exact_commitment(b"local-admission", &[self.profile.as_bytes(), hash.as_bytes()])
+                exact_commitment(
+                    b"local-admission",
+                    &[self.profile.as_bytes(), hash.as_bytes()],
+                )
             });
             let old = self.local.get(&artifact.artifact_id);
-            let reused = key.as_ref().is_ok_and(|key| old.is_some_and(|e| e.digest == *key));
+            let reused = key
+                .as_ref()
+                .is_ok_and(|key| old.is_some_and(|e| e.digest == *key));
             let findings = if reused {
                 old.map(|entry| entry.findings.clone()).unwrap_or_default()
             } else {
                 crate::check_artifact(artifact)
             };
             if let Ok(key) = &key {
-                next.insert(artifact.artifact_id.clone(), Entry { digest: key.clone(), findings: findings.clone() });
+                next.insert(
+                    artifact.artifact_id.clone(),
+                    Entry {
+                        digest: key.clone(),
+                        findings: findings.clone(),
+                    },
+                );
             }
             evidence.push(JobEvidence {
                 artifact_id: Some(artifact.artifact_id.clone()),
                 closure_digest: key.as_ref().ok().cloned(),
-                origin: if reused { EvidenceOrigin::ReusedFromDigest(key.unwrap_or_default()) } else { EvidenceOrigin::Rechecked },
+                origin: if reused {
+                    EvidenceOrigin::ReusedFromDigest(key.unwrap_or_default())
+                } else {
+                    EvidenceOrigin::Rechecked
+                },
             });
             findings
         };
-        let findings = crate::artifact_set::check_artifact_set_using(artifacts, context, &mut local);
+        let findings =
+            crate::artifact_set::check_artifact_set_using(artifacts, context, &mut local);
         self.jobs.clone_from(&evidence);
         self.local = next;
-        self.global = Some(Entry { digest: digest.clone(), findings: findings.clone() });
+        self.global = Some(Entry {
+            digest: digest.clone(),
+            findings: findings.clone(),
+        });
         evidence.push(global_evidence(&digest, false));
         Admission { findings, evidence }
     }
@@ -143,7 +167,11 @@ impl AdmissionCache {
     ) -> Result<String, ChallengeError> {
         // Preserve layer membership and order: diagnostics depend on both. Duplicate
         // identities cannot collapse, nor can moving an artifact into the base.
-        let hashes = |pool: &[ArtifactEnvelope]| pool.iter().map(exact_artifact_digest).collect::<Result<Vec<_>, _>>();
+        let hashes = |pool: &[ArtifactEnvelope]| {
+            pool.iter()
+                .map(exact_artifact_digest)
+                .collect::<Result<Vec<_>, _>>()
+        };
         let body = json!({
             "profile": self.profile,
             "candidate": hashes(artifacts)?,
@@ -151,7 +179,8 @@ impl AdmissionCache {
             "registry": context.registry,
             "tenant": context.tenant.map(|t| (t.tenant_id, &t.namespace.0)),
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body).map_err(|_error| ChallengeError::Closure)?;
+        let bytes = norn_canonical::serialize_json_verbatim(&body)
+            .map_err(|_error| ChallengeError::Closure)?;
         exact_commitment(b"global-admission", &[&bytes])
     }
 }
@@ -160,6 +189,10 @@ fn global_evidence(digest: &str, reused: bool) -> JobEvidence {
     JobEvidence {
         artifact_id: None,
         closure_digest: Some(digest.to_owned()),
-        origin: if reused { EvidenceOrigin::ReusedFromDigest(digest.to_owned()) } else { EvidenceOrigin::Rechecked },
+        origin: if reused {
+            EvidenceOrigin::ReusedFromDigest(digest.to_owned())
+        } else {
+            EvidenceOrigin::Rechecked
+        },
     }
 }

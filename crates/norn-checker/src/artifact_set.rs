@@ -103,7 +103,9 @@ use norn_ir::{
 };
 
 use crate::action_set::check_action_set;
-use crate::entity_artifacts::{EntityArtifactSetContext, check_entity_artifacts_using, dedupe_findings};
+use crate::entity_artifacts::{
+    EntityArtifactSetContext, check_entity_artifacts_using, dedupe_findings,
+};
 use crate::graph::{cycle_groups, topological_order};
 use crate::jdm_profile::check_sub_decision_closures;
 use crate::lifecycle_writes::check_lifecycle_write_set;
@@ -326,51 +328,53 @@ pub(crate) fn check_artifact_set_using(
     };
 
     let findings = match resolve_artifact_set(&normalized_artifacts, &normalized_base) {
-        Ok(_resolved) => check_entity_artifacts_using(&normalized_artifacts, &normalized_context, local)
-            .into_iter()
-            .chain(scope_findings(&normalized_artifacts, &normalized_base))
-            .chain(check_pack_instances(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(check_sub_decision_closures(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(check_action_set(&normalized_artifacts, &normalized_context))
-            .chain(check_lifecycle_write_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::rule_bindings::check_rule_binding_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::source_commands::check_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::mapping::check_mapping_artifacts(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            // Typed Widget UX references and expression contracts resolve
-            // only after the candidate and installed-base artifact pool
-            // is available.
-            .chain(crate::widget_ux::check_widget_ux_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::markings::check_references(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(crate::verification::check_law_set(
-                &normalized_artifacts,
-                &normalized_base,
-                normalized_context.registry,
-            ))
-            .collect::<Vec<_>>(),
+        Ok(_resolved) => {
+            check_entity_artifacts_using(&normalized_artifacts, &normalized_context, local)
+                .into_iter()
+                .chain(scope_findings(&normalized_artifacts, &normalized_base))
+                .chain(check_pack_instances(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(check_sub_decision_closures(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(check_action_set(&normalized_artifacts, &normalized_context))
+                .chain(check_lifecycle_write_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::rule_bindings::check_rule_binding_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::source_commands::check_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::mapping::check_mapping_artifacts(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                // Typed Widget UX references and expression contracts resolve
+                // only after the candidate and installed-base artifact pool
+                // is available.
+                .chain(crate::widget_ux::check_widget_ux_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::markings::check_references(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(crate::verification::check_law_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                    normalized_context.registry,
+                ))
+                .collect::<Vec<_>>()
+        }
         Err(resolution) => normalized_artifacts
             .iter()
             .flat_map(local)
