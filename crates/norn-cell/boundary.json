@@ -5,7 +5,8 @@
     "norn-kernel",
     "norn-checker",
     "norn-projections",
-    "norn-ir"
+    "norn-ir",
+    "norn-authz"
   ],
   "dev_only_norn": [],
   "third_party": []

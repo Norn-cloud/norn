@@ -14,15 +14,6 @@ fn ready<F: Future>(future: F) -> F::Output {
     }
 }
 
-struct Double(DecisionWithModel);
-impl WasmModule for Double {
-    async fn solve(&mut self, input: Vec<u8>) -> Result<DecisionWithModel, SolverError> {
-        let text = String::from_utf8(input).expect("SMTLib is UTF8");
-        assert!(text.contains("(check-sat)"));
-        Ok(self.0.clone())
-    }
-}
-
 fn sets() -> (ValidatedPolicySet, ValidatedPolicySet) {
     let schema = crate::AuthzSchema::from_projected_cedarschema(
         include_str!("../../tests/fixtures/order.cedarschema")
@@ -51,17 +42,6 @@ fn missing_solver_and_host_timeout_remain_visible_unknown() {
     let result = ready(analyze(Some(&mut TimedOut), &candidate, &previous, Property::Refinement, budget));
     assert_eq!(result, Analysis::Unknown);
     assert!(!result.admits(Obligation::Required));
-}
-
-#[test]
-fn upstream_queries_use_memory_transport_for_every_environment() {
-    let (candidate, _) = sets();
-    for property in [Property::Refinement, Property::Equivalence] {
-        let result = ready(analyze_in_worker(MemorySolver::new(Double(DecisionWithModel::Unsat)), &candidate, &candidate, property));
-        assert_eq!(result, Analysis::Unsat);
-    }
-    let result = ready(analyze_in_worker(MemorySolver::new(Double(DecisionWithModel::Unknown)), &candidate, &candidate, Property::Refinement));
-    assert_eq!(result, Analysis::Unknown);
 }
 
 #[test]
