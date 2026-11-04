@@ -55,6 +55,30 @@ fn finding(
 /// Decode and locally check a law; used by the ordinary artifact checker/WASM ABI.
 #[must_use]
 pub fn check_law_local(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
+    // LAW-NORMATIVE-1: the intermediate contract must not erase normative grade.
+    if artifact
+        .payload
+        .to_json_value()
+        .as_object()
+        .is_some_and(|p| p.contains_key("requirement"))
+    {
+        let structured = serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value::<norn_ir::deontic::StructuredLaw>);
+        return vec![match structured {
+            Ok(_) => finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/requirement",
+                "structured laws require trusted retained authority/enactment and complete pointwise grounding; ordinary LawIR lowering is refused",
+            ),
+            Err(error) => finding(
+                codes::INVALID_DOCUMENT,
+                artifact,
+                "/payload",
+                error.to_string(),
+            ),
+        }];
+    }
     match decode(artifact) {
         Ok(law) => local(&law, artifact),
         Err(error) => vec![finding(

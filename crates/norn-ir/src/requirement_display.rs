@@ -148,11 +148,15 @@ impl RequirementView {
         let source = isolate(&source);
         let component = format!("{}; {}", visible(&w.component), isolate(&law.subject));
         let response = format!("{}; {}", visible(&w.response), isolate(&response));
-        let preferred = format!(
-            "{}; {}",
-            visible(&w.terms.grounding),
-            isolate(&r.norm.defeated_by.join(", "))
-        );
+        let preferred = if r.norm.defeated_by.is_empty() {
+            "\u{2205}".to_owned()
+        } else {
+            format!(
+                "{}; {}",
+                visible(&w.terms.grounding),
+                isolate(&r.norm.defeated_by.join(", "))
+            )
+        };
         let mut slots = vec![
             slot(&law.id, "/norm/law/scope", &w.labels.scope, scope.join("")),
             slot(
