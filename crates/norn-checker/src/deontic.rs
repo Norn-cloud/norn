@@ -1,5 +1,5 @@
-//! Deterministic, conservative lowering of normative declarations (#3563/#3320).
-//! This is not signature verification, admission, a proof or an evaluator.
+//! Conservative lowering and finite admission of normative declarations.
+//! Structural authority bindings grant no permissions or proof status.
 use norn_ir::deontic::{DeonticModality, DeonticRule, RuleSourceSpan};
 use norn_ir::{LawIR, LawModality, LawResponse, LawRoot};
 
@@ -500,13 +500,12 @@ fn admission_order(
     }
     let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
         .map_err(|e| format!("{e:?}"))?;
-    let audited_protection = installed_protection(&protected, &lowered.edges);
     diagnose_declared_order(
         &lowered.norms,
         &lowered.origins,
         &layers,
         &lowered.edges,
-        &audited_protection,
+        &installed_protection(&protected, &lowered.edges),
         lowered.contexts,
         ADMISSION_CALLS,
     )
@@ -603,8 +602,12 @@ pub(crate) fn installed_protection(
     inherited: &std::collections::BTreeSet<usize>,
     edges: &[(usize, usize)],
 ) -> std::collections::BTreeSet<usize> {
-    inherited.iter().copied().filter(|low| {
-        let incoming: Vec<_> = edges.iter().filter(|(_, target)| target == low).collect();
-        incoming.is_empty() || incoming.iter().any(|(high, _)| !inherited.contains(high))
-    }).collect()
+    inherited
+        .iter()
+        .copied()
+        .filter(|low| {
+            let incoming: Vec<_> = edges.iter().filter(|(_, target)| target == low).collect();
+            incoming.is_empty() || incoming.iter().any(|(high, _)| !inherited.contains(high))
+        })
+        .collect()
 }
