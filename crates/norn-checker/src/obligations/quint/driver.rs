@@ -454,14 +454,21 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
             }
         }
     }
-    let report_cases = cases.iter().map(CaseReport::json).collect::<Result<Vec<_>>>()?;
+    let report_cases = cases
+        .iter()
+        .map(CaseReport::json)
+        .collect::<Result<Vec<_>>>()?;
     let stale = serde_json::to_value(GuaranteeVerdict::Unknown {
         reason: "evidence belongs to the original Challenge and is stale under the mutant".into(),
     })?;
-    writeln!(std::io::stdout().lock(), "{}", serde_json::to_string(&json!({
-        "cases": report_cases, "staleEvidence": stale,
-        "staleRejected": stale_rejected, "acceptancePassed": accepted,
-    }))?)?;
+    writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        serde_json::to_string(&json!({
+            "cases": report_cases, "staleEvidence": stale,
+            "staleRejected": stale_rejected, "acceptancePassed": accepted,
+        }))?
+    )?;
     if !accepted {
         return Err("bounded original/mutant/restored acceptance failed".into());
     }
