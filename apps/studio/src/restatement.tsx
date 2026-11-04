@@ -6,6 +6,7 @@ import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answe
 import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
 import { recordedTransport, type Answer } from "./lib/transport.ts"
+import { CorrectionsStatus } from "./restatement-status.tsx"
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
 
@@ -29,8 +30,8 @@ const read = (answer: Answer) => `Read ${day(answer.nowMs)}, after ${changes(ans
 
 export function RestatementCard() {
   const restatement = useQuery({ queryKey: ["restatement"], queryFn: recordedTransport.restatement })
-  if (restatement.isPending) return <p className="text-muted-foreground">Reading corrections…</p>
-  if (restatement.isError) return <p className="text-destructive">{restatement.error.message}</p>
+  if (restatement.isPending) return <CorrectionsStatus />
+  if (restatement.isError) return <CorrectionsStatus error={restatement.error} />
   const { answer, corrected, asOf } = restatement.data
   const declared = declarations(restatement.data)
   const published = buckets(declared, { answer: answer.document, numbers: answer.numbers, at: "" })
