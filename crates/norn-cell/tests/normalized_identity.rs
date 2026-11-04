@@ -411,6 +411,33 @@ fn rename_identity_and_reuse_business_key(cell: &mut IdentityCell) {
     );
 }
 
+fn delete_identity_retaining_reference(cell: &mut IdentityCell) {
+    use norn_kernel::{LinkKey, LinkMutation, LinkWrite};
+    let mut delete = identity_proposal(cell, None);
+    let before = cell.store().read().dump().expect("before dangling refusal");
+    let refusal = cell
+        .commit(delete.clone())
+        .expect_err("live reference cannot dangle");
+    assert_eq!(refusal.code(), "commit.dangling_link");
+    assert_eq!(
+        cell.store().read().dump().expect("atomic dangling refusal"),
+        before
+    );
+    let link = LinkKey::new(
+        FactKey::new("identity.Event", "posted"),
+        "subject",
+        FactKey::new("identity.Child", "stable"),
+    );
+    delete.links.push(LinkWrite {
+        expected: cell.load_link(&link).expect("live link version").version,
+        key: link.clone(),
+        mutation: LinkMutation::Remove,
+    });
+    cell.commit(delete)
+        .expect("retire the live edge and delete A atomically");
+    assert!(!cell.load_link(&link).expect("retired edge").exists());
+}
+
 /// ID-RENAME / ID-REF-1: recorded typed references retain A, even when B reuses A's old business key.
 #[test]
 fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
@@ -423,8 +450,7 @@ fn id_rename_retains_scoped_reference_after_tombstone_reopen_and_replay() {
     let posted_hash = posted.hash().expect("posted hash");
     rename_identity_and_reuse_business_key(&mut cell);
     let key = FactKey::new("identity.Child", "stable");
-    cell.commit(identity_proposal(&cell, None))
-        .expect("delete A");
+    delete_identity_retaining_reference(&mut cell);
     let deleted = cell.load(&key).expect("deleted identity");
     assert!(!deleted.exists());
     for _ in 0..2 {
