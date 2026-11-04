@@ -43,7 +43,7 @@ fn question_identity_is_stable_and_obligation_bound() -> Result<(), serde_json::
 fn lifecycle_wire_requires_proposal_approval_and_closure_pins() {
     for value in [
         r#"{"state":"proposed"}"#,
-        r#"{"state":"approved","actor":"expert"}"#,
+        r#"{"state":"approved"}"#,
         r#"{"state":"closed","receipt":"pretend"}"#,
         r#"{"state":"open","approval":{"actor":"expert"}}"#,
         r#"{"state":"future"}"#,
@@ -60,5 +60,45 @@ fn wire_rejects_future_versions_and_authority_fields() -> Result<(), serde_json:
     value["questionVersion"] = "0.1".into();
     value["authorized"] = true.into();
     assert!(serde_json::from_value::<DecisionQuestion>(value).is_err());
+    Ok(())
+}
+
+#[test]
+fn valid_lifecycle_records_roundtrip() -> Result<(), serde_json::Error> {
+    let proposal = serde_json::json!({
+        "questionId": Digest::from_hex(&"a".repeat(64)),
+        "questionContent": Digest::from_hex(&"b".repeat(64)),
+        "revision": 1,
+        "optionId": "binding-a",
+        "actor": "agent-a",
+        "candidate": Digest::from_hex(&"c".repeat(64)),
+    });
+    let approval = serde_json::json!({"proposal": proposal, "actor": "expert-a"});
+    for (state, binding) in [
+        (
+            serde_json::json!({"state": "proposed", "proposal": proposal}),
+            "proposal",
+        ),
+        (
+            serde_json::json!({"state": "approved", "approval": approval}),
+            "approval",
+        ),
+        (
+            serde_json::json!({
+                "state": "closed", "approval": approval,
+                "receipt": Digest::from_hex(&"d".repeat(64)),
+                "closure": Digest::from_hex(&"e".repeat(64)),
+            }),
+            "closure",
+        ),
+    ] {
+        let decoded: DecisionQuestionState = serde_json::from_value(state.clone())?;
+        assert_eq!(serde_json::to_value(decoded)?, state);
+        let mut missing = state;
+        if let Some(object) = missing.as_object_mut() {
+            object.remove(binding);
+        }
+        assert!(serde_json::from_value::<DecisionQuestionState>(missing).is_err());
+    }
     Ok(())
 }
