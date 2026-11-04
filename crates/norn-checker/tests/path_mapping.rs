@@ -206,7 +206,7 @@ fn a_bad_component_breaks_its_composite_and_identity_composes() {
     );
     let mut many = serde_json::to_value(&middle).unwrap();
     many[0]["payload"]["objectType"]["links"][0]["cardinality"]["to"] = json!("many");
-    let many = serde_json::from_value(many).unwrap();
+    let many: Vec<ArtifactEnvelope> = serde_json::from_value(many).unwrap();
     assert!(
         compose_path_mappings(
             &identity,
