@@ -1,4 +1,4 @@
 {
-  "order": 100,
+  "order": 103,
   "value": "crates/norn-checker/tests/entity_model.rs"
 }

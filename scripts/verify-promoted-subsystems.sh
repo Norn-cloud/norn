@@ -368,6 +368,10 @@ run_gate fast authority-quint \
       noOpPreservesCanonical \
     --max-steps 8 \
     --out "$result_root/authority-commit-quint.json"
+run_gate fast assurance-linear-conservation-lean \
+  "lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean" \
+  command \
+  lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \

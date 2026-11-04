@@ -1189,6 +1189,21 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
+    },
+    {
+      "id": "assurance-linear-conservation-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
     }
   ]
 }
