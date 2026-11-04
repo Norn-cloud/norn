@@ -317,8 +317,8 @@ mod tests {
         let row = RuntimeValue::from_json_text(r#"{"name":"ROW-1","item_code":"ITEM-1","item_name":"Sample","stock_uom":"Nos","modified":"2026-11-04 00:00:00"}"#).expect("row");
         let unknown = erpnext_row("Item", &row, &Crosswalk::default()).expect("unreviewed");
         assert!(!unknown.record.contains_key("norn_ref"));
-        let crosswalk = Crosswalk::parse(r#"{"erpnext":{"items":{"ROW-1":"demo/item/1"}}}"#)
-            .expect("reviewed");
+        let crosswalk =
+            Crosswalk::parse(r#"{"erpnext":{"items":{"ROW-1":"demo/item/1"}}}"#).expect("reviewed");
         let known = erpnext_row("Item", &row, &crosswalk).expect("mapped");
         assert_eq!(known.record.get("norn_ref"), Some(&string("demo/item/1")));
         let sealed = observation("test/1", known, 1).expect("sealed");
