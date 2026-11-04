@@ -32,10 +32,10 @@ fn policy() -> norn_ir::access::AccessIr {
     serde_json::from_value(serde_json::to_value(policy).unwrap()).unwrap()
 }
 fn pdp(capabilities: &[&str], declared: bool) -> Pdp {
-    let projected = norn_projections::project_host_access_schema(&[]);
-    let entities = norn_projections::project_cedar_schema(&[], &[], &[]);
-    let schema =
-        AuthzSchema::from_projected_cedarschema_fragments(&[&entities.schema, &projected]).unwrap();
+    let schema = AuthzSchema::from_projected_cedarschema(include_str!(
+        "../tests/fixtures/refusal-access.cedarschema"
+    ))
+    .unwrap();
     let mut policy = policy();
     if !declared {
         policy.rules.clear();
