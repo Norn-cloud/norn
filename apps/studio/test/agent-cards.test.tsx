@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { DecisionCard, VerdictCard } from "../src/agent/cards.tsx"
+import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
@@ -38,4 +38,14 @@ test("a tab keeps one session id for the server's budget", () => {
   const first = sessionId(storage)
   expect(first).toMatch(/^[0-9a-f-]{36}$/)
   expect(sessionId(storage)).toBe(first)
+})
+
+test("a nested checker finding reads as its own message, with the raw text kept under Details", () => {
+  const raw = '[Diagnostic { code: "expr.member.unknown", message: "`unseen` is not a member of `stress.Purchase`", span: (0, 11) }]'
+  expect(reasons(raw)).toEqual(["`unseen` is not a member of `stress.Purchase`"])
+  expect(reasons("plain reason")).toEqual(["plain reason"])
+  const verdict = { ...refusal, refusals: [{ ...refusal.refusals[0], message: raw }] }
+  const html = renderToStaticMarkup(<VerdictCard verdict={verdict as never} />)
+  expect(html).toContain("Details")
+  expect(html).toContain("is not a member of")
 })
