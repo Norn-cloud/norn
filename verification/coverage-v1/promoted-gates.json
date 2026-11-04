@@ -117,6 +117,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "assurance-specialisation-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "transition-lean",
       "profile": "fast",
       "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
