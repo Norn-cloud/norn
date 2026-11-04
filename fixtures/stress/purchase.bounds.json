@@ -1,0 +1,20 @@
+{
+  "action": "stress.receipt.inspect.action",
+  "identity": "receipt-one",
+  "inputs": {
+    "delivered": [
+      "1",
+      "4"
+    ],
+    "accepted": [
+      "0",
+      "4"
+    ]
+  },
+  "seed": 0,
+  "expectedStates": 15,
+  "exclusions": [
+    "Purchase lifecycle and its two laws remain unsupported; this bound selects immutable receipt inspection only.",
+    "One object, one create, empty initial store; pre-authorized synthetic operator; no claim about cross-object linking or unbounded histories."
+  ]
+}

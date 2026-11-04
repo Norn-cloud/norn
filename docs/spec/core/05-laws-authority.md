@@ -174,23 +174,10 @@ Named cases check native affine evaluation, ordered substitutions/input requirem
 mutant default origins, explicit refusals and unchanged Quint golden bytes.
 
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
-`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
+producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
-
-Compiler transport must not determine discharge. Flattened Quint JSON uses the
-pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
-The initializer conversion accepts only a complete constant assignment to each
-state variable, with no initializer reuse; it changes assignment to equality
-only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
-as Unknown. Both compilation stages share the existing 120-second budget and
-own their process groups. The independent Apalache CLI checks the same emitted
-TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
-exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
-an exact typed ITF trace and agreement with the primary trace shape. Other exits,
-missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
-real generated output must match the prior RPC compiler bytes.
 
 Qualification is restricted to integer/Boolean states and one worker. Raw
 successful universal searches require nonempty initialization, a drained queue
@@ -206,7 +193,27 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
-**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+**PROOF-GUARANTEE-1:** the native binder emits one typed document per law, with
+all generated obligations, exact bound records and typed trace quantities. A
+recording is written only after the complete original/mutant/restored acceptance
+passes; failed runs retain Unknown in their output and produce no recording.
+Runtime and parity links remain explicitly not-yet unless separately supplied.
+Violation results require a non-empty reconstructed counterexample or witness;
+missing/null/empty traces remain Unknown. Named refusal scenario:
+`qualifying_violations_require_a_nonempty_reconstructed_scenario`.
+Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
+and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
+are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+Tool assets use logical name/version identities and exact content digests, without
+installation paths. Compiler stages retain exit codes; oracle records retain verdicts and exact scalar
+trace values in state order. Run-specific diagnostics and ITF creation metadata
+stay outside recorded evidence. Structured primary results remain bound.
+The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
+Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
+count, worker count and exclusions. Model digests, invariant selectors and step
+selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
+
+**PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
 generated goal inventory. Unsupported goals keep explicit Unknown reasons.

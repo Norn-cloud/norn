@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { QuestionsMenu, QuestionsPage } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
+import { ObjectPage, ObjectsPage } from "./objects.tsx"
 import { SourcesPage } from "./sources.tsx"
 import "./index.css"
 
@@ -39,6 +40,8 @@ const router = createRouter({
       path: section.path,
       component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : () => <NotYet {...section} />,
     })),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectsPage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),
   ]),
 })
 

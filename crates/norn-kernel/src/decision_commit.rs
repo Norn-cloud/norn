@@ -365,7 +365,9 @@ impl<'a> TypeCatalog<'a> {
             .is_some_and(|property| {
                 matches!(
                     &property.kind,
-                    EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. })
+                    EffectiveKind::Base(
+                        PropertyType::Integer { .. } | PropertyType::Decimal { .. }
+                    )
                 )
             })
     }
