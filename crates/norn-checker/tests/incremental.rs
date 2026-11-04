@@ -15,11 +15,14 @@ use proptest::prelude::*;
 #[path = "../../../registry/core/src/units.rs"]
 mod units;
 
+fn registry() -> BTreeSet<norn_ir::PropertyTypeName> {
+    ["core.code", "core.quantity", "ucum.unit_code", "core.display_name", "iso8601.timestamp"]
+        .map(|name| norn_ir::PropertyTypeName(name.into())).into_iter().collect()
+}
+
 fn fixture() -> Vec<ArtifactEnvelope> {
     let mut pool = vec![units::pack().expect("units")];
     for text in [
-        include_str!("../../../registry/core/artifacts/core.value_types.entity.json"),
-        include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
         include_str!("../../../registry/core/artifacts/core.Commitment.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
         include_str!("../../../registry/core/artifacts/core.EconomicEvent.interface.json"),
@@ -66,7 +69,7 @@ fn compare(
 
 #[test]
 fn dependency_edits_and_new_writers_cannot_reuse_global_evidence() {
-    let registry = BTreeSet::new();
+    let registry = registry();
     let context = EntityArtifactSetContext {
         registry: &registry,
         base: &[],
@@ -115,7 +118,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
     fn generated_edits_equal_full_admission(edits in prop::collection::vec((0_u8..9, any::<u8>()), 1..32)) {
-        let registry = BTreeSet::new();
+        let registry = registry();
         let mut cache = AdmissionCache::new(&[7;32], "structural", "no solver");
         let original = fixture();
         let mut pool = original.clone();
@@ -141,7 +144,7 @@ proptest! {
 
 #[test]
 fn registry_tenant_and_base_are_global_inputs() {
-    let mut registry = BTreeSet::new();
+    let mut registry = registry();
     let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
     let pool = fixture();
     compare(
@@ -176,7 +179,7 @@ fn registry_tenant_and_base_are_global_inputs() {
 #[test]
 #[ignore = "explicit measurement; run with --ignored --nocapture"]
 fn admission_change_size_measurement() {
-    let registry = BTreeSet::new();
+    let registry = registry();
     let context = EntityArtifactSetContext {
         registry: &registry,
         base: &[],
