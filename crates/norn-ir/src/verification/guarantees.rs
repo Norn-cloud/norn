@@ -3,7 +3,7 @@ use super::evidence::{EvidenceRecord, EvidenceTool};
 use crate::UnitRef;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Stable per-law guarantees document format.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -261,6 +261,13 @@ impl GuaranteesDocument {
             && u32::try_from(self.goals.iter().filter(|goal| goal.eligible).count()).ok()
                 == Some(self.eligible)
             && self.discharged <= self.eligible
+            && self
+                .goals
+                .iter()
+                .map(|goal| goal.index)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == self.goals.len()
     }
 }
 impl Serialize for GuaranteesDocument {
@@ -487,18 +494,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries() {
+        let mut document = valid_document();
+        for (goal, index) in document.goals.iter_mut().zip([7, 11, u32::MAX]) {
+            goal.index = index;
+        }
+        let mut wire = serde_json::to_value(&document).expect("distinct Challenge indices");
+        assert_eq!(
+            serde_json::from_value::<super::GuaranteesDocument>(wire.clone())
+                .expect("per-law indices need not start at zero or be contiguous"),
+            document
+        );
+        document.goals.get_mut(1).expect("second goal").index = 7;
+        wire["goals"][1]["index"] = json!(7);
+        assert!(serde_json::to_value(&document).is_err());
+        assert!(serde_json::from_value::<super::GuaranteesDocument>(wire).is_err());
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
         #[test]
         fn document_count_boundaries_match_generated_inventories(
             flags in prop::collection::vec(any::<bool>(), 0..8),
             wrong_total in any::<bool>(), wrong_eligible in any::<bool>(), discharged in 0..10_u32,
+            duplicate_index in any::<bool>(), offset in any::<u16>(),
         ) {
             let mut document = valid_document();
             let template = document.goals.get(1).expect("Unknown template").clone();
             document.goals = flags.iter().enumerate().map(|(index, eligible)| {
                 let mut goal = template.clone();
-                goal.index = u32::try_from(index).expect("bounded index");
+                goal.index = u32::from(offset).checked_add(
+                    u32::try_from(index).expect("bounded index").checked_mul(2).expect("bounded spacing")
+                ).expect("bounded offset");
                 goal.eligible = *eligible;
                 goal
             }).collect();
@@ -506,7 +534,13 @@ mod tests {
             document.eligible = u32::try_from(flags.iter().filter(|flag| **flag).count()).expect("bounded inventory");
             document.discharged = 0;
             let mut wire = serde_json::to_value(&document).expect("valid generated inventory");
-            let valid = !wrong_total && !wrong_eligible && discharged <= document.eligible;
+            let duplicate = duplicate_index && document.goals.len() > 1;
+            if duplicate {
+                let first = document.goals.first().expect("first goal").index;
+                document.goals.get_mut(1).expect("second goal").index = first;
+                wire["goals"][1]["index"] = json!(first);
+            }
+            let valid = !wrong_total && !wrong_eligible && discharged <= document.eligible && !duplicate;
             document.total = document.total.checked_add(u32::from(wrong_total)).expect("bounded count");
             document.eligible = document.eligible.checked_add(u32::from(wrong_eligible)).expect("bounded count");
             document.discharged = discharged;
