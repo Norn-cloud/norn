@@ -18,3 +18,15 @@ test("a malformed domain list or stage refuses before anything deploys", () => {
   expect(() => deployTarget({ STUDIO_DOMAINS: "studio.norn.cloud," })).toThrow("comma-separated hostnames")
   expect(() => deployTarget({ ALCHEMY_STAGE: "Pre view" })).toThrow("ALCHEMY_STAGE")
 })
+
+test("a DNS label longer than 63 characters is refused", () => {
+  expect(() => deployTarget({ STUDIO_DOMAINS: `${"a".repeat(64)}.norn.cloud` })).toThrow("comma-separated hostnames")
+  expect(deployTarget({ STUDIO_DOMAINS: `${"a".repeat(63)}.norn.cloud` }).domains).toEqual([`${"a".repeat(63)}.norn.cloud`])
+  expect(() => deployTarget({ STUDIO_DOMAINS: "-studio.norn.cloud" })).toThrow("comma-separated hostnames")
+})
+
+test("a non-production stage cannot take the production hostnames", () => {
+  expect(() => deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud,studio.norn.cloud" }))
+    .toThrow("cannot take the production domains studio.norn.cloud")
+  expect(() => deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-demo.norn.cloud" })).toThrow("studio-demo.norn.cloud")
+})
