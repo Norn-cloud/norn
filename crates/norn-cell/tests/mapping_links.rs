@@ -717,6 +717,6 @@ fn obs_link_subtype_default_redeclarations_refuse_at_catalog_admission() {
     assert!(
         diagnostics
             .iter()
-            .any(|d| d.code.0 == "object_type.validation.link_override_redeclares")
+            .any(|d| d.code.as_str() == "object_type.validation.link_override_redeclares")
     );
 }
