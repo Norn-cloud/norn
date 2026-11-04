@@ -99,7 +99,14 @@ impl ApprovedContract {
             {
                 continue;
             }
-            let Some(index) = matching_goal(base_source, &base, &result.challenge, evidence.pins.goal_index) else { continue };
+            let Some(index) = matching_goal(
+                base_source,
+                &base,
+                &result.challenge,
+                evidence.pins.goal_index,
+            ) else {
+                continue;
+            };
             if result.reused.iter().any(|r| r.goal_index == index) {
                 continue;
             }
@@ -132,56 +139,48 @@ impl ApprovedContract {
     }
 }
 
-fn matching_goal(base_source: &DefinitionSource, base: &Challenge, target_challenge: &Challenge, goal_index: u32) -> Option<usize> {
-            let Some(old) = usize::try_from(goal_index)
+fn matching_goal(
+    base_source: &DefinitionSource,
+    base: &Challenge,
+    target_challenge: &Challenge,
+    goal_index: u32,
+) -> Option<usize> {
+    let old = usize::try_from(goal_index)
+        .ok()
+        .and_then(|index| goals(base).get(index))?;
+    let kind = old
+        .pointer("/goal/kind")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !matches!(kind, "initialization" | "preservation") {
+        return None;
+    }
+    let law_index = old["law"].as_u64().and_then(|i| usize::try_from(i).ok())?;
+    let law_identity = base.body()["lawStatements"]
+        .as_array()
+        .and_then(|a| a.get(law_index))?;
+    let safety = base_source
+        .artifacts
+        .iter()
+        .find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
+        .and_then(|a| {
+            serde_json::to_value(a.payload.to_json_value())
                 .ok()
-                .and_then(|index| goals(base).get(index))
-            else {
-                return None;
-            };
-            let kind = old.pointer("/goal/kind").and_then(Value::as_str).unwrap_or("");
-            if !matches!(kind, "initialization" | "preservation") {
-                return None;
-            }
-            let Some(law_index) = old["law"].as_u64().and_then(|i| usize::try_from(i).ok()) else {
-                return None;
-            };
-            let Some(law_identity) = base.body()["lawStatements"]
-                .as_array()
-                .and_then(|a| a.get(law_index))
-            else {
-                return None;
-            };
-            let safety = base_source
-                .artifacts
-                .iter()
-                .find(|a| Some(a.artifact_id.as_str()) == law_identity["artifactId"].as_str())
-                .and_then(|a| {
-                    serde_json::to_value(a.payload.to_json_value())
-                        .ok()
-                        .and_then(|v| serde_json::from_value::<LawIR>(v).ok())
-                })
-                .is_some_and(|law| {
-                    matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-                });
-            if !safety {
-                return None;
-            }
-            let Some(target_law) = target_challenge.body()["lawStatements"]
-                .as_array()
-                .and_then(|laws| laws.iter().position(|law| law == law_identity))
-            else {
-                return None;
-            };
-            let mut target = old.clone();
-            *target.get_mut("law")? = target_law.into();
-            *target.pointer_mut("/statement/law")? = target_law.into();
-            let Some(index) = goals(&target_challenge)
-                .iter()
-                .position(|goal| goal == &target)
-            else {
-                return None;
-            };
+                .and_then(|v| serde_json::from_value::<LawIR>(v).ok())
+        })
+        .is_some_and(|law| matches!(law.modality, LawModality::Always {} | LawModality::Never {}));
+    if !safety {
+        return None;
+    }
+    let target_law = target_challenge.body()["lawStatements"]
+        .as_array()
+        .and_then(|laws| laws.iter().position(|law| law == law_identity))?;
+    let mut target = old.clone();
+    *target.get_mut("law")? = target_law.into();
+    *target.pointer_mut("/statement/law")? = target_law.into();
+    let index = goals(target_challenge)
+        .iter()
+        .position(|goal| goal == &target)?;
     Some(index)
 }
 
