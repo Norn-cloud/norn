@@ -83,6 +83,14 @@ fn measure_advance(members: usize, changed: bool) -> usize {
             ..CommitBatch::default()
         })
         .expect("receipt");
+    assert_eq!(
+        store
+            .verified_head()
+            .expect("head")
+            .commits
+            .checked_sub(view.result().revision.commits),
+        Some(1)
+    );
     counts.set((0, 0));
     let mut evaluated = 0usize;
     let start = Instant::now();
@@ -133,6 +141,7 @@ fn unchanged_receipt_preserves_quarantine_without_rechecking_members() {
         .expect("quarantined generation");
     assert_eq!(view.result().exclusions.len(), 1);
     host.commit(CellCommit::empty()).expect("unrelated receipt");
+    assert!(host.store().verified_head().expect("head").commits > view.result().revision.commits);
     view.advance(host.store(), context.clone(), |_| {
         Err(CellError::ComputeRefused("test.unchanged_member_evaluated"))
     })
