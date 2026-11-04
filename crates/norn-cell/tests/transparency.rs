@@ -246,3 +246,62 @@ fn cache_read_failure_cannot_turn_a_durable_commit_into_an_error() {
         first.transparency_checkpoint().expect("root")
     );
 }
+
+#[test]
+fn untrusted_proof_inputs_return_errors_without_panicking() {
+    use norn_cell::transparency::{Checkpoint, ConsistencyProof, InclusionProof};
+    let inclusion = InclusionProof::try_from_bytes(vec![]).expect("empty path");
+    let consistency = ConsistencyProof::try_from_bytes(vec![]).expect("empty path");
+    let checkpoint = |size| Checkpoint::new([0; 32], size);
+    // Sol's exact input, and both operands of the consistency boundary.
+    assert!(
+        checkpoint(u64::MAX)
+            .verify_inclusion(&"leaf", 1_u64 << 63, &inclusion)
+            .is_err()
+    );
+    for size in [(1_u64 << 63) + 1, u64::MAX] {
+        assert!(
+            checkpoint(size)
+                .verify_inclusion(&"leaf", 0, &inclusion)
+                .is_err()
+        );
+        assert!(
+            checkpoint(size)
+                .verify_consistency(&checkpoint(1_u64 << 63), &consistency)
+                .is_err()
+        );
+        assert!(
+            checkpoint(1_u64 << 63)
+                .verify_consistency(&checkpoint(size), &consistency)
+                .is_err()
+        );
+        assert!(
+            checkpoint(size)
+                .verify_consistency(&checkpoint(size), &consistency)
+                .is_err()
+        );
+    }
+    for (size, index) in [(0, 0), (1, 1), (2, 0), (1_u64 << 63, (1_u64 << 63) - 1)] {
+        assert!(
+            checkpoint(size)
+                .verify_inclusion(&"leaf", index, &inclusion)
+                .is_err()
+        );
+    }
+    for (old, new) in [(0, 1), (2, 1), (1, 2)] {
+        assert!(
+            checkpoint(new)
+                .verify_consistency(&checkpoint(old), &consistency)
+                .is_err()
+        );
+    }
+    assert!(
+        checkpoint(1_u64 << 63)
+            .verify_consistency(&checkpoint(1_u64 << 63), &consistency)
+            .is_ok()
+    );
+    for bytes in [vec![0], vec![0; 65 * 32]] {
+        assert!(InclusionProof::try_from_bytes(bytes.clone()).is_err());
+        assert!(ConsistencyProof::try_from_bytes(bytes).is_err());
+    }
+}

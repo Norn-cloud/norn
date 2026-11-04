@@ -15,12 +15,129 @@ use crate::{
     engine::{SqlEngine, params},
 };
 
-/// RFC 6962 inclusion path (concatenated SHA-256 hashes).
-pub type InclusionProof = ct_merkle::InclusionProof<Sha256>;
-/// RFC 6962 consistency path (concatenated SHA-256 hashes).
-pub type ConsistencyProof = ct_merkle::ConsistencyProof<Sha256>;
-/// RFC 6962 tree root and size; exposes library proof verification methods.
-pub type Checkpoint = ct_merkle::RootHash<Sha256>;
+const MAX_TREE_SIZE: u64 = 1_u64 << 63;
+
+/// Invalid checkpoint, proof encoding, or proof verification.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid transparency proof or checkpoint")]
+pub struct ProofError;
+
+/// RFC 6962 inclusion path with checked byte decoding.
+#[derive(Clone, Debug)]
+pub struct InclusionProof(ct_merkle::InclusionProof<Sha256>);
+
+impl InclusionProof {
+    /// Decode concatenated SHA-256 hashes.
+    ///
+    /// # Errors
+    /// Rejects partial hashes and paths longer than 63 hashes.
+    pub fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, ProofError> {
+        if bytes.len() > 63 * 32 {
+            return Err(ProofError);
+        }
+        ct_merkle::InclusionProof::try_from_bytes(bytes)
+            .map(Self)
+            .map_err(|_| ProofError)
+    }
+
+    /// Concatenated SHA-256 hashes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// RFC 6962 consistency path with checked byte decoding.
+#[derive(Clone, Debug)]
+pub struct ConsistencyProof(ct_merkle::ConsistencyProof<Sha256>);
+
+impl ConsistencyProof {
+    /// Decode concatenated SHA-256 hashes.
+    ///
+    /// # Errors
+    /// Rejects partial hashes and paths longer than 64 hashes.
+    pub fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, ProofError> {
+        if bytes.len() > 64 * 32 {
+            return Err(ProofError);
+        }
+        ct_merkle::ConsistencyProof::try_from_bytes(bytes)
+            .map(Self)
+            .map_err(|_| ProofError)
+    }
+
+    /// Concatenated SHA-256 hashes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+/// RFC 6962 tree root and size with checked proof verification.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Checkpoint(ct_merkle::RootHash<Sha256>);
+
+impl Checkpoint {
+    /// Decode a retained root and size without trusting their contents.
+    /// Verification validates the size before invoking the Merkle library.
+    pub fn new(digest: [u8; 32], num_leaves: u64) -> Self {
+        Self(ct_merkle::RootHash::new(digest.into(), num_leaves))
+    }
+
+    /// Number of committed leaves claimed by this checkpoint.
+    pub fn num_leaves(&self) -> u64 {
+        self.0.num_leaves()
+    }
+
+    /// SHA-256 root digest.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// Verify inclusion of a canonical receipt digest at a zero-based index.
+    ///
+    /// # Errors
+    /// Rejects sizes above 2^63, absent indices, malformed paths and root mismatches.
+    pub fn verify_inclusion<T: AsRef<[u8]>>(
+        &self,
+        value: &T,
+        index: u64,
+        proof: &InclusionProof,
+    ) -> Result<(), ProofError> {
+        let size = self.num_leaves();
+        if size > MAX_TREE_SIZE || index >= size {
+            return Err(ProofError);
+        }
+        // The index helper is safe only after the size and index checks above.
+        let hashes = ct_merkle::indices_for_inclusion_proof(size, index).len();
+        if proof.as_bytes().len() != hashes * 32 {
+            return Err(ProofError);
+        }
+        self.0
+            .verify_inclusion(value, index, &proof.0)
+            .map_err(|_| ProofError)
+    }
+
+    /// Verify that this tree extends a retained nonempty checkpoint.
+    ///
+    /// # Errors
+    /// Rejects sizes outside 0 < old <= new <= 2^63, malformed paths and forks.
+    pub fn verify_consistency(
+        &self,
+        old: &Self,
+        proof: &ConsistencyProof,
+    ) -> Result<(), ProofError> {
+        let size = self.num_leaves();
+        let old_size = old.num_leaves();
+        if size > MAX_TREE_SIZE || old_size == 0 || old_size > size {
+            return Err(ProofError);
+        }
+        let hashes = ct_merkle::indices_for_consistency_proof(old_size, size - old_size).len();
+        if proof.as_bytes().len() != hashes * 32 {
+            return Err(ProofError);
+        }
+        self.0
+            .verify_consistency(&old.0, &proof.0)
+            .map_err(|_| ProofError)
+    }
+}
 pub(crate) type ReceiptLog = MemoryBackedTree<Sha256, String>;
 
 pub(crate) fn load<E: SqlEngine>(conn: &E) -> Result<ReceiptLog, CellError> {
@@ -75,7 +192,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL failures while catching up receipts from another store handle.
     pub fn transparency_checkpoint(&self) -> Result<Checkpoint, CellError> {
         self.refresh_transparency()?;
-        Ok(self.transparency.borrow().root())
+        Ok(Checkpoint(self.transparency.borrow().root()))
     }
 
     /// Inclusion at a zero-based receipt index in the current checkpoint.
@@ -89,11 +206,13 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Option<InclusionProof>, CellError> {
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
-        Ok(log.get(index).map(|_| log.prove_inclusion(index)))
+        Ok(log
+            .get(index)
+            .map(|_| InclusionProof(log.prove_inclusion(index))))
     }
 
     /// Consistency from a previously retained nonempty tree size to the
-    /// current tree. Verify against both retained roots using the library's
+    /// current tree. Verify against both retained roots using Norn's checked
     /// `Checkpoint::verify_consistency`. Empty prefixes carry no commitment
     /// and are refused. Equal-size proofs detect conflicting roots too.
     ///
@@ -113,6 +232,6 @@ impl<E: SqlEngine> CellStore<E> {
             .checked_sub(old_size)
             .and_then(|count| usize::try_from(count).ok())
             .ok_or(CellError::OutOfRange("transparency size"))?;
-        Ok(Some(log.prove_consistency(additions)))
+        Ok(Some(ConsistencyProof(log.prove_consistency(additions))))
     }
 }
