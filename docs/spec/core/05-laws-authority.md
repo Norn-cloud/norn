@@ -227,3 +227,11 @@ correspondence, including integer endpoints and trailing line terminators.
 ### HOST-AUTH-1: explicit server policy before host access
 
 The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.
+
+**PROOF-TRANSITION-1 multiple laws:** each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
