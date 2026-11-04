@@ -86,7 +86,7 @@ export function AgentPanel() {
       </StickToBottom>
       <div className="space-y-2 border-t p-3">
         {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
+          <div className="flex flex-wrap gap-2">{SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" className="h-auto max-w-full rounded-full py-1.5 text-start whitespace-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}</div>
         )}
         <form onSubmit={submit} className="flex items-end gap-2">
           <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. let Approve skip Submit" rows={2} className="min-h-0 resize-none"

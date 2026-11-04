@@ -55,6 +55,6 @@ export function sessionId(storage: Pick<Storage, "getItem" | "setItem"> | undefi
 export const SUGGESTIONS = [
   "Make the positive-quantity law check a field called unseen instead",
   "Let the order quantity law just be the ordered amount, not a yes/no test",
-  "Add a law that stock can't go negative",
-  "Let Approve skip Submit and go straight from draft",
+  "Let Receive start from a shipped state",
+  "Let Receive start straight from draft",
 ] as const
