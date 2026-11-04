@@ -253,6 +253,18 @@ pub fn lower_path_equations(
             Some((artifact, root.object_type.name, value))
         })
         .collect();
+    // Declaration IDs accept arbitrary nonempty strings, so no delimiter is
+    // reserved. Reserve every declaration before allocating inherited IDs.
+    let mut rule_ids: BTreeSet<String> = declarations
+        .iter()
+        .flat_map(|(artifact, _, value)| {
+            serde_json::to_value(value)
+                .and_then(serde_json::from_value::<Vec<PathEquation>>)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|equation| format!("{}:path-equation:{}", artifact.artifact_id, equation.id))
+        })
+        .collect();
     let mut theory = Theory::default();
     let catalog =
         crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
@@ -333,8 +345,15 @@ pub fn lower_path_equations(
             };
             for instance in instances {
                 match lower(instance) {
-                    Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                    Err(message) => refuse(&origin, format!("{label}: {message}")),
+                    Ok(mut egd) => {
+                        if instance != owner.as_str() {
+                            while !rule_ids.insert(egd.id.clone()) {
+                                egd.id.push_str(":inherited");
+                            }
+                        }
+                        theory.dependencies.push(Dependency::Egd(egd));
+                    }
+                    Err(message) => refuse(&origin, format!("{label} on {instance}: {message}")),
                 }
             }
         }
