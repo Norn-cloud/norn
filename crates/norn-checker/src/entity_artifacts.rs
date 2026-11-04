@@ -165,6 +165,14 @@ pub fn check_entity_artifacts(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    check_entity_artifacts_using(artifacts, context, &mut crate::check_artifact)
+}
+
+pub(crate) fn check_entity_artifacts_using(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
     let complete: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
     let path_findings = crate::consistency::lower_path_equations(&complete, context.registry)
         .err()
@@ -172,7 +180,7 @@ pub fn check_entity_artifacts(
     dedupe_findings(
         artifacts
             .iter()
-            .flat_map(crate::check_artifact)
+            .flat_map(local)
             .chain(check_artifact_set_entity_model(artifacts, context))
             .chain(crate::markings::check_references(artifacts, context.base))
             .chain(path_findings),
