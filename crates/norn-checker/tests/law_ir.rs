@@ -1088,3 +1088,119 @@ fn composition_pack_member_kinds_follow_the_canonical_enum() {
             .any(|code| code == "business_pack.validation.invalid_payload")
     );
 }
+
+fn decimal_binding_findings(
+    units: [Option<&str>; 3],
+    scales: [u64; 3],
+) -> Vec<norn_checker::Diagnostic> {
+    let names = ["input", "output", "loss"];
+    let interface: norn_ir::InterfaceDef = serde_json::from_value(json!({
+        "name":"core.Conversion", "invariants":[{"id":"conserve","expression":"self.input == self.output + self.loss","message":"conserve"}], "properties": names.map(|id| json!({
+            "id":id, "type":{"kind":"decimal-binding","group":"conversion"}
+        }))
+    }))
+    .expect("bound contract");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"toy.Melt", "implements":["core.Conversion"],
+        "properties": names.into_iter().zip(scales).zip(units).map(|((id, scale), unit)| {
+            let mut kind = json!({"kind":"decimal", "scale":scale});
+            if let Some(unit) = unit { kind["unit"] = json!({"system":"ucum","code":unit}); }
+            json!({"id":id, "type":kind})
+        }).collect::<Vec<_>>()
+    }))
+    .expect("implementor");
+    norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[interface],
+            object_types: &[object],
+            ..norn_checker::EntityModel::EMPTY
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &BTreeSet::new(),
+            base: norn_checker::EntityModel::EMPTY,
+            tenant: None,
+        },
+    )
+}
+
+#[test]
+fn interface_decimal_binding_resolves_concrete_units_and_scales_without_defaults() {
+    for unit in ["g", "kg"] {
+        assert!(decimal_binding_findings([Some(unit); 3], [3; 3]).is_empty());
+    }
+    assert!(
+        decimal_binding_findings([None; 3], [3; 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_binding_required")
+    );
+    assert!(
+        decimal_binding_findings([Some("g"); 3], [3, 2, 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn interface_decimal_binding_generated_scales_are_identical_or_refused(a in 0_u64..9, b in 0_u64..9, c in 0_u64..9, same_unit in proptest::bool::ANY) {
+        let findings = decimal_binding_findings([Some("g"),Some("g"),Some(if same_unit {"g"} else {"kg"})], [a,b,c]);
+        proptest::prop_assert_eq!(findings.is_empty(), a == b && b == c && same_unit);
+    }
+}
+
+#[test]
+fn interface_decimal_binding_cannot_be_a_stored_value_type() {
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name":"toy.Unbound", "properties":[{"id":"quantity", "type":{"kind":"decimal-binding","group":"mass"}}]
+    })).expect("syntax");
+    assert!(
+        norn_checker::check_object_type_local(&object)
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_binding_required")
+    );
+    assert!(
+        decimal_binding_findings([Some("g"), Some("kg"), Some("g")], [3; 3])
+            .iter()
+            .any(|d| d.code.as_str() == "core.values.unit_mismatch")
+    );
+}
+
+#[test]
+fn interface_decimal_binding_inherited_contract_rechecks_effective_members() {
+    let names = ["input", "output", "loss"];
+    let requirements =
+        names.map(|id| json!({"id":id,"type":{"kind":"decimal-binding","group":"conversion"}}));
+    let concrete = names.map(|id| json!({"id":id,"type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}}));
+    let interface =
+        serde_json::from_value(json!({"name":"core.Conversion","properties":requirements}))
+            .expect("interface");
+    let parent = serde_json::from_value(
+        json!({"name":"toy.Conversion","implements":["core.Conversion"],"properties":concrete}),
+    )
+    .expect("parent");
+    let child = serde_json::from_value(
+        json!({"name":"toy.Melt","extends":"toy.Conversion","properties":[
+            {"id":"output","type":{"kind":"decimal","scale":2,"unit":{"system":"ucum","code":"g"}}}
+        ]}),
+    )
+    .expect("child");
+    let findings = norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[interface],
+            object_types: &[parent, child],
+            ..norn_checker::EntityModel::EMPTY
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &BTreeSet::new(),
+            base: norn_checker::EntityModel::EMPTY,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.code.as_str() == "core.values.unit_mismatch")
+    );
+}

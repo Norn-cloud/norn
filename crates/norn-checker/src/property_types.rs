@@ -22,6 +22,10 @@ use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, Span};
 
 /// Diagnostic codes emitted by [`check_property_type_defs`].
 pub mod codes {
+    /// An interface Decimal has no concrete implementor unit/scale.
+    pub const UNIT_BINDING_REQUIRED: &str = "core.values.unit_binding_required";
+    /// Members of one Decimal binding group differ in unit or scale.
+    pub const UNIT_MISMATCH: &str = "core.values.unit_mismatch";
     /// A property type name does not follow the dotted lower-case grammar.
     pub const INVALID_NAME: &str = "property_type.validation.invalid_name";
     /// Two definitions, or a definition and a registry value type, share a name.
@@ -124,6 +128,13 @@ pub fn check_property_type_defs(
     for (index, def) in defs.iter().enumerate() {
         let position = index.to_string();
         let base = [position.as_str()];
+        if def.property_type.contains_decimal_binding() {
+            diagnostics.push(error(
+                codes::UNIT_BINDING_REQUIRED,
+                "Decimal bindings belong only to interface members".to_owned(),
+                span(index, &["type"]),
+            ));
+        }
         check_type_members(&base, &def.property_type, &mut diagnostics);
         check_record_refs(&base, &def.property_type, defs, registry, &mut diagnostics);
         let resolved = match resolve(defs, &local, registry, index) {
@@ -225,6 +236,7 @@ pub(crate) fn check_record_refs(
                 PropertyType::Text { .. }
                 | PropertyType::Integer {}
                 | PropertyType::Decimal { .. }
+                | PropertyType::DecimalBinding { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Timestamp { .. }
                 | PropertyType::Date {}
@@ -271,6 +283,7 @@ pub(crate) fn structured_metadata(
             PropertyType::Text { .. }
             | PropertyType::Integer {}
             | PropertyType::Decimal { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Boolean {}
             | PropertyType::Timestamp { .. }
             | PropertyType::Date {}
@@ -495,6 +508,7 @@ pub(crate) fn check_type_members(
     out: &mut Vec<Diagnostic>,
 ) {
     match property_type {
+        PropertyType::DecimalBinding { group } => check_decimal_binding_group(base, group, out),
         PropertyType::Record { members } => {
             if members.is_empty() {
                 out.push(error(
@@ -563,6 +577,16 @@ pub(crate) fn check_type_members(
         | PropertyType::Duration {}
         | PropertyType::JsonExt { .. }
         | PropertyType::Ref { .. } => {}
+    }
+}
+
+fn check_decimal_binding_group(base: &[&str], group: &str, out: &mut Vec<Diagnostic>) {
+    if !matches_grammar(&crate::object_types::MEMBER_ID_GRAMMAR, group) {
+        out.push(error(
+            codes::UNIT_BINDING_REQUIRED,
+            "a Decimal binding requires a nonempty identifier group".to_owned(),
+            span_at(base, &["type", "group"]),
+        ));
     }
 }
 

@@ -264,6 +264,8 @@ export class SchemaProjection {
         if (unit.size !== 2) throw new CompileError("NORN-FLOW-LITERAL", "a unit is exactly { system, code }", unitNode)
         return { kind: "value-type", type: rounded(E.decimal(value, { system, code: this.stringLiteral(unit.get("code"), unitNode, "unit.code") })), node: call }
       }
+      case "@norn/authoring#Norn.boundDecimal":
+        return { kind: "value-type", type: E.boundDecimal(this.stringLiteral(a[0], call, "the decimal binding group")), node: call }
       case "@norn/authoring#Norn.ref":
         return { kind: "value-type", type: E.ref(this.stringLiteral(a[0], call, "the property type name")), node: call }
       case "@norn/authoring#Norn.timestamp": {

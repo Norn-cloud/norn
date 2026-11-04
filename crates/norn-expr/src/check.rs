@@ -1020,7 +1020,7 @@ fn assignable(found: &InferredType, expected: &Type, env: &ZenTypeEnv) -> bool {
                 (I::Bool, Type::Bool)
                     | (
                         I::Number,
-                        Type::Number | Type::Integer | Type::Decimal { .. }
+                        Type::Number | Type::Integer | Type::Decimal { .. } | Type::DecimalBinding { .. }
                     )
                     | (
                         I::String | I::Const(_) | I::Enum(_),
@@ -1104,7 +1104,9 @@ impl<'a> ZenEnv<'a> {
             Type::Text { .. } | Type::Timestamp { .. } | Type::Date | Type::Duration => {
                 VariableType::String
             }
-            Type::Integer | Type::Decimal { .. } | Type::Number => VariableType::Number,
+            Type::Integer | Type::Decimal { .. } | Type::DecimalBinding { .. } | Type::Number => {
+                VariableType::Number
+            }
             Type::Enum { values } => {
                 VariableType::Enum(None, values.iter().map(|v| Rc::from(v.as_str())).collect())
             }
@@ -1275,6 +1277,11 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
                 currency_source.as_ref(),
                 per_unit.as_ref(),
             )
+        } else {
+            Operand::Dimensionless
+        }),
+        Type::DecimalBinding { .. } => T::Number(if exact {
+            Operand::Unresolved
         } else {
             Operand::Dimensionless
         }),

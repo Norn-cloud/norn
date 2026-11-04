@@ -162,6 +162,17 @@ fn requirement_env() -> norn_expr::ZenTypeEnv {
 }
 
 #[test]
+fn law_contained_pack_requirement_refuses_unsupported_scope() {
+    use norn_checker::deontic::{RequirementRefusal, check_requirement};
+    let mut requirement = requirement();
+    requirement.norm.law.scope.root = norn_ir::LawRoot::Pack("toy.unknown".to_owned());
+    assert_eq!(
+        check_requirement(&requirement, &requirement_env()),
+        Err(RequirementRefusal::InvalidBinding)
+    );
+}
+
+#[test]
 fn structured_safety_preserves_grades_timing_sources_and_precedence() {
     use norn_checker::deontic::check_requirement;
     use norn_checker::norm_precedence::{GroundedNorm, check_norm_precedence};

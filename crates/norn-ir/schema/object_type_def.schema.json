@@ -808,6 +808,25 @@
           ]
         },
         {
+          "description": "VAL-DECIMAL-BIND-1: interface-only exact Decimal: this group shares the implementor's explicit unit and scale.",
+          "type": "object",
+          "properties": {
+            "group": {
+              "description": "Same-name members in one interface bind identically.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "decimal-binding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group"
+          ]
+        },
+        {
           "description": "`true` or `false`.",
           "type": "object",
           "properties": {

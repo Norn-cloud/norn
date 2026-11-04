@@ -191,6 +191,17 @@ test("declared array indexes refuse while bounded inline lists retain item typin
   for (const index of ["1", "-1", "01", "1.5", "9007199254740992", "length"]) expect(() => E.render(E.ref("input", "rows", index, "value"), inline)).toThrow()
 })
 
+// VAL-DECIMAL-BIND-1: compiling an interface preserves an unresolved group, never a scalar.
+test("interface Decimal groups survive the admitted authoring profile", () => {
+  const result = compile(`import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const Conversion = Norn.interfaceType({name: "toy.Conversion", title: "Conversion", version: "1.0.0",
+  properties: Schema.Struct({quantity: Norn.boundDecimal("conversion")})})`)
+  expect(result).toMatchObject({ok: true, artifacts: [{payload: {interface: {
+    properties: [{id: "quantity", type: {kind: "decimal-binding", group: "conversion"}}],
+  }}}]})
+})
+
 test("FOLD-AUTHORING compiles closed step schemas and pins the helper", () => {
   const fixture = join(TOOL_ROOT, "fixtures/decisions/ordered-fold.source.ts")
   const source = readFileSync(fixture, "utf8")
