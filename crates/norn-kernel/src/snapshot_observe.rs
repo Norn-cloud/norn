@@ -706,6 +706,7 @@ impl ObservationAuthorization {
         let values = claim
             .values()
             .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+        let values = effective_observed_values(catalog, &claim_key, &values)?;
         let retained = self
             .read_findings
             .iter()
@@ -1552,6 +1553,7 @@ pub fn prepare_observed_link_claim_snapshot(
     let values = claim
         .values()
         .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+    let values = effective_observed_values(catalog, &key, &values)?;
     if slice.get(&key).is_some_and(|state| {
         state.version != FactVersion(0) && state.values.as_ref() != Some(&values)
     }) {
