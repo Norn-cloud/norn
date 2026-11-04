@@ -43,6 +43,7 @@ fn property(name: &str) -> EffectiveProperty {
             default: None,
             markings: Vec::new(),
             computed: None,
+            protected: false,
         },
         &catalog(),
     )
@@ -127,6 +128,8 @@ proptest! {
 
 fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
     PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+
         scale: norn_ir::WholeNumber(2),
         unit: Some(norn_ir::UnitRef {
             system,

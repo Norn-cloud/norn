@@ -53,6 +53,12 @@ Unit-bearing entity declarations pin the vocabulary with one required exact-vers
 | TIME-PIN-1 | Explicit effective/recorded time and pinned calendar; admission/commit | `core.values.time_ambiguous` |
 | BLOB-INTEGRITY-1 | Exact retained content or explicit unavailable result; evaluation | `core.values.content_unavailable` |
 
+ID-STABLE-1 distinguishes authored mutation from observation using the existing commit provenance. An authored Create of an identity with a committed deletion refuses `core.identity.reuse` atomically: "this identity was deleted; restore it explicitly or use a new identity". Observed CDC/source-bound reappearance preserves the same source-bound identity, lifts its tombstone and advances its version monotonically. Replay preserves both outcomes and their retained identity/version evidence. Explicit restoration requires a later governed action carrying retained identity evidence (#748); until that action exists, ordinary authoring cannot restore a deleted identity.
+
+The authored boundary is shared kernel `check_commit` with its existing sealed per-write observation authority, plus canonical store `FactChange::Create`. Raw actorless `CellStore::commit(CommitBatch)` and `Put` remain trusted embedding primitives, not authored contracts; authored adapters use the checked boundary. Event JSON cannot establish observation authority, and no `FactMutation` flag is introduced. An authenticated provenance/replay binding for raw paths is the separate C2 follow-up #763.
+
+The `version_kani.rs` harness imports the production deletion/successor core over full `u64` versions and live/absent states. Its scope excludes SQL, source authority and complete replay; those require the native correspondence scenarios below.
+
 Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/reference constraints; sampled transport/replay correspondence; generated arithmetic side conditions over the same exact-number semantics. Do not infer universal identity correctness from a hash function.
 
 The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Proptests cover arbitrary `i128` coefficients and `u8` scales. The standalone `verification/canonical-values-v1/decimal_kani.rs` harness imports those production functions directly: normalization uses signed 8-bit coefficients and scales 0–2; multiplier checks use exponents 0–6 plus the overflow boundary 39. These bounded implementation checks do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator. Run each harness on Boat with a 300-second bound; an absent verdict remains unknown.
@@ -65,6 +71,9 @@ The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserv
 - **VAL-UNIT-PIN:** Given a decimal UnitRef, the exact visible vocabulary pin and code/system must resolve; missing/wrong/ambiguous pins and unknown/case-changed/system-mismatched units refuse, including inside a record.
 - **ID-COLLISION:** Given two subtypes sharing a key root, when concurrent creates use the same normalized key, then exactly one commits; another tenant may use its own same key.
 - **ID-RENAME:** Given a posted event linked to object A, when A's label/business key changes and is later tombstoned, then historical links still resolve A; reusing A's identity refuses.
+- **ID-AUTHORED-RECREATE:** Given a committed deletion, authored creation of the same identity refuses `core.identity.reuse` with the actionable message above and leaves facts, events, effects and receipts unchanged.
+- **ID-OBSERVED-REAPPEAR:** Given a deleted source-bound identity, an authorized observed reappearance retains that identity, lifts the tombstone and advances its high-water version. A subsequent observed delete seals its exact tombstone Put; that retained-identity write without sealed authority refuses.
+- **ID-TOMBSTONE-REPLAY:** Replaying the retained prefix preserves the deleted/reappeared identities and monotonic versions; replaying a refused authored request does not publish a mutation.
 - **TIME-DST:** Given an ambiguous local timestamp without a pinned disambiguation policy, when admitted, then refuse; an explicit earlier/later choice resolves to a retained UTC instant and replays that same instant even after timezone rules change. An already-resolved UTC construction needs no DST choice.
 - **BLOB-MISSING:** Given an archived receipt with unavailable bytes, when requested for recomputation, then expose unavailable evidence and do not synthesize a result.
 
@@ -101,3 +110,24 @@ VAL-RATE's initial graph binding admits one direct expression node between input
 
 - **VAL-RATE-PRICE:** Given fixed USD, a 15 USD/g rate and 20 g, typed admission/evaluation produces USD 300 at the destination Money scale; a nonzero remainder under Refuse refuses.
 - **VAL-RATE-MISMATCH:** Given USD/g, combining mg, an EUR destination, Rate × Rate or an erased numeric operand refuses; quantity-versus-literal comparison records `core.values.literal_unit` naming g.
+
+ID-UNIQUE-1's bounded native profile reuses `EffectiveKey` and its declared normalization order. The shared SQLite transaction checks complete normalized tuples for every admitted declaring root/key across stored scope/world domains before publishing events, effects or a receipt; reopen and definition activation validate all such domains. Original property bytes and opaque IDs are preserved. This profile supports text/enum/integer/boolean tuple components, at most 16 normalization steps per component, and a cumulative scan of 4,096 keys/4,096 rows and 8 MiB of encoded-plus-normalized key and identity data. Unsupported normalized components or incomplete scans refuse. Entity-resolution policies, alias history and identity restoration are separate contracts; this cut does not activate them or prove their safety.
+
+- **ID-NORMALIZED-ATOMIC:** sibling subtypes with raw-distinct but canonically equal keys cannot both commit; a refusal leaves the entire SQLite dump unchanged. Original source spellings remain stored.
+- **ID-NORMALIZED-DOMAINS:** the same normalized tuple may exist in different stored scopes/worlds; a business-key rename preserves the opaque object ID.
+- **ID-NORMALIZED-COMPOSITE:** typed tuple boundaries prevent concatenation collisions; unsupported normalized components and exhausted scan/step bounds refuse.
+
+This cut's evidence is native runtime conformance and generated ASCII input sampling. The unchanged pure normalization helper is reused directly; the new transaction scan depends on SQL and is not a pure bounded Kani target. These tests do not establish alias history, tombstone restoration, arbitrary Unicode normalization correctness or general identity proofs.
+
+The normalized native profile checks candidate activation with reads only as well as inside the install transaction. A normalized key over a newly added component on an occupied table refuses until backfill-aware identity admission exists; an empty new type is permitted. Candidate checks cover all worlds, including worlds other than the install request's world.
+
+Raw-byte duplicates may refuse earlier through the existing physical unique index and retain its existing transport error; the new canonical collision code covers raw-distinct normalized duplicates. Both paths preserve atomicity. This cut does not qualify a new SQL-constraint error taxonomy.
+
+**ID-NORMALIZED-REOPEN-BOUND:** every commit charges the same complete key/row/byte budget as reopen, including unrelated roots; a commit that would make reopening exceed the profile refuses atomically. Stored byte preflight uses `octet_length` before fetching values.
+
+**ID-NORMALIZED-DISCLOSURE:** an actor-facing action exposes collision details only after the existing collection and object read policies authorize the committed conflicting subjects; unreadable, absent, unknown or over-bound subjects use the fixed visibility refusal. Internal lookup subjects never appear in the safe refusal.
+
+
+**ID-NORMALIZED-RETAINED:** decoding an inactive retained definition preserves its original metadata and hashes without applying a newly introduced admission profile. Verified export reconstruction runs only in a fresh, unpublished engine, binds each retained batch to its original model and receipt, and checks the complete final model/state against the current normalized-key profile before returning or publishing a writable cell. Current commits and candidate installations retain the same fail-closed profile; no serialized replay opt-out exists. A retained prefix may contain formerly accepted normalized duplicates if its final current state removes the collision.
+
+- **ID-NORMALIZED-RETAINED-LOOKUP-PROVISION:** after upgrading away from a retained profile outside current admission bounds, historical definition lookup preserves its exact metadata/hash, and an identical provisioning retry reopens the current admitted model without adding receipts or changing live facts.

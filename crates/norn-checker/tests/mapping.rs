@@ -63,6 +63,43 @@ fn source() -> SourceSchemaIr {
         .unwrap_or_else(|findings| panic!("the Frappe schema should check clean: {findings:#?}"))
 }
 
+#[test]
+fn map_roles_contract_does_not_admit_unimplemented_interpretations() {
+    use norn_ir::mapping::{
+        InterpretationEndpoint, InterpretationFormat, InterpretationRole, LawInterpretationIr,
+    };
+    let endpoint = |id: &str| InterpretationEndpoint {
+        artifact_id: id.to_owned(),
+        version: "1.0.0".to_owned(),
+        sha256: "a".repeat(64),
+    };
+    let document = LawInterpretationIr {
+        format: InterpretationFormat::V1,
+        role: InterpretationRole::LawInterpretation,
+        source_layer: endpoint("toy.source"),
+        target_layer: endpoint("toy.target"),
+        members: Vec::new(),
+    };
+    let artifact = envelope(
+        "toy.interpretation",
+        "mapping",
+        &serde_json::to_value(document).expect("typed interpretation"),
+    );
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    let findings = check_artifact_set(&[artifact], &context);
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.is_error() && d.code == "mapping.validation.invalid_document"),
+        "{findings:?}"
+    );
+}
+
 fn envelope(artifact_id: &str, kind: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1",

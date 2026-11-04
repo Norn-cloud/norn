@@ -54,7 +54,7 @@ fn is_binding_index_sort_type(property: &EffectiveProperty) -> bool {
         EffectiveKind::Base(
             PropertyType::Text { .. }
                 | PropertyType::Enum { .. }
-                | PropertyType::Integer {}
+                | PropertyType::Integer { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Date {}
         )
@@ -6829,13 +6829,14 @@ fn path_index(path: &str, array_prefix: &str) -> Option<usize> {
 fn property_type(property: &EffectiveProperty) -> Option<Type> {
     let ty = match &property.kind {
         EffectiveKind::Base(PropertyType::Text { format }) => Type::Text { format: *format },
-        EffectiveKind::Base(PropertyType::Integer {}) => Type::Integer,
+        EffectiveKind::Base(PropertyType::Integer { .. }) => Type::Integer,
         EffectiveKind::Base(PropertyType::Decimal {
             scale,
             unit,
             rounding,
             currency_source,
             per_unit,
+            ..
         }) => Type::Decimal {
             scale: scale.0,
             unit: unit.clone(),

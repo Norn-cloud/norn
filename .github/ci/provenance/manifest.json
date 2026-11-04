@@ -9,6 +9,15 @@
         "path": "vendor/zen/provenance.json",
         "sha256": "2be533422f792ad7bd5d7da505c2ca00b1571cc856d3f75805e6ec691a0f9016"
       }
+    },
+    {
+      "id": "software.shadcn-ui",
+      "revision": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610",
+      "license": "MIT",
+      "evidence": {
+        "path": "apps/studio/src/components/ui/provenance.json",
+        "sha256": "1a36ca40eb65ceb84e141120b112d92f839b3f13b1d791028726ad4df63d1da2"
+      }
     }
   ]
 }

@@ -1525,6 +1525,7 @@ name = "norn-api"
 version = "0.1.0"
 dependencies = [
  "http",
+ "jsonschema",
  "norn-cell",
  "norn-checker",
  "norn-ir",
@@ -1561,6 +1562,7 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "js-sys",
  "norn-checker",
  "norn-ir",
  "norn-kernel",
@@ -1576,6 +1578,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1657,6 +1660,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "norn-ir",
+ "proptest",
  "serde",
  "serde_json",
  "zen-expression",

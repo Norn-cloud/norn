@@ -161,6 +161,7 @@ pub fn check_requirement(
     let law = &rule.law;
     let root = match &law.scope.root {
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        LawRoot::Pack(_) => return Err(R::InvalidBinding),
     };
     if law.timing.is_some()
         || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
