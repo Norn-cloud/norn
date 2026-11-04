@@ -45,7 +45,7 @@ fn compile(
     work: &mut u64,
     fields: &BTreeMap<String, norn_ir::PropertyType>,
 ) -> Result<Expression, String> {
-    let cost = u64::try_from(source.len()).map_err(|_| "expression source limit")?;
+    let cost = u64::try_from(source.len()).map_err(|_error| "expression source limit")?;
     *work = work
         .checked_sub(cost.saturating_add(1))
         .ok_or("graph work budget exhausted")?;
@@ -73,14 +73,19 @@ fn boolean(expression: &Expression, context: &Value, work: &mut u64) -> Result<b
     *work = work.saturating_sub(attempt.units_used);
     match attempt.result.map_err(|error| error.to_string())?.value() {
         Value::Bool(value) => Ok(*value),
-        _ => Err("graph predicate is not Boolean".into()),
+        Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => Err("graph predicate is not Boolean".into()),
     }
 }
 fn key(row: &Row) -> Result<Vec<u8>, String> {
     norn_canonical::canonical_json_exact_of(row).map_err(|error| error.to_string())
 }
-fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
-    let mut work = WORK;
+struct Predicate<'a> {
+    identity: &'a str,
+    condition: Option<Expression>,
+    response: Expression,
+    expected: bool,
+}
+fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicate<'a>>, String> {
     if inputs.laws.len() > 128 {
         return Err("more than 128 governing laws".into());
     }
@@ -104,18 +109,18 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         let condition = law
             .condition
             .as_ref()
-            .map(|condition| compile(condition.as_str(), &mut work, &inputs.fields))
+            .map(|condition| compile(condition.as_str(), work, &inputs.fields))
             .transpose()
             .map_err(|error| format!("law {identity}: {error}"))?;
-        let response = compile(expression.as_str(), &mut work, &inputs.fields)
+        let response = compile(expression.as_str(), work, &inputs.fields)
             .map_err(|error| format!("law {identity}: {error}"))?;
-        laws.push((
-            identity,
-            condition,
-            response,
-            matches!(law.modality, LawModality::Always {}),
-        ));
+        laws.push(Predicate { identity, condition, response, expected: matches!(law.modality, LawModality::Always {}) });
     }
+    Ok(laws)
+}
+fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
+    let mut work = WORK;
+    let laws = compile_laws(&inputs, &mut work)?;
     let chart = &inputs.machine.lifecycle;
     let transitions = chart
         .transitions
@@ -145,17 +150,18 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     let mut legal = Vec::new();
     for context in &contexts {
         let mut accepted = true;
-        for (identity, condition, response, expected) in &laws {
-            let activated = condition
+        for law in &laws {
+            let identity = law.identity;
+            let activated = law.condition
                 .as_ref()
                 .map(|expression| boolean(expression, context, &mut work))
                 .transpose()
                 .map_err(|error| format!("law {identity}: {error}"))?
                 .unwrap_or(true);
             if activated {
-                accepted &= boolean(response, context, &mut work)
+                accepted &= boolean(&law.response, context, &mut work)
                     .map_err(|error| format!("law {identity}: {error}"))?
-                    == *expected;
+                    == law.expected;
             }
         }
         legal.push(accepted);
@@ -239,17 +245,17 @@ impl ApprovedContract {
     ) -> Result<Batch, ChallengeError> {
         let batch = self.lifecycle_inputs(source, registry, bounds)?;
         let input: serde_json::Value =
-            serde_json::from_str(&batch.bounds_json).map_err(|_| ChallengeError::Closure)?;
+            serde_json::from_str(&batch.bounds_json).map_err(|_error| ChallengeError::Closure)?;
         let profile = serde_json::json!({"profile":"norn.lifecycle.graph/1","inputProfile":input,
             "maxLaws":128,"maxEdges":EDGES,"workBudget":WORK,
             "workSemantics":"expression source bytes plus compilation and metered evaluation units",
             "initial":"declared initial state and all supported governing laws",
             "steps":"declared transition guards and all post-state governing laws; frozen context"});
         let bytes = norn_canonical::canonical_json_exact_of(&profile)
-            .map_err(|_| ChallengeError::Closure)?;
+            .map_err(|_error| ChallengeError::Closure)?;
         Ok(Batch {
             challenge: batch.challenge,
-            bounds_json: String::from_utf8(bytes).map_err(|_| ChallengeError::LossyInput)?,
+            bounds_json: String::from_utf8(bytes).map_err(|_error| ChallengeError::LossyInput)?,
             graph: batch
                 .snapshot
                 .and_then(|inputs| build(inputs, &bounds.property)),
