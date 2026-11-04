@@ -19,11 +19,11 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
-/// Conjunction-only specialisation evidence provenance.
-pub mod specialisation;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
+/// Conjunction-only specialisation evidence provenance.
+pub mod specialisation;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
