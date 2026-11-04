@@ -13,5 +13,5 @@
     "types": ["vite/client", "bun"],
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": ["src", "test", "vite.config.ts", "alchemy.run.ts"]
 }
