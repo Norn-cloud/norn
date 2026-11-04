@@ -1,58 +1,8 @@
 //! Read-only localized views of an already admitted question; never execution.
 use super::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
 use crate::EffectiveKind;
+pub use norn_ir::reviewed_locale::{QuestionLabels, QuestionWording};
 use norn_ir::{PropertyType, QuestionIR, deontic::TextDirection, reviewed_locale};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-/// Complete reviewed labels; semantic expressions and identities are untranslated.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct QuestionLabels {
-    /// Direction of the surrounding text; identifiers are isolated separately.
-    pub direction: TextDirection,
-    /// Label for the declared root population and traversals.
-    pub population: String,
-    /// Label for the selected sum or ratio of sums.
-    pub measure: String,
-    /// Label for grouping dimensions and calendar grains.
-    pub by: String,
-    /// Label for additional question predicates.
-    pub filters: String,
-    /// Label for effective-time properties, window and calendar.
-    pub effective_time: String,
-    /// Label for the declared knowledge/freshness policy.
-    pub knowledge_time: String,
-}
-impl QuestionLabels {
-    fn validate(&self) -> Result<(), &'static str> {
-        if [
-            &self.population,
-            &self.measure,
-            &self.by,
-            &self.filters,
-            &self.effective_time,
-            &self.knowledge_time,
-        ]
-        .iter()
-        .any(|label| label.trim().is_empty())
-        {
-            Err("law.wording.incomplete_locale")
-        } else {
-            Ok(())
-        }
-    }
-}
-
-/// Same ordered, complete, exact-match locale-map mechanism as law wording (#496).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct QuestionWording(pub BTreeMap<String, QuestionLabels>);
-impl<'de> Deserialize<'de> for QuestionWording {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        reviewed_locale::deserialize(deserializer, QuestionLabels::validate).map(Self)
-    }
-}
 
 /// Original semantic question plus a localized read-only projection.
 #[derive(Debug, Clone, PartialEq)]
@@ -79,14 +29,16 @@ pub struct QuestionSlot {
     pub text: String,
 }
 
-fn canonical(value: &impl Serialize) -> Result<String, &'static str> {
-    String::from_utf8(
-        norn_canonical::canonical_json_of(value).map_err(|_error| UNSUPPORTED_ENGINE)?,
-    )
-    .map_err(|_error| UNSUPPORTED_ENGINE)
+fn canonical(
+    bytes: Result<Vec<u8>, norn_canonical::CanonicalJsonError>,
+) -> Result<String, &'static str> {
+    String::from_utf8(bytes.map_err(|_error| UNSUPPORTED_ENGINE)?)
+        .map_err(|_error| UNSUPPORTED_ENGINE)
 }
-fn digest(value: &impl Serialize) -> Result<String, &'static str> {
-    let bytes = norn_canonical::canonical_json_of(value).map_err(|_error| UNSUPPORTED_ENGINE)?;
+fn digest(
+    bytes: Result<Vec<u8>, norn_canonical::CanonicalJsonError>,
+) -> Result<String, &'static str> {
+    let bytes = bytes.map_err(|_error| UNSUPPORTED_ENGINE)?;
     Ok(norn_canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes))
 }
 
@@ -102,7 +54,7 @@ pub fn render_question(
     wording: &QuestionWording,
     locale: &str,
 ) -> Result<QuestionRendering, &'static str> {
-    let labels = reviewed_locale::select(&wording.0, locale, QuestionLabels::validate)?;
+    let labels = wording.select(locale)?;
     let question = plan.question();
     let contracts: Vec<_> = plan
         .sums()
@@ -112,8 +64,12 @@ pub fn render_question(
             EffectiveKind::Registry(_) | EffectiveKind::Unresolved => Err(UNSUPPORTED_ENGINE),
         })
         .collect::<Result<_, _>>()?;
-    let question_digest = digest(question)?;
-    let binding_digest = digest(&(question, plan.definitions(), &contracts))?;
+    let question_digest = digest(norn_canonical::canonical_json_of(question))?;
+    let binding_digest = digest(norn_canonical::canonical_json_of(&(
+        question,
+        plan.definitions(),
+        &contracts,
+    )))?;
     let mut operands = Vec::new();
     for (sum, (_, kind)) in plan.sums().iter().zip(&contracts) {
         let units = match kind {
@@ -137,34 +93,45 @@ pub fn render_question(
         operands.push(format!(
             "Σ({}) [{units}]; {}",
             sum.property.id.as_str(),
-            canonical(&sum.filters)?
+            canonical(norn_canonical::canonical_json_of(&sum.filters))?
         ));
     }
     let entries = [
         (
             "/objectSet",
             &labels.population,
-            canonical(&(&question.object_set, &question.search_around))?,
+            canonical(norn_canonical::canonical_json_of(&(
+                &question.object_set,
+                &question.search_around,
+            )))?,
         ),
         ("/aggregate", &labels.measure, operands.join(" / ")),
-        ("/groupBy", &labels.by, canonical(&question.dimensions)?),
-        ("/filter", &labels.filters, canonical(&question.filters)?),
+        (
+            "/groupBy",
+            &labels.by,
+            canonical(norn_canonical::canonical_json_of(&question.dimensions))?,
+        ),
+        (
+            "/filter",
+            &labels.filters,
+            canonical(norn_canonical::canonical_json_of(&question.filters))?,
+        ),
         (
             "/window",
             &labels.effective_time,
-            canonical(&(
+            canonical(norn_canonical::canonical_json_of(&(
                 plan.sums()
                     .iter()
                     .map(|sum| &sum.time_property)
                     .collect::<Vec<_>>(),
                 &question.time_window,
                 &question.calendar,
-            ))?,
+            )))?,
         ),
         (
             "/freshness",
             &labels.knowledge_time,
-            canonical(&question.freshness)?,
+            canonical(norn_canonical::canonical_json_of(&question.freshness))?,
         ),
     ];
     let slots = entries

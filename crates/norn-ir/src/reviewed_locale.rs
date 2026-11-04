@@ -1,6 +1,65 @@
 //! Shared admission of reviewed locale maps, including laws and question views.
-use crate::deontic::valid_locale_tag;
+use crate::deontic::{TextDirection, valid_locale_tag};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Complete reviewed labels; semantic expressions and identities are untranslated.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuestionLabels {
+    /// Direction of the surrounding text; identifiers are isolated separately.
+    pub direction: TextDirection,
+    /// Label for the declared root population and traversals.
+    pub population: String,
+    /// Label for the selected sum or ratio of sums.
+    pub measure: String,
+    /// Label for grouping dimensions and calendar grains.
+    pub by: String,
+    /// Label for additional question predicates.
+    pub filters: String,
+    /// Label for effective-time properties, window and calendar.
+    pub effective_time: String,
+    /// Label for the declared knowledge/freshness policy.
+    pub knowledge_time: String,
+}
+impl QuestionLabels {
+    fn validate(&self) -> Result<(), &'static str> {
+        if [
+            &self.population,
+            &self.measure,
+            &self.by,
+            &self.filters,
+            &self.effective_time,
+            &self.knowledge_time,
+        ]
+        .iter()
+        .any(|label| label.trim().is_empty())
+        {
+            Err("law.wording.incomplete_locale")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Same ordered, complete, exact-match locale-map mechanism as law wording (#496).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(transparent)]
+pub struct QuestionWording(pub BTreeMap<String, QuestionLabels>);
+impl<'de> serde::Deserialize<'de> for QuestionWording {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize(deserializer, QuestionLabels::validate).map(Self)
+    }
+}
+
+impl QuestionWording {
+    /// Select complete reviewed question labels without a locale fallback.
+    ///
+    /// # Errors
+    /// Returns the shared wording refusal for invalid, missing or incomplete locales.
+    pub fn select(&self, locale: &str) -> Result<&QuestionLabels, &'static str> {
+        select(&self.0, locale, QuestionLabels::validate)
+    }
+}
 
 /// REVIEWED-LOCALE-1: every entry is complete, tags are unique ignoring case,
 /// and selection matches exactly without fallback. Preserve #496's wire errors.
