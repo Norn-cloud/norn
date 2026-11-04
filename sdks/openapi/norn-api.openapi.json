@@ -1101,62 +1101,110 @@
         "additionalProperties": false
       },
       "NornGuaranteesGoalGuarantee": {
-        "type": "object",
-        "description": "One generated obligation, including every unsupported goal.",
-        "required": [
-          "index",
-          "goalKind",
-          "eligible",
-          "verdict",
-          "level"
-        ],
-        "properties": {
-          "eligible": {
-            "type": "boolean",
-            "description": "Whether this goal is inside the declared backend fragment."
+        "allOf": [
+          {
+            "required": [
+              "index",
+              "goalKind",
+              "eligible",
+              "verdict",
+              "level"
+            ],
+            "properties": {
+              "eligible": {
+                "type": "boolean",
+                "description": "Whether this goal is inside the declared backend fragment."
+              },
+              "evidence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornGuaranteesEvidenceRecord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Actual bound result bytes, pins and digest; absent for unsupported goals.\nPresentation never replaces the controller's independent result pin."
+              },
+              "goalKind": {
+                "type": "string",
+                "description": "Actual generated obligation kind."
+              },
+              "index": {
+                "type": "integer",
+                "format": "uint32",
+                "description": "Index in the retained Challenge.",
+                "minimum": 0
+              },
+              "level": {
+                "$ref": "#/components/schemas/NornGuaranteesGuaranteeLevel",
+                "description": "Actual evidence level."
+              },
+              "scenario": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NornGuaranteesGuaranteeScenario"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Actual trace when a counterexample or reachability witness was returned."
+              },
+              "verdict": {
+                "$ref": "#/components/schemas/NornGuaranteesGuaranteeVerdict",
+                "description": "Scoped verdict or explicit Unknown reason."
+              }
+            },
+            "additionalProperties": false
           },
-          "evidence": {
-            "anyOf": [
+          {
+            "oneOf": [
               {
-                "$ref": "#/components/schemas/NornGuaranteesEvidenceRecord"
+                "required": [
+                  "eligible"
+                ],
+                "properties": {
+                  "eligible": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
               },
               {
-                "type": "null"
+                "required": [
+                  "eligible"
+                ],
+                "properties": {
+                  "eligible": {
+                    "type": "boolean",
+                    "const": false
+                  },
+                  "level": {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    }
+                  },
+                  "verdict": {
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    }
+                  }
+                }
               }
             ],
-            "description": "Actual bound result bytes, pins and digest; absent for unsupported goals.\nPresentation never replaces the controller's independent result pin."
-          },
-          "goalKind": {
-            "type": "string",
-            "description": "Actual generated obligation kind."
-          },
-          "index": {
-            "type": "integer",
-            "format": "uint32",
-            "description": "Index in the retained Challenge.",
-            "minimum": 0
-          },
-          "level": {
-            "$ref": "#/components/schemas/NornGuaranteesGuaranteeLevel",
-            "description": "Actual evidence level."
-          },
-          "scenario": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NornGuaranteesGuaranteeScenario"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Actual trace when a counterexample or reachability witness was returned."
-          },
-          "verdict": {
-            "$ref": "#/components/schemas/NornGuaranteesGuaranteeVerdict",
-            "description": "Scoped verdict or explicit Unknown reason."
+            "type": "object",
+            "description": "One generated obligation, including every unsupported goal."
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "NornGuaranteesGuaranteeLevel": {
         "oneOf": [

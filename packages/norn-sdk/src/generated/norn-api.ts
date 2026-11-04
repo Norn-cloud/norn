@@ -455,7 +455,6 @@ export interface components {
             /** @description Exact tool version. */
             version: string;
         };
-        /** @description One generated obligation, including every unsupported goal. */
         NornGuaranteesGoalGuarantee: {
             /** @description Whether this goal is inside the declared backend fragment. */
             eligible: boolean;
@@ -477,7 +476,21 @@ export interface components {
             scenario?: components["schemas"]["NornGuaranteesGuaranteeScenario"] | null;
             /** @description Scoped verdict or explicit Unknown reason. */
             verdict: components["schemas"]["NornGuaranteesGuaranteeVerdict"];
-        };
+        } & ({
+            /** @constant */
+            eligible: true;
+        } | {
+            /** @constant */
+            eligible: false;
+            level?: {
+                /** @enum {unknown} */
+                kind?: "unknown";
+            };
+            verdict?: {
+                /** @enum {unknown} */
+                kind?: "unknown";
+            };
+        });
         /** @description Distinct assurance dimensions; none implies an unrestricted proof. */
         NornGuaranteesGuaranteeLevel: {
             /** @enum {string} */
