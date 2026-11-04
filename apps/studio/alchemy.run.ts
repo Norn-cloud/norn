@@ -17,6 +17,9 @@ import { agentDeploy, deployTarget } from "./deploy-target.ts"
 // secret (never part of the browser bundle), and the checker runs in the Worker.
 const target = deployTarget(process.env)
 const agent = agentDeploy(process.env)
+// Taken out of the environment once read: later steps (the build) record their environment in state.
+delete process.env.AI_GATEWAY_TOKEN
+delete process.env.AI_GATEWAY_URL
 if (agent !== undefined) cpSync(agent.checkerPkg, new URL("./worker/checker/", import.meta.url), { recursive: true })
 const app = await alchemy("norn-studio", {
   stage: target.stage,
