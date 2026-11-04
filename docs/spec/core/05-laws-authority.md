@@ -284,6 +284,14 @@ the original/omitted-derivation update correspondence. Original/mutant model
 bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
+Each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
