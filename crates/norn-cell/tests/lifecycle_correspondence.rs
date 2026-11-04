@@ -13,7 +13,10 @@ use norn_checker::obligations::lifecycle::{
     graph::Graph,
 };
 use norn_checker::obligations::{ApprovedContract, DefinitionSource};
-use norn_ir::{ArtifactEnvelope, DecisionOutput, EntityRootV2, FactChange, ObjectTypeName, PropertyId, TransitionId};
+use norn_ir::{
+    ArtifactEnvelope, DecisionOutput, EntityRootV2, FactChange, ObjectTypeName, PropertyId,
+    TransitionId,
+};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     CellHost, DecisionRefusal, DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World,
@@ -48,8 +51,12 @@ fn native(
             })
             .expect("fixture pre-state");
     }
-    let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject> =
-        SqliteCell::new(store, "org_demo/dev", |c: &norn_kernel::Command<JsonObject>| c.payload.clone()).expect("native cell");
+    let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |c: &norn_kernel::Command<JsonObject>| c.payload.clone(),
+    )
+    .expect("native cell");
     let prior = cell.store().read().dump().expect("before");
     let key = FactKey::new("demo.Melt", "synthetic");
     let slice = load_slice(&cell, [key.clone()]).expect("read");
@@ -147,7 +154,11 @@ fn fixture(joint: bool, disabled: bool, input: u8) -> (Vec<ArtifactEnvelope>, Bo
         .expect("fresh inputs")
         .graph
         .expect("qualified graph");
-    (serde_json::from_str(&source_text).expect("same native declarations"), bounds, graph)
+    (
+        serde_json::from_str(&source_text).expect("same native declarations"),
+        bounds,
+        graph,
+    )
 }
 #[test]
 fn every_bounded_initialization_and_transition_matches_native_commit() {
