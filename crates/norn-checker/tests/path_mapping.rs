@@ -45,6 +45,12 @@ fn preservation_admits_identity_and_refuses_an_unknown_image() {
         )
     };
     assert_eq!(check(&mapping).unwrap().obligations, 2);
+    let mut missing = mapping.clone();
+    missing.links.clear();
+    assert_eq!(
+        check(&missing).unwrap_err()[0].code.as_str(),
+        PATH_MAPPING_INVALID
+    );
     mapping.links[0].path = vec!["missing".into()];
     assert_eq!(
         check(&mapping).unwrap_err()[0].code.as_str(),
