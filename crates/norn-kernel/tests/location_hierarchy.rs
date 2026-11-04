@@ -1175,11 +1175,14 @@ fn obs_link_clear_requires_old_claim_backing_and_preserves_authored_edges() {
             cell.commit(CellCommit {
                 links: vec![LinkWrite {
                     key: key.clone(),
-                    expected: norn_kernel::FactVersion::ZERO,
-                    mutation: LinkMutation::Add { values: JsonObject::new() },
+                    expected: norn_kernel::FactVersion(0),
+                    mutation: LinkMutation::Add {
+                        values: JsonObject::new(),
+                    },
                 }],
                 ..CellCommit::empty()
-            }).expect("authored edge");
+            })
+            .expect("authored edge");
         }
         let mut clear = old.clone();
         clear.observation_id = "bundle:clear".into();
@@ -1201,16 +1204,21 @@ fn obs_link_clear_requires_old_claim_backing_and_preserves_authored_edges() {
         append_retained_claim(&catalog, &cell, &clear, &mut commit, &mut authority);
         if backed {
             append_retained_claim(&catalog, &cell, &old, &mut commit, &mut authority);
-            authority.seal_observed_link_claim(&catalog, &old, read.clone(), &commit)
+            authority
+                .seal_observed_link_claim(&catalog, &old, read.clone(), &commit)
                 .expect("old and successor evidence");
         }
-        authority.seal_observed_link_claim(&catalog, &clear, read, &commit)
+        authority
+            .seal_observed_link_claim(&catalog, &clear, read, &commit)
             .expect("clear evidence");
         let result = cell.commit_observed(commit, authority);
         if backed {
             result.expect("backed clear");
         } else {
-            assert!(matches!(result, Err(norn_kernel::CommitError::ObservationAuthorization)));
+            assert!(matches!(
+                result,
+                Err(norn_kernel::CommitError::ObservationAuthorization)
+            ));
         }
         assert_eq!(cell.load_link(&key).expect("edge").values.is_none(), backed);
     }

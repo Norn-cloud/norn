@@ -766,10 +766,12 @@ impl ObservationAuthorization {
                 LinkMutation::Add { .. } => target
                     .as_ref()
                     .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
-                LinkMutation::Remove => superseded
-                    && target.as_ref().is_some_and(|t| {
-                        model.canonical(t) == model.canonical(&write.key.target)
-                    }),
+                LinkMutation::Remove => {
+                    superseded
+                        && target.as_ref().is_some_and(|t| {
+                            model.canonical(t) == model.canonical(&write.key.target)
+                        })
+                }
             };
             if !permitted {
                 continue;
