@@ -1,7 +1,7 @@
 //! Pointwise consistency of a closed, grounded deontic model. Grounding must
 //! exhaust the actual definition domains and preserve conditions/exceptions.
 //! This module checks that model; it does not issue permissions or prove that
-//! obligations have been fulfilled. Authority order is a trusted policy input.
+//! obligations have been fulfilled. Only declared priority edges resolve conflicts.
 use norn_ir::deontic::DeonticModality;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -13,10 +13,10 @@ pub struct GroundedNorm {
     pub modality: DeonticModality,
     /// Selected source identity and exact version (neither is inferred).
     pub authority: (String, String),
-    /// Explicit tenant-selected order: larger levels are superior. Missing
-    /// authority selection is unknown, never a default priority.
+    /// Optional legacy ranking, consumed only by the Info discrepancy note.
+    /// It never supplies a priority edge to the declared-only resolver.
     pub authority_level: Option<u32>,
-    /// Comparable enactment ordinal within this exact authority lineage only.
+    /// Legacy enactment ordinal after effective-version selection; never recorded recency.
     pub enacted: u64,
     /// Pre-exception applicability. Specificity uses this common universe.
     pub applicable: BTreeSet<usize>,
@@ -24,14 +24,16 @@ pub struct GroundedNorm {
     pub excepted: BTreeSet<usize>,
 }
 
-/// First decisive precedence criterion, in normative order.
+/// Declared resolution or diagnostic-only historical comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriorityReason {
-    /// Lex superior: explicitly selected authority level.
+    /// Explicit declared edge or its strict transitive closure.
+    Declared,
+    /// Info-only legacy comparison of explicitly selected authority levels.
     Superior,
-    /// Lex posterior: later enactment within the same authority/version.
+    /// Info-only legacy enactment comparison within the same authority/version.
     Posterior,
-    /// Lex specialis: strict subset of pre-exception applicability.
+    /// Info-only legacy strict containment of pre-exception applicability.
     Specialis,
 }
 
@@ -96,31 +98,46 @@ fn preferred(high: &GroundedNorm, low: &GroundedNorm) -> Option<PriorityReason> 
     None
 }
 
-/// Evaluate every context, retaining conflicts and outstanding obligations.
-/// Callers must bind catalog, grounding, domain and authority selection into
-/// evidence; this is not evidence about arbitrary ungrounded definitions.
-///
-/// # Errors
-/// Refuses malformed, unselected, cyclic or oversized models. The model must
-/// describe a single bound action/subject; timed discharge is outside its scope.
-pub fn check_norm_precedence(
+/// Legacy comparison has no public resolution entry point. Its only caller
+/// emits an Info note; the result never changes declared-only admission.
+fn legacy_precedence(
     norms: &[GroundedNorm],
     contexts: usize,
 ) -> Result<Vec<NormContext>, NormUnknown> {
     validate(norms, contexts)?;
+    if norms.iter().any(|n| n.authority_level.is_none()) {
+        return Err(NormUnknown::MissingAuthority);
+    }
+    if norms.iter().any(|n| {
+        norms.iter().any(|other| {
+            n.authority == other.authority && n.authority_level != other.authority_level
+        })
+    }) {
+        return Err(NormUnknown::Invalid);
+    }
     let mut edges: BTreeMap<usize, Vec<(usize, PriorityReason)>> = BTreeMap::new();
-    let mut incoming: BTreeMap<usize, usize> =
-        norms.iter().enumerate().map(|(i, _)| (i, 0)).collect();
     for (high, winner) in norms.iter().enumerate() {
         for (low, loser) in norms.iter().enumerate() {
             if opposed(winner.modality, loser.modality)
                 && let Some(reason) = preferred(winner, loser)
             {
                 edges.entry(high).or_default().push((low, reason));
-                let count = incoming.get_mut(&low).ok_or(NormUnknown::Invalid)?;
-                *count = count.checked_add(1).ok_or(NormUnknown::Limit)?;
             }
         }
+    }
+    resolve_contexts(norms, contexts, &edges)
+}
+
+fn resolve_contexts(
+    norms: &[GroundedNorm],
+    contexts: usize,
+    edges: &BTreeMap<usize, Vec<(usize, PriorityReason)>>,
+) -> Result<Vec<NormContext>, NormUnknown> {
+    let mut incoming: BTreeMap<usize, usize> =
+        norms.iter().enumerate().map(|(i, _)| (i, 0)).collect();
+    for (low, _) in edges.values().flatten() {
+        let count = incoming.get_mut(low).ok_or(NormUnknown::Invalid)?;
+        *count = count.checked_add(1).ok_or(NormUnknown::Limit)?;
     }
     let mut queue: VecDeque<_> = incoming
         .iter()
@@ -198,9 +215,6 @@ fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> 
     }
     let mut ids = BTreeSet::new();
     for norm in norms {
-        if norm.authority_level.is_none() {
-            return Err(NormUnknown::MissingAuthority);
-        }
         if norm.id.trim().is_empty()
             || norm.id.len() > 256
             || !ids.insert(&norm.id)
@@ -211,9 +225,6 @@ fn validate(norms: &[GroundedNorm], contexts: usize) -> Result<(), NormUnknown> 
                 .iter()
                 .chain(&norm.excepted)
                 .any(|index| *index >= contexts)
-            || norms.iter().any(|other| {
-                other.authority == norm.authority && other.authority_level != norm.authority_level
-            })
         {
             return Err(NormUnknown::Invalid);
         }
@@ -245,9 +256,11 @@ pub struct DeclaredOrderReport {
     pub diagnostics: Vec<crate::Diagnostic>,
 }
 
-/// No normative conclusion was established.
+/// Resolution was refused, or no exhaustive normative conclusion was established.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeclaredOrderUnknown {
+pub enum NormRefusal {
+    /// Exact declaration-index cores; no resolved contexts are returned.
+    Conflict(BTreeSet<BTreeSet<usize>>),
     /// Finite analysis ceiling exceeded.
     Limit,
     /// Grounding is malformed or unsupported.
@@ -299,8 +312,44 @@ fn order_closure(edges: &[(usize, usize)], active: &BTreeSet<usize>) -> BTreeSet
     reach
 }
 
+/// D1 / LAW-RETAIN-1 / OVERLAY-MONOTONE-1: resolve only declared priorities.
+/// Layer/protection checks and complete conflict diagnosis precede precedence.
+/// Numeric authority, enactment and specificity never break a tie. Grounding
+/// must select effective versions first and preserve each rule's own exceptions.
+/// # Errors
+/// Returns exact conflict cores, malformed-binding refusals or unknown on limits.
+pub fn check_norm_precedence(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    max_calls: usize,
+) -> Result<Vec<NormContext>, NormRefusal> {
+    let report = diagnose_declared_order(
+        norms, origins, layers, edges, protected, contexts, max_calls,
+    )?;
+    if !report.diagnosis.cores.is_empty() {
+        return Err(NormRefusal::Conflict(report.diagnosis.cores));
+    }
+    let all: BTreeSet<_> = (0..norms.len()).collect();
+    let mut declared: BTreeMap<usize, Vec<(usize, PriorityReason)>> = BTreeMap::new();
+    for (high, low) in order_closure(edges, &all) {
+        if let (Some(a), Some(b)) = (norms.get(high), norms.get(low))
+            && opposed(a.modality, b.modality)
+        {
+            declared
+                .entry(high)
+                .or_default()
+                .push((low, PriorityReason::Declared));
+        }
+    }
+    resolve_contexts(norms, contexts, &declared).map_err(NormRefusal::Grounding)
+}
+
 /// LAW-RETAIN-1 / OVERLAY-MONOTONE-1: diagnose cross-layer clashes, even when
-/// legacy precedence records only a defeat. Superior already wins first; within a
+/// the Info-only legacy comparison records a defeat. Within a
 /// layer only declared edges (winner, loser), including their transitive closure,
 /// resolve opposing rules. An absent edge never acquires an implicit tie-break.
 ///
@@ -321,12 +370,12 @@ pub fn diagnose_declared_order(
     protected: &BTreeSet<usize>,
     contexts: usize,
     max_calls: usize,
-) -> Result<DeclaredOrderReport, DeclaredOrderUnknown> {
+) -> Result<DeclaredOrderReport, NormRefusal> {
     use crate::consistency::{diagnosis, report::core_findings};
     if norms.len() > diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
-        return Err(DeclaredOrderUnknown::Limit);
+        return Err(NormRefusal::Limit);
     }
-    validate(norms, contexts).map_err(DeclaredOrderUnknown::Grounding)?;
+    validate(norms, contexts).map_err(NormRefusal::Grounding)?;
     if origins.len() != norms.len()
         || layers.len() != norms.len()
         || origins.iter().collect::<BTreeSet<_>>().len() != origins.len()
@@ -343,10 +392,9 @@ pub fn diagnose_declared_order(
         || norms.iter().any(|n| !n.excepted.is_subset(&n.applicable))
         || protected.iter().any(|i| *i >= norms.len())
     {
-        return Err(DeclaredOrderUnknown::InvalidBinding);
+        return Err(NormRefusal::InvalidBinding);
     }
     let all: BTreeSet<_> = (0..norms.len()).collect();
-    let reach = order_closure(edges, &all);
     let mut conflicts = Vec::new();
     // Reject even inactive or exception-masked lower-to-higher override declarations.
     for &(high, low) in edges {
@@ -354,6 +402,7 @@ pub fn diagnose_declared_order(
             conflicts.push(BTreeSet::from([high, low]));
         }
     }
+    let reach = order_closure(edges, &all);
     for (i, left) in norms.iter().enumerate() {
         for (j, right) in norms.iter().enumerate().skip(i.saturating_add(1)) {
             if opposed(left.modality, right.modality)
@@ -372,7 +421,7 @@ pub fn diagnose_declared_order(
     }
     let mut oracle = OrderOracle { edges, conflicts };
     let diagnosis = diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), max_calls)
-        .map_err(DeclaredOrderUnknown::Diagnosis)?;
+        .map_err(NormRefusal::Diagnosis)?;
     let mut diagnostics = Vec::new();
     for core in &diagnosis.cores {
         let ids: Vec<_> = core
@@ -398,7 +447,7 @@ fn legacy_notes(
 ) -> Vec<crate::Diagnostic> {
     use crate::consistency::report::core_findings;
     let mut diagnostics = Vec::new();
-    if let Ok(legacy) = check_norm_precedence(norms, contexts) {
+    if let Ok(legacy) = legacy_precedence(norms, contexts) {
         let mut noted = BTreeSet::new();
         for context in legacy {
             for defeat in context.defeats {
@@ -409,7 +458,7 @@ fn legacy_notes(
                     && noted.insert((defeat.winner, defeat.loser, format!("{:?}", defeat.reason)))
                 {
                     diagnostics.extend(core_findings("consistency.normative.legacy_resolution", &crate::DiagnosticSeverity::Info,
-                        &format!("Legacy norm_precedence records {} over {} by {:?} in defeats; the constitutional clash remains diagnosed here. Superior wins first; posterior/specialis require identical authority/version/level. See #767; admission is unchanged.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
+                        &format!("Legacy norm_precedence records {} over {} by {:?} in defeats; the constitutional clash remains diagnosed here. Superior wins first; posterior/specialis require identical authority/version/level. See #767; this comparison has no resolution authority.", norms.get(defeat.winner).map_or("", |n| n.id.as_str()), norms.get(defeat.loser).map_or("", |n| n.id.as_str()), defeat.reason),
                         &[origins.get(defeat.winner), origins.get(defeat.loser)].into_iter().flatten().collect::<Vec<_>>()));
                 }
             }
