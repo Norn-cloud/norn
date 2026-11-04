@@ -162,6 +162,12 @@ impl FactVersion {
     /// The version of an object that was never written.
     pub const ABSENT: Self = Self(0);
 
+    /// ID-STABLE-1: distinguish a retained deletion from an unwritten identity.
+    #[must_use]
+    pub const fn has_committed_deletion(self, live: bool) -> bool {
+        crate::version_check::has_committed_deletion(self.0, live)
+    }
+
     /// The next version, or `None` on overflow.
     #[must_use]
     pub const fn checked_next(self) -> Option<Self> {
@@ -600,6 +606,9 @@ pub struct CommitVersions {
 /// no event, no enqueue, no consumption.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommitError<X> {
+    /// ID-STABLE-1: only an authenticated observation can lift this deletion.
+    #[error("{message}", message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
     /// ID-UNIQUE-1: a normalized business key is occupied in this root/scope/world.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {
@@ -860,6 +869,7 @@ impl<X> CommitError<X> {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
             Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
             Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
                 norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE

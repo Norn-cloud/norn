@@ -132,8 +132,8 @@ fn input(id: &str, side: &str, rate: &str, grams: &str, currency: &str) -> JsonO
         ("quote_id".into(), id.into()),
         ("side".into(), side.into()),
         ("currency".into(), currency.into()),
-        ("price_per_g".into(), number(rate)),
-        ("fine_g".into(), number(grams)),
+        ("price_per_g".into(), RuntimeValue::String(rate.into())),
+        ("fine_g".into(), RuntimeValue::String(grams.into())),
     ])
 }
 
