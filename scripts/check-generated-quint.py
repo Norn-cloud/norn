@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Execute declaration-generated jobs with tla-ts and an independent Apalache oracle."""
 import argparse
+import copy
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
-from quint_apalache import ApalacheServer, HarnessError, run_quint_apalache, scrubbed_environment
+from quint_apalache import HarnessError, scrubbed_environment
 
 
 def verdict(primary, oracle, returncode, timed_out, expected):
@@ -20,32 +23,61 @@ def verdict(primary, oracle, returncode, timed_out, expected):
         return "unknown"
     if returncode == 0 and primary.get("status") == "success" and primary.get("distinctStates") == expected and oracle.get("status") == "ok":
         return "ok"
-    if returncode == 1 and primary.get("status") == "invariant-violation" and primary.get("violation", {}).get("trace") and oracle.get("status") == "violation" and oracle.get("trace"):
+    primary_shape = trace_shape(primary.get("violation", {}).get("trace"))
+    if returncode == 12 and primary.get("status") == "invariant-violation" and primary_shape and oracle.get("status") == "violation" and primary_shape == trace_shape(oracle.get("trace")):
         return "violation"
     return "unknown"
 
 
 def oracle_trace(trace):
-    """Decode the qualified Quint record/scalar trace without numeric coercion."""
-    if not isinstance(trace, list) or not trace:
-        raise ValueError("missing Apalache trace")
+    """Decode the pinned CLI's ITF scalar trace without numeric coercion."""
+    if not isinstance(trace, dict):
+        raise ValueError("missing Apalache ITF trace")
+    variables, raw_states = trace.get("vars"), trace.get("states")
+    if not isinstance(variables, list) or not variables or any(not isinstance(v, str) for v in variables) or len(set(variables)) != len(variables) or not isinstance(raw_states, list) or not raw_states:
+        raise ValueError("malformed Apalache ITF trace")
     states = []
-    for record in trace:
-        if not isinstance(record, dict) or record.get("kind") != "app" or record.get("opcode") != "Rec":
-            raise ValueError("unsupported Apalache trace record")
-        args = record.get("args")
-        if not isinstance(args, list) or len(args) % 2:
-            raise ValueError("malformed Apalache trace fields")
+    for index, state in enumerate(raw_states):
+        metadata = state.get("#meta") if isinstance(state, dict) else None
+        if not isinstance(state, dict) or set(state) - {"#meta"} != set(variables) or not isinstance(metadata, dict) or type(metadata.get("index")) is not int or metadata["index"] != index:
+            raise ValueError("malformed Apalache ITF state")
         values = {}
-        for key, value in zip(args[::2], args[1::2]):
-            if not isinstance(key, dict) or key.get("kind") != "str" or not isinstance(key.get("value"), str) or key["value"] in values or not isinstance(value, dict):
-                raise ValueError("malformed Apalache trace field")
-            scalar = value.get("value")
-            if not ((value.get("kind") == "int" and type(scalar) is int and -2_147_483_648 <= scalar <= 2_147_483_647) or (value.get("kind") == "bool" and type(scalar) is bool)):
-                raise ValueError("unsupported or inexact Apalache trace scalar")
-            values[key["value"]] = scalar
+        for name in variables:
+            value = state[name]
+            if type(value) is bool:
+                values[name] = value
+            elif isinstance(value, dict) and set(value) == {"#bigint"} and isinstance(value["#bigint"], str):
+                text = value["#bigint"]
+                if len(text) > 11 or not re.fullmatch(r"0|-?[1-9][0-9]*", text) or not -2_147_483_648 <= int(text) <= 2_147_483_647:
+                    raise ValueError("inexact or out-of-profile Apalache ITF integer")
+                values[name] = int(text)
+            else:
+                raise ValueError("unsupported Apalache ITF scalar")
         states.append({"state": values})
     return states
+
+
+def trace_shape(trace):
+    if not isinstance(trace, list) or not trace:
+        return None
+    result = []
+    for entry in trace:
+        state = entry.get("state") if isinstance(entry, dict) else None
+        if not isinstance(state, dict) or not state or type(state.get("present")) is not bool:
+            return None
+        if any(type(v) not in (int, bool) for v in state.values()):
+            return None
+        result.append((state["present"], sorted((k, type(v).__name__) for k, v in state.items())))
+    return result
+
+
+def oracle_verdict(returncode, stdout):
+    outcomes = re.findall(r"^The outcome is: (\w+)\b", stdout, re.MULTILINE)
+    if returncode == 0 and outcomes == ["NoError"]:
+        return "ok"
+    if returncode == 12 and outcomes == ["Error"] and re.search(r"State \d+: state invariant \d+ violated\.", stdout):
+        return "violation"
+    return "unknown"
 
 
 def arithmetic_qualified(model):
@@ -53,6 +85,114 @@ def arithmetic_qualified(model):
     # scalar leaves. Laws can add derived post-state coefficients again.
     magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
     return max(magnitudes, default=0) * 4096 * 4096 <= 2_147_483_647
+
+
+def initializer_predicate(spec):
+    """PROOF-QUINT-RUN-1: scoped equivalent of Quint 0.32.0 convertInit.
+
+    Only the generated constant initializer is accepted. Other definitions,
+    identifiers, types and effects pass unchanged to the pinned parser.
+    """
+    if not isinstance(spec, dict):
+        raise ValueError("malformed Quint JSON: root must be an object")
+    result = copy.deepcopy(spec)
+    modules = result.get("modules")
+    if not isinstance(modules, list) or len(modules) != 1 or not isinstance(modules[0], dict) or modules[0].get("name") != "generated":
+        raise ValueError("unsupported flattened Quint module")
+    declarations = modules[0].get("declarations")
+    if not isinstance(declarations, list) or any(not isinstance(d, dict) or not isinstance(d.get("name"), str) or not d["name"] or not isinstance(d.get("kind"), str) for d in declarations):
+        raise ValueError("malformed Quint JSON: declarations require named objects")
+    names = [d["name"] for d in declarations]
+    if len(set(names)) != len(names) or any(d.get("kind") not in {"var", "def"} or d.get("qualifier") == "run" for d in declarations):
+        raise ValueError("unsupported Quint declaration")
+    definitions = {d["name"]: d for d in declarations if d["kind"] == "def"}
+    init = definitions.get("init", {})
+    alias = definitions.get("q::init", {})
+    alias_expression = alias.get("expr")
+    if init.get("qualifier") != "action" or alias.get("qualifier") != "action" or not isinstance(alias_expression, dict) or alias_expression.get("kind") != "name" or alias_expression.get("name") != "init":
+        raise ValueError("unsupported Quint initializer alias")
+    def visits(value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from visits(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from visits(child)
+    for definition in declarations:
+        for node in visits(definition.get("expr")):
+            if node.get("kind") == "name":
+                if not isinstance(node.get("name"), str):
+                    raise ValueError("malformed Quint JSON: expression name must be text")
+                if definition["name"] != "q::init" and node["name"] in {"init", "q::init"}:
+                    raise ValueError("initializer reused outside q::init")
+    expression = init.get("expr")
+    if not isinstance(expression, dict) or expression.get("kind") != "app" or expression.get("opcode") != "actionAll" or not isinstance(expression.get("args"), list) or not expression["args"]:
+        raise ValueError("unsupported Quint initializer expression")
+    assigned = []
+    for assignment in expression["args"]:
+        if not isinstance(assignment, dict):
+            raise ValueError("malformed Quint JSON: initializer assignment must be an object")
+        args = assignment.get("args")
+        if assignment.get("kind") != "app" or assignment.get("opcode") != "assign" or not isinstance(args, list) or len(args) != 2 or not all(isinstance(arg, dict) for arg in args) or args[0].get("kind") != "name" or not isinstance(args[0].get("name"), str):
+            raise ValueError("unsupported Quint initializer assignment")
+        literal = args[1]
+        if not ((literal.get("kind") == "int" and type(literal.get("value")) is int) or (literal.get("kind") == "bool" and type(literal.get("value")) is bool)):
+            raise ValueError("nonconstant Quint initializer")
+        assigned.append(args[0]["name"])
+        assignment["opcode"] = "eq"
+    variables = {d["name"] for d in declarations if d["kind"] == "var"}
+    if len(set(assigned)) != len(assigned) or set(assigned) != variables:
+        raise ValueError("Quint initializer must assign every state variable once")
+    return result
+
+
+CLEANUP_RESERVE_SECONDS = 1.0
+
+
+def compile_process(command, environment, work, deadline):
+    """Process execution and group cleanup share the caller's wall-clock budget."""
+    if deadline - time.monotonic() <= CLEANUP_RESERVE_SECONDS:
+        raise subprocess.TimeoutExpired(command, 0)
+    process = subprocess.Popen(command, env=environment, cwd=work, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        remaining = max(0, deadline - time.monotonic() - CLEANUP_RESERVE_SECONDS)
+        stdout, stderr = process.communicate(timeout=remaining)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=max(0, deadline - time.monotonic()))
+
+
+def compile_tla(args, root, environment, work):
+    """Avoid the pre-parser RPC stall; preserve one 120-second compile budget."""
+    deadline = time.monotonic() + 120
+    stages = []
+    compiled = compile_process([
+        str(root / "bin/quint"), "compile", str(args.model.resolve()), "--main", "generated",
+        "--target", "json", "--flatten", "--step", args.step, "--invariant", args.invariant,
+    ], environment, work, deadline)
+    stages.append({"stage": "quint-json", "exitCode": compiled.returncode,
+                   "stdoutBytes": len(compiled.stdout),
+                   "stdoutSha256": hashlib.sha256(compiled.stdout).hexdigest(), "stderr": compiled.stderr.decode()})
+    if compiled.returncode != 0:
+        raise ValueError("Quint JSON compilation failed: " + compiled.stderr.decode())
+    source = work / "generated.qnt.json"
+    source.write_text(json.dumps(initializer_predicate(json.loads(compiled.stdout))))
+    tla = work / "generated.tla"
+    parsed = compile_process([
+        str(root / "quint-home/apalache-dist-0.56.1/apalache/bin/apalache-mc"),
+        "--out-dir=" + str(work / "parser-output"), "parse", "--output=" + str(tla), str(source),
+    ], environment, work, deadline)
+    stages.append({"stage": "apalache-cli", "exitCode": parsed.returncode,
+                   "stdout": parsed.stdout.decode(), "stderr": parsed.stderr.decode()})
+    if parsed.returncode != 0 or not tla.is_file():
+        raise ValueError("Apalache CLI compilation failed: " + parsed.stdout.decode() + parsed.stderr.decode())
+    return tla.read_bytes(), stages
 
 
 def run(args):
@@ -71,43 +211,29 @@ def run(args):
         with zipfile.ZipFile(jar) as archive:
             for name in ["Apalache", "Variants"]:
                 (work / f"{name}.tla").write_bytes(archive.read(f"tla2sany/StandardModules/{name}.tla"))
-        compilation = []
-        for attempt in range(2):
-            server = ApalacheServer(root / "quint-home", environment, lambda _: None)
-            try:
-                server.start()
-                compiled = subprocess.run([
-                    str(root / "bin/quint"), "compile", str(args.model), "--main", "generated",
-                    "--target", "tlaplus", "--step", args.step, "--invariant", args.invariant,
-                    "--out", str(work / "compile.json"), "--server-endpoint", f"127.0.0.1:{server.port}",
-                ], env=environment, capture_output=True, timeout=120)
-            finally:
-                server.stop()
-            compilation.append({"exitCode": compiled.returncode, "stdout": compiled.stdout.decode(), "stderr": compiled.stderr.decode()})
-            if compiled.returncode == 0:
-                break
-            if attempt == 1:
-                return {"status": "unknown", "reason": "Quint compilation failed", "compilation": compilation}
+        tla_bytes, compilation = compile_tla(args, root, environment, work)
         tla = work / "generated.tla"
-        tla.write_bytes(compiled.stdout)
         primary_path = work / "primary.json"
         subprocess.run([str(args.bun), "run", "tools/norn-proofs/check.ts", str(tla), str(primary_path), str(work), str(args.seed)],
                        env=environment, capture_output=True, check=True, timeout=120)
         primary_raw = primary_path.read_text()
         primary = json.loads(primary_raw)
-        oracle_path = work / "oracle.json"
-        oracle_run = run_quint_apalache([
-            str(root / "bin/quint"), "verify", str(args.model), "--main", "generated", "--backend", "apalache",
-            "--step", args.step, "--invariants", args.invariant, "--max-steps", "1", "--out", str(oracle_path),
-        ], environment=environment, timeout_seconds=120, result_root=work, emit=lambda line: print(line, file=sys.stderr, flush=True))
-        oracle_raw = oracle_path.read_text()
-        oracle = json.loads(oracle_raw)
+        oracle_directory = work / "oracle-run"
+        checked = compile_process([
+            str(root / "quint-home/apalache-dist-0.56.1/apalache/bin/apalache-mc"),
+            "--out-dir=" + str(work / "oracle-output"), "--run-dir=" + str(oracle_directory),
+            "check", "--init=q_init", "--next=q_step", "--inv=q_inv", "--length=1", "--output-traces=true", str(tla),
+        ], environment, work, time.monotonic() + 120)
+        status = oracle_verdict(checked.returncode, checked.stdout.decode())
+        trace_raw = (oracle_directory / "violation.itf.json").read_text() if status == "violation" else None
+        oracle = {"status": status, "errors": [], "trace": oracle_trace(json.loads(trace_raw)) if trace_raw else None}
+        oracle_raw = json.dumps({"stdout": checked.stdout.decode(), "stderr": checked.stderr.decode(), "traceRaw": trace_raw}, separators=(",", ":"))
         expected = 1 if args.step == "idle" else args.expected_states
-        status = verdict(primary, oracle, oracle_run.returncode, oracle_run.timed_out, expected)
+        status = verdict(primary, oracle, checked.returncode, False, expected)
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",
                 "compilation": compilation, "primaryRaw": primary_raw, "oracleRaw": oracle_raw,
-                "oracleRun": {"exitCode": oracle_run.returncode, "timedOut": oracle_run.timed_out},
-                "tlaSha256": hashlib.sha256(compiled.stdout).hexdigest(), "traceBackend": "apalache", "trace": oracle_trace(oracle.get("trace")) if status == "violation" else None}
+                "oracleRun": {"exitCode": checked.returncode, "timedOut": False},
+                "tlaSha256": hashlib.sha256(tla_bytes).hexdigest(), "traceBackend": "apalache", "trace": oracle.get("trace") if status == "violation" else None}
 
 
 def main():
