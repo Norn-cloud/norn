@@ -514,7 +514,9 @@ fn obs_link_retarget_and_redelivery_replace_only_the_latest_contribution() {
 #[test]
 fn obs_link_withdrawal_preserves_unbacked_authored_edges() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup_with(&directory.path().join("authored.sqlite"), many_holding);
+    let mut cell = setup_with(&directory.path().join("authored.sqlite"), |artifacts| {
+        many_holding(artifacts)
+    });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows {
@@ -560,7 +562,9 @@ fn obs_link_withdrawal_preserves_unbacked_authored_edges() {
 #[test]
 fn obs_link_mixed_clear_and_assert_never_oscillate_or_consume() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup_with(&directory.path().join("clear.sqlite"), many_holding);
+    let mut cell = setup_with(&directory.path().join("clear.sqlite"), |artifacts| {
+        many_holding(artifacts)
+    });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
     for row in rows {
