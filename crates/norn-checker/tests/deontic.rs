@@ -706,3 +706,21 @@ fn native_order_refuses_unbounded_and_temporal_grounding() {
     rule.law.timing = None;
     assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
 }
+
+#[test]
+fn native_order_rejects_incomplete_law_identities() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut rule = obligation().expect("fixture");
+    rule.law.timing = None;
+    rule.law.modality = LawModality::Always {};
+    for slot in ["owner", "subject", "root", "types"] {
+        let mut broken = rule.clone();
+        match slot {
+            "owner" => broken.law.owner.clear(),
+            "subject" => broken.law.subject.clear(),
+            "root" => broken.law.scope.root = norn_ir::LawRoot::App(String::new()),
+            _ => broken.law.scope.object_types.clear(),
+        }
+        assert!(lower_declared_order(&[broken], &norn_expr::schema::Schema::Boolean).is_err());
+    }
+}
