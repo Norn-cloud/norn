@@ -390,19 +390,6 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
-        /** @description A source grant never follows from membership or canonical-value disclosure. */
-        NornContributionSource: {
-            /** @description Original semantic source edges. */
-            provenance: components["schemas"]["NornInstanceSourceProvenance"];
-            /** @enum {string} */
-            status: "resolved";
-        } | {
-            /** @enum {string} */
-            status: "restricted";
-        } | {
-            /** @enum {string} */
-            status: "unavailable";
-        };
         /**
          * NornExprTypeEnvRef
          * @description The identity of the ZEN Expression type environment recorded in a checker receipt.
@@ -7132,8 +7119,19 @@ export interface components {
             recordedAtMs: number;
             /** @description Canonical property content was withheld. */
             restricted: boolean;
-            /** @description Independent source state. */
-            source: components["schemas"]["NornContributionSource"];
+            /** @description A source grant never follows from membership or canonical-value disclosure. */
+            source: {
+                /** @description Original semantic source edges. */
+                provenance: components["schemas"]["NornInstanceSourceProvenance"];
+                /** @enum {string} */
+                status: "resolved";
+            } | {
+                /** @enum {string} */
+                status: "restricted";
+            } | {
+                /** @enum {string} */
+                status: "unavailable";
+            };
             /** @description Complete canonical values, only under their own grant. */
             values: {
                 [key: string]: unknown;

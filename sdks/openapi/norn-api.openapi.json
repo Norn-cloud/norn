@@ -1115,61 +1115,6 @@
           "T7"
         ]
       },
-      "NornContributionSource": {
-        "oneOf": [
-          {
-            "type": "object",
-            "description": "Authenticated source bundle was resolved.",
-            "required": [
-              "provenance",
-              "status"
-            ],
-            "properties": {
-              "provenance": {
-                "$ref": "#/components/schemas/NornInstanceSourceProvenance",
-                "description": "Original semantic source edges."
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "resolved"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "Source disclosure was denied.",
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "type": "string",
-                "enum": [
-                  "restricted"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "No retained source bundle exists.",
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "type": "string",
-                "enum": [
-                  "unavailable"
-                ]
-              }
-            }
-          }
-        ],
-        "description": "A source grant never follows from membership or canonical-value disclosure."
-      },
       "NornExprTypeEnvRef": {
         "type": "object",
         "title": "NornExprTypeEnvRef",
@@ -18641,8 +18586,62 @@
             "description": "Canonical property content was withheld."
           },
           "source": {
-            "$ref": "#/components/schemas/NornContributionSource",
-            "description": "Independent source state."
+            "oneOf": [
+              {
+                "type": "object",
+                "description": "Authenticated source bundle was resolved.",
+                "required": [
+                  "provenance",
+                  "status"
+                ],
+                "properties": {
+                  "provenance": {
+                    "$ref": "#/components/schemas/NornInstanceSourceProvenance",
+                    "description": "Original semantic source edges."
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "resolved"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Source disclosure was denied.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "restricted"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "No retained source bundle exists.",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unavailable"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "description": "A source grant never follows from membership or canonical-value disclosure."
           },
           "values": {
             "type": [
