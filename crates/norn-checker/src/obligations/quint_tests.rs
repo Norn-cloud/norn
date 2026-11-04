@@ -21,6 +21,7 @@ fn fixture() -> Vec<Value> {
     object.object_type.properties = ["id", "amount", "remaining", "difference"]
         .into_iter()
         .map(|id| norn_ir::Property {
+            protected: false,
             id: norn_ir::PropertyId(id.into()),
             description: None,
             property_type: if id == "id" {

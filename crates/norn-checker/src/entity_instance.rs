@@ -38,6 +38,12 @@
 /// ID-UNIQUE-1: one canonical key binding per declaring root, scope and world.
 pub const IDENTITY_COLLISION: &str = "core.identity.collision";
 
+/// ID-STABLE-1: ordinary authoring cannot restore a deleted identity.
+pub const IDENTITY_REUSE: &str = "core.identity.reuse";
+/// Actionable guidance shared by every authored identity-reuse refusal.
+pub const IDENTITY_REUSE_MESSAGE: &str =
+    "this identity was deleted; restore it explicitly or use a new identity";
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
@@ -312,9 +318,16 @@ pub enum EffectiveKind {
     Unresolved,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum WriteAuthority {
+    RulesOnly,
+    CallersAndRules,
+}
+
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
+    write_authority: WriteAuthority,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
@@ -358,6 +371,16 @@ pub enum InstanceError {
 }
 
 impl EffectiveProperty {
+    pub(crate) fn protect(&mut self) {
+        self.write_authority = WriteAuthority::RulesOnly;
+    }
+
+    /// Whether only declared rule outputs may write this property.
+    #[must_use]
+    pub const fn protected(&self) -> bool {
+        matches!(self.write_authority, WriteAuthority::RulesOnly)
+    }
+
     /// Resolved members of the closed record, including referenced constraints.
     pub(crate) fn record_members(&self) -> &[Self] {
         &self.record_members
@@ -407,6 +430,11 @@ impl EffectiveProperty {
                 property.default.clone()
             },
             computed,
+            write_authority: if property.protected {
+                WriteAuthority::RulesOnly
+            } else {
+                WriteAuthority::CallersAndRules
+            },
             patterns,
             record_members: Vec::new(),
         }
@@ -448,6 +476,7 @@ impl EffectiveProperty {
             }
             *remaining = remaining.saturating_sub(1);
             let property = norn_ir::Property {
+                protected: false,
                 id: member.id.clone(),
                 description: None,
                 property_type: member.property_type.clone(),

@@ -121,3 +121,24 @@ Earlier source commits do not invalidate the captured staging time; transactiona
 version and clock guards still refuse actual concurrent conflicts.
 
 RESTATE-HISTORY-1 opaque rebuild/candidate capabilities are bound to their originating cell-store instance. Foreign-host preparation/staging refuses before input reads or writes, even when world, scope and slot version coincide. Restart obtains a new capability through authenticated resume and recomputation.
+
+## Authorized numeric source lineage
+
+LINEAGE-SUM-1 / OBS-EVIDENCE-1: an exact numeric trace authenticates each fact
+incarnation through receipt-bound historical evidence, then resolves its source
+edge only through the cell's recomputed input-bundle API. Numeric amounts and
+membership do not grant canonical-value or source disclosure. Independent host
+grants control these two views within the same transaction and decode budget.
+A source edge is explicitly `resolved`, `restricted`, or `unavailable` (no retained
+bundle). Resolved evidence carries the semantic source row and original document
+references, document and bundle digests, exact mapping pin and field provenance.
+Source identity is never inferred from a canonical/CSV key. Catalog metadata
+cannot create another numeric contribution, and document-content access is a
+separate grant. Corrupt or exhausted evidence refuses the entire trace; a
+restricted source never becomes an invented complete explanation. The numeric
+result retains its original definition, time and cursor frontier.
+
+DATA-LINEAGE scenarios use the unchanged scrap-yield CSV through a typed source
+mapping, all four combinations of value/source grants, non-bundle facts,
+redelivery and restart, source-budget exhaustion and corrupt source journal
+refusal. Generated disclosure cases preserve exact sums and member identities.

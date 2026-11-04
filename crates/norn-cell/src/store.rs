@@ -1159,6 +1159,7 @@ fn validate_readmission(
 #[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum FactWriteRow {
     /// Create the object, or replace all of its property values.
+    /// This is a trusted embedding primitive, not the authored creation contract.
     Put {
         /// The object's (concrete) type.
         object_type: String,
@@ -2418,7 +2419,9 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(head)
     }
 
-    /// Commit `batch` atomically.
+    /// Commit `batch` atomically as a trusted, actorless embedding primitive.
+    /// Authored adapters use the checked kernel boundary; raw Put carries no
+    /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
     /// # Errors
     ///
@@ -2852,6 +2855,10 @@ impl<E: SqlEngine> CellStore<E> {
                 None
             };
 
+            if !matches!(origin, CommitOrigin::Retained(_)) {
+                // Verified-prefix reconstruction retains the original admission semantics.
+                writer.admit_created_identities()?;
+            }
             let written = writer.apply_writes()?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
@@ -3094,6 +3101,7 @@ mod identity_history_tests {
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
+                    protected: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },
