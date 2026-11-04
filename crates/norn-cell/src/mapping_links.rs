@@ -40,11 +40,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut rows = Vec::new();
         if let Some(scope) = scope {
             for key in scope {
-                // Keys appear in stored JSON with their JSON escapes.
-                let encoded = serde_json::to_string(key)?;
+                // Select actual claim endpoints, never arbitrary raw/property text.
                 rows.extend(self.conn.query(
-                    &format!("{select} {journal} AND instr(observed, ?1) > 0 {order} LIMIT {cap}"),
-                    params![&encoded],
+                    &format!("{select} {journal} AND EXISTS (SELECT 1 FROM json_each(observed, '$.input.records') AS record WHERE (json_extract(record.value, '$.key') = ?1 AND json_array_length(json_extract(record.value, '$.clearedLinks')) > 0) OR EXISTS (SELECT 1 FROM json_each(record.value, '$.links') AS link WHERE json_extract(link.value, '$.key') = ?1 OR json_extract(link.value, '$.targetKey') = ?1)) {order} LIMIT {cap}"),
+                    params![key],
                 )?);
             }
         } else {
