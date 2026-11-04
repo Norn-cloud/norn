@@ -888,35 +888,6 @@
         "resourceId": "item_catalog",
         "sinceParam": "filters",
         "updatedAtPath": "/modified"
-      },
-      {
-        "commandKeyHeader": "X-Norn-Idempotency-Key",
-        "doctype": "Bin",
-        "endpoint": "/api/resource/{doctype}",
-        "itemsPath": "/data",
-        "keyset": {
-          "fields": [
-            "name",
-            "modified",
-            "item_code",
-            "warehouse",
-            "actual_qty",
-            "stock_uom"
-          ],
-          "fieldsParam": "fields",
-          "filtersParam": "filters",
-          "orFilterParam": "or_filters",
-          "orderParam": "order_by",
-          "pageParam": "limit_start",
-          "pageSize": 100,
-          "sizeParam": "limit_page_length",
-          "tieBreakerField": "name",
-          "watermarkField": "modified"
-        },
-        "kind": "delta",
-        "resourceId": "stock_balance",
-        "sinceParam": "filters",
-        "updatedAtPath": "/modified"
       }
     ],
     "commands": [
