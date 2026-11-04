@@ -304,7 +304,9 @@ pub fn lower_path_equations(
             // Inherited equations constrain each subtype's effective links, whose
             // relations are distinct from the declaring type's relations.
             let instances = catalog.object_type_names().filter(|name| {
-                catalog.lineage(name).is_some_and(|lineage| lineage.contains(&owner))
+                catalog
+                    .lineage(name)
+                    .is_some_and(|lineage| lineage.contains(&owner))
             });
             let lower = |instance: &str| -> Result<Egd, String> {
                 let mut body = vec![Atom {
@@ -321,7 +323,10 @@ pub fn lower_path_equations(
                     ));
                 }
                 Ok(Egd {
-                    id: format!("{}:path-equation:{}:{instance}", artifact.artifact_id, equation.id),
+                    id: format!(
+                        "{}:path-equation:{}:{instance}",
+                        artifact.artifact_id, equation.id
+                    ),
                     origin: origin.clone(),
                     body,
                     left,
@@ -331,7 +336,9 @@ pub fn lower_path_equations(
             for instance in instances {
                 match lower(instance) {
                     Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                    Err(message) => refuse(&origin, format!("equation {:?}: {message}", equation.id)),
+                    Err(message) => {
+                        refuse(&origin, format!("equation {:?}: {message}", equation.id))
+                    }
                 }
             }
         }
