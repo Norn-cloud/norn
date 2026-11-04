@@ -81,14 +81,11 @@ pub(crate) fn artifacts() -> Vec<ArtifactEnvelope> {
     serde_json::from_str(include_str!("../../../fixtures/stress/purchase.json"))
         .expect("generated purchase")
 }
-pub(crate) fn run(
+fn action_input(
+    artifacts: &[ArtifactEnvelope],
     action_id: &str,
     input: Value,
-    cell: &mut Cell,
-    catalog: &TypeCatalog<'_>,
-    artifacts: &[ArtifactEnvelope],
-    key: &str,
-) -> Result<ActionOutcome, norn_kernel::ActionRefusal<<Cell as CellHost>::Error>> {
+) -> (norn_ir::ActionRoot, JsonObject) {
     let artifact = artifacts
         .iter()
         .find(|a| a.artifact_id.as_str() == action_id)
@@ -100,6 +97,17 @@ pub(crate) fn run(
         .to_json_value()
         .decode::<norn_ir::ActionRoot>()
         .expect("action IR");
+    (action, serde_json::from_value(input).expect("input"))
+}
+pub(crate) fn run(
+    action_id: &str,
+    input: Value,
+    cell: &mut Cell,
+    catalog: &TypeCatalog<'_>,
+    artifacts: &[ArtifactEnvelope],
+    key: &str,
+) -> Result<ActionOutcome, Box<norn_kernel::ActionRefusal<<Cell as CellHost>::Error>>> {
+    let (action, input) = action_input(artifacts, action_id, input);
     commit_action(
         cell,
         catalog,
@@ -112,7 +120,7 @@ pub(crate) fn run(
                 ("environmentId".into(), "dev".into()),
             ]),
             actor: "synthetic:operator".into(),
-            input: serde_json::from_value(input).expect("input"),
+            input,
             idempotency_key: key.into(),
             object_type: None,
             turn: DecisionTurn {
@@ -124,6 +132,7 @@ pub(crate) fn run(
         },
         &Allow,
     )
+    .map_err(Box::new)
 }
 pub(crate) fn setup(
     artifacts: &[ArtifactEnvelope],
@@ -134,7 +143,8 @@ pub(crate) fn setup(
     .expect("core Process");
     let payload = serde_json::to_value(interface.payload.to_json_value()).expect("payload");
     let interface: InterfaceDef =
-        serde_json::from_value(payload["interface"].clone()).expect("interface");
+        serde_json::from_value(payload.get("interface").expect("interface body").clone())
+            .expect("interface");
     let interfaces = [interface];
     let mut definitions: Vec<ObjectTypeDef> = artifacts
         .iter()
@@ -258,6 +268,10 @@ fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
             assert_eq!(before, cell.store().read().dump().expect("atomic refusal"));
         }
     }
+    assert_inspection_mutant_atomic(&mut cell, &catalog);
+}
+
+fn assert_inspection_mutant_atomic(cell: &mut Cell, catalog: &TypeCatalog<'_>) {
     let mutant: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
         "../../../fixtures/stress/purchase-mutant.json"
     ))
@@ -266,8 +280,8 @@ fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
     let refusal = run(
         "stress.receipt.inspect.action",
         json!({"id":"r2","delivered":4,"accepted":3}),
-        &mut cell,
-        &catalog,
+        cell,
+        catalog,
         &mutant,
         "mutant",
     )
