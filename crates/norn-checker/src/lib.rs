@@ -55,6 +55,7 @@ pub mod entity_model;
     clippy::large_futures
 )]
 pub mod envelope;
+pub mod exact_rational;
 mod finite;
 pub mod flow_source_map;
 pub mod function;

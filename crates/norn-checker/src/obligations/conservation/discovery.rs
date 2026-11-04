@@ -117,7 +117,7 @@ fn eliminate(mut equations: Vec<Vec<Rational>>, n: usize) -> Result<Vec<Rational
         let row = equations.get_mut(rank).ok_or(Failure::Malformed)?;
         let divisor = *row.get(column).ok_or(Failure::Malformed)?;
         for coefficient in row.iter_mut().skip(column) {
-            *coefficient = coefficient.div(divisor).ok_or_else(limit)?;
+            *coefficient = coefficient.checked_div(divisor).ok_or_else(limit)?;
         }
         let normalized = row.clone();
         for (index, row) in equations.iter_mut().enumerate() {
@@ -135,7 +135,7 @@ fn eliminate(mut equations: Vec<Vec<Rational>>, n: usize) -> Result<Vec<Rational
                 }
                 *coefficient = pivot
                     .mul(factor)
-                    .and_then(Rational::neg)
+                    .and_then(Rational::checked_neg)
                     .and_then(|v| coefficient.add(v))
                     .ok_or_else(limit)?;
             }

@@ -25,6 +25,7 @@ pub mod diagnosis;
 mod divergence;
 mod exchange;
 pub mod finite;
+pub mod report;
 mod theory;
 
 pub use chase::{
