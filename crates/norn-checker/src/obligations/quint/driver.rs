@@ -569,9 +569,14 @@ mod tests {
         let artifacts = fixture();
         let source = source(&artifacts);
         let registry = std::collections::BTreeSet::new();
-        let authority =
-            ApprovedContract::approve(&source, &registry, json!({}), json!({}), json!({}))
-                .expect("admitted fixture");
+        let authority = ApprovedContract::approve(
+            &source,
+            &registry,
+            json!({"expr":"norn-zen/6"}),
+            json!({"store":"empty"}),
+            json!({"level":"bounded"}),
+        )
+        .expect("admitted fixture");
         let batch = authority
             .quint(&source, &registry, &bounds(&artifacts))
             .expect("batch");
