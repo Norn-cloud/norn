@@ -94,7 +94,10 @@ mod tests {
 
     struct Double(DecisionWithModel);
     impl WasmModule for Double {
-        fn solve(&mut self, input: Vec<u8>) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send {
+        fn solve(
+            &mut self,
+            input: Vec<u8>,
+        ) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send {
             let text = String::from_utf8(input).expect("SMTLib is UTF8");
             assert!(text.contains("(check-sat)"));
             std::future::ready(Ok(self.0.clone()))
