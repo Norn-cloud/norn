@@ -297,34 +297,49 @@ pub fn lower_path_equations(
         let mut ids = BTreeSet::new();
         for (index, equation) in equations.into_iter().enumerate() {
             let origin = at(format!("{slot}/{index}"));
-            let lowered = (|| -> Result<Egd, String> {
-                if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
-                    return Err("ID must be nonempty and unique".into());
-                }
+            if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
+                refuse(&origin, "ID must be nonempty and unique".into());
+                continue;
+            }
+            // Inherited equations constrain each subtype's effective links, whose
+            // relations are distinct from the declaring type's relations.
+            let instances = catalog.object_type_names().filter(|name| {
+                catalog
+                    .lineage(name)
+                    .is_some_and(|lineage| lineage.contains(&owner))
+            });
+            let lower = |instance: &str| -> Result<Egd, String> {
                 let mut body = vec![Atom {
-                    relation: format!("concept:{}", owner.as_str()),
+                    relation: format!("concept:{instance}"),
                     terms: vec![Term::Var("root".into())],
                 }];
                 let (left_type, left) =
-                    equation_path(&catalog, owner.as_str(), &equation.left, "l", &mut body)?;
+                    equation_path(&catalog, instance, &equation.left, "l", &mut body)?;
                 let (right_type, right) =
-                    equation_path(&catalog, owner.as_str(), &equation.right, "r", &mut body)?;
+                    equation_path(&catalog, instance, &equation.right, "r", &mut body)?;
                 if left_type != right_type {
                     return Err(format!(
                         "endpoint types differ ({left_type} vs {right_type})"
                     ));
                 }
                 Ok(Egd {
-                    id: format!("{}:path-equation:{}", artifact.artifact_id, equation.id),
+                    id: format!(
+                        "{}:path-equation:{}:{instance}",
+                        artifact.artifact_id, equation.id
+                    ),
                     origin: origin.clone(),
                     body,
                     left,
                     right,
                 })
-            })();
-            match lowered {
-                Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                Err(message) => refuse(&origin, format!("equation {:?}: {message}", equation.id)),
+            };
+            for instance in instances {
+                match lower(instance) {
+                    Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
+                    Err(message) => {
+                        refuse(&origin, format!("equation {:?}: {message}", equation.id))
+                    }
+                }
             }
         }
     }
