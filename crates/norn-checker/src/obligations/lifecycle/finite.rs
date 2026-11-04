@@ -64,6 +64,7 @@ fn freeze(object: &EffectiveObjectType, bounds: &Bounds, domain_bytes: usize) ->
         fields.insert(property.id.as_str().to_owned(),kind.clone());
         if property.id.as_str()==bounds.property {
             require(!property.protected(),"rule-owned lifecycle property is outside profile")?;
+            for state in &machine.states { property.check_runtime_value(&RuntimeValue::String(state.clone())).map_err(|error|error.to_string())?; }
             continue;
         }
         let literals=bounds.frozen.get(property.id.as_str()).ok_or("missing explicit frozen scalar domain")?;
@@ -71,7 +72,10 @@ fn freeze(object: &EffectiveObjectType, bounds: &Bounds, domain_bytes: usize) ->
         require(!literals.is_empty() && count<=4096,"empty or excessive frozen context domain (4096 nodes)")?;
         require(count.saturating_mul(row_bytes)<=4_194_304,"finite snapshot byte budget exceeded")?;
         let values=literals.iter().map(|literal|RuntimeValue::from_json_text(literal).map_err(|error|error.to_string())).collect::<Result<Vec<_>,_>>()?;
-        for value in &values { property.check_runtime_value(value).map_err(|error|error.to_string())?; }
+        for value in &values {
+            property.check_runtime_value(value).map_err(|error|error.to_string())?;
+            require(property.canonical_runtime_value(value)==*value,"frozen scalar requires storage materialization")?;
+        }
         let mut expanded=Vec::new();
         for row in &rows { for value in &values { let mut next=row.clone();next.insert(property.id.as_str().to_owned(),value.clone());expanded.push(next); } }
         rows=expanded;
