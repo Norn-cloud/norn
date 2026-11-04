@@ -69,7 +69,9 @@ pub fn check_mapping_artifacts(
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
         if let Ok(model) = &model {
-            out.extend(missing_path_bindings(artifact, mapping, model, artifacts, base));
+            out.extend(missing_path_bindings(
+                artifact, mapping, model, artifacts, base,
+            ));
         }
         if !path_refused {
             let findings = path_findings(artifact, mapping, artifacts, base, registry, &work);
@@ -128,14 +130,28 @@ fn missing_path_bindings(
         let mut equations = Vec::new();
         let mut owners = BTreeSet::new();
         for declaration in artifacts.iter().chain(base) {
-            let Decoded::Root(root) = decode_v2(declaration) else { continue };
-            let norn_ir::EntityRoot::V2(root) = *root else { continue };
+            let Decoded::Root(root) = decode_v2(declaration) else {
+                continue;
+            };
+            let norn_ir::EntityRoot::V2(root) = *root else {
+                continue;
+            };
             if !target.lineage.contains(&root.object_type.name) {
                 continue;
             }
-            let Some(value) = root.extensions.as_ref().and_then(|e| e.get(norn_ir::entity::PATH_EQUATIONS_SLOT)) else { continue };
+            let Some(value) = root
+                .extensions
+                .as_ref()
+                .and_then(|e| e.get(norn_ir::entity::PATH_EQUATIONS_SLOT))
+            else {
+                continue;
+            };
             // Malformed declarations already refuse ordinary entity admission.
-            let Ok(declared) = serde_json::to_value(value).and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>) else { continue };
+            let Ok(declared) = serde_json::to_value(value)
+                .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
+            else {
+                continue;
+            };
             if !declared.is_empty() {
                 owners.insert(declaration.artifact_id.as_str());
                 equations.extend(declared.into_iter().map(|e| e.id));
@@ -144,14 +160,23 @@ fn missing_path_bindings(
         let covered = mapping.path_mappings.iter().any(|binding| {
             binding.target_entities.contains(&map.target.entity)
                 && binding.mapping.objects.contains_key(name.as_str())
-                && owners.iter().all(|owner| binding.target_entities.iter().any(|id| id == owner))
+                && owners
+                    .iter()
+                    .all(|owner| binding.target_entities.iter().any(|id| id == owner))
         });
         if !equations.is_empty() && !covered {
-            out.push(in_payload(error(
-                "consistency.path_mapping.missing_binding",
-                format!("missing path-equation binding for {} (equation {})", map.target.entity, equations.join(", ")),
-                Span::from_segments(["maps", &index.to_string(), "target", "entity"]),
-            ), artifact));
+            out.push(in_payload(
+                error(
+                    "consistency.path_mapping.missing_binding",
+                    format!(
+                        "missing path-equation binding for {} (equation {})",
+                        map.target.entity,
+                        equations.join(", ")
+                    ),
+                    Span::from_segments(["maps", &index.to_string(), "target", "entity"]),
+                ),
+                artifact,
+            ));
         }
     }
     out
