@@ -451,7 +451,7 @@ mod tests {
         let mut document = valid_document();
         let mut wire = serde_json::to_value(&document).expect("valid document encodes");
         change(&mut document, bad);
-        wire[field] = json!(bad);
+        *wire.get_mut(field).expect("retained count field") = json!(bad);
         assert!(serde_json::to_value(&document).is_err(), "{field}={bad}");
         assert!(serde_json::from_value::<super::GuaranteesDocument>(wire).is_err(), "{field}={bad}");
     }
@@ -476,6 +476,34 @@ mod tests {
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn document_count_boundaries_match_generated_inventories(
+            flags in prop::collection::vec(any::<bool>(), 0..8),
+            wrong_total in any::<bool>(), wrong_eligible in any::<bool>(), discharged in 0..10_u32,
+        ) {
+            let mut document = valid_document();
+            let template = document.goals.get(1).expect("Unknown template").clone();
+            document.goals = flags.iter().enumerate().map(|(index, eligible)| {
+                let mut goal = template.clone();
+                goal.index = u32::try_from(index).expect("bounded index");
+                goal.eligible = *eligible;
+                goal
+            }).collect();
+            document.total = u32::try_from(flags.len()).expect("bounded inventory");
+            document.eligible = u32::try_from(flags.iter().filter(|flag| **flag).count()).expect("bounded inventory");
+            document.discharged = 0;
+            let mut wire = serde_json::to_value(&document).expect("valid generated inventory");
+            let valid = !wrong_total && !wrong_eligible && discharged <= document.eligible;
+            document.total += u32::from(wrong_total);
+            document.eligible += u32::from(wrong_eligible);
+            document.discharged = discharged;
+            *wire.get_mut("total").expect("count") = json!(document.total);
+            *wire.get_mut("eligible").expect("count") = json!(document.eligible);
+            *wire.get_mut("discharged").expect("count") = json!(document.discharged);
+            prop_assert_eq!(serde_json::to_value(&document).is_ok(), valid);
+            prop_assert_eq!(serde_json::from_value::<super::GuaranteesDocument>(wire).is_ok(), valid);
+        }
+
         #[test]
         fn guarantee_scalar_roundtrip_preserves_exact_coefficient(coefficient in any::<i64>(), scale in 0..=28_u32) {
             let value = GuaranteeScalar { coefficient, scale,
