@@ -4,7 +4,7 @@ use utoipa::{Modify, OpenApi};
 
 /// The public core's schema contract; the cell store is embedded through Rust.
 #[derive(Debug, OpenApi)]
-#[openapi(info(title = "Norn core contracts"), modifiers(&ContractSchemas), components(schemas(crate::refusal::Refusal, crate::contracts::NornCheckReceipt, crate::contracts::NornCheckerDiagnostics, crate::answers::NornQueryResult, crate::answers::NornHistoricalQuestionResult)))]
+#[openapi(info(title = "Norn core contracts"), modifiers(&ContractSchemas), paths(crate::question_routes::get_answer, crate::question_routes::get_numeric_trace), components(schemas(crate::refusal::Refusal, crate::contracts::NornCheckReceipt, crate::contracts::NornCheckerDiagnostics, crate::answers::NornQueryResult, crate::answers::NornHistoricalQuestionResult)))]
 pub struct ApiDoc;
 
 /// Serialize the contract using the existing typed `OpenAPI` projection.

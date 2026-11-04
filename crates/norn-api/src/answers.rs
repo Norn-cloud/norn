@@ -208,7 +208,7 @@ fn totals_schema() -> Schema {
     decimal_list(false, "One sum, or numerator then denominator.")
 }
 
-fn amounts_schema() -> Schema {
+pub(crate) fn amounts_schema() -> Schema {
     decimal_list(
         true,
         "Operand contributions, in `totals` order; null means a predicate excluded the operand.",
