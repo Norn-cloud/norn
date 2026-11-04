@@ -154,6 +154,6 @@ fn selected_rules_admit_commit_and_refuse_with_atomicity_and_controls() {
     }
     assert_eq!(tested, 10);
     println!(
-        "BENCH-RULE-1: {tested}/30 selected pointwise clauses exercised; 20/30 outside this profile; no bounded or inductive proof claimed"
+        "BENCH-RULE-1: {tested}/30 selected pointwise clauses exercised; 20/30 not yet encoded (not engine refusals); no bounded or inductive proof claimed"
     );
 }

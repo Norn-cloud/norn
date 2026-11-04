@@ -63,6 +63,7 @@ fn audit_type() -> ObjectTypeDef {
     .into_iter()
     .map(|id| Property {
         id: PropertyId(id.into()),
+        protected: false,
         description: None,
         property_type: PropertyType::JsonExt { schema: None },
         constraints: PropertyConstraints {
