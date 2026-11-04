@@ -8,6 +8,7 @@ export const ObservedLinkClaim = Norn.type({
   description: "OBS-LINK-CLAIM-1: an immutable source claim about a canonical relation; existence is evidence, never authored-write authority. MappingIR declares the relation and its endpoints. Resolution and quarantine are projections over these claims.",
   properties: Schema.Struct({
     observation_id: Schema.String,
+    source_scope: Schema.String,
     source_type: Schema.String,
     source_key: Schema.String,
     role: Schema.String,

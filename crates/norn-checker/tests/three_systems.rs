@@ -454,7 +454,7 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
         let mapped = apply(&compiled(system), &all_rows(&fixture(system)));
         let mut roles = BTreeSet::new();
         for record in mapped {
-            let claims = record.link_claims(&format!("synthetic-bundle:{system}"));
+            let claims = record.link_claims(&format!("synthetic-bundle:{system}"), "synthetic");
             assert_eq!(
                 claims.len(),
                 record.links.len() + record.cleared_links.len()

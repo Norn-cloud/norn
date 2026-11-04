@@ -700,6 +700,8 @@ pub struct LinkPatch {
 pub struct ObservedLinkClaim {
     /// Content-addressed observation retaining the raw input and mapping pins.
     pub observation_id: String,
+    /// Capture namespace derived from the existing connector/partition/source identity.
+    pub source_scope: String,
     /// Canonical source type produced by the admitted mapping.
     pub source_type: ObjectTypeName,
     /// Canonical source key, never a source-system alias.
@@ -736,6 +738,7 @@ impl ObservedLinkClaim {
         let nullable = |value: Option<&str>| value.map_or(crate::RuntimeValue::Null, text);
         Ok(crate::RuntimeObject::from([
             ("observation_id".into(), text(&self.observation_id)),
+            ("source_scope".into(), text(&self.source_scope)),
             ("source_type".into(), text(self.source_type.as_str())),
             ("source_key".into(), text(&self.source_key)),
             ("role".into(), text(self.role.as_str())),
@@ -763,6 +766,7 @@ impl ObservedLinkClaim {
         crate::canonical::domain_hash_hex(
             b"norn.link.contribution.v1\0",
             &(
+                &self.source_scope,
                 &self.source_type,
                 &self.source_key,
                 &self.role,
@@ -835,11 +839,12 @@ impl MappedRecord {
     /// OBS-LINK-CLAIM-1: retain every declared link output, including clears.
     /// Endpoint identity and per-rule provenance come from mapping evaluation.
     #[must_use]
-    pub fn link_claims(&self, observation_id: &str) -> Vec<ObservedLinkClaim> {
+    pub fn link_claims(&self, observation_id: &str, source_scope: &str) -> Vec<ObservedLinkClaim> {
         self.links
             .iter()
             .map(|patch| ObservedLinkClaim {
                 observation_id: observation_id.to_owned(),
+                source_scope: source_scope.to_owned(),
                 source_type: patch.object_type.clone(),
                 source_key: patch.key.clone(),
                 role: patch.link.clone(),
@@ -851,6 +856,7 @@ impl MappedRecord {
             })
             .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
                 observation_id: observation_id.to_owned(),
+                source_scope: source_scope.to_owned(),
                 source_type: self.object_type.clone(),
                 source_key: self.key.clone(),
                 role: role.clone(),

@@ -205,7 +205,10 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   authority is confined to recomputed declared claims. The existing authored
   relation-ownership check remains in force for authored mutations.
 - **OBS-LINK-CONTRIBUTION-1:** the latest consumed claim for a source row,
-  canonical source/role and mapping artifact contributes current membership.
+  declared canonical source/role and mapping artifact contributes current membership.
+  Its capture namespace comes from the existing connector/partition/source-row
+  identity, so identical row aliases from independent connectors never supersede
+  each other.
   Replacing its target withdraws an earlier observed edge only if no active
   claim still supports that edge. Prepared old and successor evidence is
   required for a withdrawal; authored edges without claim backing stay intact.

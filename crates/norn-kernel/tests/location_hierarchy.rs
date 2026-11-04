@@ -734,6 +734,7 @@ fn claim_fixture() -> (
     })).expect("provenance");
     let claim = norn_ir::mapping::ObservedLinkClaim {
         observation_id: "bundle:first".into(),
+        source_scope: "synthetic".into(),
         source_type: norn_ir::ObjectTypeName("test.Source".into()),
         source_key: "one".into(),
         role: norn_ir::LinkId("target".into()),
@@ -1154,4 +1155,41 @@ fn obs_link_supersession_requires_prepared_successor_and_retains_old_evidence() 
             Some(old.values().expect("values"))
         );
     }
+}
+
+#[test]
+fn obs_link_foreign_capture_namespace_cannot_authorize_a_withdrawal() {
+    let (types, mut cell, old) = claim_fixture();
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let (commit, authority) = claimed_commit(&catalog, &cell, &old);
+    cell.commit_observed(commit, authority).expect("original");
+    let mut foreign = old.clone();
+    foreign.source_scope = "another connector".into();
+    foreign.observation_id = "foreign observation".into();
+    foreign.target.as_mut().expect("target").key = "other".into();
+    let (mut commit, mut authority) = claimed_commit(&catalog, &cell, &foreign);
+    let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+    let key = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "two"),
+    );
+    commit.links.push(LinkWrite {
+        key: key.clone(),
+        expected: cell.load_link(&key).expect("old link").version,
+        mutation: LinkMutation::Remove,
+    });
+    append_retained_claim(&catalog, &cell, &old, &mut commit, &mut authority);
+    let read = norn_kernel::FactExpectation {
+        key: source.clone(),
+        expected: cell.load(&source).expect("source").version,
+    };
+    authority
+        .seal_observed_link_claim(&catalog, &old, read, &commit)
+        .expect("checked evidence");
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    assert!(cell.load_link(&key).expect("unchanged").values.is_some());
 }
