@@ -630,3 +630,55 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn native_order_preserves_explicit_defeat_and_own_exception() {
+    use norn_checker::deontic::lower_declared_order;
+    use norn_checker::norm_precedence::{ConstitutionLayer, check_norm_precedence};
+    use std::collections::BTreeSet;
+    let mut low = obligation().expect("fixture");
+    low.law.modality = LawModality::Always {};
+    low.law.timing = None;
+    low.law.condition = Some(norn_ir::ZenExpression("true".into()));
+    low.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("true".into()),
+    };
+    let mut high = low.clone();
+    high.law.id = "sales.block".into();
+    high.source.pointer = "/rules/1".into();
+    high.modality = DeonticModality::Prohibition;
+    high.law.modality = LawModality::Never {};
+    low.defeated_by.push(high.law.id.clone());
+    let rules = [low.clone(), high.clone()];
+    let grounded = lower_declared_order(&rules, &norn_expr::schema::Schema::Boolean)
+        .expect("native declarations lower");
+    assert_eq!(grounded.edges, vec![(1, 0)]);
+    let layers = [ConstitutionLayer::Company; 2];
+    assert!(check_norm_precedence(&grounded.norms, &grounded.origins, &layers,
+        &grounded.edges, &BTreeSet::new(), grounded.contexts, 1000).is_ok());
+    low.defeated_by.clear();
+    let tied = lower_declared_order(&[low.clone(), high.clone()], &norn_expr::schema::Schema::Boolean)
+        .expect("ties lower without resolution");
+    assert!(check_norm_precedence(&tied.norms, &tied.origins, &layers,
+        &tied.edges, &BTreeSet::new(), tied.contexts, 1000).is_err());
+    low.exceptions.push(norn_ir::deontic::RuleException {
+        id: "explicit".into(), condition: norn_ir::ZenExpression("true".into()),
+        source: low.source.clone(),
+    });
+    let excepted = lower_declared_order(&[low.clone(), high], &norn_expr::schema::Schema::Boolean)
+        .expect("explicit exceptions lower");
+    assert_eq!(excepted.norms[0].excepted, excepted.norms[0].applicable);
+    assert!(excepted.norms[1].excepted.is_empty());
+    low.defeated_by.push("missing".into());
+    assert!(lower_declared_order(&[low], &norn_expr::schema::Schema::Boolean).is_err());
+}
+
+#[test]
+fn native_order_refuses_unbounded_and_temporal_grounding() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut rule = obligation().expect("fixture");
+    assert!(lower_declared_order(&[rule.clone()], &norn_expr::schema::Schema::Boolean).is_err());
+    rule.law.modality = LawModality::Always {};
+    rule.law.timing = None;
+    assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
+}
