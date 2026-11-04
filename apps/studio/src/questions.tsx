@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { chartFrame } from "./lib/chart.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, bucketLabel, day, headline, percent, period, scope } from "./lib/format.ts"
 import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
@@ -91,10 +92,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
   const rows = buckets(read)
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
-  // Chart positions only (whole-percent scale padded by one point); every label is server text.
-  const points = rows.map((bucket) => ({ label: bucket.label, position: Number(bucket.value) * 100, shown: shown(bucket), exact: bucket.value }))
-  const positions = points.map(({ position }) => position)
-  const scale: [number, number] = [Math.floor(Math.min(...positions)) - 1, Math.ceil(Math.max(...positions)) + 1]
+  const frame = chartFrame(rows)
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
     Object.values(partitions).map(({ complete }) => `${source} ${complete ? "complete" : "incomplete"}`))
   return (
@@ -116,13 +114,14 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
           <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`} />
         </StatStrip>
       )}
-      <Panel icon={ChartLine} label={headline(question)} action={`${period(question.window)} · scale ${scale[0]}%–${scale[1]}%`}>
+      <Panel icon={ChartLine} label={headline(question)} action={frame ? `${period(question.window)} · scale ${frame.scale[0]}${frame.unit}–${frame.scale[1]}${frame.unit}` : period(question.window)}>
         <Well className="px-2 pt-4 pb-1">
+          {frame ? (
           <ChartContainer config={{ position: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
-            <AreaChart data={points} margin={{ left: 8, right: 8 }}>
+            <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
               <CartesianGrid vertical={false} strokeDasharray="2 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
-              <YAxis domain={scale} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={scale[1] - scale[0] + 1} tickFormatter={(tick: number) => `${tick}%`} />
+              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick}${frame.unit}`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
                   <span className="text-muted-foreground">{headline(question)}</span>
@@ -132,6 +131,7 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
               <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
+          ) : <EmptyState icon={ChartLine}>The server returned no answers for this window.</EmptyState>}
         </Well>
       </Panel>
       <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
