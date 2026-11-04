@@ -58,6 +58,21 @@ pub struct Diagnosis {
     pub max_calls: usize,
 }
 
+/// Refuse an independent validation batch that cannot fit in the remaining budget.
+pub(crate) fn require_validation_budget<E>(
+    cores: &BTreeSet<BTreeSet<usize>>,
+    corrections: &BTreeSet<BTreeSet<usize>>,
+    remaining: usize,
+) -> Result<(), Unknown<E>> {
+    let required = cores.iter().chain(corrections).try_fold(0_usize, |sum, set| {
+        sum.checked_add(set.len())?.checked_add(1)
+    });
+    if required.is_none_or(|count| count > remaining) {
+        return Err(Unknown::Budget);
+    }
+    Ok(())
+}
+
 /// Enumerate conflicts and corrections by a hitting-set tree, shrinking each
 /// conflict by deletion. "Minimal" means irreducible, not minimum cardinality.
 /// DIAG-UNKNOWN-1: every final core/deletion and repair/restoration is checked;
@@ -78,12 +93,12 @@ pub fn diagnose<O: Oracle>(
     if !editable.is_subset(&all) {
         return Err(Unknown::InvalidEditable);
     }
-    let mut calls = 0;
+    let calls = std::cell::Cell::new(0_usize);
     let mut unsat = |active: &BTreeSet<usize>| {
-        if calls >= max_calls {
+        if calls.get() >= max_calls {
             return Err(Unknown::Budget);
         }
-        calls = calls.saturating_add(1);
+        calls.set(calls.get().saturating_add(1));
         match oracle.check(active) {
             Verdict::Sat => Ok(false),
             Verdict::Unsat => Ok(true),
@@ -127,6 +142,7 @@ pub fn diagnose<O: Oracle>(
             }
         }
     }
+    require_validation_budget(&cores, &corrections, max_calls.saturating_sub(calls.get()))?;
     for core in &cores {
         if !unsat(core)? {
             return Err(Unknown::InconsistentOracle);
@@ -155,7 +171,7 @@ pub fn diagnose<O: Oracle>(
     Ok(Diagnosis {
         cores,
         corrections,
-        calls,
+        calls: calls.get(),
         max_calls,
     })
 }

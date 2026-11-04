@@ -592,7 +592,7 @@ fn order_conflicts(
 // Declaration removal can erase a priority path, so this oracle is not
 // monotone. Enumerate subsets rather than pruning by monotone hitting sets.
 fn diagnose_subsets(
-    oracle: &mut OrderOracle<'_>,
+    oracle: &mut impl crate::consistency::diagnosis::Oracle<Unknown = std::convert::Infallible>,
     declarations: usize,
     editable: &BTreeSet<usize>,
     max_calls: usize,
@@ -600,14 +600,21 @@ fn diagnose_subsets(
     crate::consistency::diagnosis::Diagnosis,
     crate::consistency::diagnosis::Unknown<std::convert::Infallible>,
 > {
-    use crate::consistency::diagnosis::{Diagnosis, Oracle, Unknown, Verdict};
+    use crate::consistency::diagnosis::{Diagnosis, Unknown, Verdict};
+    // Non-monotone diagnosis must visit every subset, including inherited rules.
+    let subsets = u32::try_from(declarations)
+        .ok()
+        .and_then(|n| 1_usize.checked_shl(n));
+    if subsets.is_none_or(|count| count > max_calls) {
+        return Err(Unknown::Budget);
+    }
     let all: BTreeSet<_> = (0..declarations).collect();
-    let mut calls = 0_usize;
+    let calls = std::cell::Cell::new(0_usize);
     let mut unsat = |active: &BTreeSet<usize>| {
-        if calls >= max_calls {
+        if calls.get() >= max_calls {
             return Err(Unknown::Budget);
         }
-        calls = calls.saturating_add(1);
+        calls.set(calls.get().saturating_add(1));
         Ok(matches!(oracle.check(active), Verdict::Unsat))
     };
     let mut cores = BTreeSet::new();
@@ -650,6 +657,11 @@ fn diagnose_subsets(
         corrections.insert(BTreeSet::new());
     }
     // Independent checks consume the same ceiling as subset recomputation.
+    crate::consistency::diagnosis::require_validation_budget(
+        &cores,
+        &corrections,
+        max_calls.saturating_sub(calls.get()),
+    )?;
     for core in &cores {
         if !unsat(core)? {
             return Err(Unknown::InconsistentOracle);
@@ -678,7 +690,7 @@ fn diagnose_subsets(
     Ok(Diagnosis {
         cores,
         corrections,
-        calls,
+        calls: calls.get(),
         max_calls,
     })
 }
@@ -686,6 +698,67 @@ fn diagnose_subsets(
 #[cfg(test)]
 mod admission_tests {
     use super::*;
+
+    struct CountingOracle {
+        calls: usize,
+    }
+
+    impl crate::consistency::diagnosis::Oracle for CountingOracle {
+        type Unknown = std::convert::Infallible;
+
+        fn check(
+            &mut self,
+            active: &BTreeSet<usize>,
+        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+            use crate::consistency::diagnosis::Verdict;
+            self.calls += 1;
+            if active.contains(&1) && (active.contains(&0) || active.contains(&2)) {
+                Verdict::Unsat
+            } else {
+                Verdict::Sat
+            }
+        }
+    }
+
+    #[test]
+    fn impossible_subset_search_makes_no_oracle_calls() {
+        use crate::consistency::diagnosis::Unknown;
+        for declarations in [13, 32, 64, usize::MAX] {
+            let mut oracle = CountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096),
+                Err(Unknown::Budget)
+            );
+            assert_eq!(oracle.calls, 0);
+        }
+    }
+
+    #[test]
+    fn twelve_declarations_search_and_recheck_overlapping_cores() {
+        use crate::consistency::diagnosis::Unknown;
+        let editable = (0..12).collect();
+        let mut oracle = CountingOracle { calls: 0 };
+        // 4096 subsets, two three-query core checks, two repair/restoration
+        // checks (two and three queries): the exact complete budget is 4107.
+        let result = diagnose_subsets(&mut oracle, 12, &editable, 4107).expect("fits");
+        assert_eq!(result.calls, 4107);
+        assert_eq!(oracle.calls, result.calls);
+        assert_eq!(
+            result.cores,
+            BTreeSet::from([BTreeSet::from([0, 1]), BTreeSet::from([1, 2])])
+        );
+        assert_eq!(
+            result.corrections,
+            BTreeSet::from([BTreeSet::from([1]), BTreeSet::from([0, 2])])
+        );
+        let mut oracle = CountingOracle { calls: 0 };
+        assert_eq!(
+            diagnose_subsets(&mut oracle, 12, &editable, result.calls - 1),
+            Err(Unknown::Budget)
+        );
+        // Refuse the known-incomplete validation batch before querying it.
+        assert_eq!(oracle.calls, 4096);
+    }
 
     #[test]
     fn repairs_recompute_paths_with_one_shared_budget() -> Result<(), NormRefusal> {
