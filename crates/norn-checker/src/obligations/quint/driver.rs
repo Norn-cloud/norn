@@ -498,7 +498,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     reason = "bounded binder fixtures"
 )]
 mod tests {
-    use super::{GuaranteeLevel, GuaranteeVerdict, assessment, scenario};
+    use super::{EvidenceIdentity, GuaranteeLevel, GuaranteeVerdict, assessment, scenario};
     use serde_json::json;
 
     #[test]
@@ -797,13 +797,28 @@ mod tests {
                     .clone()
                     .expect("actual evidence");
                 // Retained verdicts must bind a freshly generated Challenge in every build.
-                assert_eq!(record.challenge_json.as_bytes(),
-                    norn_canonical::canonical_json_exact_of(batch.challenge.body()).expect("challenge"));
+                assert_eq!(
+                    record.challenge_json.as_bytes(),
+                    norn_canonical::canonical_json_exact_of(batch.challenge.body())
+                        .expect("challenge")
+                );
                 assert_eq!(record.pins.challenge_sha256, batch.challenge.sha256());
-                let fresh = batch.challenge.evidence_pins(index32, record.pins.tool.clone(),
-                    &record.pins.bounds_json, record.pins.seed).expect("fresh pins");
+                let fresh = batch
+                    .challenge
+                    .evidence_pins(
+                        index32,
+                        record.pins.tool.clone(),
+                        &record.pins.bounds_json,
+                        record.pins.seed,
+                    )
+                    .expect("fresh pins");
                 assert_eq!(fresh, record.pins);
-                assert_eq!(batch.challenge.evidence_identity(&fresh, &record.result_sha256, &record), EvidenceIdentity::Current);
+                assert_eq!(
+                    batch
+                        .challenge
+                        .evidence_identity(&fresh, &record.result_sha256, &record),
+                    EvidenceIdentity::Current
+                );
                 assert_eq!(record.pins.challenge_sha256, recorded.challenge_sha256);
                 assert_eq!(record.pins.goal_index, index32);
                 assert_eq!(

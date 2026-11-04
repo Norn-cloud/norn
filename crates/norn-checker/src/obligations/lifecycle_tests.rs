@@ -21,8 +21,12 @@ fn constitution() -> DefinitionSource {
     .map(|text| serde_json::from_str(text).expect("base"))
     .collect();
     DefinitionSource::parse(
-        &String::from_utf8(norn_canonical::canonical_json_exact_of(&fixture["withLoss"]).expect("source")).expect("UTF8"),
-        &String::from_utf8(norn_canonical::canonical_json_exact_of(&base).expect("base")).expect("UTF8"),
+        &String::from_utf8(
+            norn_canonical::canonical_json_exact_of(&fixture["withLoss"]).expect("source"),
+        )
+        .expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&base).expect("base"))
+            .expect("UTF8"),
     )
     .expect("exact source")
 }
@@ -51,7 +55,10 @@ fn constitution_ten_goal_inventory_golden() {
     );
     let canonical = norn_canonical::canonical_json_exact_of(challenge.body()).expect("challenge");
     let reparsed: Value = serde_json::from_slice(&canonical).expect("canonical roundtrip");
-    assert_eq!(canonical, norn_canonical::canonical_json_exact_of(&reparsed).expect("same bytes"));
+    assert_eq!(
+        canonical,
+        norn_canonical::canonical_json_exact_of(&reparsed).expect("same bytes")
+    );
     assert_eq!(
         challenge.sha256(),
         "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc"

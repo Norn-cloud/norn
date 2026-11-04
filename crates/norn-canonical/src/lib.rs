@@ -451,7 +451,9 @@ pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
 }
 
 fn json_encoding_error(error: serde_json::Error) -> CanonicalJsonError {
-    CanonicalJsonError::Serialize { message: error.to_string() }
+    CanonicalJsonError::Serialize {
+        message: error.to_string(),
+    }
 }
 
 fn sort_exact_json(
@@ -461,14 +463,18 @@ fn sort_exact_json(
         Some(b'{') => {
             let fields: BTreeMap<String, &serde_json::value::RawValue> =
                 serde_json::from_str(raw.get())?;
-            let sorted = fields.into_iter().map(|(key, value)| {
-                sort_exact_json(value).map(|value| (key, value))
-            }).collect::<Result<BTreeMap<_, _>, _>>()?;
+            let sorted = fields
+                .into_iter()
+                .map(|(key, value)| sort_exact_json(value).map(|value| (key, value)))
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
             serde_json::to_string(&sorted)?
         }
         Some(b'[') => {
             let values: Vec<&serde_json::value::RawValue> = serde_json::from_str(raw.get())?;
-            let sorted = values.into_iter().map(sort_exact_json).collect::<Result<Vec<_>, _>>()?;
+            let sorted = values
+                .into_iter()
+                .map(sort_exact_json)
+                .collect::<Result<Vec<_>, _>>()?;
             serde_json::to_string(&sorted)?
         }
         _ => return Ok(raw.to_owned()),
@@ -1789,17 +1795,27 @@ mod tests {
     fn generated_commitments_sort_keys_without_changing_exact_text_or_numbers() {
         let left: &serde_json::value::RawValue = serde_json::from_str(
             r#"{"z":[{"b":1.2300e+2,"a":900719925474099312345}],"é":"é","é":"é"}"#,
-        ).expect("raw");
+        )
+        .expect("raw");
         let right: &serde_json::value::RawValue = serde_json::from_str(
             r#"{"é":"é","é":"é","z":[{"a":900719925474099312345,"b":1.2300e+2}]}"#,
-        ).expect("raw");
+        )
+        .expect("raw");
         let bytes = canonical_json_exact_of(left).expect("canonical");
         assert_eq!(bytes, canonical_json_exact_of(right).expect("reordered"));
-        assert!(String::from_utf8(bytes.clone()).expect("UTF8").contains("1.2300e+2"));
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("1.2300e+2")
+        );
         let roundtrip: &serde_json::value::RawValue = serde_json::from_slice(&bytes).expect("raw");
-        assert_eq!(bytes, canonical_json_exact_of(roundtrip).expect("idempotent"));
+        assert_eq!(
+            bytes,
+            canonical_json_exact_of(roundtrip).expect("idempotent")
+        );
         assert_ne!(canonical_json_exact_of("é"), canonical_json_exact_of("é"));
-        let duplicate: &serde_json::value::RawValue = serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
+        let duplicate: &serde_json::value::RawValue =
+            serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
         assert!(canonical_json_exact_of(duplicate).is_err());
     }
 
@@ -1813,5 +1829,4 @@ mod tests {
             proptest::prop_assert_eq!(canonical_json_exact_of(left).expect("left"), canonical_json_exact_of(right).expect("right"));
         }
     }
-
 }
