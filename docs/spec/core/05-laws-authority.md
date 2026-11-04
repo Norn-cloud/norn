@@ -161,3 +161,32 @@ PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
 must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
 incomplete source identities are unknown rather than an unbound explanation.
 Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
+
+### Declared-only normative resolution (D1, #767)
+
+LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `check_norm_precedence` requires exact source,
+layer, priority-edge and protection bindings over trusted exhaustive masks for
+one action/subject. Protection and cross-layer checks precede precedence. Any
+conflict core refuses the entire resolution with its exact rule indices; no
+partial survivors are returned. Same-layer opposing rules require explicit
+comparability, including the transitive closure of declared edges. Cycles refuse.
+Cross-layer clashes refuse even with an explicit higher-layer win. Lower-to-higher
+or protected-law defeat declarations refuse even when inactive or excepted.
+
+D1 applies everywhere: authority level, enactment and applicability specificity
+never break an undeclared tie. No within-layer opt-in exists. Missing optional
+legacy ranks do not prevent explicitly declared resolution. The old implicit
+comparison is private and used only for Info `consistency.normative.legacy_resolution`
+notes; it cannot select effective survivors or suppress conflict cores.
+
+Select effective versions before grounding; latest recorded is not lex posterior.
+Exceptions belong to their own rule and cannot narrow a higher law. A future
+specialis policy would need proven strict containment; equal specificity has no
+winner. CD diagnosis supplies exact protected cores and source locations;
+malformed bindings and exhausted budgets remain unknown. This is conditional
+finite-model consistency, not fulfilment, CTD/Datalog lowering or proof authority.
+
+Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
+transitive edges resolve; removing an edge refuses; cross-layer wins and protected
+defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
+three-rule groundings and generated catalog permutations preserve exact survivors.

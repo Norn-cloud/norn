@@ -164,7 +164,7 @@ fn requirement_env() -> norn_expr::ZenTypeEnv {
 #[test]
 fn structured_safety_preserves_grades_timing_sources_and_precedence() {
     use norn_checker::deontic::check_requirement;
-    use norn_checker::norm_precedence::{GroundedNorm, check_norm_precedence};
+    use norn_checker::norm_precedence::{ConstitutionLayer, GroundedNorm, check_norm_precedence};
     use norn_ir::deontic::{RequirementTiming, StructuredRequirement};
     use std::collections::BTreeSet;
     for grade in [
@@ -205,7 +205,20 @@ fn structured_safety_preserves_grades_timing_sources_and_precedence() {
                 applicable: BTreeSet::from([0, 1]),
                 excepted: BTreeSet::from([1]),
             };
-            let contexts = check_norm_precedence(&[grounded], 2).expect("existing precedence");
+            let origin = norn_checker::consistency::RuleOrigin {
+                artifact_id: Some(r.norm.source.artifact_id),
+                pointer: r.norm.source.pointer,
+            };
+            let contexts = check_norm_precedence(
+                &[grounded],
+                &[origin],
+                &[ConstitutionLayer::Company],
+                &[],
+                &BTreeSet::new(),
+                2,
+                100,
+            )
+            .expect("declared precedence");
             let obligations = &contexts.first().expect("applicable").obligations;
             assert_eq!(obligations.is_empty(), grade != DeonticModality::Obligation);
             assert!(contexts.get(1).expect("excepted").survivors.is_empty());
