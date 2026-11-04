@@ -86,3 +86,16 @@ export function readProblem(...reads: readonly { readonly error: Error | null }[
 /** Whether an object read and its link read are both about the object that was asked for. */
 export const readsOf = (objectType: string, id: string, object: ObjectRecord, links: LinkPage): boolean =>
   object.objectType === objectType && object.id === id && links.objectType === objectType && links.id === id
+
+/**
+ * Whether to read the next server page automatically: only while the server
+ * returned a cursor, nothing is in flight, the page bound is not reached and
+ * the last continuation read did not fail. A failure waits for an explicit retry.
+ */
+export const shouldReadNext = (state: {
+  readonly hasNextPage: boolean
+  readonly isFetchingNextPage: boolean
+  readonly isFetchNextPageError: boolean
+  readonly pagesRead: number
+}, maxPages: number): boolean =>
+  state.hasNextPage && !state.isFetchingNextPage && !state.isFetchNextPageError && state.pagesRead < maxPages

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Field } from "../src/lib/catalog.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { collect, compareDecimals, factText, nextAfter, readProblem, readsOf, recordName } from "../src/lib/objects.ts"
+import { collect, compareDecimals, factText, nextAfter, readProblem, readsOf, recordName, shouldReadNext } from "../src/lib/objects.ts"
 import type { LinkPage, ObjectPage, ObjectRecord } from "../src/lib/transport.ts"
 
 // The cell's reads of the three-systems world (crates/norn-api/tests/explorer_objects.rs).
@@ -83,4 +83,14 @@ test("a recorded object is returned only for the identity it was asked for", () 
   // `/` and `~` fold to the same file name; the identity check tells them apart.
   expect(readsOf("canon.Item", "demo~item~gold", object, links)).toBe(false)
   expect(readsOf("canon.Party", "demo/item/gold", object, links)).toBe(false)
+})
+
+test("a failed continuation read stops automatic paging until an explicit retry", () => {
+  const state = { hasNextPage: true, isFetchingNextPage: false, isFetchNextPageError: false, pagesRead: 1 }
+  expect(shouldReadNext(state, 50)).toBe(true)
+  // Exhausted retries leave the cursor and the page count unchanged: the loop must not restart.
+  expect(shouldReadNext({ ...state, isFetchNextPageError: true }, 50)).toBe(false)
+  expect(shouldReadNext({ ...state, isFetchingNextPage: true }, 50)).toBe(false)
+  expect(shouldReadNext({ ...state, pagesRead: 50 }, 50)).toBe(false)
+  expect(shouldReadNext({ ...state, hasNextPage: false }, 50)).toBe(false)
 })

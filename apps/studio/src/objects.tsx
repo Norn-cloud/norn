@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { member } from "./lib/exact.ts"
-import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, type PageRow } from "./lib/objects.ts"
+import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
 import { recordedTransport } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
@@ -129,12 +129,13 @@ export function ObjectsPage() {
     getNextPageParam: nextAfter,
   })
   // Keep reading server pages until the server returns no cursor, within a bound.
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = pages
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = pages
   const read = pages.data?.pages.length ?? 0
-  useEffect(() => { if (hasNextPage && !isFetchingNextPage && read < MAX_PAGES) void fetchNextPage() }, [hasNextPage, isFetchingNextPage, read, fetchNextPage])
+  const readNext = shouldReadNext({ hasNextPage, isFetchingNextPage, isFetchNextPageError, pagesRead: read }, MAX_PAGES)
+  useEffect(() => { if (readNext) void fetchNextPage() }, [readNext, fetchNextPage])
   const collected = useMemo(() => collect(pages.data?.pages ?? []), [pages.data])
   const first = pages.data?.pages[0]
-  const reading = pages.isPending || isFetchingNextPage || (hasNextPage && read < MAX_PAGES)
+  const reading = pages.isPending || isFetchingNextPage || readNext
   const problem = readProblem(catalogRead, pages)
   const title = concept?.title ?? conceptTitle(name)
   const records = (body: ReactNode) => <Panel icon={Rows3} label="Records"><Well className="p-3">{body}</Well></Panel>
@@ -152,10 +153,13 @@ export function ObjectsPage() {
         <div><div className="text-4xl font-medium tabular-nums">{collected.complete ? "" : "at least "}{collected.rows.length}</div><div className="text-meta text-muted-foreground">records</div></div>
         <div><div className="text-4xl font-medium tabular-nums">{collected.held}</div><div className="text-meta text-muted-foreground">held back for review</div></div>
       </div>}
-      {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
+      {problem !== undefined && <div role="alert" className="flex flex-wrap items-center gap-3 text-destructive">
+        <span>{problem}</span>
+        {isFetchNextPageError && <Button variant="outline" size="sm" onClick={() => void fetchNextPage()}>Retry</Button>}
+      </div>}
       {problem === undefined && (catalogRead.isPending || reading) && <p className="text-muted-foreground">Reading records…</p>}
       {catalog && !concept && <p className="text-muted-foreground">This concept is not in the business model.</p>}
-      {concept && pages.isSuccess && !reading && (first === null
+      {concept && pages.data !== undefined && !reading && (first === null
         ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>Records for this concept are not available yet.</EmptyState></Well></Panel>
         : !collected.complete
           ? records(<>
