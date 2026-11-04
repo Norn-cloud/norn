@@ -44,8 +44,11 @@ pub fn mapping_key(artifact: &ArtifactEnvelope) -> String {
 pub fn check_mapping_artifacts(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    // One deterministic work ceiling across every required path obligation.
+    let work = crate::consistency::chase::AdmissionWork::new(100_000);
     for artifact in artifacts {
         if let Some(document) = source_payload(artifact) {
             out.extend(
@@ -63,7 +66,20 @@ pub fn check_mapping_artifacts(
         return out;
     }
     let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base));
+    let mut path_refused = false;
     for (artifact, mapping) in &mappings {
+        if let Ok(model) = &model {
+            out.extend(missing_path_bindings(
+                artifact, mapping, model, artifacts, base,
+            ));
+        }
+        if !path_refused {
+            let findings = path_findings(artifact, mapping, artifacts, base, registry, &work);
+            path_refused = findings
+                .iter()
+                .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+            out.extend(findings);
+        }
         out.extend(key_findings(artifact));
         out.extend(dependency_findings(artifact, mapping));
         let findings = match (&model, resolve_source(mapping, artifacts, base)) {
@@ -91,6 +107,192 @@ pub fn check_mapping_artifacts(
         );
     }
     out
+}
+
+/// Derive obligations from the mapped types, independent of optional bindings.
+/// The model's lineage includes the type itself and every ancestor.
+fn missing_path_bindings(
+    artifact: &ArtifactEnvelope,
+    mapping: &MappingIr,
+    model: &MappingModel,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    use crate::entity_artifacts::{Decoded, decode_v2};
+    let mut out = Vec::new();
+    for (index, map) in mapping.maps.iter().enumerate() {
+        let Some(name) = model.object_types.get(&map.target.entity) else {
+            continue;
+        };
+        let Some(target) = model.types.get(name.as_str()) else {
+            continue;
+        };
+        let mut equations = Vec::new();
+        let mut owners = BTreeSet::new();
+        for declaration in artifacts.iter().chain(base) {
+            let Decoded::Root(root) = decode_v2(declaration) else {
+                continue;
+            };
+            let norn_ir::EntityRoot::V2(root) = *root else {
+                continue;
+            };
+            if !target.lineage.contains(&root.object_type.name) {
+                continue;
+            }
+            let Some(value) = root
+                .extensions
+                .as_ref()
+                .and_then(|e| e.get(norn_ir::entity::PATH_EQUATIONS_SLOT))
+            else {
+                continue;
+            };
+            // Malformed declarations already refuse ordinary entity admission.
+            let Ok(declared) = serde_json::to_value(value)
+                .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
+            else {
+                continue;
+            };
+            if !declared.is_empty() {
+                owners.insert(declaration.artifact_id.as_str());
+                equations.extend(declared.into_iter().map(|e| e.id));
+            }
+        }
+        let covered = mapping.path_mappings.iter().any(|binding| {
+            binding.target_entities.contains(&map.target.entity)
+                && binding.mapping.objects.contains_key(name.as_str())
+                && owners
+                    .iter()
+                    .all(|owner| binding.target_entities.iter().any(|id| id == owner))
+        });
+        if !equations.is_empty() && !covered {
+            out.push(in_payload(
+                error(
+                    "consistency.path_mapping.missing_binding",
+                    format!(
+                        "missing path-equation binding for {} (equation {})",
+                        map.target.entity,
+                        equations.join(", ")
+                    ),
+                    Span::from_segments(["maps", &index.to_string(), "target", "entity"]),
+                ),
+                artifact,
+            ));
+        }
+    }
+    out
+}
+
+/// Run required obligations even when other mapping checks also refuse.
+fn path_findings(
+    artifact: &ArtifactEnvelope,
+    mapping: &MappingIr,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    work: &crate::consistency::chase::AdmissionWork,
+) -> Vec<Diagnostic> {
+    use crate::consistency::{ChaseBudget, PATH_MAPPING_INVALID, path_mapping::admit_with_work};
+    if mapping.path_mappings.is_empty() {
+        return Vec::new();
+    }
+    let mapping_pin = path_pin(artifact);
+    let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
+        ids.iter()
+            .map(|id| {
+                let entity = artifacts
+                    .iter()
+                    .chain(base)
+                    .find(|a| {
+                        a.artifact_id == *id
+                            && matches!(a.payload, ArtifactPayload::Entity(_))
+                            && artifact
+                                .dependencies
+                                .iter()
+                                .find(|d| d.artifact_id == *id && d.kind == ArtifactKind::Entity)
+                                .and_then(|d| d.version.as_deref())
+                                .is_none_or(|version| a.version == version)
+                    })
+                    .ok_or_else(|| {
+                        vec![error(
+                            PATH_MAPPING_INVALID,
+                            format!("unresolved path catalog entity {id:?}"),
+                            Span::pointer("/pathMappings"),
+                        )]
+                    })?;
+                // Reserve bytes before cloning, including repeated catalog IDs.
+                norn_canonical::meter_json_verbatim(work, entity).map_err(|cause| {
+                    vec![error(
+                        crate::consistency::codes::CHASE_REFUSED,
+                        format!("path catalog metering refused: {cause}; consistency is unknown"),
+                        Span::pointer("/pathMappings"),
+                    )]
+                })?;
+                Ok(entity.clone())
+            })
+            .collect()
+    };
+    let mut out = Vec::new();
+    for (index, binding) in mapping.path_mappings.iter().enumerate() {
+        let locate = |mut d: Diagnostic| {
+            d.span = Some(Span::from_segments(["pathMappings", &index.to_string()]));
+            in_payload(d, artifact)
+        };
+        let result = (|| {
+            let source = resolve(&binding.source_entities)?;
+            let target = resolve(&binding.target_entities)?;
+            let evidence = admit_with_work(
+                &source,
+                &target,
+                &binding.mapping,
+                registry,
+                ChaseBudget::default(),
+                work,
+            )?;
+            // The mapping envelope commits the declaration; catalog envelope
+            // hashes commit the exact equations and link contracts checked.
+            let mut pins: Vec<_> = source
+                .iter()
+                .chain(&target)
+                .map(path_pin)
+                .collect::<Result<_, _>>()?;
+            pins.push(mapping_pin.clone()?);
+            Ok::<_, Vec<Diagnostic>>(crate::consistency::finding(
+                "consistency.path_mapping.preserved",
+                crate::DiagnosticSeverity::Info,
+                format!(
+                    "bounded-no-counterexample; obligations={}; inputs={pins:?}",
+                    evidence.obligations
+                ),
+                None,
+            ))
+        })();
+        match result {
+            Ok(finding) => out.push(locate(finding)),
+            Err(findings) => {
+                let exhausted = findings
+                    .iter()
+                    .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+                out.extend(findings.into_iter().map(|mut d| {
+                    d.severity = crate::DiagnosticSeverity::Error;
+                    locate(d)
+                }));
+                if exhausted {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn path_pin(artifact: &ArtifactEnvelope) -> Result<ArtifactRef, Vec<Diagnostic>> {
+    ArtifactRef::of(artifact).map_err(|_error| {
+        vec![error(
+            crate::consistency::PATH_MAPPING_INVALID,
+            "cannot hash path inputs".into(),
+            Span::pointer("/pathMappings"),
+        )]
+    })
 }
 
 /// Compile the candidate `mapping` artifact `mapping` against the set: its
@@ -373,6 +575,20 @@ fn dependency_findings(artifact: &ArtifactEnvelope, mapping: &MappingIr) -> Vec<
         Some(&mapping.source.version),
         Span::pointer("/source"),
     );
+    for binding in &mapping.path_mappings {
+        for id in binding
+            .source_entities
+            .iter()
+            .chain(&binding.target_entities)
+        {
+            require(
+                id,
+                ArtifactKind::Entity,
+                None,
+                Span::pointer("/pathMappings"),
+            );
+        }
+    }
     for (index, interface) in mapping.interfaces.iter().enumerate() {
         require(
             interface,
