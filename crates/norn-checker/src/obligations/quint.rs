@@ -3,8 +3,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod driver;
 pub use super::transition::Bounds;
-use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use super::transition::CreateRelation;
+use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use serde_json::Value;
 use std::collections::BTreeSet;
 

@@ -378,10 +378,10 @@ fn affine_relation_retains_derivation_order_and_input_requirements() {
         super::transition::AssignmentOrigin::Derivation(1)
     );
     artifacts[2]["payload"]["derive"][1]["field"] = json!("difference");
-    let missing = authority.finite(&source(&artifacts), &registry, &bounds(&artifacts))
-        .expect("unsupported raw-input profile");
-    assert!(missing.goals.iter().all(|goal| goal.as_ref().is_err_and(|reason| reason == "required derivation input absent")));
-
+    assert!(matches!(
+        authority.finite(&source(&artifacts), &registry, &bounds(&artifacts)),
+        Err(ChallengeError::NotAdmitted)
+    ));
 }
 #[test]
 fn affine_unknown_is_explicit_for_opaque_nonlinear_and_non_equality_parts() {
