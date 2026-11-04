@@ -3,7 +3,7 @@
 pub mod arithmetic;
 pub mod contribution;
 
-use norn_ir::metric::{FilterOperator, MetricFilter, TimeGrain};
+use norn_ir::metric::{FilterOperator, FreshnessPolicy, MetricFilter, TimeGrain};
 use norn_ir::{MetricDefinition, ObjectTypeName, PropertyId, PropertyType, QuestionIR};
 
 use super::{BoundMeasure, MeasureAggregate, bind_metric, check_metrics_and_questions};
@@ -75,6 +75,18 @@ impl QuestionPlan {
     #[must_use]
     pub const fn max_items(&self) -> u32 {
         self.max_items
+    }
+
+    /// ASOF-KNOWLEDGE-1: the declared `AsOf` instant as exact UTC `(seconds, nanoseconds)`,
+    /// parsed by the same temporal rules that admitted it. `None` for live/delayed freshness.
+    #[must_use]
+    pub fn as_of_instant(&self) -> Option<(i64, u32)> {
+        match &self.question.freshness {
+            FreshnessPolicy::AsOf { at } => {
+                norn_expr::temporal::timestamp_ordering_key(at.as_str()).ok()
+            }
+            FreshnessPolicy::Live { .. } | FreshnessPolicy::Delayed { .. } => None,
+        }
     }
 }
 
