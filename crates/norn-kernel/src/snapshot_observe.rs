@@ -1539,17 +1539,20 @@ pub fn prepare_observed_delete(
     if buried.exists() {
         return unchanged();
     }
-    if let Some(property) = catalog.effective_type(&key.object_type).and_then(|effective| {
-        effective
-            .properties
-            .iter()
-            .find(|property| property.protected())
-    }) {
+    if let Some(property) = catalog
+        .effective_type(&key.object_type)
+        .and_then(|effective| {
+            effective
+                .properties
+                .iter()
+                .find(|property| property.protected())
+        })
+    {
         return Err(ObservationRefusal::Properties(Box::new(
             DecisionRefusal::InvalidOutput {
                 reason: format!(
                     "protected property `{}` of {key} may be deleted only by rules",
-                    property.id
+                    property.id.as_str()
                 ),
             },
         )));
