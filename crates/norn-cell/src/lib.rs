@@ -61,6 +61,7 @@ pub mod restore;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
+pub mod transparency;
 mod write;
 
 pub use error::CellError;
