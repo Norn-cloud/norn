@@ -134,6 +134,15 @@ open boundaries remain separate obligations. Named kernel scenarios: valid affin
 balance, omitted loss, unit mismatch, cross-book cancellation, substituted/zero
 weights, unsupported writer, malformed shape and exact fractional balance.
 
+**CONS-LINEAR-DISCOVERY-1:** candidate weight discovery solves exact rational
+equalities per scope/unit partition, plus explicit coordinate anchors (the
+equality-only LP feasibility fragment). Require a nonzero anchor, choose zero
+for unanchored free variables, and return unknown on infeasibility or limits.
+Discovery is untrusted and never refutes a law. Every candidate must separately
+pass CONS-LINEAR-1 against the declared functional. Named scenarios: fractional
+exchange, conflicting/zero anchors, free coordinates, unit/book separation,
+opaque writer, duplicate identity and generated scaled exchanges.
+
 ### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
 
 The chase-backed diagnosis profile enumerates irreducible declaration conflicts
