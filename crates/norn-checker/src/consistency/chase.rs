@@ -80,6 +80,45 @@ impl Default for ChaseBudget {
     }
 }
 
+/// Whole-admission work shared by chases, conflict minimisation and unfolding.
+#[derive(Debug, Clone)]
+pub(crate) struct AdmissionWork(std::rc::Rc<std::cell::Cell<usize>>, usize);
+
+impl AdmissionWork {
+    pub(crate) fn new(steps: usize) -> Self {
+        Self(std::rc::Rc::new(std::cell::Cell::new(steps)), steps)
+    }
+
+    pub(crate) fn charge(&self) -> Result<(), ChaseError> {
+        self.charge_units(1)
+    }
+
+    pub(crate) fn charge_units(&self, units: usize) -> Result<(), ChaseError> {
+        let remaining = self.0.get();
+        if remaining < units {
+            return Err(ChaseError::BudgetExceeded {
+                resource: "whole-admission work",
+                limit: self.1,
+            });
+        }
+        self.0.set(remaining.saturating_sub(units));
+        Ok(())
+    }
+}
+
+// Stream input metering so oversized catalogs refuse without an encoded copy.
+impl std::io::Write for &AdmissionWork {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.charge_units(bytes.len())
+            .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Why a chase was refused. A refusal never means "consistent".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChaseError {
@@ -142,15 +181,32 @@ pub fn chase(
     facts: &[Fact],
     budget: ChaseBudget,
 ) -> Result<ChaseOutcome, ChaseError> {
+    chase_with_work(theory, facts, budget, &AdmissionWork::new(usize::MAX))
+}
+
+pub(crate) fn chase_with_work(
+    theory: &Theory,
+    facts: &[Fact],
+    budget: ChaseBudget,
+    work: &AdmissionWork,
+) -> Result<ChaseOutcome, ChaseError> {
+    work.charge()?;
     let mut signature = theory.signature().map_err(ChaseError::Theory)?;
     for fact in facts {
         record_arity(&mut signature, &fact.relation, fact.values.len())
             .map_err(ChaseError::Theory)?;
     }
-    weakly_acyclic(theory, &signature, budget)?;
+    weakly_acyclic(theory, &signature, budget, work)?;
     let all_rules: Vec<usize> = (0..theory.dependencies.len()).collect();
     let all_facts: Vec<usize> = (0..facts.len()).collect();
-    let failure = match run(&theory.dependencies, &all_rules, facts, &all_facts, budget) {
+    let failure = match run(
+        &theory.dependencies,
+        &all_rules,
+        facts,
+        &all_facts,
+        budget,
+        work,
+    ) {
         Ok(model) => return Ok(ChaseOutcome::Model(model)),
         Err(Halt::Refused(error)) => return Err(error),
         Err(Halt::Conflict(failure)) => *failure,
@@ -160,17 +216,17 @@ pub fn chase(
     let mut inputs: Vec<usize> = failure.inputs.iter().copied().collect();
     // Every sub-chase is a real chase; a refused one refuses the whole
     // explanation, so minimality is never claimed on an unchecked subset.
-    if !fails(theory, &rules, facts, &inputs, budget)? {
+    if !fails(theory, &rules, facts, &inputs, budget, work)? {
         rules.clone_from(&all_rules);
         inputs.clone_from(&all_facts);
     }
     shrink(&mut rules, |kept| {
-        fails(theory, kept, facts, &inputs, budget)
+        fails(theory, kept, facts, &inputs, budget, work)
     })?;
     shrink(&mut inputs, |kept| {
-        fails(theory, &rules, facts, kept, budget)
+        fails(theory, &rules, facts, kept, budget, work)
     })?;
-    let failure = match run(&theory.dependencies, &rules, facts, &inputs, budget) {
+    let failure = match run(&theory.dependencies, &rules, facts, &inputs, budget, work) {
         Err(Halt::Conflict(minimal)) => *minimal,
         Err(Halt::Refused(error)) => return Err(error),
         Ok(_) => {
@@ -199,8 +255,9 @@ fn fails(
     facts: &[Fact],
     inputs: &[usize],
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<bool, ChaseError> {
-    match run(&theory.dependencies, rules, facts, inputs, budget) {
+    match run(&theory.dependencies, rules, facts, inputs, budget, work) {
         Ok(_) => Ok(false),
         Err(Halt::Conflict(_)) => Ok(true),
         Err(Halt::Refused(error)) => Err(error),
@@ -233,6 +290,7 @@ fn weakly_acyclic(
     theory: &Theory,
     signature: &BTreeMap<String, usize>,
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<(), ChaseError> {
     let nodes: Vec<(String, usize)> = signature
         .iter()
@@ -247,6 +305,7 @@ fn weakly_acyclic(
         let body_vars = variables(&tgd.body);
         for (variable, from) in positions(&tgd.body) {
             for (head_var, to) in positions(&tgd.head) {
+                work.charge()?;
                 if head_var == variable {
                     edges.insert((from.clone(), to));
                 } else if !body_vars.contains(head_var) && occurs(&tgd.head, variable) {
@@ -267,6 +326,7 @@ fn weakly_acyclic(
     };
     let mut cyclic = BTreeSet::new();
     for (from, to, rule) in special {
+        work.charge_units(graph.nodes.len().saturating_add(graph.edges.len()))?;
         let reached =
             reachability(&graph, &[to], Direction::Downstream, limits).map_err(|error| {
                 if let norn_graph::Error::BudgetExceeded(exceeded) = &error {
@@ -318,6 +378,15 @@ pub fn first_violation(
     facts: &[Fact],
     budget: ChaseBudget,
 ) -> Result<Option<Vec<Fact>>, ChaseError> {
+    first_violation_with_work(dependency, facts, budget, &AdmissionWork::new(usize::MAX))
+}
+
+pub(crate) fn first_violation_with_work(
+    dependency: &Dependency,
+    facts: &[Fact],
+    budget: ChaseBudget,
+    work: &AdmissionWork,
+) -> Result<Option<Vec<Fact>>, ChaseError> {
     let records: Vec<Record> = facts
         .iter()
         .map(|fact| Record {
@@ -327,6 +396,7 @@ pub fn first_violation(
         })
         .collect();
     let mut meter = Meter {
+        work: work.clone(),
         steps: 0,
         limit: budget.max_steps,
     };
@@ -401,12 +471,14 @@ enum Halt {
 }
 
 struct Meter {
+    work: AdmissionWork,
     steps: usize,
     limit: usize,
 }
 
 impl Meter {
     fn step(&mut self) -> Result<(), Halt> {
+        self.work.charge().map_err(Halt::Refused)?;
         if self.steps >= self.limit {
             return Err(Halt::Refused(ChaseError::BudgetExceeded {
                 resource: "steps",
@@ -435,6 +507,7 @@ fn run(
     facts: &[Fact],
     inputs: &[usize],
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<Vec<Fact>, Halt> {
     let mut state = State {
         records: Vec::new(),
@@ -442,6 +515,7 @@ fn run(
         next_null: Some(0),
         created_nulls: 0,
         meter: Meter {
+            work: work.clone(),
             steps: 0,
             limit: budget.max_steps,
         },
