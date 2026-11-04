@@ -6,7 +6,9 @@
 use std::future::Future;
 use cedar_policy::{Authorizer, Decision};
 use cedar_policy_symcc::{CedarSymCompiler, CompiledPolicySet, Env, SmtLibScript};
-use cedar_policy_symcc::solver::{Decision as Sat, DecisionWithModel, Solver, SolverError};
+use cedar_policy_symcc::solver::{Decision as Sat, Solver};
+// Hosts implement the transport without a direct dependency on SymCC.
+pub use cedar_policy_symcc::solver::{DecisionWithModel, SolverError};
 use crate::ValidatedPolicySet;
 
 /// Built-in whole-policy-set property to ask of the candidate.
