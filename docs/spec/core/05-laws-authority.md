@@ -192,6 +192,10 @@ Runtime and parity links remain explicitly not-yet unless separately supplied.
 Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
 and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
 are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+Tool assets use logical name/version identities and exact content digests, without
+installation paths. Compiler/oracle diagnostics carry byte-length/SHA256 commitments;
+the structured primary result and exact ITF trace bytes remain in the bound result.
+The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
 
 **PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,

@@ -2,6 +2,8 @@
 """PROOF-QUINT-RUN-1: result availability never overrides timeout/exit policy."""
 import importlib.util
 import copy
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -14,9 +16,33 @@ import unittest
 spec = importlib.util.spec_from_file_location("generated_proofs", Path(__file__).with_name("check-generated-quint.py"))
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+outer_spec = importlib.util.spec_from_file_location("proof_host", Path(__file__).with_name("run-generated-proofs.py"))
+outer = importlib.util.module_from_spec(outer_spec)
+outer_spec.loader.exec_module(outer)
 
 
 class VerdictPolicy(unittest.TestCase):
+    def test_tool_asset_pins_ignore_installation_paths_and_commit_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            left, right = [Path(directory) / name for name in ["checkout-a", "checkout-b"]]
+            left.write_bytes(b"same tool bytes")
+            right.write_bytes(left.read_bytes())
+            name = "tool/1.2.3/binary"
+            self.assertEqual(outer.asset_pins([(name, left)]), outer.asset_pins([(name, right)]))
+            self.assertNotIn(directory, json.dumps(outer.asset_pins([(name, left)])))
+            right.write_bytes(b"changed tool bytes")
+            self.assertNotEqual(outer.asset_pins([(name, left)]), outer.asset_pins([(name, right)]))
+            for assets in [[("/host/tool", left)], [("../tool", left)], [(name, left), (name, right)]]:
+                with self.assertRaises(ValueError):
+                    outer.asset_pins(assets)
+
+    def test_diagnostic_commitment_pins_exact_bytes_without_host_paths(self):
+        raw = b"Parsing file /home/example/.cache/private/generated.tla\n"
+        self.assertEqual(runner.diagnostic_commitment(raw),
+                         {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+        self.assertNotIn("/home/", json.dumps(runner.diagnostic_commitment(raw)))
+        self.assertNotEqual(runner.diagnostic_commitment(raw), runner.diagnostic_commitment(raw + b"\n"))
+
     def test_success_requires_complete_agreeing_results(self):
         primary = {"status": "success", "distinctStates": 78}
         oracle = {"status": "ok", "errors": []}

@@ -447,9 +447,11 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     if accepted {
         for case in &cases {
             for (index, document) in case.documents.iter().enumerate() {
+                let mut bytes = norn_canonical::serialize_json_verbatim(document)?;
+                bytes.push(b'\n');
                 std::fs::write(
                     work.join(format!("{}-law-{index}.guarantees.json", case.label)),
-                    format!("{}\n", serde_json::to_string_pretty(document)?),
+                    bytes,
                 )?;
             }
         }
@@ -659,6 +661,9 @@ mod tests {
                 "fixtures/demo/guarantees/constitution.{label}.guarantees.json"
             ));
             let bytes = std::fs::read_to_string(&path).expect("captured real binder document");
+            for host_path in ["/home/", "/usr/bin/", "/tmp/", "agent-scratch"] {
+                assert!(!bytes.contains(host_path), "recording contains {host_path}");
+            }
             let recorded: GuaranteesDocument =
                 serde_json::from_str(&bytes).expect("typed document");
             let mut goals = Vec::new();
@@ -755,13 +760,12 @@ mod tests {
             let schema = norn_ir::verification::guarantees::guarantees_document_schema();
             let validator = jsonschema::validator_for(schema.as_value()).expect("schema");
             assert!(validator.is_valid(&serde_json::to_value(document).expect("wire value")));
-            let text = format!(
-                "{}\n",
-                serde_json::to_string_pretty(document).expect("exact binder serialization")
-            );
+            let mut bytes = norn_canonical::serialize_json_verbatim(document)
+                .expect("exact binder serialization");
+            bytes.push(b'\n');
             assert_eq!(
-                std::fs::read_to_string(path).expect("recorded bytes"),
-                text,
+                std::fs::read(path).expect("recorded bytes"),
+                bytes,
                 "regenerate with NORN_BLESS=1 only after a fully passing backend run"
             );
         }
