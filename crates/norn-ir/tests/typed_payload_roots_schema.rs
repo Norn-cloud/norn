@@ -167,7 +167,7 @@ fn assert_schema_is_current(
 
 #[test]
 fn payload_root_schemas_mark_unconditionally_required_members() {
-    // Entity, Policy, and BusinessPack have several closed forms (`anyOf`);
+    // Entity, Policy, BusinessPack and Mapping have several closed forms;
     // see `entity_payload_schema_is_the_v1_or_v2_typed_root` and
     // `policy_and_business_pack_schemas_are_their_typed_forms`.
     let expected = [
@@ -237,10 +237,6 @@ fn payload_root_schemas_mark_unconditionally_required_members() {
         (
             ArtifactKind::SourceSchema,
             &["format", "source", "observedAt", "adapter", "rawMetadata"][..],
-        ),
-        (
-            ArtifactKind::Mapping,
-            &["format", "source", "interfaces", "maps"][..],
         ),
     ];
 

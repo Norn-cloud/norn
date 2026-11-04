@@ -81,3 +81,9 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Structural sum extraction
+
+`EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
+
+Named scenarios: `structural_sum_accepts_parentheses_and_literal_members`, `structural_sum_refuses_other_operations_and_reads`, `structural_sum_bounds_and_malformed_source_fail_closed`, `structural_sum_preserves_generated_terms`. Evidence is structural and sampled, not algebraic proof.
