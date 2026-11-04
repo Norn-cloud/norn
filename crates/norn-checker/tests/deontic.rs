@@ -1093,3 +1093,24 @@ fn all_four_normative_cores_retain_their_attribution() {
         }
     }
 }
+
+#[test]
+fn live_repairs_account_for_removed_transitive_priorities() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, mut a, mut c) = admission_fixture();
+    let mut b = a.clone();
+    a.law.id = "A".into();
+    b.law.id = "B".into();
+    c.law.id = "C".into();
+    a.defeated_by.clear();
+    b.defeated_by = vec!["A".into(), "B".into()];
+    c.defeated_by = vec!["B".into()];
+    b.source.pointer = "/payload/extensions/norn.normative~11.0.0/1".into();
+    c.source.pointer = "/payload/extensions/norn.normative~11.0.0/2".into();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[a,b,c]});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None });
+    assert!(!findings.iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"), "{findings:?}");
+    assert!(findings.iter().any(|d| d.message.contains(r#"[["A", "B"], ["B", "C"]]"#)), "{findings:?}");
+}

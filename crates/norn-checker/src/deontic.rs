@@ -423,11 +423,13 @@ pub(crate) fn check_declared_order_set(
                 "structural-base-protected/candidate-editable",
                 source_hash,
                 base_hash
-            ])
-            .to_string();
+            ]);
+            let Ok(profile) = norn_canonical::canonical_json_of(&profile) else {
+                return findings;
+            };
             let pins = format!(
                 " Canonical attempted/base SHA256: {source_hash}/{base_hash}; profile SHA256: {:x}. Profile norn.normative-admission/1; closed domains derived from the exact pinned subject definitions.",
-                sha2::Sha256::digest(profile.as_bytes())
+                sha2::Sha256::digest(&profile)
             );
             for finding in &mut findings {
                 finding.message.push_str(&pins);
