@@ -5,9 +5,7 @@ use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn normalize_source(contents: &str) -> String {
-    contents.replace("\r\n", "\n").replace('\r', "\n")
-}
+include!("build_support.rs");
 
 fn sources(
     root: &Path,
@@ -47,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for path in [
         "crates/norn-expr/src",
         "crates/norn-expr/build.rs",
+        "crates/norn-expr/build_support.rs",
         "crates/norn-expr/Cargo.toml",
         "crates/norn-ir/src",
         "crates/norn-ir/Cargo.toml",
@@ -64,18 +63,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output,
     )?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_source;
-
-    #[test]
-    fn line_endings_produce_identical_fingerprint_input() {
-        let lf = "fn example() {\n    // café\n}\n";
-        assert_eq!(normalize_source(lf), lf);
-        assert_eq!(normalize_source(&lf.replace('\n', "\r\n")), lf);
-        assert_eq!(normalize_source(&lf.replace('\n', "\r")), lf);
-        assert_eq!(normalize_source("a\r\nb\rc\n"), "a\nb\nc\n");
-    }
 }
