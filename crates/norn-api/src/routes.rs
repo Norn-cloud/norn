@@ -279,7 +279,7 @@ mod tests {
                 let mut matching = query();
                 matching.version = Some(999);
                 let baseline = get_defs(&host, &matching, actor).unwrap_err();
-                let expected = serde_json::to_vec(&baseline).unwrap();
+                let expected = serde_json::to_string(&baseline).unwrap();
                 for org in [None, Some("foreign"), Some("org_demo")] {
                     for environment in [None, Some("foreign"), Some("dev")] {
                         let request = DefinitionsQuery {
@@ -288,11 +288,11 @@ mod tests {
                             version: Some(999),
                         };
                         let refusal = get_defs(&host, &request, actor).unwrap_err();
+                        let wire = serde_json::to_string(&refusal).unwrap();
                         if baseline.status == 403 {
                             assert_eq!(refusal.status, baseline.status);
-                            assert_eq!(serde_json::to_vec(&refusal).unwrap(), expected);
+                            assert_eq!(wire.as_bytes(), expected.as_bytes());
                         }
-                        let wire = serde_json::to_string(&refusal).unwrap();
                         assert!(!wire.contains(&host.scope().org_id), "{wire}");
                         assert!(!wire.contains(&host.scope().environment_id), "{wire}");
                     }
