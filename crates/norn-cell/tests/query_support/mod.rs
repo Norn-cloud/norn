@@ -21,15 +21,20 @@ use std::collections::BTreeMap;
 pub(crate) const TYPE: &str = "demo.Conversion";
 pub(crate) const WORLD: &str = "synthetic-k1";
 pub(crate) const CLOCK: u64 = 1_792_972_800_000;
-pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
-    let object: ObjectTypeDef = serde_json::from_value(json!({"name":TYPE,"properties":[
+/// The object type the cell is opened with, measured in grams.
+pub(crate) fn object_type() -> ObjectTypeDef {
+    serde_json::from_value(json!({"name":TYPE,"properties":[
         {"id":"input","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"recovered","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"loss","type":{"kind":"decimal","scale":3,"unit":{"system":"ucum","code":"g"}}},
         {"id":"occurred_at","type":{"kind":"timestamp","timezone":"utc"}},
         {"id":"metal","type":{"kind":"text"}}
     ]}))
-    .expect("typed model");
+    .expect("typed model")
+}
+
+pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
+    let object = object_type();
     let mut artifact: Value = serde_json::from_str::<Value>(include_str!(
         "../../../../fixtures/ir/metrics/ontology.json"
     ))
@@ -52,6 +57,7 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     ))
     .expect("metric");
     out.name = "demo.recovered".into();
+    out.label = "Recovered".into();
     out.type_params.expr = Some("recovered".into());
     let aggregate = out
         .type_params
@@ -66,9 +72,11 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
         Some(serde_json::from_value(json!({"property":"occurred_at"})).expect("path"));
     let mut input = out.clone();
     input.name = "demo.input".into();
+    input.label = "Input".into();
     input.type_params.expr = Some("input".into());
     let mut ratio = out.clone();
     ratio.name = "demo.yield".into();
+    ratio.label = "Yield".into();
     ratio.metric_type = MetricType::Ratio;
     ratio.type_params = MetricTypeParams {
         numerator: Some(out.name.clone()),

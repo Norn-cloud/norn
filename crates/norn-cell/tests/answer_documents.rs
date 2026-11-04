@@ -12,7 +12,7 @@ use query_support::*;
 
 const DIRECTORY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers");
 
-fn retained(name: &str, document: &impl serde::Serialize) {
+fn retained(name: &str, document: &(impl serde::Serialize + ?Sized)) {
     let path = format!("{DIRECTORY}/{name}");
     let mut text = serde_json::to_string_pretty(document).expect("exact JSON text");
     text.push('\n');
@@ -31,6 +31,8 @@ fn scrap_yield_answers_are_the_evaluators_exact_documents() {
     let (mut store, plan, context) = fixture();
     load(&mut store);
     retained("scrap-yield.question.json", plan.question());
+    retained("scrap-yield.metrics.json", plan.definitions());
+    retained("scrap-yield.object-type.json", &object_type());
     let k1 = KnowledgeCutoff {
         recorded_at: LogicalTime::from_millis(CLOCK),
         frontier: store.verified_head().expect("K1").commits,

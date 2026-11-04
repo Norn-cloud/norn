@@ -17,6 +17,8 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
             "scrap-yield.quarantine.finding.json",
             "NornIrDataQualityFinding",
         ),
+        ("scrap-yield.object-type.json", "NornIrObjectTypeDef"),
+        ("scrap-yield.metrics.json", "NornIrMetricDefinition"),
         ("scrap-yield.k1.answer.json", "NornQueryResult"),
         ("scrap-yield.k1-quarantined.answer.json", "NornQueryResult"),
         ("scrap-yield.k2.answer.json", "NornQueryResult"),
@@ -25,9 +27,15 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
             "NornHistoricalQuestionResult",
         ),
     ] {
+        let reference = json!({ "$ref": format!("#/components/schemas/{root}") });
+        let root = if file.ends_with(".metrics.json") {
+            json!({ "type": "array", "items": reference })
+        } else {
+            reference
+        };
         let schema = json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$ref": format!("#/components/schemas/{root}"),
+            "allOf": [root],
             "components": contract["components"],
         });
         let validator = jsonschema::validator_for(&schema).expect("contract schema compiles");
