@@ -257,15 +257,27 @@ fn lifecycle_inputs_reject_an_empty_enum_at_admission() {
 #[test]
 fn lifecycle_graph_preserves_unknown_reasons_and_refuses_duplicate_rows() {
     let unsupported = source(false);
-    assert!(super::lifecycle_tests::authority(&unsupported)
-        .lifecycle_graph(&unsupported, &BTreeSet::new(), &bounds()).expect("fresh source")
-        .graph.expect_err("actual App-root law stays Unknown").contains("UnsupportedUntilB2"));
+    assert!(
+        super::lifecycle_tests::authority(&unsupported)
+            .lifecycle_graph(&unsupported, &BTreeSet::new(), &bounds())
+            .expect("fresh source")
+            .graph
+            .expect_err("actual App-root law stays Unknown")
+            .contains("UnsupportedUntilB2")
+    );
     let source = source(true);
     let mut profile = bounds();
-    profile.frozen.insert("id".into(), vec!["\"synthetic\"".into();2]);
-    assert_eq!(super::lifecycle_tests::authority(&source)
-        .lifecycle_graph(&source, &BTreeSet::new(), &profile).expect("source")
-        .graph.expect_err("no duplicate node identities"), "duplicate finite scalar valuations");
+    profile
+        .frozen
+        .insert("id".into(), vec!["\"synthetic\"".into(); 2]);
+    assert_eq!(
+        super::lifecycle_tests::authority(&source)
+            .lifecycle_graph(&source, &BTreeSet::new(), &profile)
+            .expect("source")
+            .graph
+            .expect_err("no duplicate node identities"),
+        "duplicate finite scalar valuations"
+    );
 }
 
 proptest::proptest! {
