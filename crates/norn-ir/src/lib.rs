@@ -44,6 +44,7 @@ pub mod decision_output;
 pub mod defined_concept;
 pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
+pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
