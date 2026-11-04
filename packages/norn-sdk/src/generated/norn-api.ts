@@ -3835,6 +3835,15 @@ export interface components {
          *     member name space per object type.
          */
         NornIrLinkId: string;
+        /** @description The source path a [`PathMapping`] assigns to one target link. */
+        NornIrLinkImage: {
+            /** @description The target concept declaring the link. */
+            concept: string;
+            /** @description The target link ID. */
+            link: string;
+            /** @description Forward source link IDs from the image of `concept`; empty is identity. */
+            path: string[];
+        };
         /**
          * @description One link rule: the produced object links to the object another map
          *     produces with this key (an RML referencing object map with its join).
@@ -3952,6 +3961,8 @@ export interface components {
             interfaces: string[];
             /** @description The object maps, in evaluation order. */
             maps: components["schemas"]["NornIrObjectMap"][];
+            /** @description Required path preservation obligations over the named entity artifacts. */
+            pathMappings?: components["schemas"]["NornIrPathMappingBinding"][];
             /**
              * @description The one `source_schema` artifact the mapping reads, pinned by
              *     content hash.
@@ -4875,6 +4886,35 @@ export interface components {
         NornIrPackInstanceRef: {
             instanceId: string;
             pack: components["schemas"]["NornIrInterpretationEndpoint"];
+        };
+        /**
+         * @description PATH-MAP-1: a declared mapping `F: target -> source` between two concept
+         *     catalogs. Each target concept names its source concept and each mapped
+         *     target link a forward source path; source data moves to the target by
+         *     pullback along these paths. Unmapped target links are never produced.
+         */
+        NornIrPathMapping: {
+            /** @description Stable declaration identity, retained by generated TGDs. */
+            id: string;
+            /** @description Images of target links. Two images of one link make it non-functional. */
+            links: components["schemas"]["NornIrLinkImage"][];
+            objects: components["schemas"]["NornIrPathMappingPropertyObjects"];
+        };
+        /**
+         * @description Catalog bindings for a required path mapping. Admission binds evidence to
+         *     the exact envelopes (including equations), and the enclosing MappingIR.
+         */
+        NornIrPathMappingBinding: {
+            /** @description Declared object and link images. */
+            mapping: components["schemas"]["NornIrPathMapping"];
+            /** @description Source entity artifact IDs. */
+            sourceEntities: string[];
+            /** @description Target entity artifact IDs. */
+            targetEntities: string[];
+        };
+        /** @description Target concept name to source concept name. */
+        NornIrPathMappingPropertyObjects: {
+            [key: string]: string;
         };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {

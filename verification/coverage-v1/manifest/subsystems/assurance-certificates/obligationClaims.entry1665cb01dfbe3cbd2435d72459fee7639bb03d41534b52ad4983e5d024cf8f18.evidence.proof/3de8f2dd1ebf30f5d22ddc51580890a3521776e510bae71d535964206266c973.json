@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/linear-conservation-v1/LinearConservation.lean",
+    "command": "lean -DwarningAsError=true verification/linear-conservation-v1/LinearConservation.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.proof.entry3de8f2dd1ebf30f5d22ddc51580890a3521776e510bae71d535964206266c973.selectors"
+    }
+  }
+}

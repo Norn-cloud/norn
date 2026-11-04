@@ -55,9 +55,13 @@ pub mod entity_model;
     clippy::large_futures
 )]
 pub mod envelope;
+pub mod exact_rational;
+mod finite;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
+/// Closure-keyed structural admission evidence reuse.
+pub mod incremental;
 pub mod interfaces;
 pub mod jdm_profile;
 pub mod layout;
