@@ -150,7 +150,7 @@ mod tests {
         let artifacts = fixture();
         let source = source(&artifacts);
         let registry = BTreeSet::new();
-        let authority = ApprovedContract::approve(&source, &registry, json!({}), json!({}), json!({}))
+        let authority = ApprovedContract::approve(&source, &registry, json!({"expr":"norn-zen/6"}), json!({"store":"empty"}), json!({"level":"bounded"}))
             .expect("admitted engine fixture");
         authority.finite(&source, &registry, &bounds(&artifacts)).expect("relation batch")
             .goals.into_iter().find_map(Result::ok).expect("finite relation")
@@ -161,7 +161,7 @@ mod tests {
         let artifacts = fixture();
         let source = source(&artifacts);
         let registry = BTreeSet::new();
-        let authority = ApprovedContract::approve(&source, &registry, json!({}), json!({}), json!({}))
+        let authority = ApprovedContract::approve(&source, &registry, json!({"expr":"norn-zen/6"}), json!({"store":"empty"}), json!({"level":"bounded"}))
             .expect("admitted engine fixture");
         let profile = bounds(&artifacts);
         let native = authority.finite(&source, &registry, &profile).expect("finite");
@@ -192,7 +192,8 @@ mod tests {
         #[test]
         fn tla_projection_matches_native_boolean_additive_semantics(a in -9_i32..10, b in -9_i32..10, c in -9_i32..10) {
             let numeric = format!("-({a} - {b}) + {c}");
-            let boolean = format!("{a} < {b} or {b} == {c} and not({a} == {c})");
+            let compare = match a.rem_euclid(6) { 0 => "<", 1 => "<=", 2 => ">", 3 => ">=", 4 => "==", _ => "!=" };
+            let boolean = format!("{a} {compare} {b} or {b} == {c} and not({a} == {c})");
             let context = norn_expr::Value::Null;
             let number = norn_expr::Expression::compile(&numeric).expect("numeric grammar")
                 .evaluate(&context, norn_expr::EvaluationBudget::new(1000)).expect("native numeric");
