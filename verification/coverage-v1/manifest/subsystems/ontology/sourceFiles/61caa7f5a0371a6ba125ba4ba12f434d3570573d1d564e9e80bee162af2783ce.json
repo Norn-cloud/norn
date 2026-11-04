@@ -1,4 +1,4 @@
 {
-  "order": 119,
+  "order": 1000,
   "value": "crates/norn-checker/src/consistency/diagnosis.rs"
 }
