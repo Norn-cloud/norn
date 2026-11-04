@@ -213,13 +213,21 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::expect_used, clippy::indexing_slicing, reason = "fixed lenient decode fixtures")]
+    #[allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "fixed lenient decode fixtures"
+    )]
     fn recorded_payload_state_invalidates_local_and_global_reuse() {
-        let original: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
-            "../../../fixtures/law-ir/entities.json"
-        )).expect("entities");
+        let original: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+                .expect("entities");
         let registry = std::collections::BTreeSet::new();
-        let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
         for field in ["unknown_field", "extensions"] {
             for force_global_change in [false, true] {
                 let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
@@ -228,10 +236,14 @@ mod tests {
                 let mut wire = serde_json::to_value(&edited[0]).expect("wire");
                 wire["payload"][field] = json!(true);
                 edited[0] = serde_json::from_value(wire).expect("lenient root");
-                if force_global_change { edited[1].name.push_str(" changed"); }
+                if force_global_change {
+                    edited[1].name.push_str(" changed");
+                }
                 let result = cache.check(&edited, &context);
-                assert_eq!(crate::diagnostics_to_json(&result.findings),
-                    crate::diagnostics_to_json(&crate::check_artifact_set(&edited, &context)));
+                assert_eq!(
+                    crate::diagnostics_to_json(&result.findings),
+                    crate::diagnostics_to_json(&crate::check_artifact_set(&edited, &context))
+                );
                 assert_eq!(result.evidence[0].origin, EvidenceOrigin::Rechecked);
             }
         }
