@@ -172,8 +172,8 @@ fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, connector:
     let input = MappingInput {
         mapping: format!("{system}.three.mapping"),
         dataset: row["dataset"].as_str().expect("dataset").into(),
-        connector_instance: connector.into(),
-        partition: "snapshot".into(),
+        connector_instance: "demo".into(),
+        partition: partition.into(),
         recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
     };
     let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
@@ -181,7 +181,7 @@ fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, connector:
 }
 
 fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
-    let id = retain_in(cell, system, row, event, "demo");
+    let id = retain_in(cell, system, row, event, "snapshot");
     cell.process_mapping_bundle(&id).expect("process");
     id
 }
@@ -580,7 +580,7 @@ fn obs_link_mixed_clear_and_assert_preserve_other_contributors_without_oscillati
 }
 
 #[test]
-fn obs_link_connectors_with_identical_row_aliases_are_independent_contributors() {
+fn obs_link_partitions_with_identical_row_aliases_are_independent_contributors() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup(&directory.path().join("connectors.sqlite"));
     let source = fixture("erpnext");
@@ -589,7 +589,7 @@ fn obs_link_connectors_with_identical_row_aliases_are_independent_contributors()
         capture(&mut cell, "erpnext", row, "snapshot");
     }
     let id = retain_in(&mut cell, "erpnext", &rows[6], "snapshot", "second");
-    cell.process_mapping_bundle(&id).expect("second connector");
+    cell.process_mapping_bundle(&id).expect("second partition");
     let claims: Vec<_> = cell
         .store()
         .read()
@@ -602,7 +602,7 @@ fn obs_link_connectors_with_identical_row_aliases_are_independent_contributors()
     assert_ne!(claims[0].source_scope, claims[1].source_scope);
     let mut changed = rows[6].clone();
     changed["record"]["provider_ref"] = json!("demo/party/custodian");
-    let id = retain_in(&mut cell, "erpnext", &changed, "2", "demo");
+    let id = retain_in(&mut cell, "erpnext", &changed, "2", "snapshot");
     assert!(matches!(
         cell.process_mapping_bundle(&id),
         Err(norn_cell::CellError::UnsupportedMappingProfile)
@@ -626,21 +626,17 @@ fn obs_link_connectors_with_identical_row_aliases_are_independent_contributors()
 fn obs_link_pending_base_claim_uses_the_live_subtype_link_defaults() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup_with(&directory.path().join("subtype.sqlite"), |artifacts| {
-        let mut subtype = serde_json::to_value(
-            artifacts
-                .iter()
-                .find(|a| a.artifact_id == "canon.Holding.entity")
-                .expect("base"),
-        )
-        .expect("wire");
-        subtype["artifactId"] = json!("canon.SpecialHolding.entity");
-        subtype["payload"] = json!({"entityVersion":"2.0", "objectType": {
-            "name":"canon.SpecialHolding", "extends":"canon.Holding", "links":[{
-                "id":"owner", "target":"canon.Party", "cardinality":{"to":"one","from":"many"},
-                "properties":[{"id":"marker","type":{"kind":"text"},"default":"special"}]
-            }]
-        }});
-        artifacts.push(serde_json::from_value(subtype).expect("subtype fixture"));
+        edit_artifact(artifacts, "canon.Holding.entity", |a| {
+            let owner = a["payload"]["objectType"]["links"]
+                .as_array_mut()
+                .expect("links")
+                .iter_mut()
+                .find(|l| l["id"] == "owner")
+                .expect("owner");
+            owner["properties"] =
+                json!([{"id":"marker","type":{"kind":"text"},"default":"special"}]);
+        });
+        holding_subtype(artifacts, false);
     });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
@@ -682,5 +678,45 @@ fn obs_link_pending_base_claim_uses_the_live_subtype_link_defaults() {
     assert_eq!(
         link.values.get("marker"),
         Some(&RuntimeValue::from("special"))
+    );
+}
+
+/// Subtype relationship properties are inherited and cannot be redeclared.
+fn holding_subtype(artifacts: &mut Vec<ArtifactEnvelope>, redeclare: bool) {
+    let mut subtype = serde_json::to_value(
+        artifacts
+            .iter()
+            .find(|a| a.artifact_id == "canon.Holding.entity")
+            .expect("base"),
+    )
+    .expect("wire");
+    subtype["artifactId"] = json!("canon.SpecialHolding.entity");
+    let mut object = json!({"name":"canon.SpecialHolding", "extends":"canon.Holding"});
+    if redeclare {
+        object["links"] = json!([{"id":"owner", "target":"canon.Party", "cardinality":{"to":"one","from":"many"}, "properties":[{"id":"marker","type":{"kind":"text"},"default":"different"}]}]);
+    }
+    subtype["payload"] = json!({"entityVersion":"2.0", "objectType":object});
+    artifacts.push(serde_json::from_value(subtype).expect("subtype fixture"));
+}
+
+#[test]
+fn obs_link_subtype_default_redeclarations_refuse_at_catalog_admission() {
+    let mut artifacts = fixture_artifacts();
+    holding_subtype(&mut artifacts, true);
+    let (base, candidate): (Vec<_>, Vec<_>) = artifacts
+        .into_iter()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let diagnostics = norn_checker::check_artifact_set(
+        &candidate,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code.0 == "object_type.validation.link_override_redeclares")
     );
 }
