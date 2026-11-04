@@ -1,12 +1,12 @@
 //! PROOF-LIFECYCLE-3: exhaustive conditional relation/native commit correspondence.
 #![cfg(feature = "native")]
-#![allow(clippy::expect_used, clippy::indexing_slicing, missing_docs, reason = "bounded native correspondence")]
+#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic, missing_docs, reason = "bounded native correspondence")]
 use std::collections::{BTreeMap, BTreeSet};
 use norn_cell::{CellStore, CommitBatch, Model, SqliteCell};
 use norn_checker::obligations::{ApprovedContract, DefinitionSource};
 use norn_checker::obligations::lifecycle::{finite::{Bounds, Row}, graph::Graph};
 use norn_ir::{DecisionOutput, EntityRootV2, FactChange, ObjectTypeName, PropertyId, TransitionId};
-use norn_kernel::{CellHost, DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World, commit_decision, load_slice};
+use norn_kernel::{CellHost, DecisionRefusal, DecisionTurn, FactEvent, FactKey, LogicalTime, TypeCatalog, World, commit_decision, load_slice};
 use norn_kernel::cell_host::JsonObject;
 use serde_json::{Value, json};
 
@@ -25,7 +25,12 @@ fn native(model: &Model, catalog: &TypeCatalog<'_>, before: Option<&Row>, change
     let key = FactKey::new("demo.Melt", "synthetic");
     let slice = load_slice(&cell, [key.clone()]).expect("read");
     let turn = DecisionTurn { id: "correspondence".into(), now: LogicalTime::from_millis(1), world: World::Main, consumes: None };
-    let accepted = commit_decision(&mut cell, catalog, &slice, &turn, &DecisionOutput { facts: vec![change], commands: vec![], timers: vec![] }).is_ok();
+    let accepted = match commit_decision(&mut cell, catalog, &slice, &turn, &DecisionOutput { facts: vec![change], commands: vec![], timers: vec![] }) {
+        Ok(_) => true,
+        Err(DecisionRefusal::NotFromState {..} | DecisionRefusal::InvalidInitialState {..} | DecisionRefusal::GuardFalse {..}
+            | DecisionRefusal::Law { reason: norn_kernel::governing_laws::LawEvaluationError::Violated(_), .. }) => false,
+        Err(error) => panic!("unexpected native error, not a correspondence refusal: {error:?}"),
+    };
     if !accepted { assert_eq!(prior, cell.store().read().dump().expect("atomic refusal")); }
     (accepted, cell.load(&key).expect("after").values)
 }
