@@ -7,6 +7,7 @@ const [binary, original, mutant, base, bounds, work, tools] = process.argv.slice
 if (process.argv.length !== 9 || !binary || !original || !mutant || !base || !bounds || !work || !tools) {
   throw new Error("usage: run.ts BINARY ORIGINAL MUTANT BASE BOUNDS WORK TOOLS")
 }
+const workDirectory = work
 const env = environment(tools)
 const execute = (command: readonly [string, ...string[]], input = "") =>
   runProcess({ command, input, env, timeoutMs: 120000, maxBytes: 16777216 })
@@ -46,14 +47,14 @@ const control = { toolchain, results }
 const plan: unknown = JSON.parse(await checked([binary, "prepare", original, mutant, base, bounds, work, tools], JSON.stringify(control)))
 if (!object(plan) || !array(plan.jobs) || Object.keys(plan).length !== 1) throw new Error("malformed generated plan")
 const jobs = plan.jobs.map(parseJob)
-await mkdir(work, { recursive: true })
+await mkdir(workDirectory, { recursive: true })
 await writeFile(join(work, "plan.json"), JSON.stringify(plan))
 if (new Set(jobs.map(job => job.key)).size !== jobs.length) throw new Error("duplicate generated job key")
 
 async function run(job: Job) {
   if (sha(await readFile(job.model)) !== job.modelSha) throw new Error("generated model changed")
-  await mkdir(work, { recursive: true })
-  const directory = await mkdtemp(join(work, "backend-"))
+  await mkdir(workDirectory, { recursive: true })
+  const directory = await mkdtemp(join(workDirectory, "backend-"))
   try {
     const primaryPath = join(directory, "primary.json")
     const expected = job.step === "idle" ? 1 : job.expectedStates
