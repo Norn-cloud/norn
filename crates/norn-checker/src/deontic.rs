@@ -422,7 +422,7 @@ fn admission_order(
             return Err("unsupported normative extension version".into());
         }
         let Some(value) = root.extensions.as_ref().and_then(|e| e.get(NORMATIVE_SLOT)) else { continue; };
-        let declared: Vec<DeonticRule> = serde_json::from_value(serde_json::to_value(value)
+        let declared: Vec<DeonticRule> = serde_json::from_slice(&norn_canonical::canonical_json_of(value)
             .map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         if rules.len().saturating_add(declared.len()) > crate::consistency::diagnosis::MAX_DECLARATIONS {
             return Err("declaration limit".into());
