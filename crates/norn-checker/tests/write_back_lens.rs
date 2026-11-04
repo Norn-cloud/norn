@@ -44,7 +44,7 @@ fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
     let updated = lens.put(&source, true).expect("in domain");
     assert_eq!(updated.get("other"), Some(&true));
     assert!(lens.get(updated).expect("checked view"));
-    assert!(lens.put(&Default::default(), false).is_err());
+    assert!(lens.put(&std::collections::BTreeMap::default(), false).is_err());
 }
 
 #[test]
