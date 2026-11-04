@@ -8,9 +8,7 @@
     reason = "source lineage conformance"
 )]
 mod query_support;
-use norn_cell::compute::{
-    lineage::{ContributionSource, LineageDisclosure},
-};
+use norn_cell::compute::lineage::{ContributionSource, LineageDisclosure};
 use norn_cell::{CellStore, MAIN_WORLD};
 use query_support::*;
 #[path = "support/query_lineage.rs"]
