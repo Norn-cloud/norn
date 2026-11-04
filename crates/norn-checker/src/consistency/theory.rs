@@ -301,34 +301,8 @@ pub fn lower_path_equations(
                 .object_type_names()
                 .filter(|name| catalog.lineage(name).is_some_and(|l| l.contains(&owner)));
             let id = format!("{}:path-equation:{}", artifact.artifact_id, equation.id);
-            let lower = |instance: &str| -> Result<Egd, String> {
-                let mut body = vec![Atom {
-                    relation: format!("concept:{instance}"),
-                    terms: vec![Term::Var("root".into())],
-                }];
-                let (left_type, left) =
-                    equation_path(&catalog, instance, &equation.left, "l", &mut body)?;
-                let (right_type, right) =
-                    equation_path(&catalog, instance, &equation.right, "r", &mut body)?;
-                if instance == owner.as_str() && left_type != right_type {
-                    return Err(format!(
-                        "endpoint types differ: {left_type} vs {right_type}"
-                    ));
-                }
-                Ok(Egd {
-                    id: if instance == owner.as_str() {
-                        id.clone()
-                    } else {
-                        format!("{id}:{instance}")
-                    },
-                    origin: origin.clone(),
-                    body,
-                    left,
-                    right,
-                })
-            };
             for instance in instances {
-                match lower(instance) {
+                match lower_path_equation_instance(&catalog, instance, owner.as_str(), &equation, &id, &origin) {
                     Ok(mut egd) => {
                         if instance != owner.as_str() {
                             egd.id = unique_inherited_id(egd.id, &mut rule_ids);
@@ -357,6 +331,40 @@ pub fn lower_path_equations(
         }
     }
     findings.is_empty().then_some(theory).ok_or(findings)
+}
+
+fn lower_path_equation_instance(
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    instance: &str,
+    owner: &str,
+    equation: &norn_ir::entity::PathEquation,
+    id: &str,
+    origin: &RuleOrigin,
+) -> Result<Egd, String> {
+    let mut body = vec![Atom {
+        relation: format!("concept:{instance}"),
+        terms: vec![Term::Var("root".into())],
+    }];
+    let (left_type, left) =
+        equation_path(catalog, instance, &equation.left, "l", &mut body)?;
+    let (right_type, right) =
+        equation_path(catalog, instance, &equation.right, "r", &mut body)?;
+    if instance == owner && left_type != right_type {
+        return Err(format!(
+            "endpoint types differ: {left_type} vs {right_type}"
+        ));
+    }
+    Ok(Egd {
+        id: if instance == owner {
+            id.to_owned()
+        } else {
+            format!("{id}:{instance}")
+        },
+        origin: origin.clone(),
+        body,
+        left,
+        right,
+    })
 }
 
 fn path_equation_declaration(
