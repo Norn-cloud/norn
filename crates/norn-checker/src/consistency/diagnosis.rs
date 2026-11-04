@@ -64,9 +64,12 @@ pub(crate) fn require_validation_budget<E>(
     corrections: &BTreeSet<BTreeSet<usize>>,
     remaining: usize,
 ) -> Result<(), Unknown<E>> {
-    let required = cores.iter().chain(corrections).try_fold(0_usize, |sum, set| {
-        sum.checked_add(set.len())?.checked_add(1)
-    });
+    let required = cores
+        .iter()
+        .chain(corrections)
+        .try_fold(0_usize, |sum, set| {
+            sum.checked_add(set.len())?.checked_add(1)
+        });
     if required.is_none_or(|count| count > remaining) {
         return Err(Unknown::Budget);
     }
