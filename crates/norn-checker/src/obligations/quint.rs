@@ -2,22 +2,11 @@
 /// Native trusted prepare/bind controller; solver processes remain outside the checker.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod driver;
-pub use super::finite::Bounds;
-use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
+pub use super::finite::{Bounds, Projection as Batch};
+use super::{ApprovedContract, ChallengeError, DefinitionSource};
 use norn_ir::verification::finite::CreateRelation;
-use serde_json::Value;
 use std::collections::BTreeSet;
 
-/// Complete generated inventory, including unsupported goals.
-#[derive(Debug)]
-pub struct Batch {
-    /// Fresh checker-owned challenge.
-    pub challenge: Challenge,
-    /// Exact bounds and declaration interpretation for evidence binding.
-    pub bounds: Value,
-    /// One result per generated obligation, in challenge order.
-    pub goals: Vec<Result<String, String>>,
-}
 impl ApprovedContract {
     /// PROOF-QUINT-1: emit only the freshly reconstructed finite relation.
     /// # Errors

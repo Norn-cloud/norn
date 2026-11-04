@@ -27,6 +27,16 @@ pub struct Batch {
     /// One result per generated obligation, in challenge order.
     pub goals: Vec<Result<CreateRelation, String>>,
 }
+/// Rendered model inventory shared by backend projections and the trusted binder.
+#[derive(Debug)]
+pub struct Projection {
+    /// Fresh source and statement commitments.
+    pub challenge: Challenge,
+    /// Exact finite profile and declaration interpretation.
+    pub bounds: Value,
+    /// Goal-specific model text or an explicit refusal, in complete Challenge order.
+    pub goals: Vec<Result<String, String>>,
+}
 impl ApprovedContract {
     /// PROOF-BIND-1: reconstruct admission and challenge before lowering declarations.
     /// Each supported goal returns a closed finite relation; errors remain visible unknowns.

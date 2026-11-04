@@ -133,8 +133,8 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
     let implementation = json!({"driver":digest(&std::env::current_exe()?)?,"toolchain":control.get("toolchain").ok_or("trusted toolchain")?});
     let mut jobs = Vec::new();
     let tool = EvidenceTool {
-        id: "norn.generated-quint".into(),
-        version: "quint-0.32.0/tla-ts-0.0.7/apalache-0.56.1".into(),
+        id: "tla-ts/bun".into(),
+        version: "tla-ts-0.0.7/bun-1.3.14/apalache-0.56.1".into(),
         implementation_sha256: format!(
             "{:x}",
             Sha256::digest(norn_canonical::serialize_json_verbatim(&implementation)?)
@@ -149,7 +149,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
         ("mutant", &mutant),
         ("restored", &restored),
     ] {
-        let batch = authority.quint(source, &registry, &bounds)?;
+        let batch = authority.tla(source, &registry, &bounds)?;
         if label == "original" {
             original_models = Some(batch.goals.clone());
         }
@@ -181,7 +181,8 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
                 .and_then(|index| batch.challenge.body().get("lawStatements")?.get(index))
                 .and_then(|law| law.get("artifactId"))
                 .ok_or("source law identity")?;
-            let path = Path::new(work).join(format!("{label}-{index}.qnt"));
+            let directory = Path::new(work).join(format!("{label}-{index}"));
+            let path = directory.join("generated.tla");
             let result = Path::new(work).join(format!("{label}-{index}.json"));
             let key = format!("{label}-{index}");
             let invariant = if kind == "non_vacuity" {
@@ -196,8 +197,9 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
             };
             let model_sha = format!("{:x}", Sha256::digest(model.as_bytes()));
             if mode == DriverMode::Prepare {
+                std::fs::create_dir_all(&directory)?;
                 std::fs::write(&path, model)?;
-                jobs.push(json!({"key":key,"model":path,"result":result,"modelSha":model_sha,"challenge":batch.challenge.sha256(),"invariant":invariant,"step":step,"seed":bounds.seed,"expectedStates":profile.get("expectedStates").ok_or("expected states")?}));
+                jobs.push(json!({"key":key,"model":path,"result":result,"modelSha":model_sha,"challenge":batch.challenge.sha256(),"invariant":invariant,"step":step,"seed":bounds.seed.to_string(),"expectedStates":profile.get("expectedStates").ok_or("expected states")?}));
                 continue;
             }
             let checked = control

@@ -18,6 +18,7 @@ pub mod evidence;
 pub mod finite;
 mod induction;
 pub mod quint;
+pub mod tla;
 #[cfg(test)]
 mod quint_tests;
 
