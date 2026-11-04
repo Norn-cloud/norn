@@ -233,7 +233,11 @@ pub struct GuaranteesDocument {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(remote = "GuaranteesDocument", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    remote = "GuaranteesDocument",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 struct GuaranteesDocumentWire {
     format: GuaranteesFormat,
     law_artifact_id: String,
@@ -262,7 +266,9 @@ impl GuaranteesDocument {
 impl Serialize for GuaranteesDocument {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if !self.counts_valid() {
-            return Err(serde::ser::Error::custom("guarantees counts contradict goal inventory"));
+            return Err(serde::ser::Error::custom(
+                "guarantees counts contradict goal inventory",
+            ));
         }
         GuaranteesDocumentWire::serialize(self, serializer)
     }
@@ -271,7 +277,9 @@ impl<'de> Deserialize<'de> for GuaranteesDocument {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let document = GuaranteesDocumentWire::deserialize(deserializer)?;
         if !document.counts_valid() {
-            return Err(serde::de::Error::custom("guarantees counts contradict goal inventory"));
+            return Err(serde::de::Error::custom(
+                "guarantees counts contradict goal inventory",
+            ));
         }
         Ok(document)
     }
@@ -453,7 +461,10 @@ mod tests {
         change(&mut document, bad);
         *wire.get_mut(field).expect("retained count field") = json!(bad);
         assert!(serde_json::to_value(&document).is_err(), "{field}={bad}");
-        assert!(serde_json::from_value::<super::GuaranteesDocument>(wire).is_err(), "{field}={bad}");
+        assert!(
+            serde_json::from_value::<super::GuaranteesDocument>(wire).is_err(),
+            "{field}={bad}"
+        );
     }
     #[test]
     fn document_total_matches_complete_goal_inventory_at_both_wire_boundaries() {
@@ -470,7 +481,9 @@ mod tests {
     #[test]
     fn document_discharged_cannot_exceed_eligible_at_both_wire_boundaries() {
         for bad in [3, u32::MAX] {
-            count_refusal("discharged", bad, |document, count| document.discharged = count);
+            count_refusal("discharged", bad, |document, count| {
+                document.discharged = count
+            });
         }
     }
 
