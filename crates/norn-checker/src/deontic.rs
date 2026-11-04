@@ -384,7 +384,7 @@ fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
         })
 }
 
-/// Customer-authored declarations in the existing EntityIR extension map.
+/// Customer-authored declarations in the existing `EntityIR` extension map.
 pub const NORMATIVE_SLOT: &str = "norn.normative/1.0.0";
 /// One whole-admission query ceiling; unknown always refuses admission.
 const ADMISSION_CALLS: usize = 4096;
@@ -417,6 +417,10 @@ fn admission_order(
         .chain(artifacts.iter().map(|a| (a, false))) {
         let crate::entity_artifacts::Decoded::Root(root) = crate::entity_artifacts::decode_v2(artifact) else { continue; };
         let norn_ir::EntityRoot::V2(root) = *root else { continue; };
+        if root.extensions.as_ref().is_some_and(|e| e.keys().any(|key|
+            key.starts_with("norn.normative/") && key != NORMATIVE_SLOT)) {
+            return Err("unsupported normative extension version".into());
+        }
         let Some(value) = root.extensions.as_ref().and_then(|e| e.get(NORMATIVE_SLOT)) else { continue; };
         let declared: Vec<DeonticRule> = serde_json::from_value(serde_json::to_value(value)
             .map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
@@ -428,6 +432,9 @@ fn admission_order(
             if rule.source.artifact_id != artifact.artifact_id || rule.source.pointer != pointer
  {
                 return Err("normative source/subject does not identify its containing artifact".into());
+            }
+            if rule.law.scope.object_types != [rule.law.subject.clone()] {
+                return Err("normative scope must name exactly its grounded subject".into());
             }
             let derived = admission_schema(&rule.law.subject, artifacts, base, artifact)?;
             if schema.as_ref().is_some_and(|prior| prior != &derived) {
