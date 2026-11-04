@@ -812,8 +812,8 @@ else
 fi
 
 run_gate full integer-negation-kani \
-  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
+  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --edition 2024 --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
   command env RUSTUP_HOME=target/verification-tools/rustup \
     KANI_HOME=target/verification-tools/kani-home \
-    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    kani --edition 2024 --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
     verification/implementation-v1/rational_neg_kani.rs

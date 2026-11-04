@@ -1,4 +1,4 @@
 {
-  "order": 102,
+  "order": 99,
   "value": "crates/norn-checker/tests/entity_lowering.rs"
 }

@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "crates/norn-checker/src/exact_rational.rs",
+    "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --edition 2024 --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs",
+    "selectors": {
+      "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.proof.entry22548b19811fdb08b4f9e4c2f4170819caf44e9cf01c387dec0b2c6c141c379d.selectors"
+    }
+  }
+}

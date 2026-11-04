@@ -107,6 +107,31 @@ class EnrollmentTests(unittest.TestCase):
                     with self.assertRaisesRegex(module.InvalidCoverage, "preparation actions and inputs must match the approved contract"):
                         module.validate_workflow_integrity([], formal_path=path)
 
+    def test_implementation_kani_evidence_requires_proof_and_production_predicate(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
+        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
+        for mutation in ("no-proof", "no-predicate", "not-kani", "checks-disabled", "not-annotated"):
+            with self.subTest(mutation=mutation):
+                claim = copy.deepcopy(original)
+                evidence = claim["evidence"]["proof"]
+                if mutation == "no-proof":
+                    evidence.pop(0)
+                elif mutation == "no-predicate":
+                    evidence.pop(1)
+                elif mutation == "not-kani":
+                    evidence[0]["command"] = "true"
+                elif mutation == "checks-disabled":
+                    evidence[0]["command"] += " --no-unwinding-checks"
+                else:
+                    evidence[0]["artifact"] = "crates/norn-checker/src/exact_rational.rs"
+                    evidence[0]["selectors"] = ["harness:checked_neg"]
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+
     def test_plan_workflow_contract_is_exact(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
