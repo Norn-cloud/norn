@@ -29,7 +29,7 @@ pub struct Snapshot {
     pub fields: BTreeMap<String, PropertyType>,
     /// Every bounded valuation, including states a governing law may refuse.
     pub nodes: Vec<Row>,
-    /// Applicable governing laws, retaining artifact identities and complete LawIR.
+    /// Applicable governing laws, retaining artifact identities and complete `LawIR`.
     pub laws: Vec<(String, LawIR)>,
 }
 /// Fresh source identity and exact finite inputs, never checked evidence.
@@ -127,52 +127,10 @@ fn freeze(
             }
             continue;
         }
-        let literals = bounds
-            .frozen
-            .get(property.id.as_str())
-            .ok_or("missing explicit frozen scalar domain")?;
-        let count = rows
-            .len()
-            .saturating_mul(literals.len())
-            .saturating_mul(machine.states.len());
-        require(
-            !literals.is_empty() && count <= 4096,
-            "empty or excessive frozen context domain (4096 nodes)",
-        )?;
-        require(
-            count.saturating_mul(row_bytes) <= 4_194_304,
-            "finite snapshot byte budget exceeded",
-        )?;
-        let values = literals
-            .iter()
-            .map(|literal| RuntimeValue::from_json_text(literal).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        for value in &values {
-            property
-                .check_runtime_value(value)
-                .map_err(|error| format!("{error:?}"))?;
-            require(
-                property.canonical_runtime_value(value) == *value,
-                "frozen scalar requires storage materialization",
-            )?;
-        }
-        let mut expanded = Vec::new();
-        for row in &rows {
-            for value in &values {
-                let mut next = row.clone();
-                next.insert(property.id.as_str().to_owned(), value.clone());
-                expanded.push(next);
-            }
-        }
-        rows = expanded;
+        rows = extend_rows(rows, property,
+            bounds.frozen.get(property.id.as_str()).ok_or("missing explicit frozen scalar domain")?,
+            machine.states.len(), row_bytes)?;
     }
-    require(
-        bounds
-            .frozen
-            .keys()
-            .all(|name| name != &bounds.property && object.property(name).is_some()),
-        "extra frozen scalar domain",
-    )?;
     let mut nodes = Vec::new();
     for row in rows {
         for state in &machine.states {
@@ -189,6 +147,21 @@ fn freeze(
         laws: Vec::new(),
     })
 }
+
+fn extend_rows(rows: Vec<Row>, property: &crate::EffectiveProperty, literals: &[String], states: usize, row_bytes: usize) -> Result<Vec<Row>, String> {
+    let count=rows.len().saturating_mul(literals.len()).saturating_mul(states);
+    require(!literals.is_empty() && count<=4096,"empty or excessive frozen context domain (4096 nodes)")?;
+    require(count.saturating_mul(row_bytes)<=4_194_304,"finite snapshot byte budget exceeded")?;
+    let values=literals.iter().map(|literal|RuntimeValue::from_json_text(literal).map_err(|error|error.to_string())).collect::<Result<Vec<_>,_>>()?;
+    for value in &values {
+        property.check_runtime_value(value).map_err(|error|format!("{error:?}"))?;
+        require(property.canonical_runtime_value(value)==*value,"frozen scalar requires storage materialization")?;
+    }
+    let mut expanded=Vec::new();
+    for row in rows { for value in &values { let mut next=row.clone();next.insert(property.id.as_str().to_owned(),value.clone());expanded.push(next); } }
+    Ok(expanded)
+}
+
 impl ApprovedContract {
     /// Reconstruct admission and exact scalar inputs before any relation or solver runs.
     /// # Errors
@@ -233,6 +206,8 @@ impl ApprovedContract {
                 if let Some(reason) = super::unsupported_binding(object, &laws) {
                     return Err(reason);
                 }
+
+                require(bounds.frozen.keys().all(|name|name!=&bounds.property && object.property(name).is_some()), "extra frozen scalar domain")?;
                 let mut snapshot = freeze(object, bounds, domains.len())?;
                 snapshot.laws = laws
                     .iter()
