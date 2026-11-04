@@ -127,7 +127,8 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     }
   }
   for (const artifact of artifacts) {
-    if (artifact.kind !== "mapping") continue
+    // Interpretation documents carry no source maps; only source mappings feed concepts.
+    if (artifact.kind !== "mapping" || !("maps" in artifact.payload)) continue
     const system = systemName(sourceSystem.get(artifact.payload.source.schemaId) ?? artifact.payload.source.schemaId)
     const targets = new Set<string>()
     for (const map of artifact.payload.maps) {

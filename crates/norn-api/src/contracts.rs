@@ -83,6 +83,11 @@ impl Modify for ContractSchemas {
                 "NornIr",
             ))
             .chain(project_schemars_components(
+                norn_ir::metric_definition_schema(),
+                "NornIrMetricDefinition",
+                "NornIr",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::data_quality_finding_schema(),
                 "NornIrDataQualityFinding",
                 "NornIr",

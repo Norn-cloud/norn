@@ -4463,6 +4463,60 @@
         },
         "additionalProperties": false
       },
+      "NornIrConversionCalculation": {
+        "type": "string",
+        "description": "Conversion outputs.",
+        "enum": [
+          "conversions",
+          "conversion_rate"
+        ],
+        "x-enumDescriptions": [
+          "Count converted entities.",
+          "Converted entities divided by base entities."
+        ]
+      },
+      "NornIrConversionTypeParams": {
+        "type": "object",
+        "description": "MetricFlow cohort conversion parameters.",
+        "required": [
+          "base_metric",
+          "conversion_metric",
+          "entity",
+          "window",
+          "calculation"
+        ],
+        "properties": {
+          "base_metric": {
+            "type": "string",
+            "description": "Base population metric."
+          },
+          "calculation": {
+            "type": "string",
+            "description": "Conversion count or rate.",
+            "enum": [
+              "conversions",
+              "conversion_rate"
+            ],
+            "x-enumDescriptions": [
+              "Count converted entities.",
+              "Converted entities divided by base entities."
+            ]
+          },
+          "conversion_metric": {
+            "type": "string",
+            "description": "Converted population metric."
+          },
+          "entity": {
+            "type": "string",
+            "description": "Join entity."
+          },
+          "window": {
+            "type": "string",
+            "description": "Allowed conversion interval."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrCorrespondenceRelation": {
         "type": "string",
         "description": "How a source term relates to its target terms.",
@@ -4499,6 +4553,42 @@
           ";",
           "\t"
         ]
+      },
+      "NornIrCumulativeTypeParams": {
+        "type": "object",
+        "description": "MetricFlow cumulative window parameters.",
+        "required": [
+          "metric"
+        ],
+        "properties": {
+          "grain_to_date": {
+            "type": "string",
+            "description": "Calendar grain to date.",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "x-enumDescriptions": [
+              "Day.",
+              "Week.",
+              "Month.",
+              "Quarter.",
+              "Year."
+            ]
+          },
+          "metric": {
+            "type": "string",
+            "description": "Underlying metric."
+          },
+          "window": {
+            "type": "string",
+            "description": "Rolling window, e.g. `7 days`."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrCurrencyConversion": {
         "type": "object",
@@ -10580,6 +10670,51 @@
         ],
         "description": "Algebraic contract for re-aggregation."
       },
+      "NornIrMetricAggregationParams": {
+        "type": "object",
+        "description": "Aggregate parameters use MetricFlow field names.",
+        "required": [
+          "semantic_model",
+          "agg",
+          "agg_time_dimension"
+        ],
+        "properties": {
+          "agg": {
+            "type": "string",
+            "description": "Aggregate operator.",
+            "enum": [
+              "sum",
+              "count",
+              "min",
+              "max",
+              "average",
+              "count_distinct"
+            ],
+            "x-enumDescriptions": [
+              "Exact total.",
+              "Count objects or non-null property values.",
+              "Minimum value.",
+              "Maximum value.",
+              "Arithmetic mean.",
+              "Count distinct property values."
+            ]
+          },
+          "agg_time_dimension": {
+            "type": "string",
+            "description": "Generated scalar field name; directional ontology paths bind in `x-norn`."
+          },
+          "non_additive_dimension": {
+            "$ref": "#/components/schemas/NornIrNonAdditiveDimension",
+            "description": "Snapshot dimension and series groupings."
+          },
+          "semantic_model": {
+            "type": "string",
+            "description": "Ontology-bound semantic model.",
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9]*$"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMetricAuthorization": {
         "type": "object",
         "description": "Authorization remains a runtime boundary; checker admission never grants access.",
@@ -10620,6 +10755,55 @@
         },
         "additionalProperties": false
       },
+      "NornIrMetricDefinition": {
+        "type": "object",
+        "title": "MetricDefinition",
+        "description": "A MetricFlow definition carried by the OSI DBT extension.\nNorn-specific policy is isolated in `x-norn`.",
+        "required": [
+          "name",
+          "label",
+          "type",
+          "type_params",
+          "x-norn"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Human-readable MetricFlow label."
+          },
+          "name": {
+            "type": "string",
+            "description": "Stable metric identifier."
+          },
+          "type": {
+            "type": "string",
+            "description": "MetricFlow metric type.",
+            "enum": [
+              "simple",
+              "ratio",
+              "cumulative",
+              "derived",
+              "conversion"
+            ],
+            "x-enumDescriptions": [
+              "Aggregate a measure.",
+              "Divide two bucket metrics.",
+              "Accumulate a metric over a window.",
+              "Expression over named input metrics.",
+              "Cohort conversion calculation."
+            ]
+          },
+          "type_params": {
+            "$ref": "#/components/schemas/NornIrMetricTypeParams",
+            "description": "Closure-free MetricFlow calculation parameters."
+          },
+          "x-norn": {
+            "$ref": "#/components/schemas/NornIrMetricNorn",
+            "description": "Policies which do not belong to OSI or MetricFlow."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMetricFilter": {
         "type": "object",
         "description": "A predicate over a resolved property; numeric values retain exact decimals.",
@@ -10656,6 +10840,24 @@
           "value": {
             "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMetricInput": {
+        "type": "object",
+        "description": "Named metric input in a derived calculation.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "Expression alias."
+          },
+          "name": {
+            "type": "string",
+            "description": "Metric name."
           }
         },
         "additionalProperties": false
@@ -10797,6 +10999,62 @@
         },
         "additionalProperties": false
       },
+      "NornIrMetricType": {
+        "type": "string",
+        "description": "MetricFlow's five metric types; conversion means cohort conversion, not FX.",
+        "enum": [
+          "simple",
+          "ratio",
+          "cumulative",
+          "derived",
+          "conversion"
+        ],
+        "x-enumDescriptions": [
+          "Aggregate a measure.",
+          "Divide two bucket metrics.",
+          "Accumulate a metric over a window.",
+          "Expression over named input metrics.",
+          "Cohort conversion calculation."
+        ]
+      },
+      "NornIrMetricTypeParams": {
+        "type": "object",
+        "description": "MetricFlow calculation parameters. The checker enforces the fields for each type.",
+        "properties": {
+          "conversion_type_params": {
+            "$ref": "#/components/schemas/NornIrConversionTypeParams",
+            "description": "Conversion parameters."
+          },
+          "cumulative_type_params": {
+            "$ref": "#/components/schemas/NornIrCumulativeTypeParams",
+            "description": "Cumulative parameters."
+          },
+          "denominator": {
+            "type": "string",
+            "description": "Denominator metric."
+          },
+          "expr": {
+            "type": "string",
+            "description": "Stored property for a simple metric, or derived expression."
+          },
+          "metric_aggregation_params": {
+            "$ref": "#/components/schemas/NornIrMetricAggregationParams",
+            "description": "Modern MetricFlow aggregate specification."
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMetricInput"
+            },
+            "description": "Derived metric inputs."
+          },
+          "numerator": {
+            "type": "string",
+            "description": "Numerator metric."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrMultiplicity": {
         "type": "string",
         "description": "How many objects one end of a link may relate to (Gel `single`/`multi`).",
@@ -10932,6 +11190,41 @@
           "field": {
             "type": "string",
             "description": "The parent's field holding the rows (a Frappe `Table` field)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrNonAdditiveDimension": {
+        "type": "object",
+        "description": "MetricFlow snapshot metadata. Admission does not promise snapshot evaluation.",
+        "required": [
+          "name",
+          "window_choice"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Time dimension."
+          },
+          "window_choice": {
+            "type": "string",
+            "description": "Choose the earliest/latest timestamp, rather than a min/max amount.",
+            "enum": [
+              "min",
+              "max"
+            ],
+            "x-enumDescriptions": [
+              "Earliest timestamp.",
+              "Latest timestamp."
+            ]
+          },
+          "window_groupings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Snapshot series keys.",
+            "default": []
           }
         },
         "additionalProperties": false
@@ -19060,6 +19353,18 @@
           "ready",
           "error",
           "preview"
+        ]
+      },
+      "NornIrWindowChoice": {
+        "type": "string",
+        "description": "MetricFlow timestamp selection.",
+        "enum": [
+          "min",
+          "max"
+        ],
+        "x-enumDescriptions": [
+          "Earliest timestamp.",
+          "Latest timestamp."
         ]
       },
       "NornIrWriteChange": {
