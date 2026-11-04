@@ -60,6 +60,7 @@ pub mod source_provenance;
 pub mod store;
 pub mod system;
 mod write;
+pub mod transparency;
 
 pub use error::CellError;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
