@@ -65,7 +65,7 @@ impl AdmissionCache {
     pub fn new(tool_sha256: &[u8; 32], policy: &str, assumptions: &str) -> Self {
         Self {
             profile: format!(
-                "norn.incremental-structural/2:{tool_sha256:?}:{policy:?}:{assumptions:?}"
+                "norn.incremental-structural/3:{tool_sha256:?}:{policy:?}:{assumptions:?}"
             ),
             local: BTreeMap::new(),
             global: None,
@@ -81,7 +81,7 @@ impl AdmissionCache {
         artifacts: &[ArtifactEnvelope],
         context: &EntityArtifactSetContext<'_>,
     ) -> Admission {
-        let Ok(digest) = self.global_digest(artifacts, context) else {
+        let Ok((digest, context_digest)) = self.global_digest(artifacts, context) else {
             self.local.clear();
             self.global = None;
             self.jobs.clear();
@@ -116,7 +116,7 @@ impl AdmissionCache {
             let key = admission_artifact_digest(artifact).and_then(|hash| {
                 exact_commitment(
                     b"local-admission",
-                    &[self.profile.as_bytes(), hash.as_bytes()],
+                    &[context_digest.as_bytes(), hash.as_bytes()],
                 )
             });
             let old = key.as_ref().ok().and_then(|key| self.local.get(key));
@@ -162,7 +162,7 @@ impl AdmissionCache {
         &self,
         artifacts: &[ArtifactEnvelope],
         context: &EntityArtifactSetContext<'_>,
-    ) -> Result<String, ChallengeError> {
+    ) -> Result<(String, String), ChallengeError> {
         // Preserve layer membership and order: diagnostics depend on both. Duplicate
         // identities cannot collapse, nor can moving an artifact into the base.
         let hashes = |pool: &[ArtifactEnvelope]| {
@@ -170,16 +170,22 @@ impl AdmissionCache {
                 .map(admission_artifact_digest)
                 .collect::<Result<Vec<_>, _>>()
         };
-        let body = json!({
+        let identity = json!({
             "profile": self.profile,
-            "candidate": hashes(artifacts)?,
-            "base": hashes(context.base)?,
             "registry": context.registry,
             "tenant": context.tenant.map(|t| (t.tenant_id, &t.namespace.0)),
         });
+        let identity_bytes = norn_canonical::serialize_json_verbatim(&identity)
+            .map_err(|_error| ChallengeError::Closure)?;
+        let context_digest = exact_commitment(b"admission-context", &[&identity_bytes])?;
+        let body = json!({
+            "context": context_digest,
+            "candidate": hashes(artifacts)?,
+            "base": hashes(context.base)?,
+        });
         let bytes = norn_canonical::serialize_json_verbatim(&body)
             .map_err(|_error| ChallengeError::Closure)?;
-        exact_commitment(b"global-admission", &[&bytes])
+        Ok((exact_commitment(b"global-admission", &[&bytes])?, context_digest))
     }
 }
 
@@ -211,6 +217,65 @@ fn admission_artifact_digest(artifact: &ArtifactEnvelope) -> Result<String, Chal
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "fixed entity fixtures")]
+    fn context_changes_invalidate_local_evidence() {
+        let artifacts: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+                .expect("entities");
+        let registry = std::collections::BTreeSet::new();
+        let other_registry = [norn_ir::PropertyTypeName("other.Type".into())].into();
+        let namespace = norn_ir::ExtensionNamespace("first".into());
+        let other_namespace = norn_ir::ExtensionNamespace("second".into());
+        let original = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: Some(crate::TenantLayer {
+                tenant_id: "first",
+                namespace: &namespace,
+            }),
+        };
+        for changed in [
+            EntityArtifactSetContext {
+                tenant: Some(crate::TenantLayer {
+                    tenant_id: "second",
+                    namespace: &namespace,
+                }),
+                ..original
+            },
+            EntityArtifactSetContext {
+                tenant: Some(crate::TenantLayer {
+                    tenant_id: "first",
+                    namespace: &other_namespace,
+                }),
+                ..original
+            },
+            EntityArtifactSetContext {
+                registry: &other_registry,
+                ..original
+            },
+            EntityArtifactSetContext { tenant: None, ..original },
+        ] {
+            let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
+            let cold = cache.check(&artifacts, &original);
+            let warm = cache.check(&artifacts, &original);
+            assert!(warm.evidence.iter().any(|job| job.artifact_id.is_some()));
+            assert!(warm.evidence.iter().all(|job| matches!(
+                job.origin, EvidenceOrigin::ReusedFromDigest(_)
+            )));
+            let switched = cache.check(&artifacts, &changed);
+            assert!(switched.evidence.iter().any(|job| job.artifact_id.is_some()));
+            for (before, after) in cold.evidence.iter().zip(&switched.evidence) {
+                assert_ne!(before.closure_digest, after.closure_digest);
+                assert_eq!(after.origin, EvidenceOrigin::Rechecked);
+            }
+            assert_eq!(
+                crate::diagnostics_to_json(&switched.findings),
+                crate::diagnostics_to_json(&crate::check_artifact_set(&artifacts, &changed))
+            );
+        }
+    }
 
     #[test]
     #[allow(
