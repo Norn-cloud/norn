@@ -16,6 +16,7 @@ proptest::proptest! {
         changes in proptest::collection::vec((0u8..7, 0u8..6, 0i64..100_000, 12u8..27, proptest::bool::ANY), 1..32)
     ) {
         let (base, plan, mut context) = fixture();
+        assert!(norn_checker::metric::compute::certificate::question(&plan).algebraic.iter().all(|result| *result == norn_checker::metric::compute::certificate::Algebraic::ProvedAlgebraic));
         let model = base.model().clone();
         drop(base);
         let directory = tempfile::tempdir().expect("test directory");
