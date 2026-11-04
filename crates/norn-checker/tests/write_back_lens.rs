@@ -51,6 +51,39 @@ fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
 }
 
 #[test]
+fn lawful_projection_round_trips_original_non_nfc_source_keys() {
+    let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [2, 3], [2, 3]]));
+    let mut raw = serde_json::to_value(mapping).expect("mapping JSON");
+    let sources = raw["extensions"][LENS_SLOT]["sources"]
+        .as_array_mut()
+        .expect("source records");
+    let key = "e\u{301}";
+    for source in sources {
+        let record = source.as_object_mut().expect("source record");
+        let complement = record.remove("other").expect("complement");
+        record.insert(key.into(), complement);
+    }
+    let mapping = serde_json::from_value(raw).expect("typed mapping");
+    assert!(check_mapping_local(&mapping).is_empty());
+    let lens = admit(&mapping).expect("checked").expect("declared");
+    for approved in [false, true] {
+        for complement in [false, true] {
+            let source = [("approved".into(), approved), (key.into(), complement)].into();
+            let view = lens.get(&source).expect("original source is in domain");
+            assert_eq!(view, approved);
+            assert_eq!(lens.put(&source, view).expect("GetPut"), &source);
+            for next_view in [false, true] {
+                let updated = lens.put(&source, next_view).expect("original key retained");
+                assert_eq!(updated.get(key), Some(&complement));
+                assert!(!updated.contains_key("\u{e9}"));
+                assert_eq!(lens.get(updated).expect("PutGet"), next_view);
+                assert_eq!(lens.put(updated, view).expect("round trip"), &source);
+            }
+        }
+    }
+}
+
+#[test]
 fn seeded_lossy_overwrite_refuses_live_mapping_admission() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [0, 1], [0, 1]]));
     let findings = check_mapping_local(&mapping);
