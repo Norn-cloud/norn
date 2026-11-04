@@ -1153,6 +1153,7 @@ mod tests {
             "NornGuaranteesDocument",
             "NornGuarantees",
         )
+        .into_iter()
         .map(|(name, schema)| (name, serde_json::to_value(schema).expect("component")))
         .collect();
         let validator = |name: &str| {
