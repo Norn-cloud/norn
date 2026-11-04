@@ -7,14 +7,17 @@ use std::future::Future;
 /// In-memory transport implemented by the host's separately loaded official
 /// cvc5 WASM module. SAT must include a model; request get-model only after SAT.
 pub trait WasmModule: Send {
-    /// Execute the complete buffered SMTLib query. No subprocess transport.
+    /// Execute the complete buffered `SMTLib` query. No subprocess transport.
+    ///
+    /// # Errors
+    /// Returns the module or transport failure without treating it as UNSAT.
     fn solve(
         &mut self,
         input: Vec<u8>,
     ) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send;
 }
 
-/// SymCC's Solver adapter. Uses only upstream-generated SMTLib.
+/// `SymCC`'s Solver adapter. Uses only upstream-generated `SMTLib`.
 #[derive(Debug)]
 pub struct MemorySolver<M> {
     input: Vec<u8>,
@@ -56,6 +59,7 @@ impl<M: WasmModule> Solver for MemorySolver<M> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, clippy::panic, reason = "fixture assertions and deliberately synchronous test doubles")]
 mod tests {
     use super::*;
     use norn_authz::{
