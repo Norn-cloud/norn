@@ -202,6 +202,21 @@ pub const CRATES: &[CrateRule] = &[
     rule("zen-types", Ring::Vendored, &[]),
 ];
 
+/// Dependency policy admitted before a crate's functional export arrives.
+/// Unlike [`CRATES`], these rows do not require workspace membership.
+/// Every present workspace crate still requires boundary files.
+pub const PREDECLARED_CRATES: &[CrateRule] = &[rule(
+    "norn-engine",
+    Ring::One,
+    &[
+        "norn-kernel",
+        "norn-checker",
+        "norn-projections",
+        "norn-cell",
+        "norn-ir",
+    ],
+)];
+
 /// Optional normal dependencies that belong exclusively to norn-cell's
 /// native host adapters, enabled by its `native` feature.
 const NORN_CELL_NATIVE_DEPENDENCIES: &[&str] = &["rusqlite", "object_store", "tokio", "tempfile"];
@@ -848,7 +863,10 @@ fn violation(rule: &'static str, message: String) -> Violation {
 /// Looks up a crate's rule by package name.
 #[must_use]
 pub fn crate_rule(name: &str) -> Option<&'static CrateRule> {
-    CRATES.iter().find(|rule| rule.name == name)
+    CRATES
+        .iter()
+        .chain(PREDECLARED_CRATES)
+        .find(|rule| rule.name == name)
 }
 
 #[expect(
@@ -929,7 +947,10 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
             }
             // Vendored zen crates are workspace members but keep the zen
             // source/profile rules rather than the `norn-*` edge table.
-            if member_names.contains(dep_name) && !is_zen_crate(dep_name) {
+            if (member_names.contains(dep_name)
+                || PREDECLARED_CRATES.iter().any(|rule| rule.name == dep_name))
+                && !is_zen_crate(dep_name)
+            {
                 check_norn_edge(rule, dep, &mut seen_edges, &mut out);
             } else {
                 check_third_party(
