@@ -61,14 +61,16 @@ pub fn suggest_conservation(
     training_records: usize,
     anchors: &[Option<Rational>],
 ) -> Result<ConservationSuggestion, Failure> {
-    if coordinates.len() > 64 || observations.len() > 256
+    if coordinates.len() > 64
+        || observations.len() > 256
         || coordinates.iter().any(|c| c.scope.len() > 64)
     {
         return Err(Failure::Malformed);
     }
     let identity_bytes = coordinates.iter().fold(window.len(), |size, c| {
         c.scope.iter().fold(
-            size.saturating_add(c.id.len()).saturating_add(c.unit.code.len()),
+            size.saturating_add(c.id.len())
+                .saturating_add(c.unit.code.len()),
             |size, (k, v)| size.saturating_add(k.len()).saturating_add(v.len()),
         )
     });
@@ -115,7 +117,10 @@ pub fn suggest_conservation(
     let candidate: Vec<_> = coordinates
         .iter()
         .zip(&weights)
-        .map(|(c, weight)| Coordinate { weight: *weight, ..c.clone() })
+        .map(|(c, weight)| Coordinate {
+            weight: *weight,
+            ..c.clone()
+        })
         .collect();
     let mut result = ConservationSuggestion {
         status: SuggestionStatus::SuggestedNotAdmitted,
@@ -138,31 +143,51 @@ pub fn suggest_conservation(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "exact mining fixtures")]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "exact mining fixtures"
+)]
 mod tests {
     use super::*;
     use norn_ir::{UnitRef, UnitSystem};
 
-    fn q(n: i64, d: i64) -> Rational { Rational::new(n, d).unwrap() }
+    fn q(n: i64, d: i64) -> Rational {
+        Rational::new(n, d).unwrap()
+    }
     fn fixture(count: usize) -> (Vec<Coordinate>, Vec<ObservedFlow>) {
-        let coordinates = ["input", "output"].into_iter().map(|id| Coordinate {
-            id: id.into(), scope: [("book".into(), "primary".into())].into(),
-            unit: UnitRef { system: UnitSystem::Ucum, code: "g".into() },
-            weight: q(1, 1),
-        }).collect();
-        let observations = (0..count).map(|i| ObservedFlow {
-            record: format!("flow:{i}@1"), delta: vec![q(-2, 1), q(1, 1)],
-        }).collect();
+        let coordinates = ["input", "output"]
+            .into_iter()
+            .map(|id| Coordinate {
+                id: id.into(),
+                scope: [("book".into(), "primary".into())].into(),
+                unit: UnitRef {
+                    system: UnitSystem::Ucum,
+                    code: "g".into(),
+                },
+                weight: q(1, 1),
+            })
+            .collect();
+        let observations = (0..count)
+            .map(|i| ObservedFlow {
+                record: format!("flow:{i}@1"),
+                delta: vec![q(-2, 1), q(1, 1)],
+            })
+            .collect();
         (coordinates, observations)
     }
     #[test]
     fn true_candidate_is_only_suggested_with_full_evidence() {
         let (c, o) = fixture(4);
-        let result = suggest_conservation("revision:42", &c, &o, 2, &[None, Some(q(1, 1))]).unwrap();
+        let result =
+            suggest_conservation("revision:42", &c, &o, 2, &[None, Some(q(1, 1))]).unwrap();
         assert_eq!(result.status, SuggestionStatus::SuggestedNotAdmitted);
         assert_eq!(result.window, "revision:42");
         assert_eq!(result.coordinates[0].weight, q(1, 2));
-        assert_eq!(result.supporting_records, o.iter().map(|v| v.record.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            result.supporting_records,
+            o.iter().map(|v| v.record.clone()).collect::<Vec<_>>()
+        );
         assert!(result.counterexamples.is_empty());
         assert_eq!(c[0].weight, q(1, 1)); // Discovery cannot edit the input functional.
     }
@@ -170,11 +195,14 @@ mod tests {
     fn near_miss_retains_exact_counterexample() {
         let (c, mut o) = fixture(4);
         o[3].delta[1] = q(3, 2);
-        let result = suggest_conservation("revision:42", &c, &o, 2, &[None, Some(q(1, 1))]).unwrap();
+        let result =
+            suggest_conservation("revision:42", &c, &o, 2, &[None, Some(q(1, 1))]).unwrap();
         assert_eq!(result.supporting_records.len(), 3);
         assert_eq!(result.counterexamples.len(), 1);
         assert_eq!(result.counterexamples[0].0, o[3].record);
-        assert!(matches!(&result.counterexamples[0].1, Failure::Unbalanced { residual, .. } if *residual == q(1, 2)));
+        assert!(
+            matches!(&result.counterexamples[0].1, Failure::Unbalanced { residual, .. } if *residual == q(1, 2))
+        );
         assert_eq!(result.status, SuggestionStatus::SuggestedNotAdmitted);
     }
     #[test]
@@ -198,6 +226,9 @@ mod tests {
         let start = std::time::Instant::now();
         let result = suggest_conservation("r", &c, &o, 128, &[None, Some(q(1, 1))]).unwrap();
         assert_eq!(result.supporting_records.len(), 256);
-        eprintln!("MINE-CONS-1: 256 records x 2 coordinates; 128 training; {:?}; <=512 input coefficients", start.elapsed());
+        eprintln!(
+            "MINE-CONS-1: 256 records x 2 coordinates; 128 training; {:?}; <=512 input coefficients",
+            start.elapsed()
+        );
     }
 }
