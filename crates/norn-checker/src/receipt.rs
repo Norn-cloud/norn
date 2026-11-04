@@ -637,6 +637,22 @@ pub fn verify_admission_receipt_sources(
     )
 }
 
+/// Whether a stored receipt's findings equal a fresh check under the same
+/// checker. A receipt from another checker version may legitimately report
+/// different findings, so its digest stays format-checked only.
+pub(crate) fn attests_fresh_diagnostics(
+    stored: &str,
+    fresh: &CheckReceipt,
+) -> Result<bool, ReceiptError> {
+    let value: serde_json::Value = serde_json::from_str(stored)
+        .map_err(|error| invalid_receipt(format!("receipt JSON is invalid: {error}")))?;
+    let parsed = parse_stored_receipt(&value)?;
+    Ok(parsed.checker_version != fresh.checker_version
+        || (parsed.diagnostics_count == fresh.diagnostics.count
+            && parsed.diagnostics_errors == fresh.diagnostics.errors
+            && parsed.diagnostics_sha256 == fresh.diagnostics.sha256))
+}
+
 fn verify_receipt(
     stored: &str,
     expected_sha256: &str,
@@ -1348,6 +1364,7 @@ struct StoredReceipt {
     flow_source_map: Option<FlowSourceMap>,
     limit_profile: StoredProfileRef,
     type_env: Option<StoredProfileRef>,
+    diagnostics_count: u64,
     diagnostics_errors: u64,
     diagnostics_sha256: String,
     admitted: bool,
@@ -1457,6 +1474,7 @@ fn parse_stored_receipt(value: &serde_json::Value) -> Result<StoredReceipt, Rece
         flow_source_map,
         limit_profile,
         type_env,
+        diagnostics_count,
         diagnostics_errors,
         diagnostics_sha256,
         admitted: required_bool(object, "admitted", "receipt")?,

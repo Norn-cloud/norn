@@ -1246,7 +1246,7 @@ fn layers_exact_source_bytes_are_retained_separately_from_receipt_semantics() {
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
-    fn layers_forged_reordered_missing_receipts_never_construct_authority(index in 0usize..3, mutation in 0u8..5) {
+    fn layers_forged_reordered_missing_receipts_never_construct_authority(index in 0usize..3, mutation in 0u8..7) {
         let mut layers = retained_fixture();
         match mutation {
             0 => layers[index].receipt.clear(),
@@ -1260,6 +1260,18 @@ proptest::proptest! {
                 layers[index].receipt = String::from_utf8(bytes).expect("UTF-8");
             }
             4 => { layers.remove(0); }
+            5 | 6 => {
+                let mut receipt: Value = serde_json::from_str(&layers[index].receipt).expect("receipt");
+                if mutation == 5 {
+                    receipt["diagnostics"]["sha256"] = json!("0".repeat(64));
+                } else {
+                    let count = receipt["diagnostics"]["count"].as_u64().expect("count");
+                    receipt["diagnostics"]["count"] = json!(count.saturating_add(1));
+                }
+                let bytes = norn_canonical::canonical_json_of(&receipt).expect("canonical");
+                layers[index].receipt_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+                layers[index].receipt = String::from_utf8(bytes).expect("UTF-8");
+            }
             _ => unreachable!(),
         }
         proptest::prop_assert!(verify_layers(&layers).is_err());
