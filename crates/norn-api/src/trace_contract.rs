@@ -56,9 +56,9 @@ pub enum NornContributionSource {
         provenance: Box<NornInstanceSourceProvenance>,
     },
     /// Source disclosure was denied.
-    Restricted,
+    Restricted {},
     /// No retained source bundle exists.
-    Unavailable,
+    Unavailable {},
 }
 /// Exact Core 07 source evidence; no physical storage locators.
 #[derive(Debug, ToSchema)]

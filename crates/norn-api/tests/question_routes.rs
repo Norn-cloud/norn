@@ -612,6 +612,23 @@ fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> Str
             .map(|e| e.to_string())
             .collect();
         assert!(errors.is_empty(), "{name}: {errors:?}");
+        if root == "NornNumericTrace" {
+            assert!(document["contributions"][0]["source"].is_object());
+            let mut extended = document.clone();
+            extended["contributions"][0]["source"]["undisclosed"] = serde_json::json!(true);
+            assert!(
+                !validator.is_valid(&extended),
+                "{name}: source must be closed"
+            );
+            if document["contributions"][0]["source"]["status"] != "resolved" {
+                let mut leaked = document.clone();
+                leaked["contributions"][0]["source"]["provenance"] = serde_json::json!({});
+                assert!(
+                    !validator.is_valid(&leaked),
+                    "{name}: provenance must be absent"
+                );
+            }
+        }
         writeln!(
             &mut typescript,
             "export const {name} = {} satisfies Schemas[\"{root}\"];",
