@@ -1,10 +1,12 @@
-//! PATH-MAP-1 (#712): #574's schema-level catches and its valid controls,
+//! PATH-MAP-1 (#712): #574's four schema-level catches and its valid controls,
 //! reproduced from declarations alone. Both catalogs are EntityIR with
 //! PATH-EQ-1 equations; mappings are typed `PathMapping` declarations.
 
 use std::collections::BTreeSet;
 
-use norn_checker::consistency::{ChaseBudget, PATH_MAPPING_INVALID, admit_path_mapping, codes};
+use norn_checker::consistency::{
+    ChaseBudget, PATH_MAPPING_INVALID, admit_path_mapping, codes, compose_path_mappings,
+};
 use norn_ir::ArtifactEnvelope;
 use norn_ir::entity::PathMapping;
 use serde_json::{Value, json};
@@ -173,6 +175,28 @@ fn a_non_functional_image_breaks_the_target_link_contract() {
         broken.contains("target:t.Delivery.provider:functional"),
         "{broken:?}"
     );
+}
+
+#[test]
+fn a_bad_component_breaks_its_composite_and_identity_composes() {
+    let identity = mapping("identity", "t", "s", &[]);
+    let middle = catalog("s");
+    let compose = |then: &PathMapping| {
+        compose_path_mappings(&identity, then, &middle, &BTreeSet::new()).unwrap()
+    };
+    let good = compose(&mapping("endo", "s", "s", &[]));
+    assert_eq!(good.links, identity.links);
+    assert_eq!(admit(&good), Ok(12));
+    let bad = compose(&mapping("swap", "s", "s", SWAPPED));
+    assert!(unpreserved(&bad).contains("t.Delivery.entity:path-equation:provider"));
+    let both: &[(&str, &[&str])] = &[("provider", &["provider"]), ("provider", &["receiver"])];
+    let refused = compose_path_mappings(
+        &identity,
+        &mapping("both", "s", "s", both),
+        &middle,
+        &BTreeSet::new(),
+    );
+    assert_eq!(refused.unwrap_err()[0].code.as_str(), PATH_MAPPING_INVALID);
 }
 
 #[test]

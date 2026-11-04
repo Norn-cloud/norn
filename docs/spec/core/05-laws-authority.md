@@ -189,14 +189,15 @@ functional EGDs for every reachable to-one link, source totality TGDs for
 required links, and one TGD per object and link image into an `Exchange`, then
 runs the existing schema-compatibility search. Ill-typed images and overlapping
 catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
-refuses as `consistency.schema.unpreserved_constraint`.
+refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
+substitutes images and refuses components with two images of one link.
 Admission is bounded-no-counterexample, never exhaustive. A witness is
 attributed to the first EGD its mapped image breaks, so equations sharing a
 witness are named once; the mapping still refuses. Target totality and
 source endpoint typing are not lowered: the first leaves existence unchecked,
 the second can only add spurious witnesses. Named scenarios reproduce #574:
-swapped roles, dropped join and non-functional image refuse; identity and
-equivalent path admit. Composition is the next unit.
+swapped roles, dropped join, non-functional image and bad composite refuse;
+identity, equivalent path and identity composites admit.
 
 ### Declared-only normative resolution (D1, #767)
 
