@@ -995,7 +995,7 @@ fn obs_link_extension_defaults_seal_and_redeliver_but_changed_defaults_require_m
     let (types, cell, claim) = claim_fixture();
     let extension: norn_ir::ObjectTypeExtension = serde_json::from_value(serde_json::json!({
         "namespace":"demo", "target":"norn.ObservedLinkClaim",
-        "properties":[{"id":"demo__note", "type":{"kind":"string"}, "default":"reviewed"}]
+        "properties":[{"id":"demo__note", "type":{"kind":"text"}, "default":"reviewed"}]
     }))
     .expect("extension");
     let diagnostics = norn_checker::check_entity_model(
