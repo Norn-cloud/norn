@@ -57,14 +57,24 @@ pub fn get_defs<E: SqlEngine>(
     query: &DefinitionsQuery,
     actor: Option<&str>,
 ) -> Result<DefsResponse, Refusal> {
-    let _epoch = host.definition_read()?;
-    host.scope()
-        .admit(query.org_id.as_deref(), query.environment_id.as_deref())?;
-    host.authorizer.authorize(&crate::authz::AccessRequest {
+    let epoch = host.definition_read();
+    let authorized = host.authorizer.authorize(&crate::authz::AccessRequest {
         scope: host.scope(),
         actor,
         operation: crate::authz::Operation::ReadDefinitions,
-    })?;
+    });
+    let scoped = host
+        .scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
+    if authorized.is_err() || scoped.is_err() {
+        return Err(Refusal::new(
+            StatusCode::FORBIDDEN,
+            crate::refusal::codes::AUTHZ_DENIED,
+            "the read request is not authorized",
+            "access to the requested read is denied",
+        ));
+    }
+    let _epoch = epoch?;
     let installed = host
         .cell()?
         .store()
@@ -257,15 +267,19 @@ mod tests {
         let mut bad = query();
         bad.org_id = Some("foreign".into());
         let refused = get_defs(&host, &bad, actor).unwrap_err();
-        assert_eq!(refused.code, "scope.denied");
+        assert_eq!(refused.code, "authz.denied");
         bad.org_id = None;
         let refused = get_defs(&host, &bad, actor).unwrap_err();
-        assert_eq!(refused.code, "scope.missing");
+        assert_eq!(refused.code, "authz.denied");
     }
     #[test]
     fn denied_read_refusals_do_not_disclose_the_physical_scope() {
         for host in [host(), host().with_authorizer(Fixture)] {
             for actor in [None, Some("clerk@demo"), Some("reviewer@demo")] {
+                let mut matching = query();
+                matching.version = Some(999);
+                let baseline = get_defs(&host, &matching, actor).unwrap_err();
+                let expected = serde_json::to_vec(&baseline).unwrap();
                 for org in [None, Some("foreign"), Some("org_demo")] {
                     for environment in [None, Some("foreign"), Some("dev")] {
                         let request = DefinitionsQuery {
@@ -274,6 +288,10 @@ mod tests {
                             version: Some(999),
                         };
                         let refusal = get_defs(&host, &request, actor).unwrap_err();
+                        if baseline.status == 403 {
+                            assert_eq!(refusal.status, baseline.status);
+                            assert_eq!(serde_json::to_vec(&refusal).unwrap(), expected);
+                        }
                         let wire = serde_json::to_string(&refusal).unwrap();
                         assert!(!wire.contains(&host.scope().org_id), "{wire}");
                         assert!(!wire.contains(&host.scope().environment_id), "{wire}");
@@ -281,6 +299,31 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn authorization_runs_for_matching_foreign_and_missing_scopes() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct Counting(Arc<AtomicUsize>);
+        impl Authorizer for Counting {
+            fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                crate::authz::DenyAll.authorize(request)
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let host = host().with_authorizer(Counting(Arc::clone(&calls)));
+        for org in [Some("org_demo"), Some("foreign"), None] {
+            let mut request = query();
+            request.org_id = org.map(str::to_owned);
+            assert_eq!(
+                get_defs(&host, &request, None).unwrap_err().code,
+                "authz.denied"
+            );
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
     }
     #[test]
     fn admitted_document_and_missing_version_preserve_cell_state() {
