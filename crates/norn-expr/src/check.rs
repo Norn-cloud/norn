@@ -309,7 +309,10 @@ impl FuelCertificate {
         expected: &Type,
         limits: &ResourceLimitProfile,
     ) -> Result<CheckedExpression, String> {
-        if self.semantics.len() != 64 || self.statement.len() != 64 || self.semantics != fuel_semantics()? {
+        if self.semantics.len() != 64
+            || self.statement.len() != 64
+            || self.semantics != fuel_semantics()?
+        {
             return Err("stale expression fuel semantics".into());
         }
         let (checked, reconstructed) = certify_expression(expression, env, expected, limits)?;
@@ -336,8 +339,9 @@ pub fn certify_expression(
 ) -> Result<(CheckedExpression, FuelCertificate), String> {
     let checked = check_expression_with_sources_and_root_bounds(
         expression, env, expected, limits, None, true,
-    ).map(|(checked, _)| checked)
-        .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
+    )
+    .map(|(checked, _)| checked)
+    .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
     if checked.cost().units() == u64::MAX {
         return Err("unknown or overflowing expression cost".into());
     }
@@ -345,8 +349,12 @@ pub fn certify_expression(
         b"norn.expression-cost-statement/1\0",
         &(
             expression.source().as_bytes(),
-            norn_ir::canonical::serialize(&env.to_canonical_value()).map_err(|error| error.to_string())?,
-            norn_ir::canonical::serialize(&expected.to_canonical_value(crate::env::TypeEnvVersion::V2)).map_err(|error| error.to_string())?,
+            norn_ir::canonical::serialize(&env.to_canonical_value())
+                .map_err(|error| error.to_string())?,
+            norn_ir::canonical::serialize(
+                &expected.to_canonical_value(crate::env::TypeEnvVersion::V2),
+            )
+            .map_err(|error| error.to_string())?,
             limits,
         ),
     )
@@ -377,7 +385,9 @@ fn fuel_semantics() -> Result<String, String> {
                     include_str!("../../../vendor/zen/core/expression/src/vm/vm.rs"),
                     include_str!("../../../vendor/zen/core/expression/src/functions/internal.rs"),
                     include_str!("../../../vendor/zen/core/expression/src/functions/method.rs"),
-                    include_str!("../../../vendor/zen/core/expression/src/functions/date_method.rs"),
+                    include_str!(
+                        "../../../vendor/zen/core/expression/src/functions/date_method.rs"
+                    ),
                     include_str!("../../../vendor/zen/core/expression/src/functions/arguments.rs"),
                     include_str!("../../../vendor/zen/core/expression/src/functions/deprecated.rs"),
                     include_str!("../../../vendor/zen/core/expression/src/vm/helpers.rs"),
