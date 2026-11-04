@@ -47,7 +47,7 @@ fn measure_advance(members: usize, changed: bool) -> usize {
     let mut store = CellStore::from_engine(
         CountedEngine(
             NativeEngine::open_in_memory().expect("engine"),
-            counts.clone(),
+            Rc::clone(&counts),
         ),
         base.model().clone(),
     )
