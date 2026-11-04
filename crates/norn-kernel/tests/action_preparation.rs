@@ -278,8 +278,7 @@ fn described_decimal_action_input_prepares_exactly_and_rejects_unknown_constrain
         "required": ["amount"]
     });
     action.input_schema = serde_json::from_value(schema.clone()).unwrap();
-    let raw: JsonObject =
-        serde_json::from_value(json!({"amount": "9007199254740993.25"})).unwrap();
+    let raw: JsonObject = serde_json::from_value(json!({"amount": "9007199254740993.25"})).unwrap();
     let prepared = prepare_action_input::<Infallible>(&action, &raw).unwrap();
     assert_eq!(
         serde_json::to_string(prepared.effective_input()).unwrap(),
