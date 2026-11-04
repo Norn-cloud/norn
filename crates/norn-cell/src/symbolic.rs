@@ -59,29 +59,19 @@ impl<M: WasmModule> Solver for MemorySolver<M> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "fixture assertions and deliberately synchronous test doubles"
-)]
 mod tests {
     use super::*;
     use norn_authz::{
         ValidatedPolicySet,
         symbolic::{Analysis, Property, analyze_in_worker},
     };
-    use std::sync::Arc;
-    use std::task::{Poll, Wake, Waker};
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
+    use std::task::{Poll, Waker};
     fn ready<F: Future>(future: F) -> F::Output {
         let mut future = std::pin::pin!(future);
-        let waker = Waker::from(Arc::new(Noop));
+        let waker = Waker::noop();
         match future
             .as_mut()
-            .poll(&mut std::task::Context::from_waker(&waker))
+            .poll(&mut std::task::Context::from_waker(waker))
         {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("test double must complete synchronously"),
@@ -104,10 +94,10 @@ mod tests {
 
     struct Double(DecisionWithModel);
     impl WasmModule for Double {
-        async fn solve(&mut self, input: Vec<u8>) -> Result<DecisionWithModel, SolverError> {
+        fn solve(&mut self, input: Vec<u8>) -> impl Future<Output = Result<DecisionWithModel, SolverError>> + Send {
             let text = String::from_utf8(input).expect("SMTLib is UTF8");
             assert!(text.contains("(check-sat)"));
-            Ok(self.0.clone())
+            std::future::ready(Ok(self.0.clone()))
         }
     }
 
