@@ -9,12 +9,9 @@
 )]
 mod query_support;
 use norn_cell::compute::{
-    QueryContext,
     lineage::{ContributionSource, LineageDisclosure},
 };
 use norn_cell::{CellStore, MAIN_WORLD};
-use norn_ir::{ArtifactEnvelope, RuntimeValue as V};
-use norn_kernel::{LogicalTime, ObservationId, Observed, Provenance};
 use query_support::*;
 #[path = "support/query_lineage.rs"]
 mod lineage_support;
