@@ -336,6 +336,9 @@ pub fn compose_path_mappings(
             else {
                 return Err(refuse(&id, &format!("{current}.{step} has no image")));
             };
+            if !then.objects.contains_key(&next) {
+                return Err(refuse(&id, &format!("{next} is not mapped")));
+            }
             path.extend_from_slice(sub);
             current = next;
         }
