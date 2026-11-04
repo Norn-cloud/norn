@@ -663,7 +663,7 @@ const github={rest:{pulls:{get:async()=>({data:{head:{sha:'head'}}})},
 repos:{getCommit:async()=>({data:{commit:{tree:{sha:'tree'}}}}),listCommitStatusesForRef:()=>{},
 createCommitStatus:async row=>console.log(JSON.stringify(row))}},
 paginate:async()=>[{id:1,state:'success',creator:{login:'github-actions[bot]'},
-context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:'"+"a"*64+"'})}]};
+context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:'a'.repeat(64)})}]};
 (async()=>{
 """ + script + "\n})().catch(error=>{console.error(error);process.exit(1)});"
         result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10,
@@ -1826,7 +1826,9 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     const data=JSON.parse(outputs.payload);
     if(!payloads.has(id)){payloads.set(id,p);runs.unshift(makeRun(id));nextRun=Math.max(nextRun,id+1)}
     runs.find(r=>r.id===id).run_attempt=attempt;
-    const capture={id:id*10+attempt,name:'Capture immutable rights event '+outputs.kind,status:'completed',conclusion:'success'};
+    const possible=[p.comment.body,p.changes?.body?.from].some(body=>(body||'').includes('/ack-rights')||(body||'').includes('/revoke-rights'));
+    const capture={id:id*10+attempt,name:'Capture immutable rights event '+outputs.kind+' '+(possible?'possible':'none'),status:'completed',conclusion:'success',
+      steps:[{name:'Rights event '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'}]};
     const journal={id:id*10+attempt+1,name:'Rights ledger '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'};
     if(!jobs.has(id))jobs.set(id,new Map());
     jobs.get(id).set(attempt,[capture,journal]);
@@ -1880,7 +1882,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
       for(let id=10001;id<=20000;id++){
         runs.unshift(makeRun(id));
         jobs.set(id,new Map([[1,[
-          {name:'Capture immutable rights event pull',status:'completed',conclusion:'success'},
+          {name:'Capture immutable rights event pull none',status:'completed',conclusion:'success'},
           {name:'Rights ledger none comment '+id,status:'completed',conclusion:'success'}]]]));
       }
       nextRun=20001;paging=true;shifted=false;
@@ -1916,12 +1918,12 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
     await snapshot(prefix+'fresh');
     const freshAdmission=admission,freshGroup=groupAdmission,freshDocs=evidence[prefix+'fresh'];
-    const normalNow=virtualNow;virtualNow+=600001;
+    const normalNow=virtualNow;virtualNow+=7200001;
     await publishSaved('pr',freshDocs.pr,freshAdmission,freshGroup);
     await publishSaved('group',freshDocs.group,freshAdmission,freshGroup);
     virtualNow=normalNow;
     const waitingRun=nextRun++;
-    await record(waitingRun,payload(comment(13,'ordinary PR comment',clock)));
+    await record(waitingRun,payload(comment(13,'ordinary mention of /revoke-rights, not a command',clock)));
     const waitingJobs=jobs.get(waitingRun).get(1);
     waitingJobs[0].status='queued';waitingJobs[1].status='queued';
     waitingJobs[1].name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';

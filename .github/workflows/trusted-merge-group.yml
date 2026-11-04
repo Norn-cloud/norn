@@ -89,7 +89,7 @@ jobs:
               }
               const sourceId=context.payload.workflow_run?.id||context.runId;
               const {data:source}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:sourceId});
-              const started=Date.parse(source.created_at), deadline=started+600000;
+              const started=Date.parse(source.created_at), deadline=started+7200000;
               if (!Number.isFinite(started)||Date.now()>deadline) throw new Error('Rights authority queue deadline exceeded');
               const until=()=>{if(Date.now()>deadline)throw new Error('Rights authority deadline exceeded')};
               const permissionCache=new Map(), permission=async username=>{
@@ -184,21 +184,21 @@ jobs:
                 for(;;){
                   jobs=await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt,
                     {owner,repo,run_id:run.id,attempt_number:run.run_attempt,per_page:100});
-                  const captures=jobs.filter(j=>/^Capture immutable rights event (pull|issue)$/.test(j.name));
+                  const captures=jobs.filter(j=>/^Capture immutable rights event (pull|issue) (none|possible)$/.test(j.name));
                   const journals=jobs.filter(j=>j.name.startsWith('Rights ledger '));
-                  if(captures.length===1&&captures[0].name.endsWith(' issue'))return {jobs,plain:true};
-                  const captured=captures.length===1&&captures[0].status==='completed'&&captures[0].conclusion==='success'&&journals.length===1;
-                  if(captured&&(journals[0].status==='completed'||Date.now()>=Math.min(waitUntil,ledgerUntil)))
-                    return {jobs,plain:false};
+                  if(captures.length===1&&(/ event issue /.test(captures[0].name)||captures[0].name.endsWith(' none')))return {jobs,plain:true};
+                  const stamp=captures[0]?.steps?.find(step=>step.name.startsWith('Rights event '));
+                  const tag=stamp?.name.match(/^Rights event (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
+                  const captured=captures.length===1&&captures[0].status==='completed'&&captures[0].conclusion==='success'&&stamp?.conclusion==='success'&&tag;
+                  if(captured&&(tag[1]==='none'||journals[0]?.status==='completed'||Date.now()>=Math.min(waitUntil,ledgerUntil)))
+                    return {jobs,plain:false,tag};
                   if(Date.now()>=waitUntil||run.status==='completed')throw new Error('Rights capture incomplete after bounded wait');
                   await new Promise(resolve=>setTimeout(resolve,1000));until();
                 }
               };
               for(const run of [...suffix].reverse()){
                 if(run.event!=='issue_comment')continue;
-                const {jobs,plain}=await jobsFor(run);if(plain)continue;
-                const journals=jobs.filter(j=>j.name.startsWith('Rights ledger '));
-                const tag=journals[0].name.match(/^Rights ledger (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
+                const {plain,tag}=await jobsFor(run);if(plain)continue;
                 if(!tag)throw new Error('Invalid saved rights event');
                 if(tag[1]==='none')continue;
                 for(const head of tag[1].split(',')){
@@ -244,11 +244,10 @@ jobs:
                 const state=await readTarget(head), sources=new Map(), pending=[], entries=[];
                 for(const event of state.events){
                   const {data:run}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:event.run});
-                  const {jobs}=await jobsFor(run);
+                  const {jobs,tag}=await jobsFor(run);
                   const writer=jobs.find(j=>j.name.startsWith('Rights ledger '));
-                  const tag=writer?.name.match(/^Rights ledger (none|[0-9a-f]{40}(?:,[0-9a-f]{40})?) comment (\d+)$/);
                   if(!tag||!tag[1].split(',').includes(head)||Number(tag[2])!==event.comment)throw new Error('Checkpoint source changed');
-                  const complete=writer.status==='completed'&&writer.conclusion==='success';
+                  const complete=writer?.status==='completed'&&writer.conclusion==='success';
                   sources.set(event.run,{...event,attempt:run.run_attempt,complete});
                   if(!complete)pending.push(event.run);
                 }

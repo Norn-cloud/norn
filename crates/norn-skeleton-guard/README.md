@@ -46,7 +46,7 @@ ignored even when their journal job is skipped under an unexpanded name.
 All rights writers and both trusted admission jobs share the
 `rights-authority-v4` GitHub Actions mutex, with queued work retained and active
 work never cancelled by another rights event. Test jobs remain outside this
-mutex. The source run's server creation time sets a ten-minute deadline: an
+mutex. The source run's server creation time sets a two-hour end-to-end deadline: an
 expired authority run publishes failure and cannot publish success. The same
 deadline is checked immediately before publication.
 
@@ -59,6 +59,9 @@ is reconstructed from the last published checkpoint. No fixed date or page
 count cuts off history. Each target's live rights ledger, including pending
 events and failure generation, has its own SHA/tree-bound checkpoint digest.
 
+Ordinary comments without rights markers never enter the authority queue. Their
+saved-payload classification is available before a runner starts; possible
+commands get a normalized identity stamp in the capture job before any writes.
 Both collectors deduplicate offset pages, wait up to thirty seconds for capture
 and five seconds for an in-flight ledger, and fail closed at their deadline.
 Known pending events remain scoped to their target. Re-run the whole original
