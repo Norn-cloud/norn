@@ -67,6 +67,7 @@ fn preservation_admits_identity_and_refuses_an_unknown_image() {
 
 fn inherited_equation_mapping(
     preserves: bool,
+    identity: bool,
 ) -> (Vec<ArtifactEnvelope>, Vec<ArtifactEnvelope>, PathMapping) {
     let entity = |name: &str, extends: Option<&str>, constrained: bool| -> ArtifactEnvelope {
         let mut value = json!({
@@ -78,10 +79,10 @@ fn inherited_equation_mapping(
             "payload": {"entityVersion": "2.0", "objectType": {
                 "name": name,
                 "links": if extends.is_some() || name.ends_with(".End") { vec![] } else {
-                    ["f", "g"].map(|id| json!({"id": id, "target": format!("{}.End", name.split('.').next().unwrap()),
+                    ["f", "g"].map(|id| json!({"id": id, "target": format!("{}.{}", name.split('.').next().unwrap(), if identity { "Parent" } else { "End" }),
                         "cardinality": {"to": "one", "from": "many", "required": false}})).to_vec()
                 }}, "extensions": {"norn.path-equations/1.0.0": if constrained {
-                    vec![json!({"id": "fg", "left": ["f"], "right": ["g"]})]
+                    vec![json!({"id": "fg", "left": if identity { vec![] } else { vec!["g"] }, "right": ["f"]})]
                 } else { vec![] }}}
         });
         if let Some(parent) = extends {
@@ -91,7 +92,11 @@ fn inherited_equation_mapping(
     };
     let source = vec![
         entity("s.Parent", None, true),
-        entity("s.Child", None, preserves),
+        entity(
+            "s.Child",
+            identity.then_some("s.Parent"),
+            preserves && !identity,
+        ),
         entity("s.End", None, false),
     ];
     let target = vec![
@@ -109,7 +114,7 @@ fn inherited_equation_mapping(
 
 #[test]
 fn inherited_target_equation_refuses_unconstrained_subtype_image() {
-    let (source, target, mapping) = inherited_equation_mapping(false);
+    let (source, target, mapping) = inherited_equation_mapping(false, false);
     let findings = admit_path_mapping(
         &source,
         &target,
@@ -127,13 +132,15 @@ fn inherited_target_equation_refuses_unconstrained_subtype_image() {
 
 #[test]
 fn inherited_target_equation_admits_preserving_subtype_image() {
-    let (source, target, mapping) = inherited_equation_mapping(true);
-    admit_path_mapping(
-        &source,
-        &target,
-        &mapping,
-        &BTreeSet::new(),
-        ChaseBudget::default(),
-    )
-    .unwrap();
+    for identity in [false, true] {
+        let (source, target, mapping) = inherited_equation_mapping(true, identity);
+        admit_path_mapping(
+            &source,
+            &target,
+            &mapping,
+            &BTreeSet::new(),
+            ChaseBudget::default(),
+        )
+        .unwrap();
+    }
 }
