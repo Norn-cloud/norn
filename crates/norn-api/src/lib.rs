@@ -13,7 +13,11 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
+/// Shared cell and definition epoch.
+pub mod host;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 /// Typed object, link and source-lineage reads for the Data Explorer.
 pub mod objects;
+/// Authorized read services shared by transports.
+pub mod routes;
