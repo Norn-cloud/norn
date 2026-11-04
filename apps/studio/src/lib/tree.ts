@@ -131,7 +131,11 @@ export function visibleOf(tree: Tree, focus: string | undefined, expanded: boole
   const states = tree.nodes.filter(({ kind }) => kind === "state").length
   if (expanded || states <= 8) return { shown: new Set(tree.nodes.map(({ id }) => id)), hidden: 0 }
   const shown = new Set<string>(focus === undefined ? tree.spine.slice(0, 3) : pathTo(tree, focus).path)
-  for (let hop = 0; hop < 4; hop += 1) for (const { source, target } of tree.edges) if (shown.has(source)) shown.add(target)
+  // Two states on: four connectors (step, state, step, state), one ring at a time.
+  for (let hop = 0; hop < 4; hop += 1) {
+    const ring = tree.edges.filter(({ source }) => shown.has(source)).map(({ target }) => target)
+    for (const id of ring) shown.add(id)
+  }
   for (const node of tree.nodes) if (node.kind === "step" && shown.has(node.id)) shown.add(node.from)
   const hidden = tree.nodes.filter((node) => node.kind === "state" && !shown.has(node.id)).length
   return { shown, hidden }
