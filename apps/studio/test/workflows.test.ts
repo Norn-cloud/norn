@@ -100,3 +100,17 @@ test("pinning a step back on a folded lifecycle keeps its source path in view", 
   for (const state of ["s0", "s5", "s10", "s11", "s12"]) expect(shown.has(state)).toBe(true)
   expect(hidden).toBe(7)
 })
+
+test("a component the start never reaches is placed once, and its steps trace back to it", () => {
+  const lifecycle = { property: "status", initial: ["a"], terminal: ["z"], transitions: [
+    { id: "go", from: ["a"], to: "z" },
+    { id: "b_to_c", from: ["b"], to: "c" },
+    { id: "c_to_a", from: ["c"], to: "a" },
+  ] }
+  const tree = treeOf(lifecycle)
+  const ids = tree.nodes.map(({ id }) => id)
+  expect(ids.length).toBe(new Set(ids).size)
+  expect(ids.filter((id) => id === "c")).toHaveLength(1)
+  const step = stepId({ id: "b_to_c", from: ["b"], to: "c" }, "b")
+  expect(pathTo(tree, step).path).toEqual(["b", step])
+})

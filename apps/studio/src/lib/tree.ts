@@ -102,14 +102,15 @@ export function treeOf(lifecycle: Lifecycle): Tree {
   // States no step reaches from the start still appear, below everything else.
   const unreached = transitions.flatMap(({ from, to }) => [...from, to]).filter((state, index, all) => !placed.has(state) && all.indexOf(state) === index)
   const bottom = Math.max(0, ...rows.values())
-  for (const state of unreached) { placeState(state, 0, bottom); visit([state]) }
+  for (const state of unreached) { if (placed.has(state)) continue; placeState(state, 0, bottom); visit([state]) }
   return { spine, nodes, edges, backs }
 }
 
 /** The elements on the shortest path from the start to a node, and the options right after it. */
 export function pathTo(tree: Tree, id: string): { readonly path: readonly string[]; readonly next: ReadonlySet<string> } {
   const parents = new Map<string, string>()
-  const roots = tree.nodes.filter((node) => node.kind === "state" && node.column === 0 && node.row === 0).map(({ id: root }) => root)
+  // Every state in column 0 starts a path: the spine's start and any component no step reaches from it.
+  const roots = tree.nodes.filter((node) => node.kind === "state" && node.column === 0).sort((a, b) => a.row - b.row).map(({ id: root }) => root)
   const queue = [...roots]
   const seen = new Set(queue)
   while (queue.length > 0) {

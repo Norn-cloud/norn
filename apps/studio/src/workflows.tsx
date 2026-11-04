@@ -133,11 +133,12 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     if (event.key === "Enter" && active) { pin(active); return }
     if (!event.key.startsWith("Arrow")) return
     event.preventDefault()
-    const next = moveFrom(tree, active ?? tree.spine[0] ?? "", event.key)
+    // A pinned step back is a chip on its source state; move from that state.
+    const next = moveFrom(tree, anchorOf(tree, active ?? tree.spine[0] ?? ""), event.key)
     if (next) { setHover(next); pin(next) }
   }
   return (
-    <div ref={frame} className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+    <div ref={frame} role="group" className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       {/* Remounted per pin: React Flow fits reliably on mount, which keeps the start or the pinned path in view. */}
       <ReactFlow key={pinned ?? "start"} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
         // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
