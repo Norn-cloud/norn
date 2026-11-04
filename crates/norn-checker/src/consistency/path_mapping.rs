@@ -178,6 +178,24 @@ fn lower_mapping(
             )],
         }));
     }
+    for concept in mapping.objects.keys() {
+        for link in target_catalog
+            .links_for_object_type(concept)
+            .unwrap_or_default()
+        {
+            if link.cardinality.to == Multiplicity::One
+                && !mapping
+                    .links
+                    .iter()
+                    .any(|image| image.concept == *concept && image.link == link.id.as_str())
+            {
+                return Err(refuse(
+                    &mapping.id,
+                    &format!("{concept}.{} has no image", link.id.as_str()),
+                ));
+            }
+        }
+    }
     Ok(lowered)
 }
 
