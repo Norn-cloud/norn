@@ -1820,7 +1820,10 @@ mod tests {
             bytes,
             canonical_json_exact_of(roundtrip).expect("idempotent")
         );
-        assert_ne!(canonical_json_exact_of("é"), canonical_json_exact_of("e\u{301}"));
+        assert_ne!(
+            canonical_json_exact_of("é"),
+            canonical_json_exact_of("e\u{301}")
+        );
         let duplicate: &serde_json::value::RawValue =
             serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
         assert!(canonical_json_exact_of(duplicate).is_err());
