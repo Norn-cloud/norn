@@ -63,6 +63,149 @@ class EnrollmentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             module.check_inventory(subprocess.CompletedProcess([], 0, success, ""), name, False)
 
+    def _validator(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _claim(self, claim_id):
+        return next((s, c) for s in self.coverage["subsystems"] for c in s["obligationClaims"] if c["id"] == claim_id)
+
+    def _bindings(self, module, subsystems=None, gates=None, runner=None):
+        module.validate_implementation_bindings(
+            self.coverage["subsystems"] if subsystems is None else subsystems,
+            self.gates["gates"] if gates is None else gates,
+            (ROOT / "scripts/verify-promoted-subsystems.sh").read_text() if runner is None else runner)
+
+    def test_regression_a_unused_production_import_with_local_copy_is_rejected_by_mutation_gate(self):
+        """(a) A harness importing production but proving a local copy passes static checks;
+        the wired mutation gate must reject it. The fake Kani verifies a harness unless its proof
+        reaches the mutated production module, which is what real Kani does on these sources."""
+        spec = importlib.util.spec_from_file_location("mutation_gate", ROOT / "verification/implementation-v1/check_mutations.py")
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        _, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        production = (ROOT / original["correspondenceSource"]).read_text()
+
+        def fake_kani(argv, cwd, **_):
+            work = Path(cwd)
+            harness = (work / argv[-1]).read_text()
+            body = harness[harness.index("#[kani::proof]"):]
+            mutated = (work / original["correspondenceSource"]).read_text() != production
+            fails = mutated and "exact_rational::Rational" in body
+            name = argv[argv.index("--harness") + 1]
+            verdict, summary = (("FAILED", "0 successfully verified harnesses, 1 failures, 1 total.") if fails
+                                else ("SUCCESSFUL", "1 successfully verified harnesses, 0 failures, 1 total."))
+            return subprocess.CompletedProcess(argv, 1 if fails else 0,
+                                               f"Checking harness {name}...\nVERIFICATION:- {verdict}\nComplete - {summary}\n", "")
+
+        with mock.patch.object(gate.subprocess, "run", side_effect=fake_kani):
+            for order in (original["correspondenceMutations"], list(reversed(original["correspondenceMutations"]))):
+                with self.subTest(first=order[0]["name"]):
+                    claim = copy.deepcopy(original)
+                    claim["correspondenceMutations"] = order
+                    gate.check_claim(claim)
+                    # Both disconnected canaries are rejected, whatever mutation is listed first.
+                    gate.regressions(claim)
+        # The canaries run only if the promoted mutation gate passes --regressions.
+        module = self._validator()
+        gates = copy.deepcopy(self.gates["gates"])
+        mutation = next(g for g in gates if g["id"] == original["correspondenceMutationGate"])
+        mutation["command"] = mutation["command"].replace(" --regressions", "")
+        with self.assertRaisesRegex(module.InvalidCoverage, "correspondence-mutation gate missing or invalid"):
+            self._bindings(module, gates=gates)
+
+    def test_regression_b_kani_command_cannot_swap_harness_for_fstar_theorem(self):
+        """(b) The kind comes from the executed argv: a Kani command stays a Kani claim."""
+        module = self._validator()
+        subsystem, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        fstar = "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst"
+        for drop_mutations in (False, True):
+            with self.subTest(drop_mutations=drop_mutations):
+                claim = copy.deepcopy(original)
+                entry = claim["evidence"]["proof"][0]
+                entry["artifact"] = fstar
+                entry["selectors"] = ["theorem:direct_artifact_write_truth_table"]
+                if drop_mutations:
+                    for field in module.KANI_CLAIM_FIELDS:
+                        del claim[field]
+                self.assertEqual(module.implementation_kind(claim), "kani")
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        # An extraction exemption is unreachable from a Kani command.
+        claim = copy.deepcopy(original)
+        claim["extractionBinding"] = {"gate": "artifact-governance-rust-extraction",
+                                      "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"}
+        with self.assertRaisesRegex(module.InvalidCoverage, "cannot use an extraction exemption"):
+            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        # Kani hidden behind env, cargo, a path or a shell word is still Kani.
+        for command in ("env A=b cargo kani --harness x f.rs", "/opt/kani/bin/cargo-kani f.rs",
+                        "sh -c 'kani f.rs'", "target/bin/kani f.rs"):
+            with self.subTest(command=command):
+                self.assertTrue(module.command_invokes_kani(command))
+        self.assertFalse(module.command_invokes_kani("scripts/verify-artifact-governance-extraction.sh"))
+
+    def test_regression_c_extraction_exemption_requires_a_real_wired_extraction_gate(self):
+        """(c) Nonexistent, non-extraction or unwired bound gates are refused."""
+        module = self._validator()
+        self._bindings(module)
+        subsystem, original = self._claim("INV-ART-DIRECT-WRITE-PREDICATE")
+        module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
+        self.assertEqual(module.implementation_kind(original), "extraction")
+        runner = (ROOT / "scripts/verify-promoted-subsystems.sh").read_text()
+        cases = {
+            "nonexistent": ({"gate": "no-such-extraction"}, None, "names no promoted gate"),
+            "non-extraction": ({"gate": "artifact-governance-lean"}, None, "not an extraction proof gate"),
+            "kani-gate": ({"gate": "integer-negation-kani"}, None, "not an extraction proof gate"),
+            "unwired": ({}, runner.replace("  command \\\n  scripts/verify-artifact-governance-extraction.sh\n",
+                                           "  command \\\n  true\n"), "not wired into the promoted runner"),
+            "not-its-result": ({"result": "target/verification-results/other.fst"}, None, "generated result"),
+        }
+        for name, (binding, mutated_runner, message) in cases.items():
+            with self.subTest(case=name):
+                subsystems = copy.deepcopy(self.coverage["subsystems"])
+                claim = next(c for s in subsystems for c in s["obligationClaims"] if c["id"] == original["id"])
+                claim["extractionBinding"].update(binding)
+                with self.assertRaisesRegex(module.InvalidCoverage, message):
+                    self._bindings(module, subsystems=subsystems, runner=mutated_runner)
+        self.assertIn("not wired", cases["unwired"][2])
+        self.assertNotEqual(cases["unwired"][1], runner)
+        # Without a typed binding, or with an untyped one, the exemption refuses.
+        for binding in (None, "artifact-governance-rust-extraction", {"gate": "artifact-governance-rust-extraction"}):
+            with self.subTest(binding=binding):
+                claim = copy.deepcopy(original)
+                if binding is None:
+                    del claim["extractionBinding"]
+                else:
+                    claim["extractionBinding"] = binding
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        # A script that is not an extractor cannot be exempted.
+        self.assertFalse(module.extraction_command("scripts/verify-promoted-subsystems.sh"))
+        self.assertTrue(module.extraction_command("scripts/verify-artifact-governance-extraction.sh"))
+
+    def test_regression_d_kani_claim_requires_its_wired_mutation_gate(self):
+        """(d) A Kani claim without a valid, wired mutation gate is refused."""
+        module = self._validator()
+        subsystem, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        # Relabeling the harness selector no longer skips the mutation requirement.
+        claim = copy.deepcopy(original)
+        for field in module.KANI_CLAIM_FIELDS:
+            del claim[field]
+        claim["evidence"]["proof"][0]["selectors"] = ["predicate:integer_negation_correspondence"]
+        with self.assertRaises(module.InvalidCoverage):
+            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        runner = (ROOT / "scripts/verify-promoted-subsystems.sh").read_text()
+        gates = [g for g in self.gates["gates"] if g["id"] != original["correspondenceMutationGate"]]
+        with self.assertRaisesRegex(module.InvalidCoverage, "correspondence-mutation gate missing or invalid"):
+            self._bindings(module, gates=gates)
+        unwired = runner.replace("  python3 verification/implementation-v1/check_mutations.py --claim "
+                                 "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE --regressions\n", "  true\n")
+        self.assertNotEqual(unwired, runner)
+        with self.assertRaisesRegex(module.InvalidCoverage, "not wired into the promoted runner"):
+            self._bindings(module, runner=unwired)
+
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
 

@@ -16,6 +16,10 @@
       "proof": {
         "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.proof"
       }
+    },
+    "extractionBinding": {
+      "gate": "artifact-governance-rust-extraction",
+      "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"
     }
   }
 }

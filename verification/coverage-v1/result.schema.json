@@ -302,7 +302,39 @@
                       }
                     }
                   }
+                },
+                "correspondenceSource": {
+                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceSource"
+                },
+                "correspondenceMutationGate": {
+                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceMutationGate"
+                },
+                "correspondenceMutations": {
+                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceMutations"
+                },
+                "extractionBinding": {
+                  "$ref": "#/$defs/extractionBinding"
                 }
+              },
+              "dependentRequired": {
+                "correspondenceSource": [
+                  "correspondenceMutationGate",
+                  "correspondenceMutations"
+                ],
+                "correspondenceMutationGate": [
+                  "correspondenceSource",
+                  "correspondenceMutations"
+                ],
+                "correspondenceMutations": [
+                  "correspondenceSource",
+                  "correspondenceMutationGate"
+                ]
+              },
+              "not": {
+                "required": [
+                  "extractionBinding",
+                  "correspondenceMutationGate"
+                ]
               }
             }
           },
@@ -491,6 +523,75 @@
             "type": "string",
             "minLength": 1
           }
+        }
+      }
+    },
+    "correspondenceMutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "before": {
+          "type": "string",
+          "minLength": 1
+        },
+        "after": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "kaniCorrespondence": {
+      "description": "Typed Kani implementation-proof binding. Required exactly when a proof command executes Kani.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correspondenceSource",
+        "correspondenceMutationGate",
+        "correspondenceMutations"
+      ],
+      "properties": {
+        "correspondenceSource": {
+          "type": "string",
+          "pattern": "^crates/[^\\s]+\\.rs$"
+        },
+        "correspondenceMutationGate": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "correspondenceMutations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/correspondenceMutation"
+          }
+        }
+      }
+    },
+    "extractionBinding": {
+      "description": "Typed extraction exemption: the promoted extraction gate that executes the proof and the generated result it must produce.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate",
+        "result"
+      ],
+      "properties": {
+        "gate": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "result": {
+          "type": "string",
+          "pattern": "^target/verification-results/[^\\s]+$"
         }
       }
     }

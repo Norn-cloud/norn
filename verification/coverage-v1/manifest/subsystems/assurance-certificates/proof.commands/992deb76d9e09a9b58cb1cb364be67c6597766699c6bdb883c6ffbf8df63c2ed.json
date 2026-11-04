@@ -1,4 +1,0 @@
-{
-  "order": 4,
-  "value": "python3 verification/implementation-v1/check_mutations.py --claim INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"
-}

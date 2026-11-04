@@ -18,6 +18,7 @@ import coverage_manifest
 
 
 def check_inventory(result, name, success):
+    """Require Kani to check exactly `name` with the expected single verdict."""
     output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout + result.stderr)
     checked = re.findall(r"^Checking harness (.+)\.\.\.$", output, re.MULTILINE)
     verdicts = re.findall(r"^VERIFICATION:- (.+)$", output, re.MULTILINE)
@@ -31,6 +32,7 @@ def check_inventory(result, name, success):
 
 
 def check_claim(claim, *, root=ROOT, harness_text=None):
+    """Prove the baseline, then require every declared production mutant to fail."""
     proofs = [(entry, selector.split(":", 1)[1])
               for entry in claim["evidence"]["proof"]
               for selector in entry["selectors"] if selector.startswith("harness:")]
@@ -50,7 +52,8 @@ def check_claim(claim, *, root=ROOT, harness_text=None):
             environment[key] = str((root / environment[key]).resolve())
     original = (root / source).read_text()
     mutations = claim["correspondenceMutations"]
-    scratch = Path.home() / ".cache/agent-scratch"
+    # Keep working copies under the repository's ignored target/ tree.
+    scratch = root / "target" / "correspondence-scratch"
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="correspondence-", dir=scratch) as directory:
         work = Path(directory)
@@ -84,7 +87,13 @@ def check_claim(claim, *, root=ROOT, harness_text=None):
 
 
 def regressions(claim):
-    """Run real Kani canaries: unused production import and empty proof."""
+    """Run real Kani canaries: unused production import and empty proof.
+
+    The promoted mutation gate passes --regressions, so these run in every full
+    profile. A disconnected harness proves the baseline and then also proves the
+    first declared production mutant, which must be rejected.
+    """
+    first = claim["correspondenceMutations"][0]["name"]
     harness = next(e["artifact"] for e in claim["evidence"]["proof"]
                    if any(s.startswith("harness:") for s in e["selectors"]))
     real = (ROOT / harness).read_text()
@@ -97,7 +106,7 @@ def regressions(claim):
             check_claim(claim, harness_text=text)
         except RuntimeError as error:
             # Baseline must pass; the first unchanged mutant must still verify.
-            if not str(error).startswith("overflow-clamp: expected FAILED") or "VERIFICATION:- SUCCESSFUL" not in str(error):
+            if not str(error).startswith(f"{first}: expected FAILED") or "VERIFICATION:- SUCCESSFUL" not in str(error):
                 raise
             print(f"{label}: rejected (production mutation still verifies)", flush=True)
         else:
@@ -105,6 +114,7 @@ def regressions(claim):
 
 
 def main():
+    """Run the mutation gate for one claim, optionally with its canaries."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--claim", required=True)
     parser.add_argument("--regressions", action="store_true")
