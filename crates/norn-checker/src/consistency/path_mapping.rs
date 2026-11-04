@@ -241,7 +241,7 @@ pub(crate) fn admit_with_work(
 ) -> Result<PreservationEvidence, Vec<Diagnostic>> {
     // Charge input bytes before lowering; large theories and long paths
     // consume the same admission allowance as search and unfolding work.
-    serde_json::to_writer(work, &(source, target, mapping)).map_err(|error| {
+    norn_canonical::meter_json_verbatim(work, &(source, target, mapping)).map_err(|error| {
         vec![super::refusal(
             &Theory::default(),
             &super::chase::ChaseError::Internal(error.to_string()),
