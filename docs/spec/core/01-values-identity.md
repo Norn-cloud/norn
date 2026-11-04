@@ -127,4 +127,6 @@ The action boundary implements VAL-EXACT-1 with exact decimal JSON strings. It d
 
 Decimal action-input schemas admit a string `description` annotation without changing validation. Other unknown keywords and non-string descriptions refuse. `described_decimal_action_input_prepares_exactly_and_rejects_unknown_constraints` exercises this annotation through kernel input preparation.
 
+VAL-EXACT-1 widget action mappings correspond to this same decimal wire contract: dynamic strings are checked at runtime, while string constants and every member of a string enumeration are checked at admission through the shared decoder. Numeric mappings and malformed or excess-scale literals refuse. `action_mapping_accepts_decimal_text_but_not_numeric_wire_values` and `decimal_mapping_matches_the_shared_decoder` cover this correspondence; mapping admission grants no permission to execute the action.
+
 Runtime JSON schemas describe opaque exact JSON, rather than binary64 values. The generated TypeScript SDK is declarations only; its runtime-value slots remain `unknown` until an exact-number decoder interprets retained source. It supplies no JSON parser. Ordinary JavaScript `JSON.parse` is insufficient for arbitrary-precision receipt consumption. This changes schema guidance, not the canonical numeric wire encoding.
