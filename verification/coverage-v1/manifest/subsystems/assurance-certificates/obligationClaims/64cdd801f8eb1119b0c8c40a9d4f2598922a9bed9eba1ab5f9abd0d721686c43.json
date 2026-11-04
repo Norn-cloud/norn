@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-CERT-IVM-OPERATOR-COMPOSITION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "Given the two local Correct equations, composition preserves the abstract one-step maintenance equation (#714/#770). Rust operator certificates, lowering and runtime correspondence are not covered.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry64cdd801f8eb1119b0c8c40a9d4f2598922a9bed9eba1ab5f9abd0d721686c43.evidence.proof"
+      }
+    }
+  }
+}
