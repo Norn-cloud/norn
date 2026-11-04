@@ -222,7 +222,9 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
   return (
     <TooltipProvider>
       <SidebarProvider style={{ "--sidebar-width": "23rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
-        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden ps-0 *:data-[sidebar=sidebar]:flex-row">
+        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden ps-0">
+          {/* One row on every screen: the mobile sheet does not take the outer sidebar's classes. */}
+          <div className="flex size-full min-h-0 flex-row">
           <Sidebar collapsible="none" className="w-16! shrink-0 bg-transparent">
             <SidebarHeader className="items-center px-0 pt-1">
               <Link to="/questions" className="flex size-10 items-center justify-center rounded-[11px] bg-primary text-base font-semibold text-primary-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
@@ -250,6 +252,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
             </SidebarFooter>
           </Sidebar>
           {current && <Submenu key={current.path} section={current} />}
+          </div>
         </Sidebar>
         <SidebarInset>
           <header className="grid h-16 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-3 px-4">
