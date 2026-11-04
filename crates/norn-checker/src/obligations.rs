@@ -18,10 +18,10 @@ pub mod evidence;
 pub mod finite;
 mod induction;
 pub mod quint;
-/// Exact symbolic projections of the shared declaration relation.
-pub mod transition;
 #[cfg(test)]
 mod quint_tests;
+/// Exact symbolic projections of the shared declaration relation.
+pub mod transition;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes

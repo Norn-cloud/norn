@@ -300,23 +300,42 @@ fn finite_relation_is_backend_neutral() {
     check_affine_origins(relation, mutant, &difference.symbol);
 }
 
-fn check_affine_origins(original: &norn_ir::verification::finite::CreateRelation, mutant: &norn_ir::verification::finite::CreateRelation, difference: &str) {
+fn check_affine_origins(
+    original: &norn_ir::verification::finite::CreateRelation,
+    mutant: &norn_ir::verification::finite::CreateRelation,
+    difference: &str,
+) {
     use super::transition::{Affine, AssignmentOrigin, project};
-    assert_eq!(original.origins[difference], AssignmentOrigin::Derivation(0));
-    assert_eq!(original.absent_inputs, vec![norn_ir::PropertyId("difference".into())]);
+    assert_eq!(
+        original.origins[difference],
+        AssignmentOrigin::Derivation(0)
+    );
+    assert_eq!(
+        original.absent_inputs,
+        vec![norn_ir::PropertyId("difference".into())]
+    );
     assert_eq!(mutant.absent_inputs, original.absent_inputs);
-    assert_eq!(mutant.origins[difference], AssignmentOrigin::DefaultAbsentInput);
+    assert_eq!(
+        mutant.origins[difference],
+        AssignmentOrigin::DefaultAbsentInput
+    );
     let symbolic = project(original);
     let residual = symbolic.law_equality.expect("affine equality");
     let mut coefficients = BTreeMap::<String, i128>::new();
     for (symbol, delta) in &symbolic.deltas {
         for (input, value) in &delta.as_ref().expect("affine delta").coefficients {
-            *coefficients.entry(input.clone()).or_default() += residual.coefficients[symbol] * value;
+            *coefficients.entry(input.clone()).or_default() +=
+                residual.coefficients[symbol] * value;
         }
     }
     assert!(coefficients.values().all(|value| *value == 0));
-    let delta = project(mutant).deltas.into_iter().find(|(symbol, _)| symbol == difference)
-        .expect("property").1.expect("delta");
+    let delta = project(mutant)
+        .deltas
+        .into_iter()
+        .find(|(symbol, _)| symbol == difference)
+        .expect("property")
+        .1
+        .expect("delta");
     assert_eq!(delta, Affine::default());
 }
 
@@ -329,18 +348,35 @@ fn affine_relation_retains_derivation_order_and_input_requirements() {
     ]);
     let source = source(&artifacts);
     let registry = BTreeSet::new();
-    let authority = ApprovedContract::approve(&source, &registry,
-        json!({"expr":"norn-zen/6"}), json!({"store":"empty"}), json!({"level":"bounded"}))
-        .expect("admitted");
-    let model = authority.finite(&source, &registry, &bounds(&artifacts)).expect("batch")
-        .goals.into_iter().find_map(Result::ok).expect("relation");
+    let authority = ApprovedContract::approve(
+        &source,
+        &registry,
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("admitted");
+    let model = authority
+        .finite(&source, &registry, &bounds(&artifacts))
+        .expect("batch")
+        .goals
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("relation");
     assert_eq!(model.derivations.len(), 2);
     assert!(!model.derivations[0].input_required);
     assert!(model.derivations[1].input_required);
     let symbolic = super::transition::project(&model);
     assert_eq!(symbolic.derivations[0], symbolic.derivations[1]);
-    let target = model.state.iter().find(|field| field.property.as_str() == "remaining").expect("target");
-    assert_eq!(model.origins[&target.symbol], super::transition::AssignmentOrigin::Derivation(1));
+    let target = model
+        .state
+        .iter()
+        .find(|field| field.property.as_str() == "remaining")
+        .expect("target");
+    assert_eq!(
+        model.origins[&target.symbol],
+        super::transition::AssignmentOrigin::Derivation(1)
+    );
 }
 
 #[test]

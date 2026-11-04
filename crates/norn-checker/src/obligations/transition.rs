@@ -25,7 +25,11 @@ impl Affine {
     fn combine(mut self, rhs: Self, sign: i128) -> Result<Self, String> {
         self.constant = accumulate(self.constant, rhs.constant, sign)?;
         for (symbol, value) in rhs.coefficients {
-            let value = accumulate(self.coefficients.get(&symbol).copied().unwrap_or(0), value, sign)?;
+            let value = accumulate(
+                self.coefficients.get(&symbol).copied().unwrap_or(0),
+                value,
+                sign,
+            )?;
             if value == 0 {
                 self.coefficients.remove(&symbol);
             } else {
