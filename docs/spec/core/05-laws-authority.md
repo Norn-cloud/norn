@@ -183,6 +183,9 @@ policy are pinned together. The report type has no Challenge/EvidencePins or
 PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
 must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
 incomplete source identities are unknown rather than an unbound explanation.
+Generated profiles use sorted-key exact-text canonical serialization. If encoding
+fails, diagnosis is unknown with a reason and its profile digest is absent (the
+last native digest slot is empty); exact source/base digests remain available.
 Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
 
 ### Path equations (PATH-EQ-1, #712)

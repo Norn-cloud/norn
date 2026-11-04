@@ -222,19 +222,31 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::expect_used, reason="fixed exact commitment bytes")]
+    #[allow(clippy::expect_used, reason = "fixed exact commitment bytes")]
     fn generated_admission_commitments_are_sorted_under_every_map_backend() {
-        let cache=AdmissionCache::new(&[0;32],"p","a");
-        let registry=std::collections::BTreeSet::new();
-        let context=EntityArtifactSetContext{registry:&registry,base:&[],tenant:None};
-        let (global,context_digest)=cache.global_digest(&[],&context).expect("pins");
-        let expected=format!(r#"{{"base":[],"candidate":[],"context":"{context_digest}"}}"#);
-        assert_eq!(global,exact_commitment(b"global-admission",&[expected.as_bytes()]).expect("global"));
-        let artifacts:Vec<ArtifactEnvelope>=serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).expect("entities");
-        let artifact=artifacts.first().expect("entity");
-        let envelope=exact_artifact_digest(artifact).expect("envelope");
-        let shape=br#"{"invalidExtensions":false,"unknownFields":[]}"#;
-        assert_eq!(admission_artifact_digest(artifact).expect("artifact"),exact_commitment(b"admission-artifact",&[envelope.as_bytes(),shape]).expect("shape"));
+        let cache = AdmissionCache::new(&[0; 32], "p", "a");
+        let registry = std::collections::BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let (global, context_digest) = cache.global_digest(&[], &context).expect("pins");
+        let expected = format!(r#"{{"base":[],"candidate":[],"context":"{context_digest}"}}"#);
+        assert_eq!(
+            global,
+            exact_commitment(b"global-admission", &[expected.as_bytes()]).expect("global")
+        );
+        let artifacts: Vec<ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+                .expect("entities");
+        let artifact = artifacts.first().expect("entity");
+        let envelope = exact_artifact_digest(artifact).expect("envelope");
+        let shape = br#"{"invalidExtensions":false,"unknownFields":[]}"#;
+        assert_eq!(
+            admission_artifact_digest(artifact).expect("artifact"),
+            exact_commitment(b"admission-artifact", &[envelope.as_bytes(), shape]).expect("shape")
+        );
     }
 
     #[test]

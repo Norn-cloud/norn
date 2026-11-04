@@ -44,10 +44,13 @@ pub struct Report {
 #[must_use]
 pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
     let (digests, diagnosis) = match attempt_pins(attempt) {
-        Ok(digests)=>(digests,diagnose_constraints(attempt)),
-        Err(error)=>([hash(attempt.source),hash(attempt.base),String::new()],
+        Ok(digests) => (digests, diagnose_constraints(attempt)),
+        Err(error) => (
+            [hash(attempt.source), hash(attempt.base), String::new()],
             Err(super::diagnosis::Unknown::Oracle(Unknown::Expression(
-                format!("diagnosis profile cannot be canonicalized: {error}"))))),
+                format!("diagnosis profile cannot be canonicalized: {error}"),
+            ))),
+        ),
     };
     let mut diagnostics = Vec::new();
     let mut emit = |code, message: String, origin: Option<&super::RuleOrigin>| {
@@ -117,14 +120,17 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
     }
 }
 
-fn diagnose_constraints(attempt: &Attempt<'_>) -> Result<super::diagnosis::Diagnosis,super::diagnosis::Unknown<Unknown>> {
+fn diagnose_constraints(
+    attempt: &Attempt<'_>,
+) -> Result<super::diagnosis::Diagnosis, super::diagnosis::Unknown<Unknown>> {
     let predicates: Vec<_> = attempt.members.iter().map(|(_, p)| p.as_str()).collect();
     let origins: BTreeSet<_> = attempt.members.iter().map(|(o, _)| o).collect();
     if origins.len() != attempt.members.len()
         || attempt.members.iter().any(|(o, _)| {
             o.artifact_id.as_deref().is_none_or(str::is_empty)
                 || (!o.pointer.is_empty() && !o.pointer.starts_with('/'))
-        }) {
+        })
+    {
         Err(super::diagnosis::Unknown::Oracle(Unknown::Expression(
             "source member identities are incomplete or duplicated".into(),
         )))
@@ -149,12 +155,12 @@ fn diagnose_constraints(attempt: &Attempt<'_>) -> Result<super::diagnosis::Diagn
     }
 }
 
-fn hash(bytes:&[u8])->String {
-    use sha2::{Digest,Sha256};
-    format!("{:x}",Sha256::digest(bytes))
+fn hash(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
 }
 
-fn attempt_pins(attempt: &Attempt<'_>) -> Result<[String; 3],norn_canonical::CanonicalJsonError> {
+fn attempt_pins(attempt: &Attempt<'_>) -> Result<[String; 3], norn_canonical::CanonicalJsonError> {
     let members: Vec<_> = attempt
         .members
         .iter()
@@ -174,8 +180,8 @@ fn attempt_pins(attempt: &Attempt<'_>) -> Result<[String; 3],norn_canonical::Can
         super::diagnosis::MAX_DECLARATIONS,
         FiniteOracle::bounds()
     ]);
-    let profile=norn_canonical::canonical_json_exact_of(&profile)?;
-    Ok([hash(attempt.source),hash(attempt.base),hash(&profile)])
+    let profile = norn_canonical::canonical_json_exact_of(&profile)?;
+    Ok([hash(attempt.source), hash(attempt.base), hash(&profile)])
 }
 
 fn correction_message(
