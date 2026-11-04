@@ -2290,6 +2290,16 @@ where
             let Some(child) = catalog.effective_type(&collection.child_type) else {
                 return true;
             };
+            if [&collection.row_id_property, &collection.ordering_key]
+                .into_iter()
+                .any(|property| {
+                    child
+                        .property(property.as_str())
+                        .is_some_and(norn_checker::EffectiveProperty::protected)
+                })
+            {
+                return true;
+            }
             configs.get(id.as_str()).is_none_or(|config| {
                 config.derive.keys().any(|property| {
                     property == &collection.row_id_property

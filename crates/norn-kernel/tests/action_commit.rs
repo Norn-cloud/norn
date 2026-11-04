@@ -4079,6 +4079,45 @@ fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
     }
 }
 
+#[test]
+fn owned_row_actions_refuse_protected_framework_identity_and_order() {
+    let action = owned_series_action();
+    for property in ["row_id", "idx"] {
+        let mut definitions = owned_series_types(false, false);
+        definitions[1]
+            .properties
+            .iter_mut()
+            .find(|candidate| candidate.id.as_str() == property)
+            .unwrap()
+            .protected = true;
+        let catalog = TypeCatalog::new(&definitions);
+        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(definitions.clone());
+        let request = owned_series_call(
+            &action,
+            "protected-framework",
+            "0",
+            &json!({"name":"ORDER-1", "company":"ACME"}),
+            &json!([owned_series_add("row-a")]),
+        );
+        let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
+        assert_eq!(refusal.code(), "action.unsupported_effect");
+        assert!(cell.ledger().is_empty());
+        assert!(
+            !cell
+                .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
+                .unwrap()
+                .exists()
+        );
+        assert!(
+            !cell
+                .load(&FactKey::new("commerce.NamedOrder", "ORDER-1"))
+                .unwrap()
+                .exists()
+        );
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]

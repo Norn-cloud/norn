@@ -2607,7 +2607,17 @@ fn apply_change<X>(
             if entry.values.is_some() {
                 return Err(DecisionRefusal::ObjectExists { key });
             }
-            let values = with_initial_states(catalog, &key, values)?;
+            let mut values = values.clone();
+            if origin == AdmissionOrigin::Observation {
+                for lifecycle in catalog.lifecycles(&key.object_type).into_values() {
+                    if let [initial] = lifecycle.initial.as_slice() {
+                        values
+                            .entry(lifecycle.property.as_str().to_owned())
+                            .or_insert_with(|| JsonValue::String(initial.clone()));
+                    }
+                }
+            }
+            let values = with_initial_states(catalog, &key, &values)?;
             let values = catalog
                 .effective_object_values(&key.object_type, &values)
                 .map_err(|error| DecisionRefusal::InvalidOutput {

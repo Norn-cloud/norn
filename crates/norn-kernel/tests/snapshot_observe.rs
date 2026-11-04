@@ -1030,6 +1030,75 @@ fn an_observed_delete_reaches_its_on_delete_state_when_a_path_is_declared() {
 }
 
 #[test]
+fn an_observed_delete_cannot_transition_a_protected_lifecycle() {
+    let (mut object_type, target) = lifecycle_chain(1);
+    object_type.properties[0].protected = true;
+    let catalog = TypeCatalog::new([&object_type]);
+    let key = FactKey::new(object_type.name.as_str(), "protected-delete");
+    let provenance = provenance("protected.delete");
+    let mut cell = cell();
+    seed_observed_snapshot(
+        &mut cell,
+        &catalog,
+        &key,
+        &JsonObject::new(),
+        &provenance,
+        "seed",
+    );
+    let before = cell.load(&key).unwrap();
+    let ledger = cell.ledger().to_vec();
+    let slice = load_slice(&cell, [key.clone(), tombstone_key(&key)]).unwrap();
+    let lifecycles = [ObservedLifecycleSnapshot {
+        property: PropertyId("status".into()),
+        state: target,
+        provenance: provenance.clone(),
+    }];
+    let refusal = prepare_observed_delete(
+        &catalog,
+        &slice,
+        &unconsumed_turn("protected-delete"),
+        ObservedDelete {
+            key: &key,
+            lifecycles: &lifecycles,
+            provenance: &provenance,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        refusal,
+        norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { property, reason }
+            if property == "status" && reason.contains("protected")
+    ));
+    assert_eq!(cell.load(&key).unwrap(), before);
+    assert_eq!(cell.ledger(), ledger.as_slice());
+    assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+}
+
+#[test]
+fn an_observed_create_keeps_unique_initialization_without_a_property_default() {
+    for protected in [false, true] {
+        let (mut object_type, _) = lifecycle_chain(1);
+        object_type.properties[0].default = None;
+        object_type.properties[0].protected = protected;
+        let catalog = TypeCatalog::new([&object_type]);
+        let key = FactKey::new(object_type.name.as_str(), "unique-initial");
+        let mut cell = cell();
+        seed_observed_snapshot(
+            &mut cell,
+            &catalog,
+            &key,
+            &JsonObject::new(),
+            &provenance("initial"),
+            "seed",
+        );
+        assert_eq!(
+            state(&cell, &key, "status"),
+            JsonValue::String("state_0".into())
+        );
+    }
+}
+
+#[test]
 fn a_source_delete_of_an_object_already_in_its_on_delete_state_is_still_recorded() {
     let transitions = json!([{ "id": "cancel", "from": ["draft"], "to": "cancelled" }]);
     let (object_type, key, mut cell) = delete_world(&transitions);
