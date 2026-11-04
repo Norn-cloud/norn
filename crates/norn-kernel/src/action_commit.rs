@@ -4972,13 +4972,14 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let env = norn_expr::schema::action_environment(action, None, completed).map_err(|reason| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason,
-        }
-    })?;
+    let env =
+        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
+            ActionRefusal::DerivationFailed {
+                field: derivation.field.clone(),
+                expression: derivation.expression.as_str().to_owned(),
+                reason,
+            }
+        })?;
     let expected = action_derivation_destination(action, derivation, &env);
     let attempt = expression.evaluate_admitted_metered(
         &context,

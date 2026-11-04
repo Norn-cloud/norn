@@ -1269,18 +1269,7 @@ fn action_input_environment(
 // ACTION-ACTOR-1: only the authenticated principal identity is available here.
 // Other general actor members have no trusted action-call binding and refuse typing.
 fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTypeEnv> {
-    const PRINCIPAL: &str = "norn:ActionPrincipal";
-    ZenTypeEnv::input_only_with_records(
-        BTreeMap::from([(
-            PRINCIPAL.into(),
-            BTreeMap::from([("subjectId".into(), Type::text())]),
-        )]),
-        fields,
-        EnvOptions::default(),
-    )
-    .ok()?
-    .bind_operand("actor", Type::Record(PRINCIPAL.into()))
-    .ok()
+    ZenTypeEnv::action_derivation_with_records(BTreeMap::new(), fields, EnvOptions::default()).ok()
 }
 
 fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
@@ -2891,6 +2880,15 @@ mod tests {
             {"field":"code","expression":"actor.subjectId","inputRequired":false}
         ]);
         assert_eq!(findings(action.clone()), []);
+        let mut decimal = action.clone();
+        let amount = json!({"type":"number","nornType":{"kind":"decimal","scale":2}});
+        for field in ["amount", "base", "discount"] {
+            decimal["payload"]["inputSchema"]["properties"][field] = amount.clone();
+        }
+        decimal["payload"]["derive"] = json!([{"field":"amount",
+            "expression":"actor.subjectId == 'person:vip' ? input.discount : input.base",
+            "inputRequired":false}]);
+        assert_eq!(findings(decimal), []);
         for unsupported in ["actor.roles", "actor.agentSessionId", "actor.approved"] {
             action["payload"]["derive"][0]["expression"] = json!(unsupported);
             assert!(has(

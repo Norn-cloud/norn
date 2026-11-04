@@ -247,6 +247,89 @@ fn featureless_actions_keep_large_inputs_without_allowing_identity_claims() {
     ));
 }
 
+#[test]
+fn action_actor_decimal_derivation_commits_and_forged_actor_refuses() {
+    let mut action = action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "code": {"type": "string"},
+            "amount": {"type": "number", "nornType": {"kind": "decimal", "scale": 2}},
+            "base": {"type": "number", "nornType": {"kind": "decimal", "scale": 2}},
+            "discount": {"type": "number", "nornType": {"kind": "decimal", "scale": 2}}
+        },
+        "required": ["code", "base", "discount"]
+    }))
+    .unwrap();
+    action.derive = vec![norn_ir::ActionInputDerivation {
+        field: "amount".into(),
+        expression: ZenExpression(
+            "actor.subjectId == 'person:vip' ? input.discount : input.base".into(),
+        ),
+        input_required: false,
+    }];
+    let definitions: Vec<ObjectTypeDef> = serde_json::from_value(json!([{
+        "name": "test.Target",
+        "properties": [
+            {"id": "code", "type": {"kind": "text"}},
+            {"id": "amount", "type": {"kind": "decimal", "scale": 2}}
+        ]
+    }]))
+    .unwrap();
+    let catalog = TypeCatalog::new(&definitions);
+    let priced = |code: &str| -> JsonObject {
+        serde_json::from_value(json!({"code": code, "base": 2.25, "discount": 1.5})).unwrap()
+    };
+    for (principal, code, expected) in [
+        ("person:vip", "VIP", "1.50"),
+        ("person:other", "OTHER", "2.25"),
+    ] {
+        let mut invocation = call(&action, priced(code), "1.0.0");
+        invocation.actor = principal.into();
+        let mut storage = cell();
+        let outcome = commit_action(
+            &mut storage,
+            &catalog,
+            &invocation,
+            &PrincipalOnly(principal),
+        );
+        assert!(
+            matches!(outcome, Ok(ActionOutcome::Committed { .. })),
+            "{outcome:?}"
+        );
+        let retained = storage.load(&FactKey::new("test.Target", code)).unwrap();
+        let amount = retained
+            .values
+            .as_ref()
+            .and_then(|values| values.get("amount"));
+        assert_eq!(
+            amount.and_then(norn_ir::RuntimeValue::as_decimal),
+            Some(&norn_ir::Decimal::parse(expected).unwrap())
+        );
+    }
+    let mut forged = priced("FORGED");
+    forged.insert(
+        "actor".into(),
+        serde_json::from_value(json!({"subjectId": "person:vip"})).unwrap(),
+    );
+    let mut invocation = call(&action, forged, "1.0.0");
+    invocation.actor = "person:other".into();
+    let mut storage = cell();
+    let error = commit_action(
+        &mut storage,
+        &catalog,
+        &invocation,
+        &PrincipalOnly("person:other"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "actor"),
+        "{error:?}"
+    );
+    assert!(storage.ledger().is_empty());
+}
+
 proptest::proptest! {
     #[test]
     fn action_actor_is_identical_in_derivation_pdp_and_retained_receipt(principal in "person:[a-z0-9é\u{301}]{1,24}") {
