@@ -127,7 +127,7 @@ impl<'m, 'a> CommitModel<'m, 'a> {
             })
     }
 
-    /// Resolve endpoint presence against the same final concrete identity as admission.
+    /// OBS-LINK-PENDING-1: resolve endpoint presence with admission's concrete identity.
     ///
     /// # Errors
     /// A host identity lookup failed.

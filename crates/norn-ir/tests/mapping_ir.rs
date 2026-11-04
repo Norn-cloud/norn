@@ -173,7 +173,7 @@ fn link_record() -> norn_ir::mapping::MappedRecord {
 #[test]
 fn obs_link_identity_retains_explicit_targets_and_nullable_clears() {
     let record = link_record();
-    let claims = record.link_claims("mapping-bundle:first");
+    let claims = record.link_claims("mapping-bundle:first", "synthetic");
     assert_eq!(claims.len(), 2);
     let target = claims
         .iter()
@@ -241,9 +241,9 @@ proptest::proptest! {
         record.links = targets.into_iter().map(|key| {
             let mut patch = template.clone(); patch.target_key = key; patch
         }).collect();
-        let expected: BTreeSet<_> = record.link_claims("observation").iter().map(|c| c.id().expect("id")).collect();
+        let expected: BTreeSet<_> = record.link_claims("observation", "synthetic").iter().map(|c| c.id().expect("id")).collect();
         record.links.reverse();
-        let repeated: BTreeSet<_> = (0..repeats).flat_map(|_| record.link_claims("observation"))
+        let repeated: BTreeSet<_> = (0..repeats).flat_map(|_| record.link_claims("observation", "synthetic"))
             .map(|c| c.id().expect("id")).collect();
         proptest::prop_assert_eq!(expected, repeated);
     }
@@ -251,7 +251,9 @@ proptest::proptest! {
 
 #[test]
 fn obs_link_claim_missing_target_does_not_imply_a_clear() {
-    let claim = link_record().link_claims("observation").remove(0);
+    let claim = link_record()
+        .link_claims("observation", "synthetic")
+        .remove(0);
     let mut wire = serde_json::to_value(claim).expect("wire");
     wire.as_object_mut().expect("object").remove("target");
     assert!(serde_json::from_value::<norn_ir::mapping::ObservedLinkClaim>(wire.clone()).is_err());
@@ -269,7 +271,7 @@ proptest::proptest! {
     fn obs_link_contribution_identity_survives_retarget_clear_and_version_changes(
         version in 1u16..1000, target in "[a-z]{1,12}", clear in proptest::bool::ANY,
     ) {
-        let mut old = link_record().link_claims("old occurrence").remove(0);
+        let mut old = link_record().link_claims("old occurrence", "synthetic").remove(0);
         old.provenance.mapping_version.0 = format!("test.mapping@{version}");
         let mut new = old.clone();
         new.observation_id = "new occurrence".into();
@@ -277,6 +279,9 @@ proptest::proptest! {
         new.target = (!clear).then(|| norn_ir::mapping::ObservedLinkTarget { object_type: norn_ir::ObjectTypeName("test.Target".into()), key: target });
         proptest::prop_assert_eq!(old.contribution_id().expect("old"), new.contribution_id().expect("new"));
         proptest::prop_assert_ne!(old.id().expect("old"), new.id().expect("new"));
+        new.source_scope.push_str("_different");
+        proptest::prop_assert_ne!(old.contribution_id().expect("old"), new.contribution_id().expect("other capture namespace"));
+        new.source_scope = old.source_scope.clone();
         new.provenance.source.system.push_str("_different");
         proptest::prop_assert_ne!(old.contribution_id().expect("old"), new.contribution_id().expect("other source"));
     }
