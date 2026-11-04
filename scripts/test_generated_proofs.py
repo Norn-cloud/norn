@@ -11,6 +11,7 @@ import time
 from unittest import mock
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("generated_proofs", Path(__file__).with_name("check-generated-quint.py"))
 runner = importlib.util.module_from_spec(spec)
@@ -118,6 +119,21 @@ class ConstantInitializerPredicate(unittest.TestCase):
             {"kind": "def", "name": "step", "qualifier": "action", "expr": {
                 "kind": "app", "opcode": "assign", "args": [{"kind": "name", "name": "amount"}, {"kind": "int", "value": 1}]}},
         ]}], "table": {"retained": 1}, "types": {"retained": 2}, "effects": {"retained": 3}}
+
+    def test_failed_compilers_log_diagnostics_without_binding_them_in_reasons(self):
+        compiled = subprocess.CompletedProcess(["quint"], 0, json.dumps(self.fixture()).encode(), b"")
+        for results, diagnostics, message in [
+            ([subprocess.CompletedProcess(["quint"], 2, b"", b"Quint error /tmp/source")], b"Quint error /tmp/source", "Quint JSON compilation failed"),
+            ([compiled, subprocess.CompletedProcess(["apalache"], 1, b"parser /tmp/source", b"error")], b"parser /tmp/sourceerror", "Apalache CLI compilation failed"),
+            ([compiled, subprocess.CompletedProcess(["apalache"], 0, b"missing output", b"")], b"missing output", "Apalache CLI compilation failed"),
+        ]:
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(runner, "compile_process", side_effect=results), mock.patch.object(runner.os, "write") as write:
+                work = Path(directory)
+                args = SimpleNamespace(model=work / "source.qnt", step="step", invariant="law")
+                with self.assertRaises(ValueError) as refusal:
+                    runner.compile_tla(args, work, {}, work)
+                self.assertEqual(str(refusal.exception), message)
+                write.assert_called_once_with(2, diagnostics)
 
     def test_constant_initializer_predicate_preserves_every_other_byte_value(self):
         for coefficient in range(-127, 128):

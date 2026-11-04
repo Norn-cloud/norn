@@ -197,6 +197,9 @@ all generated obligations, exact bound records and typed trace quantities. A
 recording is written only after the complete original/mutant/restored acceptance
 passes; failed runs retain Unknown in their output and produce no recording.
 Runtime and parity links remain explicitly not-yet unless separately supplied.
+Violation results require a non-empty reconstructed counterexample or witness;
+missing/null/empty traces remain Unknown. Named refusal scenario:
+`qualifying_violations_require_a_nonempty_reconstructed_scenario`.
 Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
 and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
 are bless-gated fixtures from actual backend output, not fresh solver verdicts.
