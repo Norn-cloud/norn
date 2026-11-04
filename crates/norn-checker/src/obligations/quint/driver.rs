@@ -845,8 +845,20 @@ mod tests {
                 );
                 let pinned: serde_json::Value =
                     serde_json::from_str(&record.pins.bounds_json).expect("bound profile");
-                assert_eq!(record.pins.bounds_json.as_bytes(), norn_canonical::canonical_json_exact_of(&pinned).expect("canonical bounds"));
-                assert_eq!(record.pins.tool.implementation_sha256, format!("{:x}", Sha256::digest(norn_canonical::canonical_json_exact_of(&pinned["toolchain"]).expect("canonical implementation"))));
+                assert_eq!(
+                    record.pins.bounds_json.as_bytes(),
+                    norn_canonical::canonical_json_exact_of(&pinned).expect("canonical bounds")
+                );
+                assert_eq!(
+                    record.pins.tool.implementation_sha256,
+                    format!(
+                        "{:x}",
+                        Sha256::digest(
+                            norn_canonical::canonical_json_exact_of(&pinned["toolchain"])
+                                .expect("canonical implementation")
+                        )
+                    )
+                );
                 assert_eq!(
                     pinned["invariant"],
                     if kind == "non_vacuity" {

@@ -445,8 +445,10 @@ pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
 ) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serialize_json_verbatim(value)?;
     parse_json_verbatim(&bytes)?;
-    let sorted = sort_exact_json(serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?)
-        .map_err(|error| json_encoding_error(&error))?;
+    let sorted = sort_exact_json(
+        serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?,
+    )
+    .map_err(|error| json_encoding_error(&error))?;
     Ok(sorted.get().as_bytes().to_vec())
 }
 
@@ -1808,7 +1810,11 @@ mod tests {
                 .expect("UTF8")
                 .contains("1.2300e+2")
         );
-        assert!(String::from_utf8(bytes.clone()).expect("UTF8").contains("900719925474099312345"));
+        assert!(
+            String::from_utf8(bytes.clone())
+                .expect("UTF8")
+                .contains("900719925474099312345")
+        );
         let roundtrip: &serde_json::value::RawValue = serde_json::from_slice(&bytes).expect("raw");
         assert_eq!(
             bytes,
