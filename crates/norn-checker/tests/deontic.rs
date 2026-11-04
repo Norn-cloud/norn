@@ -953,29 +953,47 @@ fn admitted_normative_resolution_survives_installation() {
         )
         .is_empty()
     );
-    // A candidate cannot rewrite the inherited rule under its existing identity.
-    let (_, mut replacement, _) = admission_fixture();
-    replacement.defeated_by.push("new-winner".into());
+    // A candidate cannot redeclare the inherited law under its existing identity.
+    let (_, mut replacement, high) = admission_fixture();
+    replacement.defeated_by.push(high.law.id);
     let mut candidate = serde_json::to_value(&installed).expect("wire");
     candidate["artifactId"] = json!("candidate.entity");
     candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+    candidate["dependencies"] = json!([{
+        "artifactId": installed.artifact_id,
+        "version": installed.version,
+        "kind": "entity",
+        "required": true
+    }]);
     replacement.source.artifact_id = "candidate.entity".into();
-    replacement.law.subject = "candidate.Subject".into();
-    replacement.law.scope.object_types = vec!["candidate.Subject".into()];
-    candidate["payload"]["extensions"] =
-        json!({norn_checker::deontic::NORMATIVE_SLOT:[replacement]});
-    let candidate = serde_json::from_value(candidate).expect("candidate");
-    assert!(
+    let mut run = |replacement: &DeonticRule| {
+        candidate["payload"]["extensions"] =
+            json!({norn_checker::deontic::NORMATIVE_SLOT:[replacement]});
         check_artifact_set(
-            &[candidate],
+            &[serde_json::from_value(candidate.clone()).expect("candidate")],
             &EntityArtifactSetContext {
                 registry: &registry,
-                base: &[installed],
-                tenant: None
-            }
+                base: std::slice::from_ref(&installed),
+                tenant: None,
+            },
         )
-        .iter()
-        .any(norn_checker::Diagnostic::is_error)
+    };
+    let findings = run(&replacement);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].code.as_str(), "consistency.diagnosis.unknown");
+    assert_eq!(
+        findings[0].message,
+        "Normative admission refused: Expression(\"invalid normative source or binding\"). Limits: 64 declarations, 256 contexts, 8192 evaluations, 4096 diagnosis queries."
+    );
+    // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
+    replacement.law.id = "sales.candidate".into();
+    let findings = run(&replacement);
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|d| d.code.as_str() == "consistency.normative.conflict"),
+        "{findings:?}"
     );
 }
 
@@ -1049,4 +1067,29 @@ fn wording_pack_term_is_required_in_every_declared_locale_for_both_views() {
             }
         }
     }
+}
+
+#[test]
+fn normative_subject_names_cannot_be_installed_twice() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (entity, _, _) = admission_fixture();
+    let mut other = entity.clone();
+    other["artifactId"] = json!("other.entity");
+    let installed = serde_json::from_value(entity).expect("installed");
+    let candidate = serde_json::from_value(other).expect("candidate");
+    let findings = check_artifact_set(
+        &[candidate],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[installed],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == "object_type.validation.shadows_base"),
+        "{findings:?}"
+    );
 }
