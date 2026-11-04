@@ -232,7 +232,19 @@ fn physical_scope_is_the_only_policy_scope() {
         )
         .is_err()
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    access.resource.scope = key(&physical);
+    access.action_id = "example.write".into();
+    assert!(
+        host.read_access(
+            &explicit(&physical),
+            &ReadRequest {
+                capability: ReadCapability::Population,
+                access: &access
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
 
 proptest::proptest! {

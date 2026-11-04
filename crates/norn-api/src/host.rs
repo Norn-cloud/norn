@@ -1,6 +1,6 @@
 //! One already-opened tenant cell shared by authorized transport adapters.
 use crate::{
-    authz::{Authorizer, DenyAll, ReadRequest, read_denied},
+    authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, read_denied},
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -80,7 +80,9 @@ impl<E: SqlEngine> DevHost<E> {
             business_unit: None,
         };
         let mut bound = request.access.clone();
-        let matches = bound.scope.as_ref() == Some(&physical) && bound.resource.scope == physical;
+        let matches = bound.scope.as_ref() == Some(&physical)
+            && bound.resource.scope == physical
+            && (request.capability != ReadCapability::Population || bound.action_id == "norn.read");
         bound.scope = Some(physical.clone());
         bound.resource.scope = physical;
         let allowed = self
