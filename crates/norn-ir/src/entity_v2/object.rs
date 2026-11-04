@@ -52,7 +52,7 @@ use super::invariant::Invariant;
 use super::lifecycle::Lifecycle;
 use super::link::{Link, LinkId};
 use super::naming_series::NamingSeriesIR;
-use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType};
+use super::property::{PROPERTY_TYPE_NAME_PATTERN, PropertyConstraints, PropertyType, is_false};
 use super::status::ResourceStatus;
 use crate::members::{WholeNumber, present_non_null};
 use crate::posting::AccountingLegDeclaration;
@@ -239,6 +239,9 @@ pub struct OwnedChildCollection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Property {
+    /// FA-PROTECT-1: only sealed rule outputs may write this inherited field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub protected: bool,
     /// Unique id within the object type.
     pub id: PropertyId,
     #[serde(
