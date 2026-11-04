@@ -238,20 +238,10 @@ pub fn lower_path_equations(
     artifacts: &[norn_ir::ArtifactEnvelope],
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Result<Theory, Vec<crate::Diagnostic>> {
-    use crate::entity_artifacts::{Decoded, decode_v2};
-    use norn_ir::entity::{PATH_EQUATIONS_SLOT, PathEquation};
+    use norn_ir::entity::PathEquation;
     let declarations: Vec<_> = artifacts
         .iter()
-        .filter_map(|artifact| {
-            let Decoded::Root(root) = decode_v2(artifact) else {
-                return None;
-            };
-            let norn_ir::EntityRoot::V2(root) = *root else {
-                return None;
-            };
-            let value = root.extensions.as_ref()?.get(PATH_EQUATIONS_SLOT)?.clone();
-            Some((artifact, root.object_type.name, value))
-        })
+        .filter_map(path_equation_declaration)
         .collect();
     // Declaration IDs accept arbitrary nonempty strings, so no delimiter is
     // reserved. Reserve every declaration before allocating inherited IDs.
@@ -341,9 +331,7 @@ pub fn lower_path_equations(
                 match lower(instance) {
                     Ok(mut egd) => {
                         if instance != owner.as_str() {
-                            while !rule_ids.insert(egd.id.clone()) {
-                                egd.id.push_str(":inherited");
-                            }
+                            egd.id = unique_inherited_id(egd.id, &mut rule_ids);
                         }
                         theory.dependencies.push(Dependency::Egd(egd));
                     }
@@ -353,6 +341,35 @@ pub fn lower_path_equations(
         }
     }
     findings.is_empty().then_some(theory).ok_or(findings)
+}
+
+fn path_equation_declaration(
+    artifact: &norn_ir::ArtifactEnvelope,
+) -> Option<(
+    &norn_ir::ArtifactEnvelope,
+    norn_ir::ObjectTypeName,
+    norn_ir::JsonValue,
+)> {
+    use crate::entity_artifacts::{Decoded, decode_v2};
+    let Decoded::Root(root) = decode_v2(artifact) else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2(root) = *root else {
+        return None;
+    };
+    let value = root
+        .extensions
+        .as_ref()?
+        .get(norn_ir::entity::PATH_EQUATIONS_SLOT)?
+        .clone();
+    Some((artifact, root.object_type.name, value))
+}
+
+fn unique_inherited_id(mut id: String, used: &mut BTreeSet<String>) -> String {
+    while !used.insert(id.clone()) {
+        id.push_str(":inherited");
+    }
+    id
 }
 
 fn declared_equation_rule_ids(artifact: &str, value: &norn_ir::JsonValue) -> Vec<String> {

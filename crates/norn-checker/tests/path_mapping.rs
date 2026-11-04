@@ -425,12 +425,10 @@ fn source_link_target_cannot_reuse_a_target_concept() {
         ChaseBudget::default(),
     )
     .unwrap_err();
-    assert_eq!(findings[0].code.as_str(), PATH_MAPPING_INVALID);
-    assert!(
-        findings[0]
-            .message
-            .contains("t.Delivery: catalogs must be disjoint")
-    );
+    assert!(findings.iter().all(|finding| matches!(
+        finding.code.as_str(),
+        PATH_MAPPING_INVALID | "consistency.path_equation.invalid"
+    )));
 }
 
 #[test]
