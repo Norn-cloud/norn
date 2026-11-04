@@ -5,7 +5,6 @@ use norn_ir::verification::guarantees::{
     GoalGuarantee, GuaranteeLevel, GuaranteeReference, GuaranteeScalar, GuaranteeScenario,
     GuaranteeScenarioKind, GuaranteeState, GuaranteeVerdict, GuaranteesDocument, GuaranteesFormat,
 };
-use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -167,10 +166,7 @@ fn unsupported_goal(index: u32, kind: &str, reason: &str) -> GoalGuarantee {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct CaseReport {
-    #[serde(rename = "case")]
     label: String,
     challenge: String,
     total: usize,
@@ -179,13 +175,13 @@ struct CaseReport {
     acceptance_passed: bool,
     documents: Vec<GuaranteesDocument>,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AcceptanceReport {
-    cases: Vec<CaseReport>,
-    stale_evidence: GuaranteeVerdict,
-    stale_rejected: bool,
-    acceptance_passed: bool,
+impl CaseReport {
+    fn json(&self) -> Result<Value> {
+        let documents = serde_json::to_value(&self.documents)?;
+        Ok(json!({"case": self.label, "challenge": self.challenge,
+            "total": self.total, "eligible": self.eligible, "discharged": self.discharged,
+            "acceptancePassed": self.acceptance_passed, "documents": documents}))
+    }
 }
 fn documents(
     source: &DefinitionSource,
@@ -458,19 +454,14 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
             }
         }
     }
-    writeln!(
-        std::io::stdout().lock(),
-        "{}",
-        serde_json::to_string(&AcceptanceReport {
-            cases,
-            stale_evidence: GuaranteeVerdict::Unknown {
-                reason: "evidence belongs to the original Challenge and is stale under the mutant"
-                    .into()
-            },
-            stale_rejected,
-            acceptance_passed: accepted,
-        })?
-    )?;
+    let report_cases = cases.iter().map(CaseReport::json).collect::<Result<Vec<_>>>()?;
+    let stale = serde_json::to_value(GuaranteeVerdict::Unknown {
+        reason: "evidence belongs to the original Challenge and is stale under the mutant".into(),
+    })?;
+    writeln!(std::io::stdout().lock(), "{}", serde_json::to_string(&json!({
+        "cases": report_cases, "staleEvidence": stale,
+        "staleRejected": stale_rejected, "acceptancePassed": accepted,
+    }))?)?;
     if !accepted {
         return Err("bounded original/mutant/restored acceptance failed".into());
     }
