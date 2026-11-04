@@ -47,6 +47,7 @@ fn preservation_admits_identity_and_refuses_an_unknown_image() {
     assert_eq!(check(&mapping).unwrap().obligations, 2);
     let mut missing = mapping.clone();
     missing.objects.clear();
+    missing.links.clear();
     assert_eq!(
         check(&missing).unwrap_err()[0].code.as_str(),
         PATH_MAPPING_INVALID
