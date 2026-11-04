@@ -459,3 +459,295 @@ fn composition_substitutes_each_step_and_refuses_unmapped_intermediates() {
     assert_eq!(findings[0].code.as_str(), PATH_MAPPING_INVALID);
     assert!(findings[0].message.contains("s.OrderLine is not mapped"));
 }
+
+// Exercise the runtime's admission entry point with an otherwise valid import.
+fn runtime_set(paths: &[PathMapping]) -> Vec<ArtifactEnvelope> {
+    let envelope = |id: &str, kind: &str, payload: Value| -> ArtifactEnvelope {
+        serde_json::from_value(json!({
+            "irVersion":"0.1", "artifactId":id, "kind":kind, "namespace":"erpnext",
+            "name":id, "version":"0.1.0", "lifecycle":"draft",
+            "scope":{"orgId":"org_demo","environmentId":"dev"}, "dependencies":[],
+            "provenance":{"source":"import"}, "payload":payload
+        }))
+        .unwrap()
+    };
+    let read = |path: &std::path::Path| {
+        serde_json::from_str::<Value>(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut set: Vec<ArtifactEnvelope> =
+        std::fs::read_dir(root.join("tests/fixtures/mapping/model"))
+            .unwrap()
+            .map(|e| serde_json::from_value(read(&e.unwrap().path())).unwrap())
+            .collect();
+    let source = envelope(
+        "erpnext.source_schema",
+        "source_schema",
+        read(&root.join("../norn-ir/tests/fixtures/source_schema/frappe.json")),
+    );
+    let mut payload = read(&root.join("../norn-ir/tests/fixtures/mapping/erpnext.mapping.json"));
+    payload["source"]["sha256"] = json!(
+        norn_checker::receipt::ArtifactRef::of(&source)
+            .unwrap()
+            .sha256
+    );
+    let sources = catalog("s");
+    let targets = catalog("t");
+    payload["pathMappings"] = json!(paths.iter().map(|p| json!({
+        "sourceEntities": sources.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
+        "targetEntities": targets.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(), "mapping": p
+    })).collect::<Vec<_>>());
+    set.extend(sources);
+    set.extend(targets);
+    set.push(source);
+    let mut import = envelope("erpnext.mapping", "mapping", payload);
+    import.dependencies = set
+        .iter()
+        .map(|a| norn_ir::ArtifactDependency {
+            artifact_id: a.artifact_id.clone(),
+            kind: a.kind(),
+            version: Some(a.version.clone()),
+            required: true,
+        })
+        .collect();
+    set.push(import);
+    set
+}
+
+fn runtime_check(set: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
+    norn_checker::check_artifact_set(
+        set,
+        &norn_checker::EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    )
+}
+
+#[test]
+fn runtime_admission_enforces_required_paths_and_budget() {
+    let identity = mapping("identity", "t", "s", &[]);
+    let good = runtime_set(std::slice::from_ref(&identity));
+    let findings = runtime_check(&good);
+    assert!(
+        !findings.iter().any(norn_checker::Diagnostic::is_error),
+        "{findings:?}"
+    );
+    let evidence = findings
+        .iter()
+        .find(|d| d.code == "consistency.path_mapping.preserved")
+        .unwrap();
+    assert!(evidence.message.contains("bounded-no-counterexample"));
+    assert!(
+        evidence.message.contains(
+            &norn_checker::receipt::ArtifactRef::of(good.last().unwrap())
+                .unwrap()
+                .sha256
+        )
+    );
+    let composite = compose_path_mappings(
+        &identity,
+        &mapping("swap", "s", "s", SWAPPED),
+        &catalog("s"),
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    for broken in [
+        mapping("swapped", "t", "s", SWAPPED),
+        mapping("dropped", "t", "s", &[("fulfils", &["unjoined"])]),
+        mapping(
+            "both",
+            "t",
+            "s",
+            &[("provider", &["provider"]), ("provider", &["receiver"])],
+        ),
+        composite,
+    ] {
+        let findings = runtime_check(&runtime_set(&[broken]));
+        assert!(
+            findings.iter().any(|d| d.is_error()
+                && d.code == codes::UNPRESERVED
+                && d.message.contains("breaks")),
+            "{findings:?}"
+        );
+    }
+    let exhausted = runtime_check(&runtime_set(&vec![identity; 100]));
+    assert!(
+        exhausted.iter().any(|d| d.is_error()
+            && d.code == codes::CHASE_REFUSED
+            && d.message.contains("whole-admission")),
+        "{exhausted:?}"
+    );
+    assert!(runtime_check(&runtime_set(&[])).is_empty());
+}
+
+#[test]
+fn runtime_admission_cost_before_and_after() {
+    let baseline = runtime_set(&[]);
+    let enforced = runtime_set(&[mapping("identity", "t", "s", &[])]);
+    for (label, set) in [("without-paths", baseline), ("with-paths", enforced)] {
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            assert!(
+                !runtime_check(&set)
+                    .iter()
+                    .any(norn_checker::Diagnostic::is_error)
+            );
+        }
+        eprintln!(
+            "RUNTIME-PATH-COST {label} {:?}/admission",
+            start.elapsed() / 20
+        );
+    }
+}
+
+fn edit_artifact(set: &mut [ArtifactEnvelope], id: &str, edit: impl FnOnce(&mut Value)) {
+    let artifact = set.iter_mut().find(|a| a.artifact_id == id).unwrap();
+    let mut value = serde_json::to_value(&*artifact).unwrap();
+    edit(&mut value);
+    *artifact = serde_json::from_value(value).unwrap();
+}
+
+fn constrain(set: &mut [ArtifactEnvelope], id: &str) {
+    edit_artifact(set, id, |v| {
+        v["payload"]["extensions"] = json!({"norn.path-equations/1.0.0": [
+            {"id": "identity", "left": [], "right": []}
+        ]});
+    });
+}
+
+#[test]
+fn runtime_requires_bindings_for_actual_mapped_targets() {
+    let mut set = runtime_set(&[]);
+    assert!(
+        !runtime_check(&set)
+            .iter()
+            .any(norn_checker::Diagnostic::is_error)
+    );
+    constrain(&mut set, "party.Customer.entity");
+    let findings = runtime_check(&set);
+    assert!(
+        findings.iter().any(|d| d.is_error()
+            && d.code == "consistency.path_mapping.missing_binding"
+            && d.message
+                .contains("party.Customer.entity (equation identity)")),
+        "{findings:?}"
+    );
+
+    // Cover Customer successfully but omit a second constrained mapped target.
+    edit_artifact(&mut set, "erpnext.mapping", |v| {
+        v["payload"]["pathMappings"] = json!([{
+            "sourceEntities":["s.Party.entity"],
+            "targetEntities":["party.Customer.entity", "core.Party.interface"],
+            "mapping":{"id":"customer", "objects":{"party.Customer":"s.Party"}, "links":[]}
+        }]);
+    });
+    let covered = runtime_check(&set);
+    assert!(
+        !covered.iter().any(norn_checker::Diagnostic::is_error),
+        "{covered:?}"
+    );
+    constrain(&mut set, "commerce.SalesOrder.entity");
+    let partial = runtime_check(&set);
+    let missing: Vec<_> = partial
+        .iter()
+        .filter(|d| d.code == "consistency.path_mapping.missing_binding")
+        .collect();
+    assert_eq!(missing.len(), 1, "{partial:?}");
+    assert!(
+        missing[0]
+            .message
+            .contains("commerce.SalesOrder.entity (equation identity)")
+    );
+}
+
+#[test]
+fn runtime_requires_inherited_only_binding() {
+    let mut set = runtime_set(&[]);
+    let mut parent = serde_json::to_value(
+        set.iter()
+            .find(|a| a.artifact_id == "party.Customer.entity")
+            .unwrap(),
+    )
+    .unwrap();
+    parent["artifactId"] = json!("party.Parent.entity");
+    parent["name"] = json!("Parent");
+    parent["payload"] = json!({"entityVersion":"2.0", "objectType":{"name":"party.Parent"}});
+    set.push(serde_json::from_value(parent).unwrap());
+    constrain(&mut set, "party.Parent.entity");
+    edit_artifact(&mut set, "party.Customer.entity", |v| {
+        v["payload"]["objectType"]["extends"] = json!("party.Parent");
+        v["dependencies"] = json!([{"artifactId":"party.Parent.entity", "kind":"entity", "version":"0.1.0", "required":true}]);
+    });
+    let findings = runtime_check(&set);
+    assert!(
+        findings.iter().any(|d| d.is_error()
+            && d.code == "consistency.path_mapping.missing_binding"
+            && d.message
+                .contains("party.Customer.entity (equation identity)")),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|d| d.is_error())
+            .all(|d| d.code == "consistency.path_mapping.missing_binding"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
+    let mut set = runtime_set(&[]);
+    constrain(&mut set, "t.Party.entity");
+    let sources: Vec<_> = catalog("u")
+        .into_iter()
+        .filter(|a| a.artifact_id == "u.Party.entity")
+        .collect();
+    let mut targets: Vec<_> = catalog("v")
+        .into_iter()
+        .filter(|a| a.artifact_id == "v.Party.entity")
+        .collect();
+    constrain(&mut targets, "v.Party.entity");
+    edit_artifact(&mut set, "erpnext.mapping", |v| {
+        v["payload"]["pathMappings"] = json!([
+            {"sourceEntities":["s.Party.entity"], "targetEntities":["t.Party.entity"],
+             "mapping":{"id":"first","objects":{"t.Party":"s.Party"},"links":[]}},
+            {"sourceEntities":["u.Party.entity"], "targetEntities":["v.Party.entity"],
+             "mapping":{"id":"second","objects":{"v.Party":"u.Party"},"links":[]}}
+        ]);
+        for a in sources.iter().chain(&targets) {
+            v["dependencies"].as_array_mut().unwrap().push(json!({"artifactId":a.artifact_id,"kind":"entity","version":a.version,"required":true}));
+        }
+    });
+    set.extend(sources);
+    set.extend(targets);
+    let findings = runtime_check(&set);
+    assert!(
+        !findings.iter().any(norn_checker::Diagnostic::is_error),
+        "{findings:?}"
+    );
+    let evidence: Vec<_> = findings
+        .iter()
+        .filter(|d| d.code == "consistency.path_mapping.preserved")
+        .collect();
+    assert_eq!(evidence.len(), 2, "{findings:?}");
+    for (index, ns) in ["t", "v"].iter().enumerate() {
+        let d = evidence
+            .iter()
+            .find(|d| d.span.as_ref().unwrap().pointer == format!("/payload/pathMappings/{index}"))
+            .unwrap();
+        let declaration = set
+            .iter()
+            .find(|a| a.artifact_id == format!("{ns}.Party.entity"))
+            .unwrap();
+        assert!(
+            d.message.contains(
+                &norn_checker::receipt::ArtifactRef::of(declaration)
+                    .unwrap()
+                    .sha256
+            )
+        );
+    }
+}

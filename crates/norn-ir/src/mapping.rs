@@ -155,6 +155,9 @@ pub struct MappingIr {
     pub interfaces: Vec<String>,
     /// The object maps, in evaluation order.
     pub maps: Vec<ObjectMap>,
+    /// Required path preservation obligations over the named entity artifacts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_mappings: Vec<PathMappingBinding>,
     /// Declarative permission-row maps. These emit ordinary upsert actions
     /// for `core.Entitlement`; joins are applied only from a caller-declared
     /// complete snapshot of every `requiredSnapshot` dataset.
@@ -173,6 +176,19 @@ pub struct MappingIr {
     )]
     #[schemars(with = "JsonObject")]
     pub extensions: Option<JsonObject>,
+}
+
+/// Catalog bindings for a required path mapping. Admission binds evidence to
+/// the exact envelopes (including equations), and the enclosing MappingIR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathMappingBinding {
+    /// Source entity artifact IDs.
+    pub source_entities: Vec<String>,
+    /// Target entity artifact IDs.
+    pub target_entities: Vec<String>,
+    /// Declared object and link images.
+    pub mapping: crate::entity::PathMapping,
 }
 
 /// A checked, declarative projection of source permission rows into the
