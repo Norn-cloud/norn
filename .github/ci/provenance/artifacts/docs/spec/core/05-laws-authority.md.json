@@ -1,6 +1,6 @@
 {
   "origin": "authored",
-  "category": "code",
+  "category": "documentation",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
@@ -13,5 +13,5 @@
   ],
   "notices": [],
   "connector": null,
-  "sha256": "aabab4c4803159cd6aa742e788679fc349c911a46bcd9c88bfc68477cd4a63cb"
+  "sha256": "0b779e2a173b57eccf1210700b9e542ba0c87a07503960f154b8ef480916aae5"
 }
