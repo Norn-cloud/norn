@@ -25,6 +25,20 @@
         "#714",
         "#770"
       ]
+    },
+    {
+      "id": "INV-CERT-SPECIALISATION",
+      "priority": "P0",
+      "statement": "Conjunctive extensions with no new projected writers preserve base safety invariants.",
+      "assumptions": [
+        "Extension initial states project to admitted base initial states.",
+        "Every extension step projects to a base step.",
+        "Base initialization and each base step preserve the invariant."
+      ],
+      "sourceIssues": [
+        "#713",
+        "#718"
+      ]
     }
   ]
 }
