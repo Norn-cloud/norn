@@ -701,8 +701,14 @@ fn runtime_requires_inherited_only_binding() {
 fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
     let mut set = runtime_set(&[]);
     constrain(&mut set, "t.Party.entity");
-    let sources: Vec<_> = catalog("u").into_iter().filter(|a| a.artifact_id == "u.Party.entity").collect();
-    let mut targets: Vec<_> = catalog("v").into_iter().filter(|a| a.artifact_id == "v.Party.entity").collect();
+    let sources: Vec<_> = catalog("u")
+        .into_iter()
+        .filter(|a| a.artifact_id == "u.Party.entity")
+        .collect();
+    let mut targets: Vec<_> = catalog("v")
+        .into_iter()
+        .filter(|a| a.artifact_id == "v.Party.entity")
+        .collect();
     constrain(&mut targets, "v.Party.entity");
     edit_artifact(&mut set, "erpnext.mapping", |v| {
         v["payload"]["pathMappings"] = json!([
