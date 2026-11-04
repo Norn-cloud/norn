@@ -494,8 +494,8 @@ mod tests {
             document.discharged = 0;
             let mut wire = serde_json::to_value(&document).expect("valid generated inventory");
             let valid = !wrong_total && !wrong_eligible && discharged <= document.eligible;
-            document.total += u32::from(wrong_total);
-            document.eligible += u32::from(wrong_eligible);
+            document.total = document.total.checked_add(u32::from(wrong_total)).expect("bounded count");
+            document.eligible = document.eligible.checked_add(u32::from(wrong_eligible)).expect("bounded count");
             document.discharged = discharged;
             *wire.get_mut("total").expect("count") = json!(document.total);
             *wire.get_mut("eligible").expect("count") = json!(document.eligible);
