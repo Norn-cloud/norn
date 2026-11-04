@@ -43,7 +43,7 @@ fn fixture(joint: bool, disabled: bool, input: u8) -> (DefinitionSource, Bounds,
         let mut law = declarations[1].clone();
         law["artifactId"] = json!("bounded_joint");
         law["payload"]["id"] = json!("bounded_joint");
-        law["payload"]["condition"] = json!("self.status == 'approved'");
+        law["payload"]["condition"] = json!("true");
         law["payload"]["response"]["expression"] = json!("self.loss_fine_g == 1");
         declarations.as_array_mut().expect("source").push(law);
     }
@@ -62,9 +62,10 @@ fn fixture(joint: bool, disabled: bool, input: u8) -> (DefinitionSource, Bounds,
 }
 #[test]
 fn every_bounded_initialization_and_transition_matches_native_commit() {
-    for (joint, disabled, expected_edges) in [(false,false,7),(true,false,6),(false,true,6),(true,true,5)] {
+    for (joint, disabled, expected_edges) in [(false,false,7),(true,false,4),(false,true,6),(true,true,3)] {
         let (source, _, graph) = fixture(joint, disabled, 2);
         assert_eq!(graph.inputs.laws.len(),if joint {2} else {1});
+        assert_eq!(graph.initial.len(),if joint {1} else {2});
         assert_eq!(graph.edges.len(),expected_edges);
         compare(&source, &graph);
     }
@@ -75,7 +76,6 @@ fn compare(source: &DefinitionSource, graph: &Graph) {
         let model = Model::from_definitions(&definitions, &[]).expect("projection").with_governing_laws(&source.artifacts).expect("retained laws");
         let catalog = TypeCatalog::new(definitions.iter()).with_governing_laws(&source.artifacts);
         assert_eq!(graph.inputs.nodes.len(),10);
-        assert_eq!(graph.initial.len(),2);
         let mut compared = 0;
         for (from, row) in graph.inputs.nodes.iter().enumerate() {
             let (committed, after) = native(&model, &catalog, None, create(row));
