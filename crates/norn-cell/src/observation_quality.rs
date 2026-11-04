@@ -21,6 +21,36 @@ pub struct AuthoritativePage {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// QUERY-ENGINE-1: only subjects of authenticated finding events in this receipt.
+    pub(crate) fn question_finding_keys(
+        &self,
+        receipt: &crate::Receipt,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let mut keys = BTreeSet::new();
+        if receipt.body.event_count == 0 {
+            return Ok(keys);
+        }
+        let rows = self.conn.query(
+            &format!("SELECT seq FROM {LEDGER} WHERE commit_seq = ?1 AND world = ?2 AND json_extract(event, '$.op') = 'data_quality_finding' ORDER BY seq"),
+            params![to_i64(receipt.body.commit_seq, "finding receipt")?, &receipt.body.world],
+        )?;
+        for row in rows {
+            let seq: i64 = crate::engine::SqlRow(row).get(0)?;
+            if let Some((event, _)) =
+                self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
+            {
+                let finding: DataQualityFinding = norn_ir::runtime::decode(
+                    event
+                        .get("fact")
+                        .ok_or(CellError::OutOfRange("finding fact"))?,
+                )
+                .map_err(CellError::Encoding)?;
+                keys.extend(finding.subjects.into_iter().map(|subject| subject.key));
+            }
+        }
+        Ok(keys)
+    }
+
     /// OBS-EVIDENCE-1: quarantine is any open integrity finding under its retained model.
     ///
     /// # Errors

@@ -329,6 +329,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
+    /// QUERY-ENGINE-1: bounded member cache tokens from the rechecked source index.
+    /// Tokens include roots and complete finding contents; they grant no authority.
+    pub(crate) fn question_source_pins(
+        &self,
+        members: &BTreeSet<String>,
+    ) -> Result<BTreeMap<String, String>, CellError> {
+        if members.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        self.with_source_dispute_index(|index| {
+            let mut grouped = BTreeMap::<&str, Vec<_>>::new();
+            for ((root, key), findings) in &index.subjects {
+                if members.contains(key) {
+                    grouped
+                        .entry(key.as_str())
+                        .or_default()
+                        .push((root, findings));
+                }
+            }
+            grouped
+                .into_iter()
+                .map(|(key, findings)| Ok((key.to_owned(), crate::codec::hash_json(&findings)?)))
+                .collect()
+        })?
+    }
+
     pub(crate) fn indexed_source_dispute(
         &self,
         world: &str,

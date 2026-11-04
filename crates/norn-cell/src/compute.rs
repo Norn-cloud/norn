@@ -305,6 +305,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut members = BTreeSet::new();
+            let mut finding_members = BTreeSet::new();
             for id in ids {
                 let selected = if let Some(cutoff) = cutoff {
                     historical::historical_record(
@@ -337,7 +338,13 @@ impl<E: SqlEngine> CellStore<E> {
                     &record,
                     cutoff.map(|c| c.frontier),
                     &mut exclusions,
-                    visible,
+                    &mut |record| {
+                        let allowed = visible(record)?;
+                        if allowed {
+                            finding_members.insert(record.id.clone());
+                        }
+                        Ok(allowed)
+                    },
                 )? {
                     continue;
                 }
@@ -360,6 +367,7 @@ impl<E: SqlEngine> CellStore<E> {
                     result,
                     contributions,
                     members,
+                    finding_members,
                 },
                 &mut budget,
             )
@@ -397,6 +405,7 @@ impl<E: SqlEngine> CellStore<E> {
 }
 
 struct Snapshot {
+    finding_members: BTreeSet<String>,
     historical_receipt: Option<String>,
     result: QueryResult,
     contributions: Contributions,

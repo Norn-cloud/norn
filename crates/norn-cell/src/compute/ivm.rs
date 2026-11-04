@@ -20,6 +20,8 @@ pub struct IncrementalQuestion {
     rebuilt: bool,
     receipt_pin: Option<String>,
     knowledge: Option<crate::KnowledgeCutoff>,
+    source_pins: BTreeMap<String, String>,
+    finding_members: BTreeSet<String>,
 }
 impl IncrementalQuestion {
     /// Rebuild all bounded inputs before publishing a complete generation.
@@ -52,15 +54,19 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        let snapshot = store.question_snapshot_at(plan, context, knowledge, visible)?;
+        let (snapshot, source_pins, receipt_pin) =
+            store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
+                let reader = store.read();
+                let pins = reader.question_source_pins(&snapshot.finding_members)?;
+                let receipt = reader
+                    .receipt_at(snapshot.result.revision.commits)?
+                    .map(|r| r.hash);
+                Ok((snapshot, pins, receipt))
+            })?;
         let mut totals = Totals::default();
         for (_, value) in snapshot.contributions.values() {
             totals.adjust(value, false)?;
         }
-        let receipt_pin = store
-            .read()
-            .receipt_at(snapshot.result.revision.commits)?
-            .map(|r| r.hash);
         let mut result = snapshot.result;
         result.engine = Engine::Ivm;
         Ok(Self {
@@ -72,6 +78,8 @@ impl IncrementalQuestion {
             rebuilt: true,
             receipt_pin,
             knowledge,
+            source_pins,
+            finding_members: snapshot.finding_members,
         })
     }
     /// Last atomically published generation.
@@ -220,6 +228,12 @@ impl IncrementalQuestion {
                         })
                         .map(|w| w.key.clone()),
                 );
+                changed.extend(
+                    reader
+                        .question_finding_keys(&receipt)?
+                        .into_iter()
+                        .filter(|id| self.members.contains(id)),
+                );
             }
         }
         Ok(changed)
@@ -231,7 +245,7 @@ impl IncrementalQuestion {
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
-        let mut exclusions = BTreeMap::new();
+        let mut exclusions = self.result.exclusions.clone();
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
@@ -244,66 +258,75 @@ impl IncrementalQuestion {
             (verified, None)
         };
         let mut changed = self.changed_keys(store, &context, &head)?;
+        let mut source_pins = BTreeMap::new();
         let mut history = reader.history_read_seeded(receipt);
-        let candidates: BTreeSet<_> = self.members.union(&changed).cloned().collect();
-        let mut records = BTreeMap::new();
-        for id in candidates {
-            let selected = if let Some(cutoff) = self.knowledge {
-                super::historical::historical_record(
-                    &mut history,
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    cutoff,
-                    store.model().model_hash(),
-                    &mut budget,
-                )?
-            } else {
-                reader.object_with_budget(
-                    &context.world,
-                    self.plan.grain().as_str(),
-                    &id,
-                    &mut budget,
-                )?
-            };
-            match selected {
-                BudgetedRead::Found(record) => {
-                    let authorized = context.include_record(
-                        &reader,
-                        &record,
-                        self.knowledge.map(|c| c.frontier),
-                        &mut exclusions,
-                        visible,
-                    )?;
-                    records.insert(id, (record, authorized));
+        for refresh_source in [false, true] {
+            if refresh_source {
+                // QUERY-ENGINE-1: inbox evidence can change without a canonical receipt.
+                source_pins = reader.question_source_pins(&self.finding_members)?;
+                changed.extend(
+                    self.source_pins
+                        .keys()
+                        .chain(source_pins.keys())
+                        .filter(|id| {
+                            self.finding_members.contains(*id)
+                                && self.source_pins.get(*id) != source_pins.get(*id)
+                        })
+                        .cloned(),
+                );
+            }
+            for id in std::mem::take(&mut changed) {
+                self.finding_members.remove(&id);
+                exclusions.remove(&id);
+                if let Some((_, previous)) = self.contributions.remove(&id) {
+                    self.totals.adjust(&previous, true)?;
                 }
-                BudgetedRead::Missing => {}
-                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
-            }
-        }
-        let old = &self.result.exclusions;
-        changed.extend(
-            old.keys()
-                .chain(exclusions.keys())
-                .filter(|id| old.get(*id) != exclusions.get(*id))
-                .cloned(),
-        );
-        for id in changed {
-            if let Some((_, previous)) = self.contributions.remove(&id) {
-                self.totals.adjust(&previous, true)?;
-            }
-            match records.remove(&id) {
-                Some((record, authorized)) => {
-                    self.members.insert(id.clone());
-                    if authorized
-                        && let Some(value) = project(&self.plan, &record.values).map_err(refused)?
-                    {
-                        self.totals.adjust(&value, false)?;
-                        self.contributions.insert(id, (record.version, value));
+                let selected = if let Some(cutoff) = self.knowledge {
+                    super::historical::historical_record(
+                        &mut history,
+                        &context.world,
+                        self.plan.grain().as_str(),
+                        &id,
+                        cutoff,
+                        store.model().model_hash(),
+                        &mut budget,
+                    )?
+                } else {
+                    reader.object_with_budget(
+                        &context.world,
+                        self.plan.grain().as_str(),
+                        &id,
+                        &mut budget,
+                    )?
+                };
+                match selected {
+                    BudgetedRead::Found(record) => {
+                        let authorized = context.include_record(
+                            &reader,
+                            &record,
+                            self.knowledge.map(|c| c.frontier),
+                            &mut exclusions,
+                            &mut |record| {
+                                let allowed = visible(record)?;
+                                if allowed {
+                                    self.finding_members.insert(record.id.clone());
+                                }
+                                Ok(allowed)
+                            },
+                        )?;
+                        self.members.insert(id.clone());
+                        if authorized
+                            && let Some(value) =
+                                project(&self.plan, &record.values).map_err(refused)?
+                        {
+                            self.totals.adjust(&value, false)?;
+                            self.contributions.insert(id, (record.version, value));
+                        }
                     }
-                }
-                None => {
-                    self.members.remove(&id);
+                    BudgetedRead::Missing => {
+                        self.members.remove(&id);
+                    }
+                    BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
                 }
             }
         }
@@ -327,6 +350,8 @@ impl IncrementalQuestion {
         result.engine = Engine::Ivm;
         self.totals.0.retain(|key, _| result.rows.contains_key(key));
         self.receipt_pin = reader.receipt_at(result.revision.commits)?.map(|r| r.hash);
+        source_pins.retain(|id, _| self.members.contains(id));
+        self.source_pins = source_pins;
         self.result = result;
         self.rebuilt = false;
         Ok(())
