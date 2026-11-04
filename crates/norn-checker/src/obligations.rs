@@ -137,6 +137,153 @@ impl DefinitionSource {
             base_sources,
         })
     }
+    /// Commitment to the original candidate/base UTF-8 documents.
+    #[must_use]
+    pub fn exact_digest(&self) -> &str {
+        &self.exact_digest
+    }
+}
+
+/// One retained layer, with its original source documents and receipt commitment.
+#[derive(Debug, Clone, Copy)]
+pub struct RetainedLayer<'a> {
+    /// Exact candidate/base source documents captured before typed projection.
+    pub source: &'a DefinitionSource,
+    /// Retained commitment to the exact source documents.
+    pub source_sha256: &'a str,
+    /// Stored ordinary admission receipt; no caller-supplied admitted flag.
+    pub receipt: &'a str,
+    /// Retained SHA-256 of the stored receipt.
+    pub receipt_sha256: &'a str,
+}
+
+/// Checked retained authority; only the ordered verifier can construct it.
+#[derive(Debug, Clone)]
+pub struct RetainedLayers {
+    artifacts: Vec<ArtifactEnvelope>,
+    registry: BTreeSet<norn_ir::PropertyTypeName>,
+    exact_digest: String,
+}
+
+impl RetainedLayers {
+    /// LAYER-AUTHORITY-1: recheck each exact layer against verified predecessors.
+    /// Receipt verification is structural evidence, never a law proof or grant.
+    /// # Errors
+    /// Refuses missing, forged, reordered, duplicated or edited retained input,
+    /// failed current admission and aggregate resource limits.
+    pub fn verify(
+        layers: &[RetainedLayer<'_>],
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    ) -> Result<Self, ChallengeError> {
+        if layers.is_empty() || layers.len() > 64 {
+            return Err(ChallengeError::Limit);
+        }
+        let registry_bytes = registry
+            .iter()
+            .try_fold(0usize, |bytes, name| bytes.checked_add(name.as_str().len()))
+            .ok_or(ChallengeError::Limit)?;
+        if registry.len() > 16_384 || registry_bytes > 65_536 {
+            return Err(ChallengeError::Limit);
+        }
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let profiles = norn_canonical::serialize_json_verbatim(&(registry, &limits))
+            .map_err(|_error| ChallengeError::Closure)?;
+        if profiles.len() > 65_536 {
+            return Err(ChallengeError::Limit);
+        }
+        let mut artifacts = Vec::new();
+        let mut identities = vec![profiles];
+        let mut bytes = 0usize;
+        for layer in layers {
+            bytes = bytes.saturating_add(layer.receipt.len());
+            if bytes > 8_388_608
+                || artifacts.len().saturating_add(layer.source.artifacts.len()) > 16_384
+            {
+                return Err(ChallengeError::Limit);
+            }
+            if layer.source.exact_digest != layer.source_sha256
+                || exact_set(&layer.source.base)? != exact_set(&artifacts)?
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
+            let context = EntityArtifactSetContext {
+                registry,
+                base: &artifacts,
+                tenant: None,
+            };
+            let receipt_sources = crate::receipt::ReceiptSources::new(
+                &layer.source.receipt_sources,
+                &layer.source.base_sources,
+            )
+            .map_err(|_error| ChallengeError::NotAdmitted)?;
+            let checked = check_artifact_set_with_receipt(&receipt_sources, &context, &limits)
+                .map_err(|_error| ChallengeError::NotAdmitted)?;
+            if !checked.receipt.admitted
+                || checked.diagnostics.iter().any(crate::Diagnostic::is_error)
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
+            crate::receipt::verify_admission_receipt_sources(
+                layer.receipt,
+                layer.receipt_sha256,
+                &layer.source.receipt_sources,
+                &layer.source.base_sources,
+                &limits,
+            )
+            .map_err(|_error| ChallengeError::NotAdmitted)?;
+            if !crate::receipt::attests_fresh_diagnostics(layer.receipt, &checked.receipt)
+                .map_err(|_error| ChallengeError::NotAdmitted)?
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
+            identities.push(layer.source.exact_digest.as_bytes().to_vec());
+            identities.push(layer.receipt_sha256.as_bytes().to_vec());
+            artifacts.extend(layer.source.artifacts.iter().cloned());
+        }
+        exact_set(&artifacts)?;
+        let members: Vec<_> = identities.iter().map(Vec::as_slice).collect();
+        Ok(Self {
+            artifacts,
+            registry: registry.clone(),
+            exact_digest: exact_commitment(b"retained-layers/1", &members)?,
+        })
+    }
+
+    /// Complete definitions reconstructed in verified layer order.
+    #[must_use]
+    pub fn artifacts(&self) -> &[ArtifactEnvelope] {
+        &self.artifacts
+    }
+
+    /// Registry used by current admission of every retained predecessor.
+    #[must_use]
+    pub fn registry(&self) -> &BTreeSet<norn_ir::PropertyTypeName> {
+        &self.registry
+    }
+
+    /// Exact ordered source/receipt identity, separate from Norn1 artifact identity.
+    #[must_use]
+    pub fn exact_digest(&self) -> &str {
+        &self.exact_digest
+    }
+}
+
+fn exact_set(
+    artifacts: &[ArtifactEnvelope],
+) -> Result<BTreeMap<(&str, &str), String>, ChallengeError> {
+    let mut out = BTreeMap::new();
+    for artifact in artifacts {
+        if out
+            .insert(
+                (artifact.artifact_id.as_str(), artifact.version.as_str()),
+                exact_artifact_digest(artifact)?,
+            )
+            .is_some()
+        {
+            return Err(ChallengeError::NotAdmitted);
+        }
+    }
+    Ok(out)
 }
 
 // Protected identities are deliberately separate from ordinary ArtifactRef/Norn1.
