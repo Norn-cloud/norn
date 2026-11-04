@@ -12,6 +12,7 @@ const Order = Schema.Struct({
 export const Purchase = Norn.type({
   name: "stress.Purchase", title: "Synthetic purchase to receipt", version: "1.0.0",
   role: "happening", implements: [Process], properties: Order,
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: { status: "draft", received: 0 },
   lifecycles: [{ property: "status", initial: ["draft"], terminal: ["received", "cancelled"],
@@ -47,7 +48,11 @@ export const ReceiptLimit = Norn.law({
 export const CreatePurchase = Norn.action({
   id: "stress.purchase.create", title: "Create purchase", version: "1.0.0",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
-  input: Order, output: Schema.Struct({ id: Schema.String }),
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
+  input: Schema.Struct({ id: Schema.String,
+    ordered: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
+    received: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
+  }), output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Purchase, change: "created" }],
   effect: { kind: "upsert_input_object", type: Purchase, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
@@ -57,6 +62,17 @@ export const ApprovePurchase = Norn.action({
   input: Schema.Struct({ id: Schema.String }), output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Purchase, change: "modified" }],
   effect: { kind: "fire_transition", type: Purchase, objectIdField: "id", lifecycle: "status", transition: "approve" },
+})
+export const RecordReceivedQuantity = Norn.action({
+  id: "stress.purchase.record_received", title: "Record counted receipt quantity", version: "1.0.0",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
+  slice: [{ name: "purchase", type: Purchase, key: { property: { from: "input", property: "id" } } }],
+  preconditions: [Norn.expression(Schema.Struct({ slice: Schema.Struct({ purchase: Order }) }), x => x.slice.purchase.status === "approved")],
+  input: Schema.Struct({ id: Schema.String, received: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }) }),
+  output: Schema.Struct({ id: Schema.String }), writes: [{ type: Purchase, change: "modified" }, { type: Purchase, change: "created" }],
+  effect: { kind: "upsert_input_object", type: Purchase, objectIdField: "id",
+    writeMode: { kind: "upsert" } },
 })
 export const ReceivePurchase = Norn.action({
   id: "stress.purchase.receive", title: "Complete receipt", version: "1.0.0",
@@ -72,9 +88,16 @@ const Line = Schema.Struct({
   rejected: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
   delivered: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
 })
+const LineInput = Schema.Struct({
+  id: Schema.String,
+  accepted: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
+  rejected: Schema.optionalKey(Norn.decimal(0, { unit: { system: "ucum", code: "1" } })),
+  delivered: Norn.decimal(0, { unit: { system: "ucum", code: "1" } }),
+})
 export const ReceiptLine = Norn.type({
   name: "stress.ReceiptLine", title: "Immutable receipt inspection", version: "1.0.0",
   role: "happening", implements: [Process], properties: Line,
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
   identity: [{ name: "primary", properties: ["id"] }], defaults: { rejected: 0 },
 })
 export const ReceiptBalance = Norn.law({
@@ -90,10 +113,11 @@ export const ReceiptBalance = Norn.law({
 export const InspectReceipt = Norn.action({
   id: "stress.receipt.inspect", title: "Record receipt inspection", version: "1.0.0",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
-  input: Line, output: Schema.Struct({ id: Schema.String }),
+  dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
+  input: LineInput, output: Schema.Struct({ id: Schema.String }),
   derive: [{ field: "rejected", inputRequired: false,
-    expression: Norn.expression(Line, x => x.delivered - x.accepted) }],
-  preconditions: [Norn.expression(Schema.Struct({ input: Line }), x => x.input.delivered > 0 && x.input.accepted >= 0 && x.input.accepted <= x.input.delivered)],
+    expression: Norn.expression(LineInput, x => x.delivered - x.accepted) }],
+  preconditions: [Norn.expression(Schema.Struct({ input: LineInput }), x => x.input.delivered > 0 && x.input.accepted >= 0 && x.input.accepted <= x.input.delivered)],
   writes: [{ type: ReceiptLine, change: "created" }],
   effect: { kind: "upsert_input_object", type: ReceiptLine, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
