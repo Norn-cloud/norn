@@ -372,7 +372,15 @@ pub fn diagnose_declared_order(
     contexts: usize,
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, NormRefusal> {
-    diagnose_order(norms, origins, layers, edges, protected, contexts, (max_calls, &BTreeSet::new()))
+    diagnose_order(
+        norms,
+        origins,
+        layers,
+        edges,
+        protected,
+        contexts,
+        (max_calls, &BTreeSet::new()),
+    )
 }
 
 /// Admission repairs may relax only candidate declarations; base laws remain fixed.
@@ -385,13 +393,40 @@ pub(crate) fn diagnose_candidate_order(
     contexts: usize,
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, NormRefusal> {
-    let editable = (0..norms.len()).filter(|i| !protected.contains(i)).collect();
+    let editable = (0..norms.len())
+        .filter(|i| !protected.contains(i))
+        .collect();
     let audit = crate::deontic::installed_protection(protected, edges);
-    let mut report = diagnose_order(norms, origins, layers, edges, &audit, contexts, (max_calls, &editable))?;
-    validate_admission_diagnosis(norms, origins, layers, edges, protected, contexts, &mut report.diagnosis)?;
+    let mut report = diagnose_order(
+        norms,
+        origins,
+        layers,
+        edges,
+        &audit,
+        contexts,
+        (max_calls, &editable),
+    )?;
+    validate_admission_diagnosis(
+        norms,
+        origins,
+        layers,
+        edges,
+        protected,
+        contexts,
+        &mut report.diagnosis,
+    )?;
     if !report.diagnosis.cores.is_empty() {
-        let repairs: Vec<Vec<_>> = report.diagnosis.corrections.iter().map(|repair|
-            repair.iter().filter_map(|i| norms.get(*i).map(|n| n.id.as_str())).collect()).collect();
+        let repairs: Vec<Vec<_>> = report
+            .diagnosis
+            .corrections
+            .iter()
+            .map(|repair| {
+                repair
+                    .iter()
+                    .filter_map(|i| norms.get(*i).map(|n| n.id.as_str()))
+                    .collect()
+            })
+            .collect();
         for diagnostic in &mut report.diagnostics {
             if diagnostic.is_error() {
                 use std::fmt::Write;
@@ -508,34 +543,86 @@ fn legacy_notes(
 }
 
 fn validate_admission_diagnosis(
-    norms: &[GroundedNorm], origins: &[crate::consistency::RuleOrigin],
-    layers: &[ConstitutionLayer], edges: &[(usize, usize)], protected: &BTreeSet<usize>,
-    contexts: usize, diagnosis: &mut crate::consistency::diagnosis::Diagnosis,
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    diagnosis: &mut crate::consistency::diagnosis::Diagnosis,
 ) -> Result<(), NormRefusal> {
     let all: BTreeSet<_> = (0..norms.len()).collect();
     let mut checks = Vec::new();
     for core in &diagnosis.cores {
         checks.push((core.clone(), true));
-        for member in core { let mut subset = core.clone(); subset.remove(member); checks.push((subset, false)); }
+        for member in core {
+            let mut subset = core.clone();
+            subset.remove(member);
+            checks.push((subset, false));
+        }
     }
     for repair in &diagnosis.corrections {
         let remaining: BTreeSet<_> = all.difference(repair).copied().collect();
         checks.push((remaining.clone(), false));
-        for member in repair { let mut restored = remaining.clone(); restored.insert(*member); checks.push((restored, true)); }
+        for member in repair {
+            let mut restored = remaining.clone();
+            restored.insert(*member);
+            checks.push((restored, true));
+        }
     }
     for (active, conflict) in checks {
-        if active.is_empty() { if conflict { return Err(NormRefusal::InvalidBinding); } continue; }
-        let indices: BTreeMap<_, _> = active.iter().enumerate().map(|(new, old)| (*old, new)).collect();
-        let subset: Vec<_> = active.iter().filter_map(|i| norms.get(*i).cloned()).collect();
-        let locations: Vec<_> = active.iter().filter_map(|i| origins.get(*i).cloned()).collect();
-        let levels: Vec<_> = active.iter().filter_map(|i| layers.get(*i).copied()).collect();
-        let priorities: Vec<_> = edges.iter().filter_map(|(a,b)| Some((*indices.get(a)?, *indices.get(b)?))).collect();
-        let fixed = protected.iter().filter_map(|i| indices.get(i).copied()).collect();
-        let remaining = diagnosis.max_calls.checked_sub(diagnosis.calls).ok_or(NormRefusal::Limit)?;
+        if active.is_empty() {
+            if conflict {
+                return Err(NormRefusal::InvalidBinding);
+            }
+            continue;
+        }
+        let indices: BTreeMap<_, _> = active
+            .iter()
+            .enumerate()
+            .map(|(new, old)| (*old, new))
+            .collect();
+        let subset: Vec<_> = active
+            .iter()
+            .filter_map(|i| norms.get(*i).cloned())
+            .collect();
+        let locations: Vec<_> = active
+            .iter()
+            .filter_map(|i| origins.get(*i).cloned())
+            .collect();
+        let levels: Vec<_> = active
+            .iter()
+            .filter_map(|i| layers.get(*i).copied())
+            .collect();
+        let priorities: Vec<_> = edges
+            .iter()
+            .filter_map(|(a, b)| Some((*indices.get(a)?, *indices.get(b)?)))
+            .collect();
+        let fixed = protected
+            .iter()
+            .filter_map(|i| indices.get(i).copied())
+            .collect();
+        let remaining = diagnosis
+            .max_calls
+            .checked_sub(diagnosis.calls)
+            .ok_or(NormRefusal::Limit)?;
         let audit = crate::deontic::installed_protection(&fixed, &priorities);
-        let checked = diagnose_declared_order(&subset, &locations, &levels, &priorities, &audit, contexts, remaining)?;
-        diagnosis.calls = diagnosis.calls.checked_add(checked.diagnosis.calls).ok_or(NormRefusal::Limit)?;
-        if checked.diagnosis.cores.is_empty() == conflict { return Err(NormRefusal::InvalidBinding); }
+        let checked = diagnose_declared_order(
+            &subset,
+            &locations,
+            &levels,
+            &priorities,
+            &audit,
+            contexts,
+            remaining,
+        )?;
+        diagnosis.calls = diagnosis
+            .calls
+            .checked_add(checked.diagnosis.calls)
+            .ok_or(NormRefusal::Limit)?;
+        if checked.diagnosis.cores.is_empty() == conflict {
+            return Err(NormRefusal::InvalidBinding);
+        }
     }
     Ok(())
 }

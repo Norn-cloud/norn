@@ -765,10 +765,11 @@ fn ordinary_admission_runs_native_declared_order() {
             .any(|d| d.message.contains("sales.approve") && d.message.contains("sales.block")),
         "{tie:?}"
     );
-    assert!(tie.iter().filter(|d| d.is_error()).all(|d|
+    assert!(tie.iter().filter(|d| d.is_error()).all(|d| {
         d.message.contains("Canonical attempted/base SHA256:")
-        && d.message.contains("candidate-only relaxation proposals")
-        && d.message.contains("Query budget:")));
+            && d.message.contains("candidate-only relaxation proposals")
+            && d.message.contains("Query budget:")
+    }));
     low.defeated_by.push(high.law.id.clone());
     assert!(run(&[low.clone(), high.clone()]).is_empty());
     high.defeated_by.push(low.law.id.clone());
@@ -866,20 +867,42 @@ fn native_order_rejects_incomplete_law_identities() {
 
 #[test]
 fn live_diagnosis_exhaustion_refuses_without_partial_repairs() {
-    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
     use std::collections::BTreeSet;
     let (mut entity, low, high) = admission_fixture();
-    let rules: Vec<_> = (0..32).map(|index| {
-        let mut rule = if index % 2 == 0 { low.clone() } else { high.clone() };
-        rule.law.id = format!("rule-{index}");
-        rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
-        rule
-    }).collect();
+    let rules: Vec<_> = (0..32)
+        .map(|index| {
+            let mut rule = if index % 2 == 0 {
+                low.clone()
+            } else {
+                high.clone()
+            };
+            rule.law.id = format!("rule-{index}");
+            rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            rule
+        })
+        .collect();
     entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
     let artifact = serde_json::from_value(entity).expect("candidate");
-    let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&BTreeSet::new(),base:&[],tenant:None});
-    assert!(findings.iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"), "{findings:?}");
-    assert!(findings.iter().all(|d| !d.message.contains("relaxation proposals")));
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|d| !d.message.contains("relaxation proposals"))
+    );
 }
 
 #[test]
@@ -925,18 +948,31 @@ fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
 
 #[test]
 fn live_diagnosis_pins_reproduce_and_change_with_attempted_source() {
-    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
     use std::collections::BTreeSet;
     let (mut entity, low, high) = admission_fixture();
     entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low, high]});
     let run = |value| {
         let artifact = serde_json::from_value(value).expect("candidate");
-        check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&BTreeSet::new(),base:&[],tenant:None})
-            .into_iter().map(|d| d.message).collect::<Vec<_>>()
+        check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        )
+        .into_iter()
+        .map(|d| d.message)
+        .collect::<Vec<_>>()
     };
     let original = run(entity.clone());
     assert_eq!(original, run(entity.clone()));
-    assert!(original.iter().all(|message| message.contains("profile SHA256:")));
+    assert!(
+        original
+            .iter()
+            .all(|message| message.contains("profile SHA256:"))
+    );
     entity["name"] = json!("edited");
     assert_ne!(original, run(entity));
 }
