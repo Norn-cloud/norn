@@ -800,12 +800,32 @@ def validate_claim_evidence_shape(
                 if (layer_name, status, selector_kind) == ("proof", "implementation_proved", "harness"):
                     harness = ROOT / artifact
                     name = selector.split(":", 1)[1]
+                    command_args = shlex.split(command)
+                    kani_index = command_args.index("kani") if "kani" in command_args else len(command_args)
+                    prefix = command_args[:kani_index]
+                    declaration = re.search(
+                        r"((?:#\[[^\]]+\]\s*)+)(?:pub\s+)?fn\s+" + re.escape(name) + r"\b",
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else "",
+                    )
+                    require(
+                        declaration is not None
+                        and re.search(r"#\[cfg(?:_attr)?\b", declaration.group(1)) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
+                    )
+                    require(
+                        not prefix or (prefix[0] == "env" and all(
+                            re.fullmatch(r"(?:RUSTFLAGS|RUSTUP_HOME|KANI_HOME)=[^\s]+", arg)
+                            for arg in prefix[1:]
+                        )),
+                        f"{subsystem_id}.{claim_id}: implementation command must execute Kani directly",
+                    )
                     require(
                         harness.suffix == ".rs" and harness.is_file()
                         and re.search(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b", strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))) is not None
                         and "kani" in shlex.split(command)
                         and shlex.split(command)[shlex.split(command).index("kani"):] == [
-                            "kani", "--fail-fast", "--output-format", "terse", artifact
+                            "kani", "--fail-fast", "--output-format", "terse", "--harness", name, artifact
                         ],
                         f"{subsystem_id}.{claim_id}: implementation harness must be an executed Kani proof with safety checks",
                     )

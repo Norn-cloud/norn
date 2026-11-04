@@ -635,10 +635,10 @@ run_gate fast core-value-ledger-lean \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
 run_gate full integer-negation-kani \
-  "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
+  "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse --harness integer_negation_correspondence verification/implementation-v1/rational_neg_kani.rs" \
   command env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup \
     KANI_HOME=target/verification-tools/kani-home \
-    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    kani --fail-fast --output-format terse --harness integer_negation_correspondence --target-dir "$result_root/kani-target" \
     verification/implementation-v1/rational_neg_kani.rs
 
 run_gate full quantity-kani \

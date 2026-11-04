@@ -114,7 +114,7 @@ class EnrollmentTests(unittest.TestCase):
         subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
         original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
         module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
-        for mutation in ("no-proof", "no-predicate", "not-kani", "checks-disabled", "not-annotated"):
+        for mutation in ("no-proof", "no-predicate", "not-kani", "checks-disabled", "no-harness", "shell-wrapper", "not-annotated"):
             with self.subTest(mutation=mutation):
                 claim = copy.deepcopy(original)
                 evidence = claim["evidence"]["proof"]
@@ -126,10 +126,32 @@ class EnrollmentTests(unittest.TestCase):
                     evidence[0]["command"] = "true"
                 elif mutation == "checks-disabled":
                     evidence[0]["command"] += " --no-unwinding-checks"
+                elif mutation == "no-harness":
+                    evidence[0]["command"] = evidence[0]["command"].replace(" --harness integer_negation_correspondence", "")
+                elif mutation == "shell-wrapper":
+                    evidence[0]["command"] = "sh -c true " + evidence[0]["command"]
                 else:
+                    evidence[0]["command"] = evidence[0]["command"].replace(evidence[0]["artifact"], "crates/norn-checker/src/exact_rational.rs").replace("--harness integer_negation_correspondence", "--harness checked_neg")
                     evidence[0]["artifact"] = "crates/norn-checker/src/exact_rational.rs"
                     evidence[0]["selectors"] = ["harness:checked_neg"]
                 with self.assertRaises(module.InvalidCoverage):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+
+    def test_configuration_disabled_implementation_harness_is_rejected(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
+        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        for attributes in ("#[cfg(any())]\n#[kani::proof]", "#[kani::proof]\n#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]\n#[kani::proof]"):
+            with self.subTest(attributes=attributes), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                claim = copy.deepcopy(original)
+                entry = claim["evidence"]["proof"][0]
+                harness = module.ROOT / entry["artifact"]
+                harness.parent.mkdir(parents=True)
+                harness.write_text(attributes + "\nfn integer_negation_correspondence() {}\n#[kani::proof]\nfn other() {}\n")
+                with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
                     module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
 
     def test_plan_workflow_contract_is_exact(self):

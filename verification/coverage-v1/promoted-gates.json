@@ -851,7 +851,7 @@
     {
       "id": "integer-negation-kani",
       "profile": "full",
-      "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs",
+      "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse --harness integer_negation_correspondence verification/implementation-v1/rational_neg_kani.rs",
       "evidenceKind": "command",
       "role": "claim-evidence",
       "classifications": [
