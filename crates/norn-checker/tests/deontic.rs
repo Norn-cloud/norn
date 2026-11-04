@@ -863,3 +863,21 @@ fn native_order_rejects_incomplete_law_identities() {
         assert!(lower_declared_order(&[broken], &norn_expr::schema::Schema::Boolean).is_err());
     }
 }
+
+#[test]
+fn live_diagnosis_exhaustion_refuses_without_partial_repairs() {
+    use norn_checker::{check_artifact_set, EntityArtifactSetContext};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    let rules: Vec<_> = (0..32).map(|index| {
+        let mut rule = if index % 2 == 0 { low.clone() } else { high.clone() };
+        rule.law.id = format!("rule-{index}");
+        rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+        rule
+    }).collect();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext {registry:&BTreeSet::new(),base:&[],tenant:None});
+    assert!(findings.iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"), "{findings:?}");
+    assert!(findings.iter().all(|d| !d.message.contains("relaxation proposals")));
+}
