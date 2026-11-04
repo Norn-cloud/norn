@@ -228,6 +228,12 @@ pub fn admit_path_mapping(
     let lowered = lower_mapping(&source_catalog, &target_catalog, mapping)?;
     let sources = reachable(&source_catalog, mapping.objects.values().cloned());
     let targets = reachable(&target_catalog, mapping.objects.keys().cloned());
+    if let Some(concept) = sources.intersection(&targets).next() {
+        return Err(refuse(
+            &mapping.id,
+            &format!("{concept}: catalogs must be disjoint"),
+        ));
+    }
     source_theory
         .dependencies
         .extend(link_contracts(&source_catalog, &sources, "source", true).dependencies);

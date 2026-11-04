@@ -405,3 +405,34 @@ fn inherited_equation_ids_do_not_collide_with_declarations() {
     )
     .unwrap();
 }
+
+#[test]
+fn source_link_target_cannot_reuse_a_target_concept() {
+    let mut source = serde_json::to_value(catalog("s")).unwrap();
+    source[0]["payload"]["objectType"]["links"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "overlap", "target": "t.Node", "cardinality": {"to": "one", "from": "many"}
+        }));
+    let source = serde_json::from_value::<Vec<ArtifactEnvelope>>(source).unwrap();
+    let mapping = serde_json::from_value(json!({
+        "id": "overlap", "objects": {"t.Node": "s.Node"},
+        "links": [{"concept": "t.Node", "link": "next", "path": ["next"]}]
+    }))
+    .unwrap();
+    let findings = admit_path_mapping(
+        &source,
+        &catalog("t"),
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    )
+    .unwrap_err();
+    assert_eq!(findings[0].code.as_str(), PATH_MAPPING_INVALID);
+    assert!(
+        findings[0]
+            .message
+            .contains("t.Node: catalogs must be disjoint")
+    );
+}
