@@ -49,6 +49,7 @@ fn freeze(
     object: &EffectiveObjectType,
     bounds: &Bounds,
     domain_bytes: usize,
+    laws: Vec<(String,LawIR)>,
 ) -> Result<Snapshot, String> {
     require(
         object.lifecycles.len() == 1,
@@ -68,14 +69,6 @@ fn freeze(
         "chart exceeds finite profile",
     )?;
     require(object.properties.len() <= 16, "more than 16 stored fields")?;
-    require(
-        !object.keys.iter().any(|key| {
-            key.components
-                .iter()
-                .any(|member| member.as_str() == bounds.property)
-        }),
-        "lifecycle-dependent identity is outside profile",
-    )?;
     let state_bytes = machine
         .states
         .iter()
@@ -144,7 +137,7 @@ fn freeze(
         machine: machine.clone(),
         fields,
         nodes,
-        laws: Vec::new(),
+        laws,
     })
 }
 
@@ -208,8 +201,8 @@ impl ApprovedContract {
                 }
 
                 require(bounds.frozen.keys().all(|name|name!=&bounds.property && object.property(name).is_some()), "extra frozen scalar domain")?;
-                let mut snapshot = freeze(object, bounds, domains.len())?;
-                snapshot.laws = laws
+                require(!object.keys.iter().any(|key|key.components.iter().any(|member|member.as_str()==bounds.property)), "lifecycle-dependent identity is outside profile")?;
+                let applicable = laws
                     .iter()
                     .filter(|(_, law)| {
                         object.lineage.iter().any(|ty| ty.as_str() == law.subject)
@@ -220,7 +213,7 @@ impl ApprovedContract {
                     })
                     .map(|(artifact, law)| (artifact.artifact_id.clone(), law.clone()))
                     .collect();
-                Ok(snapshot)
+                freeze(object, bounds, domains.len(), applicable)
             });
         let document = serde_json::json!({"profile":"norn.lifecycle.frozen/1","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
         let bytes = norn_canonical::serialize_json_verbatim(&document)
