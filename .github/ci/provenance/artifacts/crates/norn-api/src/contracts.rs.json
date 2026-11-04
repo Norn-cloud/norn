@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",
@@ -12,6 +13,5 @@
     }
   ],
   "notices": [],
-  "connector": null,
-  "parents": []
+  "connector": null
 }
