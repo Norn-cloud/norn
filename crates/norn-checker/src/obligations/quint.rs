@@ -1,4 +1,7 @@
 //! PROOF-QUINT-1: syntax emission from the shared finite relation.
+/// Native trusted prepare/bind controller; solver processes remain outside the checker.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod driver;
 pub use super::finite::Bounds;
 use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use norn_ir::verification::finite::CreateRelation;
