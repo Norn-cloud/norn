@@ -262,6 +262,7 @@ impl IncrementalQuestion {
             (verified, None)
         };
         let mut changed = self.changed_keys(store, &context, &head)?;
+        let receipt_changed = changed.clone();
         let mut source_pins = BTreeMap::new();
         let mut history = reader.history_read_seeded(receipt);
         for refresh_source in [false, true] {
@@ -273,7 +274,8 @@ impl IncrementalQuestion {
                         .keys()
                         .chain(source_pins.keys())
                         .filter(|id| {
-                            self.finding_members.contains(*id)
+                            !receipt_changed.contains(*id)
+                                && self.finding_members.contains(*id)
                                 && self.source_pins.get(*id) != source_pins.get(*id)
                         })
                         .cloned(),
