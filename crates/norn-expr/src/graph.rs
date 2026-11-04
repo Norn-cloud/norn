@@ -115,8 +115,12 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
             .ty;
         let compiled = Expression::compile(expression.value.as_str()).map_err(|e| e.to_string())?;
         let (checked, fuel) = crate::check::certify_expression(
-            &compiled, &env, expected, &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-        ).map_err(|reason| format!("node {id} assignment {}: {reason}", expression.key))?;
+            &compiled,
+            &env,
+            expected,
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        )
+        .map_err(|reason| format!("node {id} assignment {}: {reason}", expression.key))?;
         result.push(BoundAssignment {
             fuel,
             node: id.clone(),

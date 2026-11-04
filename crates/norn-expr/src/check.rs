@@ -309,7 +309,7 @@ impl FuelCertificate {
         expected: &Type,
         limits: &ResourceLimitProfile,
     ) -> Result<CheckedExpression, String> {
-        if self.semantics.len() != 64 || self.semantics != fuel_semantics()? {
+        if self.semantics.len() != 64 || self.statement.len() != 64 || self.semantics != fuel_semantics()? {
             return Err("stale expression fuel semantics".into());
         }
         let (checked, reconstructed) = certify_expression(expression, env, expected, limits)?;
@@ -334,17 +334,27 @@ pub fn certify_expression(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, FuelCertificate), String> {
-    let checked = check_expression_with(expression, env, expected, limits)
+    let checked = check_expression_with_sources_and_root_bounds(
+        expression, env, expected, limits, None, true,
+    ).map(|(checked, _)| checked)
         .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
     if checked.cost().units() == u64::MAX {
         return Err("unknown or overflowing expression cost".into());
     }
-    let statement = norn_ir::canonical::domain_hash_hex(b"norn.expression-cost-statement/1\0",
-        &(expression.source(), env.to_canonical_value(),
-          expected.to_canonical_value(crate::env::TypeEnvVersion::V2), limits))
-        .map_err(|error| error.to_string())?;
+    let statement = norn_ir::canonical::domain_hash_hex(
+        b"norn.expression-cost-statement/1\0",
+        &(
+            expression.source().as_bytes(),
+            env.to_canonical_value(),
+            expected.to_canonical_value(crate::env::TypeEnvVersion::V2),
+            limits,
+        ),
+    )
+    .map_err(|error| error.to_string())?;
     let certificate = FuelCertificate {
-        units: checked.cost().units(), statement, semantics: fuel_semantics()?,
+        units: checked.cost().units(),
+        statement,
+        semantics: fuel_semantics()?,
     };
     Ok((checked, certificate))
 }
@@ -353,19 +363,29 @@ pub fn certify_expression(
 /// invalidate old evidence even when an author forgets to bump the profile name.
 fn fuel_semantics() -> Result<String, String> {
     static IDENTITY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    IDENTITY.get_or_init(|| {
-        norn_ir::canonical::domain_hash_hex(b"norn.expression-fuel/1\0", &[
-            include_str!("check.rs"),
-            include_str!("check/cost.rs"),
-            include_str!("expression.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/meter.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/compiler/compiler.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/compiler/opcode.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/vm/vm.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/functions/internal.rs"),
-            include_str!("../../../vendor/zen/core/expression/src/functions/method.rs"),
-        ]).map_err(|error| error.to_string())
-    }).clone()
+    IDENTITY
+        .get_or_init(|| {
+            norn_ir::canonical::domain_hash_hex(
+                b"norn.expression-fuel/1\0",
+                &[
+                    include_str!("check.rs"),
+                    include_str!("check/cost.rs"),
+                    include_str!("expression.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/meter.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/compiler/compiler.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/compiler/opcode.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/vm/vm.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/functions/internal.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/functions/method.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/functions/date_method.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/functions/arguments.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/functions/deprecated.rs"),
+                    include_str!("../../../vendor/zen/core/expression/src/vm/helpers.rs"),
+                ],
+            )
+            .map_err(|error| error.to_string())
+        })
+        .clone()
 }
 
 /// An admitted expression: its proved type and its static cost bound.
