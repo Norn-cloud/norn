@@ -104,7 +104,7 @@ must equal full recomputation at that exact frontier. Equality covers the
 entire result envelope, including decimal values, member versions, exclusions,
 scope, definitions, mappings and source progress; only the engine label differs.
 Every generated sequence includes insertion, update, deletion, redelivery and
-restart, followed by generated amount, metal and effective-week changes.
+restart, with possible generated amount, metal and effective-week changes.
 Forward/reverse runs reorder independent identities within each batch and the
 initial fixture, preserving each identity's update order. Their values and
 versioned contribution IDs must agree; their physical ledger hashes may differ.
@@ -116,3 +116,7 @@ is runtime-enforced scenario assertions plus sampled generated correspondence.
 It adds no evaluator or arithmetic kernel; the existing bounded arithmetic
 Kani harness remains its arithmetic evidence. Synthetic native receipts do not
 qualify mapped-feed authority, training knowledge, OLAP or a demo surface.
+
+## G6 numeric QUERY-FANOUT correspondence
+QUERY-GRAIN-1: the native root-grain sum returns 80 for one Holding linked to two real Tag objects; two distinct holdings each valued at 80 return 160. Numeric contributions are keyed by holding identity/version, not measure value or catalog multiplicity. Typed Rust fixture definitions compile through the existing IR/checker and use actual native objects/links. No monetary/currency or joined-dimension execution is qualified.
+The named expanded-tag case refuses ambiguous grain; symmetric linked grouping stays unsupported. A generated native population varies scalar amounts and tag multiplicities, commits link-only receipts and compares complete IVM/recompute envelopes plus independent root sums and unchanged numeric rows. This test-only cut adds no pure engine function or Kani target; the existing exact-arithmetic harnesses remain unchanged.
