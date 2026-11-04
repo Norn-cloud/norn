@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { QuestionsMenu, QuestionsPage } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
+import { SourcesPage } from "./sources.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
@@ -36,7 +37,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : () => <NotYet {...section} />,
     })),
   ]),
 })
