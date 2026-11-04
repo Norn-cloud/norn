@@ -87,3 +87,7 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 `EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
 
 Named scenarios: `structural_sum_accepts_parentheses_and_literal_members`, `structural_sum_refuses_other_operations_and_reads`, `structural_sum_bounds_and_malformed_source_fail_closed`, `structural_sum_preserves_generated_terms`. Evidence is structural and sampled, not algebraic proof.
+
+## Host read authority
+
+**HOST-READ-1:** configured host reads distinguish Population, Values and Sources. Metadata/action grants imply none of them. The shared authorizer receives only physical-cell scope, and mismatched original bindings still deny. Authorization and explicit scope admission both execute before storage access under one held definition epoch; every failed read gate returns identical static 403 bytes. Named correspondences: `metadata_grants_do_not_grant_read_capabilities`, `read_gate_checks_policy_and_scope_before_reading`, `physical_scope_is_the_only_policy_scope`, and `denied_read_documents_do_not_reveal_the_physical_scope`.

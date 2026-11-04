@@ -1,8 +1,8 @@
 //! One already-opened tenant cell shared by authorized transport adapters.
 use crate::{
-    authz::{Authorizer, DenyAll},
+    authz::{Authorizer, DenyAll, ReadRequest, read_denied},
     refusal::Refusal,
-    scope::CellScope,
+    scope::{CellScope, ScopeQuery},
 };
 use norn_cell::{CellStore, engine::SqlEngine};
 use norn_ir::RuntimeObject;
@@ -52,6 +52,45 @@ impl<E: SqlEngine> DevHost<E> {
     /// Poisoned synchronization refuses closed.
     pub fn definition_read(&self) -> Result<RwLockReadGuard<'_, ()>, Refusal> {
         self.definitions.read().map_err(Refusal::host)
+    }
+    /// HOST-READ-1: authorize and check explicit scope before opening storage.
+    /// # Errors
+    /// Every policy or scope failure has the same opaque 403 document.
+    pub fn read_access(
+        &self,
+        scope: &ScopeQuery,
+        request: &ReadRequest<'_>,
+    ) -> Result<RwLockReadGuard<'_, ()>, Refusal> {
+        let epoch = self.definition_read();
+        let allowed = self.read_permitted(request);
+        let scoped = self
+            .scope
+            .admit(scope.org_id.as_deref(), scope.environment_id.as_deref());
+        if !allowed || scoped.is_err() {
+            return Err(read_denied());
+        }
+        epoch
+    }
+    pub(crate) fn read_permitted(&self, request: &ReadRequest<'_>) -> bool {
+        let physical = norn_kernel::authz::ScopeKey {
+            org: self.scope.org_id.clone(),
+            environment: Some(self.scope.environment_id.clone()),
+            tenant: None,
+            workspace: None,
+            business_unit: None,
+        };
+        let mut bound = request.access.clone();
+        let matches = bound.scope.as_ref() == Some(&physical) && bound.resource.scope == physical;
+        bound.scope = Some(physical.clone());
+        bound.resource.scope = physical;
+        let allowed = self
+            .authorizer
+            .read(&ReadRequest {
+                capability: request.capability,
+                access: &bound,
+            })
+            .is_ok();
+        matches && allowed
     }
     pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
         self.cell.lock().map_err(Refusal::host)
