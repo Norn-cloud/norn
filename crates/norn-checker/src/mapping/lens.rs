@@ -105,7 +105,8 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
         .map(|[no, yes]| {
             Ok([
                 no.parse::<usize>().map_err(|_error| "unknown: put index")?,
-                yes.parse::<usize>().map_err(|_error| "unknown: put index")?,
+                yes.parse::<usize>()
+                    .map_err(|_error| "unknown: put index")?,
             ])
         })
         .collect::<Result<Vec<_>, String>>()?;
