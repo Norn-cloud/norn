@@ -1,0 +1,25 @@
+{
+  "sha256": "e7f711a8d26a21a17ef85bea801491201c167d79ffa18f0fa4a597c3fca92148",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/stock-parity/fifo.json",
+    "tools/stock-parity/boot.sh",
+    "tools/stock-parity/rest.py",
+    "tools/stock-parity/setup.py",
+    "tools/stock-parity/driver.py",
+    "tools/stock-parity/extract.py",
+    "tools/norn-ts/src/parity/stock-trace.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
