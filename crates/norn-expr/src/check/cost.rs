@@ -1027,8 +1027,14 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 ..Val::default()
             },
             FunctionKind::Internal(InternalFunction::Tokens) => {
-                let max_count = literal_u64(arguments.get(2).copied(), len64(zen_expression::functions::MAX_TOKEN_COUNT));
-                let max_length = literal_u64(arguments.get(3).copied(), len64(zen_expression::functions::MAX_TOKEN_BYTES));
+                let max_count = literal_u64(
+                    arguments.get(2).copied(),
+                    len64(zen_expression::functions::MAX_TOKEN_COUNT),
+                );
+                let max_length = literal_u64(
+                    arguments.get(3).copied(),
+                    len64(zen_expression::functions::MAX_TOKEN_BYTES),
+                );
                 let input_bytes = self.total(&first);
                 let count = if max_length == 0 {
                     0
@@ -1048,7 +1054,10 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 }
             }
             FunctionKind::Internal(InternalFunction::Take) => {
-                let max_scalars = literal_u64(arguments.get(1).copied(), len64(zen_expression::functions::MAX_TAKE_SCALARS));
+                let max_scalars = literal_u64(
+                    arguments.get(1).copied(),
+                    len64(zen_expression::functions::MAX_TAKE_SCALARS),
+                );
                 let output_bytes = self.total(&first).min(max_scalars.saturating_mul(4));
                 cost.add(&Lin::constant(output_bytes));
                 Val::sized(Lin::constant(output_bytes))
@@ -1077,7 +1086,9 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 );
                 let separator_bytes = self.total(&separator).saturating_mul(separators);
                 Val::sized(Lin::constant(
-                    item_bytes.saturating_add(separator_bytes).min(len64(zen_expression::functions::MAX_JOIN_BYTES)),
+                    item_bytes
+                        .saturating_add(separator_bytes)
+                        .min(len64(zen_expression::functions::MAX_JOIN_BYTES)),
                 ))
             }
             FunctionKind::Internal(_) | FunctionKind::Deprecated(_) | FunctionKind::Closure(_) => {
