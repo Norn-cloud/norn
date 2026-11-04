@@ -1045,7 +1045,7 @@ fn certified_fuel_bounds_exhaustive_small_inputs_and_detects_quadratic_mutant() 
     let (_, mutant) =
         certify_expression(&quadratic, &env, &Type::Number, &profile).expect("mutant");
     assert!(mutant.units > evidence.units);
-    let mut restricted = profile.clone();
+    let mut restricted = profile;
     restricted.decide.fuel_units = evidence.units;
     assert!(certify_expression(&linear, &env, &Type::Number, &restricted).is_ok());
     assert!(certify_expression(&quadratic, &env, &Type::Number, &restricted).is_err());
