@@ -12,29 +12,40 @@ use norn_ir::deontic::{
     StructuredRequirement,
 };
 use norn_ir::requirement_display::RequirementView;
-use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawResponse, ZenExpression};
 use serde_json::json;
 
 type DemoResult<T> = Result<T, Box<dyn Error>>;
 
-// TARGET: the profile lacks structured bilingual authoring; https://github.com/Norn-cloud/norn/issues/58
-fn target_wording() -> DemoResult<RequirementWording> {
+fn conservation() -> DemoResult<LawIR> {
+    let artifact: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))?;
+    Ok(serde_json::from_value(
+        artifact
+            .get("payload")
+            .ok_or("missing law payload")?
+            .clone(),
+    )?)
+}
+
+fn wording() -> DemoResult<RequirementWording> {
     let mut wording: RequirementWording =
         serde_json::from_str(include_str!("../../../fixtures/wording/locales.json"))?;
     for (tag, scope, activation, component, response) in [
         (
             "en",
-            "Each melt in this app",
-            "When the melt is posted",
-            "Its fine-metal mass measurements",
-            "Input fine mass equals output fine mass plus recorded fine-metal loss",
+            "Each core conversion",
+            "At every accepted measurement",
+            "Its measurements in one unit",
+            "Input equals output plus recorded loss",
         ),
         (
             "ar",
-            "كل عملية صهر في هذا التطبيق",
-            "عندما تكون عملية الصهر مُرحَّلة",
-            "قياسات كتلة المعدن الخالص للعملية",
-            "كتلة المعدن الخالص الداخلة تساوي مجموع كتلته الخارجة وكتلة الفاقد المُسجَّل منه",
+            "كل عملية تحويل",
+            "عند كل قياس مقبول",
+            "قياساتها بوحدة واحدة",
+            "المدخل يساوي المخرج مع الفاقد المسجل",
         ),
     ] {
         let entry = wording.0.get_mut(tag).ok_or("missing declared locale")?;
@@ -63,41 +74,21 @@ fn target_requirement(law: LawIR) -> DemoResult<StructuredRequirement> {
             defeated_by: vec![],
         },
         timing: RequirementTiming::EveryCommittedState,
-        wording: target_wording()?,
+        wording: wording()?,
     })
 }
 
-fn authored_law(artifacts: &[ArtifactEnvelope]) -> DemoResult<LawIR> {
-    let envelope = artifacts
-        .iter()
-        .find(|a| {
-            a.artifact_id == "demo.fine_mass_conservation.law" && a.kind() == ArtifactKind::Law
-        })
-        .ok_or("missing TS-authored conservation law")?;
-    Ok(serde_json::from_value(serde_json::to_value(
-        envelope.payload.to_json_value(),
-    )?)?)
-}
-
-fn refusal_probe(
-    artifacts: &[ArtifactEnvelope],
-    predicate: &str,
-) -> DemoResult<Vec<ArtifactEnvelope>> {
-    let mut edited = artifacts.to_vec();
-    let mut law = authored_law(artifacts)?;
-    let LawResponse::Predicate { expression } = &mut law.response else {
-        return Err("refusal probe requires the authored predicate law".into());
-    };
-    expression.0 = predicate.into();
-    let envelope = edited
-        .iter_mut()
-        .find(|a| a.artifact_id == "demo.fine_mass_conservation.law")
-        .ok_or("missing authored law for refusal probe")?;
+fn with_law(types: &[ArtifactEnvelope], law: &LawIR) -> DemoResult<Vec<ArtifactEnvelope>> {
+    let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../registry/core/artifacts/core.law.conversion_conservation.law.json"
+    ))?;
     envelope.payload = ArtifactPayload::from_kind_json(
         &ArtifactKind::Law,
-        serde_json::from_str(&serde_json::to_string(&law)?)?,
+        serde_json::from_str(&serde_json::to_string(law)?)?,
     )?;
-    Ok(edited)
+    let mut artifacts = types.to_vec();
+    artifacts.push(envelope);
+    Ok(artifacts)
 }
 
 fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
@@ -107,7 +98,155 @@ fn source(artifacts: &[ArtifactEnvelope]) -> DemoResult<DefinitionSource> {
     )?)
 }
 
+fn retain_demo(
+    artifacts: &[ArtifactEnvelope],
+) -> DemoResult<norn_checker::obligations::RetainedLayers> {
+    use norn_checker::obligations::{RetainedLayer, RetainedLayers};
+    let registry = BTreeSet::new();
+    let exact = source(artifacts)?;
+    let native: Vec<_> = artifacts
+        .iter()
+        .map(norn_ir::runtime::encode)
+        .collect::<Result<_, _>>()?;
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&native, &[])?,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )?;
+    if !checked.receipt.admitted {
+        return Err("retained demo source refused".into());
+    }
+    let receipt = String::from_utf8(checked.receipt.canonical_json()?)?;
+    let receipt_sha256 = checked.receipt.content_sha256()?;
+    Ok(RetainedLayers::verify(
+        &[RetainedLayer {
+            source: &exact,
+            source_sha256: exact.exact_digest(),
+            receipt: &receipt,
+            receipt_sha256: &receipt_sha256,
+        }],
+        &registry,
+    )?)
+}
+
+/// LAW-CONVERSION-OVERLAY: the Core 06 validator preserves retained core authority.
+fn overlay_cannot_weaken(artifacts: &[ArtifactEnvelope]) -> DemoResult<String> {
+    use norn_ir::{CustomizationOverlayOp, CustomizationRoot};
+    let retained = retain_demo(artifacts)?;
+    let target = retained
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.artifact_id == "demo.Melt.entity")
+        .ok_or("missing retained Melt")?;
+    let pin = norn_checker::ArtifactRef::of(target)?;
+    let law = retained
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.artifact_id == "core.law.conversion_conservation.law")
+        .ok_or("missing retained core law")?;
+    let law_pin = norn_checker::ArtifactRef::of(law)?;
+    let mut envelope: ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/retail-sku-reorder-point.customization.json"
+    ))?;
+    envelope.artifact_id = "demo.Melt.loss_bound.customization".into();
+    envelope.namespace = "demo".into();
+    envelope.name = "Melt loss bound".into();
+    envelope.dependencies.clear();
+    envelope.scope = target.scope.clone();
+    let mut overlay: CustomizationRoot =
+        serde_json::from_value(serde_json::to_value(envelope.payload.to_json_value())?)?;
+    overlay.customization_id = "demo.Melt.loss_bound".into();
+    overlay
+        .target_artifact
+        .artifact_id
+        .clone_from(&target.artifact_id);
+    overlay.target_artifact.version.clone_from(&target.version);
+    overlay.target_artifact.additional = std::collections::BTreeMap::from([(
+        "sha256".into(),
+        norn_ir::JsonValue::String(pin.sha256),
+    )]);
+    let addition = std::collections::BTreeMap::from([
+        (
+            "id".into(),
+            norn_ir::JsonValue::String("demo_loss_bound".into()),
+        ),
+        (
+            "expression".into(),
+            norn_ir::JsonValue::String("self.loss_quantity <= 1".into()),
+        ),
+    ]);
+    let base = serde_json::to_string(retained.artifacts())?;
+    let input = |overlay: &CustomizationRoot| -> DemoResult<DefinitionSource> {
+        let mut candidate = envelope.clone();
+        candidate.payload = ArtifactPayload::from_kind_json(
+            &ArtifactKind::Customization,
+            serde_json::from_str(&serde_json::to_string(overlay)?)?,
+        )?;
+        Ok(DefinitionSource::parse(
+            &serde_json::to_string(&[candidate])?,
+            &base,
+        )?)
+    };
+    overlay.overlay.operations = vec![CustomizationOverlayOp::AddValidation {
+        additional: addition,
+    }];
+    let added = input(&overlay)?;
+    let plan = norn_checker::overlay::overlay_obligations(&added, &retained, &target.scope)
+        .map_err(|error| format!("additive overlay: {} / {}", error.code(), error.reason()))?;
+    if plan.retained_sha256() != retained.exact_digest()
+        || plan.source_sha256() != added.exact_digest()
+        || !plan.goals().any(|(_, guards)| guards.len() > 1)
+        || !plan.laws().iter().any(|instance| {
+            instance.law_digest == law_pin.sha256
+                && instance.subject.artifact_id == target.artifact_id
+        })
+    {
+        return Err("additive overlay did not retain core guard goals".into());
+    }
+    overlay.overlay.operations = vec![CustomizationOverlayOp::UpdateValidation {
+        additional: std::collections::BTreeMap::from([
+            (
+                "id".into(),
+                norn_ir::JsonValue::String("conversion_conservation".into()),
+            ),
+            (
+                "expression".into(),
+                norn_ir::JsonValue::String("true".into()),
+            ),
+        ]),
+    }];
+    let Err(refusal) =
+        norn_checker::overlay::overlay_obligations(&input(&overlay)?, &retained, &target.scope)
+    else {
+        return Err("overlay replaced the retained conversion invariant".into());
+    };
+    if refusal.code() != "core.composition.overlay_conflict"
+        || refusal.reason() != "weakens_inherited"
+    {
+        return Err("unexpected weakening refusal".into());
+    }
+    Ok(format!(
+        "{} / {}; additive guards remain pending solver/progress evidence",
+        refusal.code(),
+        refusal.reason()
+    ))
+}
+
+fn challenge_output_requested() -> DemoResult<bool> {
+    let mut arguments = std::env::args().skip(1);
+    match (arguments.next().as_deref(), arguments.next()) {
+        (None, None) => Ok(false),
+        (Some("--challenge-json"), None) => Ok(true),
+        _ => Err("usage: jewelry_demo [--challenge-json]".into()),
+    }
+}
+
 fn main() -> DemoResult<()> {
+    let challenge_only = challenge_output_requested()?;
     let mut stdout = std::io::stdout().lock();
     let mut input = String::new();
     std::io::stdin()
@@ -116,12 +255,17 @@ fn main() -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("demo input exceeds 1 MiB".into());
     }
-    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
-    artifacts.push(serde_json::from_str(include_str!(
-        "../../../registry/core/artifacts/core.units.json"
-    ))?);
-    let exact = source(&artifacts)?;
-    let law = authored_law(&artifacts)?;
+    let mut types: Vec<ArtifactEnvelope> = serde_json::from_str(&input)?;
+    for document in [
+        include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
+        include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
+        include_str!("../../../registry/core/artifacts/core.units.json"),
+    ] {
+        types.push(serde_json::from_str(document)?);
+    }
+    let law = conservation()?;
+    let artifacts = with_law(&types, &law)?;
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &registry,
@@ -132,17 +276,25 @@ fn main() -> DemoResult<()> {
     if diagnostics.iter().any(norn_checker::Diagnostic::is_error) {
         return Err(format!("admission: {diagnostics:?}").into());
     }
+    let exact = source(&artifacts)?;
+    let authority = ApprovedContract::approve(
+        &exact,
+        &registry,
+        json!({"expression":"norn-zen/6","execution":"unqualified"}),
+        json!({"scope":"local admission example, not deployment authority"}),
+        json!({"required":"unknown; no solver result supplied"}),
+    )?;
+    let challenge = authority.challenge(&exact, &registry)?;
+    if challenge_only {
+        writeln!(stdout, "{}", serde_json::to_string(challenge.body())?)?;
+        return Ok(());
+    }
     writeln!(
         stdout,
-        "CURRENT: admitted measurement schema, lifecycle and pointwise law (no runtime claim)"
+        "CURRENT: admitted Melt inherits the unchanged core conversion law (measurement scope)"
     )?;
     writeln!(stdout, "{}", serde_json::to_string_pretty(&artifacts)?)?;
-    writeln!(
-        stdout,
-        "TARGET (#58): Rust bilingual authoring adapter for {}; CURRENT: real EN/AR views (display only):",
-        law.id
-    )?;
-    let requirement = target_requirement(law)?;
+    let requirement = target_requirement(law.clone())?;
     for locale in ["en", "ar"] {
         let view = RequirementView {
             requirement: requirement.clone(),
@@ -153,14 +305,6 @@ fn main() -> DemoResult<()> {
             writeln!(stdout, "{} | {}: {}", slot.id, slot.label, slot.text)?;
         }
     }
-    let authority = ApprovedContract::approve(
-        &exact,
-        &registry,
-        json!({"expression":"norn-zen/6","execution":"unqualified"}),
-        json!({"scope":"local admission example, not deployment authority"}),
-        json!({"required":"unknown; no solver result supplied"}),
-    )?;
-    let challenge = authority.challenge(&exact, &registry)?;
     writeln!(
         stdout,
         "Checker-generated obligations {}; no handwritten theorem or proof:",
@@ -171,7 +315,16 @@ fn main() -> DemoResult<()> {
         "{}",
         serde_json::to_string_pretty(challenge.body())?
     )?;
-    let edited = source(&refusal_probe(&artifacts, "true")?)?;
+    writeln!(
+        stdout,
+        "CURRENT: weakening overlay refused: {}",
+        overlay_cannot_weaken(&artifacts)?
+    )?;
+    let mut weakened = law.clone();
+    weakened.response = LawResponse::Predicate {
+        expression: ZenExpression("true".into()),
+    };
+    let edited = source(&with_law(&types, &weakened)?)?;
     if authority.challenge(&edited, &registry).err() != Some(ChallengeError::LawChanged) {
         return Err("protected-law edit did not refuse".into());
     }
@@ -179,7 +332,11 @@ fn main() -> DemoResult<()> {
         stdout,
         "CURRENT: protected-law edit refused: LawChanged (challenge boundary only)"
     )?;
-    let refused = check_artifact_set(&refusal_probe(&artifacts, "self.missing == 1")?, &context);
+    let mut invalid = law;
+    invalid.response = LawResponse::Predicate {
+        expression: ZenExpression("self.missing == 1".into()),
+    };
+    let refused = check_artifact_set(&with_law(&types, &invalid)?, &context);
     if !refused.iter().any(norn_checker::Diagnostic::is_error) {
         return Err("invalid property binding was admitted".into());
     }
