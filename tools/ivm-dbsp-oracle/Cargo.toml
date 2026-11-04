@@ -1,5 +1,5 @@
-# Dev/test-only DBSP reference oracle for Norn's incremental question (#714).
-# Deliberately outside the root workspace: `dbsp` never enters the runtime,
+# Dev/test-only differential-dataflow reference oracle for Norn's incremental question (#714).
+# Deliberately outside the root workspace: `differential-dataflow` never enters the runtime,
 # wasm or root Cargo.lock graph. Run: cargo test --locked --manifest-path tools/ivm-dbsp-oracle/Cargo.toml
 [package]
 name = "norn-ivm-dbsp-oracle"
@@ -11,10 +11,11 @@ publish = false
 [workspace]
 
 # This entire standalone package is test-only. Normal edges let cargo-deny
-# audit the complete oracle graph (including DBSP), rather than only the root.
+# audit the complete oracle graph (including differential-dataflow), rather than only the root.
 [dependencies]
-# Feldera DBSP, MIT OR Apache-2.0.
-dbsp = "=0.375.0"
+# Differential Dataflow and Timely, MIT.
+differential-dataflow = "=0.25.1"
+timely = "=0.31.0"
 norn-cell = { path = "../../crates/norn-cell" }
 norn-checker = { path = "../../crates/norn-checker" }
 norn-ir = { path = "../../crates/norn-ir" }
@@ -24,7 +25,3 @@ proptest = "1.11.0"
 serde_json = "1.0.150"
 tempfile = "3.27.0"
 
-# Bound debug-info size for this large dependency in the test-only workspace.
-[profile.dev.package.dbsp]
-opt-level = 1
-debug = 0
