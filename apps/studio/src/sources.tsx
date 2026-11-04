@@ -188,7 +188,7 @@ export function SourcesPage() {
           <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
-        <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
+        <p className="max-w-2xl text-muted-foreground">Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
