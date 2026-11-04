@@ -81,8 +81,20 @@ pub(super) fn pack() -> Result<ArtifactEnvelope, serde_json::Error> {
                         members: vec![
                             member("code", enumeration([code]), None),
                             member("dimension", enumeration([dimension]), None),
-                            member("numerator", PropertyType::Integer {}, Some(numerator)),
-                            member("denominator", PropertyType::Integer {}, Some(denominator)),
+                            member(
+                                "numerator",
+                                PropertyType::Integer {
+                                    additivity: norn_ir::PropertyAdditivity::Undeclared {},
+                                },
+                                Some(numerator),
+                            ),
+                            member(
+                                "denominator",
+                                PropertyType::Integer {
+                                    additivity: norn_ir::PropertyAdditivity::Undeclared {},
+                                },
+                                Some(denominator),
+                            ),
                         ],
                     },
                 )

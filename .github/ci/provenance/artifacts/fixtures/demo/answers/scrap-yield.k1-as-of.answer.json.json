@@ -1,0 +1,26 @@
+{
+  "sha256": "a09246bead4d65201e7c2110a9fa4568b56626ab09c31e874b87b7b95f0f3da7",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "crates/norn-cell/tests/answer_documents.rs",
+    "crates/norn-cell/tests/query_support/mod.rs",
+    "crates/norn-cell/src/compute.rs",
+    "crates/norn-cell/src/compute/historical.rs",
+    "fixtures/demo/scrap-yield-k1.csv",
+    "fixtures/ir/metrics/ontology.json",
+    "fixtures/ir/metrics/net-sales.definition.json",
+    "fixtures/ir/metrics/sales-by-store-day.question.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
