@@ -1220,17 +1220,19 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
                 .is_empty()
         );
     }
-    // Replacing the protected law is a refusal, not an inferred restriction.
-    extra["artifactId"] = documents[3]["artifactId"].clone();
-    extra["payload"]["response"]["expression"] = json!("true");
-    assert!(
-        ApprovedContract::approve(
-            &make(&[extra]),
-            &BTreeSet::new(),
-            json!({"zen":"6"}),
-            json!({"axioms":[]}),
-            json!({"proof":"checked"})
-        )
-        .is_err()
-    );
+ }
+
+#[test]
+fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
+    let documents = pool();
+    let mut law = documents[3].clone();
+    law["payload"]["response"]["expression"] = json!("true");
+    let source = DefinitionSource::parse(
+        &serde_json::to_string(&[law]).expect("extension"),
+        &serde_json::to_string(&documents).expect("base"),
+    ).expect("source");
+    assert!(ApprovedContract::approve(
+        &source, &BTreeSet::new(), json!({"zen":"6"}),
+        json!({"axioms":[]}), json!({"proof":"checked"})
+    ).is_err());
 }
