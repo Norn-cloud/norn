@@ -1202,9 +1202,9 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
     if let Ok(contract) = ApprovedContract::approve(
         &changed,
         &BTreeSet::new(),
-        json!({"zen":"6"}),
-        json!({"axioms":[]}),
-        json!({"proof":"checked"}),
+        base.body()["semantics"].clone(),
+        base.body()["assumptions"].clone(),
+        base.body()["assurance"].clone(),
     ) {
         assert!(
             contract
@@ -1220,7 +1220,7 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
                 .is_empty()
         );
     }
- }
+}
 
 #[test]
 fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
@@ -1230,9 +1230,16 @@ fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
     let source = DefinitionSource::parse(
         &serde_json::to_string(&[law]).expect("extension"),
         &serde_json::to_string(&documents).expect("base"),
-    ).expect("source");
-    assert!(ApprovedContract::approve(
-        &source, &BTreeSet::new(), json!({"zen":"6"}),
-        json!({"axioms":[]}), json!({"proof":"checked"})
-    ).is_err());
+    )
+    .expect("source");
+    assert!(
+        ApprovedContract::approve(
+            &source,
+            &BTreeSet::new(),
+            json!({"zen":"6"}),
+            json!({"axioms":[]}),
+            json!({"proof":"checked"})
+        )
+        .is_err()
+    );
 }
