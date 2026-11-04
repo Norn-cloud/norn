@@ -46,6 +46,7 @@ mod mapping_identity;
 mod mapping_links;
 mod mapping_process;
 mod migration;
+pub mod mining;
 mod observation_quality;
 pub use observation_quality::AuthoritativePage;
 mod identity;
@@ -61,6 +62,7 @@ pub mod restore;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
+pub mod transparency;
 mod write;
 
 pub use error::CellError;

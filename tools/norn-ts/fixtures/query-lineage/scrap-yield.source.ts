@@ -11,9 +11,9 @@ export const Conversion = Norn.type({
   dependencies: [{ artifactId: "core.units", kind: "entity", version: "1.0.0" }],
   properties: Schema.Struct({
     id: Schema.String,
-    input: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
-    recovered: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
-    loss: Norn.decimal(3, { unit: { system: "ucum", code: "g" } }),
+    input: Norn.decimal(3, { unit: { system: "ucum", code: "g" }, additivity: { kind: "additive" } }),
+    recovered: Norn.decimal(3, { unit: { system: "ucum", code: "g" }, additivity: { kind: "additive" } }),
+    loss: Norn.decimal(3, { unit: { system: "ucum", code: "g" }, additivity: { kind: "additive" } }),
     occurred_at: Norn.timestamp("utc"), metal: Schema.String,
   }), identity: [{ name: "primary", properties: ["id"] }],
 })

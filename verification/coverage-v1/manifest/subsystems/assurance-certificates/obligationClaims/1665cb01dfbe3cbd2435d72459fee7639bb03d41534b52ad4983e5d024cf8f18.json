@@ -1,0 +1,21 @@
+{
+  "order": 0,
+  "value": {
+    "id": "INV-CERT-LINEAR-CONSERVATION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "The abstract rational measure is invariant on reachable steps provided every step faithfully realizes its weighted delta and every delta balances (#711/#729). Declaration lowering, Rust correspondence, initial-state validity and non-vacuity are not covered.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry1665cb01dfbe3cbd2435d72459fee7639bb03d41534b52ad4983e5d024cf8f18.evidence.proof"
+      }
+    }
+  }
+}

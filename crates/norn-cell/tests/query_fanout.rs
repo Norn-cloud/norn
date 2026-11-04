@@ -74,6 +74,7 @@ fn fixture() -> Fixture {
         .expect("value");
     value.id = PropertyId("value".into());
     value.property_type = PropertyType::Decimal {
+        additivity: value.property_type.additivity().clone(),
         scale: WholeNumber(3),
         unit: None,
         currency_source: None,
