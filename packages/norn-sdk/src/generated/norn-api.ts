@@ -356,6 +356,244 @@ export interface components {
             sha256: string;
             version: number;
         };
+        /**
+         * GuaranteesDocument
+         * @description The presentation contract consumed by Studio; identity alone grants no verdict.
+         */
+        NornGuaranteesDocument: {
+            /** @description Complete pinned bounds/assumptions JSON bytes, without a lossy projection. */
+            boundsJson: string;
+            /** @description Exact source/closure/statement identity. */
+            challengeSha256: string;
+            /**
+             * Format: uint32
+             * @description Eligible goals discharged by the checked driver.
+             */
+            discharged: number;
+            /**
+             * Format: uint32
+             * @description Actual eligible denominator, independent of the total goal inventory.
+             */
+            eligible: number;
+            /**
+             * @description Versioned wire contract.
+             * @enum {string}
+             */
+            format: "norn/guarantees@1";
+            /** @description Every generated obligation, including individually unsupported goals. */
+            goals: components["schemas"]["NornGuaranteesGoalGuarantee"][];
+            /** @description Exact governing law artifact. */
+            lawArtifactId: string;
+            /** @description Declared LawIR identifier. */
+            lawId: string;
+            /** @description Governing artifact version. */
+            lawVersion: string;
+            /** @description Independently qualified evidence level. */
+            level: components["schemas"]["NornGuaranteesGuaranteeLevel"];
+            /** @description Separately supplied application/reference parity evidence, or not yet. */
+            parity: components["schemas"]["NornGuaranteesGuaranteeReference"];
+            /** @description Separately supplied runtime enforcement evidence, or explicitly not yet. */
+            runtimeEnforcement: components["schemas"]["NornGuaranteesGuaranteeReference"];
+            /** @description Actual tools used by the trusted driver. */
+            tools: components["schemas"]["NornGuaranteesEvidenceTool"][];
+            /**
+             * Format: uint32
+             * @description Complete generated denominator, including unsupported obligations.
+             */
+            total: number;
+            /** @description Result for the eligible bounded profile, not all possible application goals. */
+            verdict: components["schemas"]["NornGuaranteesGuaranteeVerdict"];
+        };
+        /**
+         * @description Complete run identity. Fields are untrusted wire data, not proof capabilities.
+         *     The challenge digest binds law, writer/mapping closure, unit interpretation,
+         *     generator/semantics profiles, assumptions and every generated statement.
+         */
+        NornGuaranteesEvidencePins: {
+            /** @description Exact JSON object containing the runner's bounds and assumptions. */
+            boundsJson: string;
+            /** @description Exact checker-owned challenge identity. */
+            challengeSha256: string;
+            /**
+             * Format: uint32
+             * @description Index in that challenge's generated obligations, never a supplied theorem.
+             */
+            goalIndex: number;
+            /** @description Exact generated goal, including its statement and assessment. */
+            goalSha256: string;
+            /**
+             * Format: uint64
+             * @description Explicit deterministic seed (zero is permitted).
+             */
+            seed: number;
+            /** @description Actual runner identity. */
+            tool: components["schemas"]["NornGuaranteesEvidenceTool"];
+        };
+        /** @description A result and its source identity. Deserializing or matching it grants no status. */
+        NornGuaranteesEvidenceRecord: {
+            /** @description Exact serialized challenge, retaining all law/writer/unit/mapping pins. */
+            challengeJson: string;
+            /** @description Complete expected run identity. */
+            pins: components["schemas"]["NornGuaranteesEvidencePins"];
+            /**
+             * @description Exact UTF-8 JSON result bytes, including whitespace and number spelling.
+             *     The checked driver owns their meaning and assurance level.
+             */
+            resultJson: string;
+            /** @description Raw SHA-256 of `result_json`'s UTF-8 bytes. */
+            resultSha256: string;
+        };
+        /**
+         * @description Identity of the actual runner, supplied by its trusted controller.
+         *     This record does not authenticate a runner or attest its execution.
+         */
+        NornGuaranteesEvidenceTool: {
+            /** @description Tool/profile identity. */
+            id: string;
+            /** @description Lowercase SHA-256 of the implementing binary/source closure. */
+            implementationSha256: string;
+            /** @description Exact tool version. */
+            version: string;
+        };
+        NornGuaranteesGoalGuarantee: {
+            /** @description Whether this goal is inside the declared backend fragment. */
+            eligible: boolean;
+            /**
+             * @description Actual bound result bytes, pins and digest; absent for unsupported goals.
+             *     Presentation never replaces the controller's independent result pin.
+             */
+            evidence?: components["schemas"]["NornGuaranteesEvidenceRecord"] | null;
+            /** @description Actual generated obligation kind. */
+            goalKind: string;
+            /**
+             * Format: uint32
+             * @description Index in the retained Challenge.
+             */
+            index: number;
+            /** @description Actual evidence level. */
+            level: components["schemas"]["NornGuaranteesGuaranteeLevel"];
+            /** @description Actual trace when a counterexample or reachability witness was returned. */
+            scenario?: components["schemas"]["NornGuaranteesGuaranteeScenario"] | null;
+            /** @description Scoped verdict or explicit Unknown reason. */
+            verdict: components["schemas"]["NornGuaranteesGuaranteeVerdict"];
+        } & ({
+            /** @constant */
+            eligible: true;
+        } | {
+            /** @constant */
+            eligible: false;
+            level?: {
+                /** @enum {unknown} */
+                kind?: "unknown";
+            };
+            verdict?: {
+                /** @enum {unknown} */
+                kind?: "unknown";
+            };
+        });
+        /** @description Distinct assurance dimensions; none implies an unrestricted proof. */
+        NornGuaranteesGuaranteeLevel: {
+            /** @enum {string} */
+            kind: "exhaustive-finite/bounded";
+        } | {
+            /** @enum {string} */
+            kind: "runtime-enforced";
+        } | {
+            /** @enum {string} */
+            kind: "parity-tested";
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
+            /** @description Concrete reason, rather than an inferred guarantee. */
+            reason: string;
+        };
+        /** @description A real independently supplied link, or an explicit unavailable reference. */
+        NornGuaranteesGuaranteeReference: {
+            /** @enum {string} */
+            kind: "not-yet";
+            /** @description Missing evidence or integration boundary. */
+            reason: string;
+        } | {
+            /** @enum {string} */
+            kind: "available";
+            /** @description Exact referenced bytes. */
+            sha256: string;
+            /** @description Evidence location, not an execution attestation by itself. */
+            uri: string;
+        };
+        /** @description An exact scalar coefficient, interpreted at its declared decimal scale/unit. */
+        NornGuaranteesGuaranteeScalar: {
+            /** @description Signed integer text; never a binary64 quantity. */
+            coefficient: string;
+            /**
+             * Format: uint32
+             * @description Fractional decimal digits from the declaration.
+             */
+            scale: number;
+            /** @description Effective declared unit; absent means dimensionless. */
+            unit?: components["schemas"]["NornGuaranteesUnitRef"] | null;
+        };
+        /** @description A generated writer proposal before runtime law enforcement. */
+        NornGuaranteesGuaranteeScenario: {
+            /** @description Singleton identity retained from the finite profile. */
+            identity: string;
+            /**
+             * @description Why the solver returned this trace.
+             * @enum {string}
+             */
+            kind: "counterexample" | "non-vacuity-witness";
+            /** @description Actual checked trace, in transition order. */
+            states: components["schemas"]["NornGuaranteesGuaranteeState"][];
+            /** @description Actual source writer artifact. */
+            writerArtifactId: string;
+        };
+        /**
+         * @description Distinguishes a refutation from a successful non-vacuity witness.
+         * @enum {string}
+         */
+        NornGuaranteesGuaranteeScenarioKind: "counterexample" | "non-vacuity-witness";
+        /** @description One typed counterexample state; absent objects have no scalar values. */
+        NornGuaranteesGuaranteeState: {
+            /** @description Whether the modeled object exists. */
+            exists: boolean;
+            /** @description Exact quantities keyed by source property name. */
+            values: {
+                [key: string]: components["schemas"]["NornGuaranteesGuaranteeScalar"];
+            };
+        };
+        /** @description A scoped result; Unknown always explains the missing evidence. */
+        NornGuaranteesGuaranteeVerdict: {
+            /** @enum {string} */
+            kind: "bounded-pass";
+        } | {
+            /** @enum {string} */
+            kind: "refuted";
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
+            /** @description Concrete unsupported, stale, failed or unavailable boundary. */
+            reason: string;
+        };
+        /**
+         * @description Stable per-law guarantees document format.
+         * @enum {string}
+         */
+        NornGuaranteesGuaranteesFormat: "norn/guarantees@1";
+        /**
+         * @description A reference to a unit of measure in a standard unit vocabulary (ruling
+         *     2026-09-25 §27). The code is not interpreted here; resolving it against the
+         *     vocabulary is registry work (T8-STD-1).
+         */
+        NornGuaranteesUnitRef: {
+            /** @description The unit's code in `system` (UCUM `kg`, `m/s`; QUDT `unit:KiloGM`). */
+            code: string;
+            system: components["schemas"]["NornGuaranteesUnitSystem"];
+        };
+        /**
+         * @description A standard unit vocabulary.
+         * @enum {string}
+         */
+        NornGuaranteesUnitSystem: "ucum" | "qudt";
         /** @description An answer read at a knowledge cutoff, beside its historical world. */
         NornHistoricalQuestionResult: {
             /**
@@ -1863,6 +2101,34 @@ export interface components {
             /** @description The terminal property. */
             property: string;
         };
+        /**
+         * EffectiveLawInstance
+         * @description LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+         *     identity, concrete subject, attachment and complete origin paths.
+         *     This projection is not a new law or evidence of preservation.
+         */
+        NornIrEffectiveLawInstance: {
+            /** @description Declared governing boundary, including retained pack/app attachments. */
+            attachment: components["schemas"]["NornIrLawRoot"];
+            /** @description Explicit typed member substitutions; no rewritten child LawIR. */
+            bindings: {
+                [key: string]: components["schemas"]["NornIrMemberRef"];
+            };
+            /** @description LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope. */
+            instancePaths: components["schemas"]["NornIrPackInstanceRef"][][];
+            /** @description Original law artifact/version and stable law member ID. */
+            law: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of the unchanged law artifact. */
+            lawDigest: string;
+            /** @description Original governed concept/interface/container identity. */
+            origin: components["schemas"]["NornIrMemberRef"];
+            /** @description Every inheritance, containment or mapping path; a diamond retains all. */
+            paths: components["schemas"]["NornIrMemberRef"][][];
+            /** @description Concrete implementing type, independently pinned. */
+            subject: components["schemas"]["NornIrMemberRef"];
+            /** @description Norn1 identity of that concrete type artifact. */
+            subjectDigest: string;
+        };
         /** @description A recognized source action and the checked predicate that admits it. */
         NornIrEntitlementActionMap: {
             /** @description Exact Norn action id. */
@@ -2757,6 +3023,16 @@ export interface components {
             /** @description Exact artifact version. */
             version: string;
         };
+        /**
+         * @description Only the interpretation wire format decodes here.
+         * @enum {string}
+         */
+        NornIrInterpretationFormat: "norn.interpretation/1";
+        /**
+         * @description A law interpretation is neither source evidence nor term correspondence.
+         * @enum {string}
+         */
+        NornIrInterpretationRole: "law_interpretation";
         /** @description One declared invariant of an object type or interface. */
         NornIrInvariant: {
             /**
@@ -3063,6 +3339,28 @@ export interface components {
              */
             rule?: components["schemas"]["NornIrIdentityRule"];
         };
+        /** @description Typed interpretation contract. Admission refuses until conformance exists. */
+        NornIrLawInterpretationIr: {
+            /**
+             * @description Closed format discriminator.
+             * @enum {string}
+             */
+            format: "norn.interpretation/1";
+            /**
+             * @description MAP-MEMBER-CONTRACT-1: retain every explicit member binding.
+             *     Required coverage and unit/link contracts come from pinned definitions.
+             */
+            members: components["schemas"]["NornIrMemberInterpretation"][];
+            /**
+             * @description Explicit semantic role.
+             * @enum {string}
+             */
+            role: "law_interpretation";
+            /** @description Layer whose contract must be preserved. */
+            sourceLayer: components["schemas"]["NornIrInterpretationEndpoint"];
+            /** @description Layer interpreting that contract. */
+            targetLayer: components["schemas"]["NornIrInterpretationEndpoint"];
+        };
         /** @description Scoped temporal vocabulary; nested temporal operators have no wire representation. */
         NornIrLawModality: components["schemas"]["NornIrLawModalityOneOf0"] | components["schemas"]["NornIrLawModalityOneOf1"] | components["schemas"]["NornIrLawModalityOneOf2"] | components["schemas"]["NornIrLawModalityOneOf3"];
         /** @description Response holds at every applicable point. */
@@ -3171,7 +3469,7 @@ export interface components {
             transitionId: string;
         };
         /** @description Named application boundary; authorization still comes from the envelope. */
-        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"];
+        NornIrLawRoot: components["schemas"]["NornIrLawRootOneOf0"] | components["schemas"]["NornIrLawRootOneOf1"] | components["schemas"]["NornIrLawRootOneOf2"] | components["schemas"]["NornIrLawRootOneOf3"] | components["schemas"]["NornIrLawRootOneOf4"];
         /** @description Organization/company boundary. */
         NornIrLawRootOneOf0: {
             id: string;
@@ -3195,6 +3493,12 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        };
+        /** @description Exact retained composition-pack boundary. */
+        NornIrLawRootOneOf4: {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrLawScope: {
@@ -3563,17 +3867,19 @@ export interface components {
             reason: "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere";
         };
         /**
-         * @description The payload of a `mapping` artifact: an interface-scoped mapping
-         *     ([`mapping::MappingIr`], T8-MAP-1a).
+         * @description An interface-scoped mapping from one source schema: the payload of a
+         *     `mapping` artifact. The envelope's `artifactId` and `version` identify
+         *     the mapping; its provenance key is `<artifactId>@<version>` (both
+         *     checked so the key is unambiguous). See the module docs.
          */
-        NornIrMappingPayload: {
+        NornIrMappingIr: {
             /**
              * @description Declarative permission-row maps. These emit ordinary upsert actions
              *     for `core.Entitlement`; joins are applied only from a caller-declared
              *     complete snapshot of every `requiredSnapshot` dataset.
              */
             entitlements?: components["schemas"]["NornIrEntitlementMap"][];
-            extensions?: components["schemas"]["NornIrMappingPayloadPropertyExtensions"];
+            extensions?: components["schemas"]["NornIrMappingIrPropertyExtensions"];
             /**
              * @description The format tag.
              * @enum {string}
@@ -3599,9 +3905,14 @@ export interface components {
             source: components["schemas"]["NornIrSourceBinding"];
         };
         /** @description Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected. */
-        NornIrMappingPayloadPropertyExtensions: {
+        NornIrMappingIrPropertyExtensions: {
             [key: string]: components["schemas"]["NornIrJsonValue"];
         };
+        /**
+         * @description The payload of a `mapping` artifact: source-record transforms or a
+         *     separately checked law interpretation ([`mapping::MappingDocument`]).
+         */
+        NornIrMappingPayload: components["schemas"]["NornIrMappingIr"] | components["schemas"]["NornIrLawInterpretationIr"];
         /**
          * @description SKOS-style mapping relations.
          * @enum {string}
@@ -3694,6 +4005,18 @@ export interface components {
          *     an object-map id, a law id.
          */
         NornIrMember: components["schemas"]["NornIrMemberOneOf0"] | components["schemas"]["NornIrMemberOneOf1"] | components["schemas"]["NornIrMemberOneOf2"] | components["schemas"]["NornIrMemberOneOf3"] | components["schemas"]["NornIrMemberOneOf4"] | components["schemas"]["NornIrMemberOneOf5"] | components["schemas"]["NornIrMemberOneOf6"] | components["schemas"]["NornIrMemberOneOf7"];
+        /** @description One interpretation between exact catalog members, never a coverage claim. */
+        NornIrMemberInterpretation: {
+            /** @description Source type, property, link, lifecycle state or transition identity. */
+            source: components["schemas"]["NornIrMemberRef"];
+            /** @description Corresponding target identity, resolved within the pinned target layer. */
+            target: components["schemas"]["NornIrMemberRef"];
+            /**
+             * @description Absent means identity. Expressions require checked conformance;
+             *     declaring one does not establish preservation.
+             */
+            transform?: string;
+        };
         /** @description The artifact as a whole (an action, a decision, a mapping). */
         NornIrMemberOneOf0: {
             /** @enum {string} */
@@ -5008,6 +5331,10 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "entity";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "pack";
         };
         /** @description Applicability of a law. All filters are conjunctive; type lists denote a union. */
         NornIrRequirementLawScope: {
@@ -5080,6 +5407,8 @@ export interface components {
             everyCommittedState: string;
             grounding: string;
             obligation: string;
+            /** @description Required to render a pack-rooted law; other roots never read it. */
+            pack?: string | null;
             permission: string;
             prohibition: string;
             sameCommit: string;

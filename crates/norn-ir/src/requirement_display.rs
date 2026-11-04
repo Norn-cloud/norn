@@ -1,5 +1,7 @@
 //! Deterministic views of one structured requirement; display is never proof input.
-use crate::deontic::{DeonticModality, RequirementTiming, StructuredRequirement};
+use crate::deontic::{
+    DeonticModality, LocalizedRequirement, RequirementTiming, StructuredRequirement,
+};
 use crate::{LawModality, LawResponse, LawRoot};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,12 +43,23 @@ impl RequirementView {
     /// # Errors
     /// Refuses invalid wording or an unknown requested locale.
     pub fn direction(&self) -> Result<&'static str, &'static str> {
-        Ok(self
-            .requirement
-            .wording
-            .locale(&self.locale)?
-            .direction
-            .as_str())
+        Ok(self.wording()?.direction.as_str())
+    }
+
+    // LAW-WORDING-LOCALE-1 applies to every declared locale before either view.
+    fn wording(&self) -> Result<&LocalizedRequirement, &'static str> {
+        let wording = self.requirement.wording.locale(&self.locale)?;
+        if matches!(self.requirement.norm.law.scope.root, LawRoot::Pack(_))
+            && self
+                .requirement
+                .wording
+                .0
+                .values()
+                .any(|entry| entry.terms.pack.is_none())
+        {
+            return Err("law.wording.incomplete_locale");
+        }
+        Ok(wording)
     }
 
     /// All locales expose identical semantic slots in identical order.
@@ -67,10 +80,18 @@ impl RequirementView {
         {
             return Err("law.validation.invalid_document");
         }
-        let w = r.wording.locale(&self.locale)?;
+        let w = self.wording()?;
         let root = match &law.scope.root {
             LawRoot::Company(id) => format!("{} {}", visible(&w.terms.company), isolate(id)),
             LawRoot::App(id) => format!("{} {}", visible(&w.terms.application), isolate(id)),
+            LawRoot::Pack(id) => {
+                let pack = w
+                    .terms
+                    .pack
+                    .as_deref()
+                    .ok_or("law.wording.incomplete_locale")?;
+                format!("{} {}", visible(pack), isolate(id))
+            }
             LawRoot::Cell(id) => format!("{} {}", visible(&w.terms.cell), isolate(id)),
             LawRoot::Entity(id) => format!("{} {}", visible(&w.terms.entity), isolate(id)),
         };

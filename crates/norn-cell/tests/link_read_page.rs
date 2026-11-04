@@ -514,14 +514,30 @@ fn creation_survives_replacement_reopen_and_resets_after_removal_or_cascade() {
             ..CommitBatch::default()
         })
         .expect("cascade");
+    let recreate = CommitBatch {
+        facts: vec![create("source")],
+        world: MAIN_WORLD.to_owned(),
+        scope: "org_demo/dev".to_owned(),
+        ..CommitBatch::default()
+    };
+    let deleted = store.read().dump().expect("deleted state");
+    assert!(matches!(
+        store.commit(&recreate),
+        Err(norn_cell::CellError::IdentityReuse)
+    ));
+    assert_eq!(store.read().dump().expect("authored refusal"), deleted);
+    // Exercise low-level link history through the trusted embedding primitive.
     store
         .commit(&CommitBatch {
-            facts: vec![create("source")],
-            world: MAIN_WORLD.to_owned(),
-            scope: "org_demo/dev".to_owned(),
-            ..CommitBatch::default()
+            facts: Vec::new(),
+            writes: vec![norn_cell::FactWriteRow::Put {
+                object_type: "test.Node".to_owned(),
+                key: "source".to_owned(),
+                values: std::collections::BTreeMap::new(),
+            }],
+            ..recreate
         })
-        .expect("recreate source");
+        .expect("embedding recreation");
     assert!(creation(&store).expect("cascaded link").is_empty());
     let after_cascade = link_commit(&mut store, related(true));
     assert_eq!(

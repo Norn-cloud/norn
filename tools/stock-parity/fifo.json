@@ -1,0 +1,110 @@
+[
+  {
+    "format": "norn.stock-trace/1",
+    "id": "cross-layer-fifo",
+    "company": "demo-company",
+    "currency": "USD",
+    "item": "demo-item",
+    "uom": "unit",
+    "method": "fifo",
+    "quantityScale": 6,
+    "valueScale": 6,
+    "glScale": 2,
+    "rounding": "half-up",
+    "steps": [
+      {
+        "kind": "serial",
+        "command": {
+          "requestId": "receive",
+          "effectiveAt": "2026-01-02T12:00:00Z",
+          "operation": {
+            "kind": "receipt",
+            "warehouse": "a",
+            "quantity": "2",
+            "rate": "10"
+          }
+        },
+        "expected": {
+          "kind": "accepted"
+        }
+      },
+      {
+        "kind": "serial",
+        "command": {
+          "requestId": "receive-two",
+          "effectiveAt": "2026-01-02T12:00:30Z",
+          "operation": {
+            "kind": "receipt",
+            "warehouse": "a",
+            "quantity": "3",
+            "rate": "20"
+          }
+        },
+        "expected": {
+          "kind": "accepted"
+        }
+      },
+      {
+        "kind": "serial",
+        "command": {
+          "requestId": "deliver",
+          "effectiveAt": "2026-01-02T12:01:00Z",
+          "operation": {
+            "kind": "delivery",
+            "warehouse": "a",
+            "quantity": "4"
+          }
+        },
+        "expected": {
+          "kind": "accepted"
+        }
+      }
+    ]
+  },
+  {
+    "format": "norn.stock-trace/1",
+    "id": "receipt-delivery",
+    "company": "demo-company",
+    "currency": "USD",
+    "item": "demo-item",
+    "uom": "unit",
+    "method": "fifo",
+    "quantityScale": 6,
+    "valueScale": 6,
+    "glScale": 2,
+    "rounding": "half-up",
+    "steps": [
+      {
+        "kind": "serial",
+        "command": {
+          "requestId": "receive",
+          "effectiveAt": "2026-01-02T12:00:00Z",
+          "operation": {
+            "kind": "receipt",
+            "warehouse": "a",
+            "quantity": "10",
+            "rate": "2"
+          }
+        },
+        "expected": {
+          "kind": "accepted"
+        }
+      },
+      {
+        "kind": "serial",
+        "command": {
+          "requestId": "deliver",
+          "effectiveAt": "2026-01-02T12:01:00Z",
+          "operation": {
+            "kind": "delivery",
+            "warehouse": "a",
+            "quantity": "3"
+          }
+        },
+        "expected": {
+          "kind": "accepted"
+        }
+      }
+    ]
+  }
+]
