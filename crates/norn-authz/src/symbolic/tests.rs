@@ -1,24 +1,13 @@
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "fixture assertions and deliberately synchronous test doubles"
-)]
-
 use super::*;
 use cedar_policy::{Context, Entities, Request};
-use std::sync::Arc;
-use std::task::{Poll, Wake, Waker};
+use std::task::{Poll, Waker};
 
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
 fn ready<F: Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
-    let waker = Waker::from(Arc::new(Noop));
+    let waker = Waker::noop();
     match future
         .as_mut()
-        .poll(&mut std::task::Context::from_waker(&waker))
+        .poll(&mut std::task::Context::from_waker(waker))
     {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("test double must complete synchronously"),
@@ -39,14 +28,14 @@ fn sets() -> (ValidatedPolicySet, ValidatedPolicySet) {
 
 struct TimedOut;
 impl AnalysisHost for TimedOut {
-    async fn run(
+    fn run(
         &mut self,
         _: &ValidatedPolicySet,
         _: &ValidatedPolicySet,
         _: Property,
         _: Budget,
-    ) -> Analysis {
-        Analysis::Unknown
+    ) -> impl Future<Output = Analysis> {
+        std::future::ready(Analysis::Unknown)
     }
 }
 
