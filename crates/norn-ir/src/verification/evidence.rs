@@ -1,10 +1,11 @@
 //! PROOF-BIND-1: serializable identity records; no execution or proof authority.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Identity of the actual runner, supplied by its trusted controller.
 /// This record does not authenticate a runner or attest its execution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceTool {
     /// Tool/profile identity.
@@ -18,7 +19,7 @@ pub struct EvidenceTool {
 /// Complete run identity. Fields are untrusted wire data, not proof capabilities.
 /// The challenge digest binds law, writer/mapping closure, unit interpretation,
 /// generator/semantics profiles, assumptions and every generated statement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidencePins {
     /// Exact checker-owned challenge identity.
@@ -36,7 +37,7 @@ pub struct EvidencePins {
 }
 
 /// A result and its source identity. Deserializing or matching it grants no status.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceRecord {
     /// Complete expected run identity.

@@ -157,7 +157,9 @@ pub use artifact_set::{
     ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
-pub use definitions_diff::{DefinitionDiff, DefinitionId, Narrowing, diff_definition_sets};
+pub use definitions_diff::{
+    AdditivityChange, DefinitionDiff, DefinitionId, Narrowing, diff_definition_sets,
+};
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     SourceSpan, Span, diagnostics_to_json,
@@ -168,8 +170,8 @@ pub use entity_artifacts::{
 };
 pub use entity_instance::{
     EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLifecycle, EffectiveLink,
-    EffectiveObjectType, EffectiveProperty, InstanceError, KeyComponent, Unsupported,
-    normalize_text,
+    EffectiveObjectType, EffectiveProperty, IDENTITY_COLLISION, IDENTITY_REUSE,
+    IDENTITY_REUSE_MESSAGE, InstanceError, KeyComponent, Unsupported, normalize_text,
 };
 pub use entity_lowering::{
     EntityForm, EntityObjectType, LoweredRelation, entity_object_type, entity_v1_deprecation,

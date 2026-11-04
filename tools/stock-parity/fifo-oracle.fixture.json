@@ -1,0 +1,527 @@
+{
+  "format": "norn.stock-dump/1",
+  "engine": "erpnext",
+  "versions": {
+    "erpnext": {
+      "commit": "",
+      "app": "erpnext",
+      "branch": "",
+      "version": "16.14.0"
+    },
+    "frappe": {
+      "commit": "",
+      "app": "frappe",
+      "branch": "",
+      "version": "16.16.0"
+    }
+  },
+  "cases": [
+    {
+      "case": "cross-layer-fifo",
+      "method": "fifo",
+      "status": "complete",
+      "reason": null,
+      "checkpoints": [
+        {
+          "step": 0,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "receive",
+              "nativeId": "MAT-PRE-2026-00001",
+              "outcome": "accepted",
+              "nativeCode": null,
+              "reason": null,
+              "completionOrder": 0
+            }
+          ],
+          "stock": [
+            {
+              "id": "a4eb36ce21",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "quantityDelta": "2",
+              "valueDelta": "20",
+              "quantity": "2",
+              "value": "20",
+              "incomingRate": "10",
+              "valuationRate": "10",
+              "fifo": [
+                [
+                  "2",
+                  "10"
+                ]
+              ],
+              "cancelled": false
+            }
+          ],
+          "gl": [
+            {
+              "id": "ba59f4e7f9",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "efe872302e",
+              "requestId": "receive",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "20",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "receive-two",
+              "nativeId": "MAT-PRE-2026-00002",
+              "outcome": "accepted",
+              "nativeCode": null,
+              "reason": null,
+              "completionOrder": 0
+            }
+          ],
+          "stock": [
+            {
+              "id": "a4eb36ce21",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "quantityDelta": "2",
+              "valueDelta": "20",
+              "quantity": "2",
+              "value": "20",
+              "incomingRate": "10",
+              "valuationRate": "10",
+              "fifo": [
+                [
+                  "2",
+                  "10"
+                ]
+              ],
+              "cancelled": false
+            },
+            {
+              "id": "da30c338cf",
+              "requestId": "receive-two",
+              "line": "receive-two:1",
+              "warehouse": "a",
+              "quantityDelta": "3",
+              "valueDelta": "60",
+              "quantity": "5",
+              "value": "80",
+              "incomingRate": "20",
+              "valuationRate": "16",
+              "fifo": [
+                [
+                  "2",
+                  "10"
+                ],
+                [
+                  "3",
+                  "20"
+                ]
+              ],
+              "cancelled": false
+            }
+          ],
+          "gl": [
+            {
+              "id": "ba59f4e7f9",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "efe872302e",
+              "requestId": "receive",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "20",
+              "cancelled": false
+            },
+            {
+              "id": "704d5e29cd",
+              "requestId": "receive-two",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "60",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "2974870541",
+              "requestId": "receive-two",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "60",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            },
+            {
+              "requestId": "receive-two",
+              "status": 1
+            }
+          ]
+        },
+        {
+          "step": 2,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "deliver",
+              "nativeId": "MAT-DN-2026-00001",
+              "outcome": "accepted",
+              "nativeCode": null,
+              "reason": null,
+              "completionOrder": 0
+            }
+          ],
+          "stock": [
+            {
+              "id": "a4eb36ce21",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "quantityDelta": "2",
+              "valueDelta": "20",
+              "quantity": "2",
+              "value": "20",
+              "incomingRate": "10",
+              "valuationRate": "10",
+              "fifo": [
+                [
+                  "2",
+                  "10"
+                ]
+              ],
+              "cancelled": false
+            },
+            {
+              "id": "da30c338cf",
+              "requestId": "receive-two",
+              "line": "receive-two:1",
+              "warehouse": "a",
+              "quantityDelta": "3",
+              "valueDelta": "60",
+              "quantity": "5",
+              "value": "80",
+              "incomingRate": "20",
+              "valuationRate": "16",
+              "fifo": [
+                [
+                  "2",
+                  "10"
+                ],
+                [
+                  "3",
+                  "20"
+                ]
+              ],
+              "cancelled": false
+            },
+            {
+              "id": "588f165db1",
+              "requestId": "deliver",
+              "line": "deliver:1",
+              "warehouse": "a",
+              "quantityDelta": "-4",
+              "valueDelta": "-60",
+              "quantity": "1",
+              "value": "20",
+              "incomingRate": "15",
+              "valuationRate": "20",
+              "fifo": [
+                [
+                  "1",
+                  "20"
+                ]
+              ],
+              "cancelled": false
+            }
+          ],
+          "gl": [
+            {
+              "id": "ba59f4e7f9",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "efe872302e",
+              "requestId": "receive",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "20",
+              "cancelled": false
+            },
+            {
+              "id": "704d5e29cd",
+              "requestId": "receive-two",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "60",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "2974870541",
+              "requestId": "receive-two",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "60",
+              "cancelled": false
+            },
+            {
+              "id": "a024428b01",
+              "requestId": "deliver",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "60",
+              "cancelled": false
+            },
+            {
+              "id": "a3e4c0fc2b",
+              "requestId": "deliver",
+              "account": "cogs",
+              "currency": "USD",
+              "debit": "60",
+              "credit": "0",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            },
+            {
+              "requestId": "receive-two",
+              "status": 1
+            },
+            {
+              "requestId": "deliver",
+              "status": 1
+            }
+          ]
+        }
+      ],
+      "initial": {
+        "step": -1,
+        "attempts": [],
+        "stock": [],
+        "gl": [],
+        "documents": []
+      }
+    },
+    {
+      "case": "receipt-delivery",
+      "method": "fifo",
+      "status": "complete",
+      "reason": null,
+      "checkpoints": [
+        {
+          "step": 0,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "receive",
+              "nativeId": "MAT-PRE-2026-00003",
+              "outcome": "accepted",
+              "nativeCode": null,
+              "reason": null,
+              "completionOrder": 0
+            }
+          ],
+          "stock": [
+            {
+              "id": "9825da3e1a",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "quantityDelta": "10",
+              "valueDelta": "20",
+              "quantity": "10",
+              "value": "20",
+              "incomingRate": "2",
+              "valuationRate": "2",
+              "fifo": [
+                [
+                  "10",
+                  "2"
+                ]
+              ],
+              "cancelled": false
+            }
+          ],
+          "gl": [
+            {
+              "id": "d6493f9f81",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "ee85aac002",
+              "requestId": "receive",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "20",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            }
+          ]
+        },
+        {
+          "step": 1,
+          "attempts": [
+            {
+              "attempt": 0,
+              "requestId": "deliver",
+              "nativeId": "MAT-DN-2026-00002",
+              "outcome": "accepted",
+              "nativeCode": null,
+              "reason": null,
+              "completionOrder": 0
+            }
+          ],
+          "stock": [
+            {
+              "id": "9825da3e1a",
+              "requestId": "receive",
+              "line": "receive:1",
+              "warehouse": "a",
+              "quantityDelta": "10",
+              "valueDelta": "20",
+              "quantity": "10",
+              "value": "20",
+              "incomingRate": "2",
+              "valuationRate": "2",
+              "fifo": [
+                [
+                  "10",
+                  "2"
+                ]
+              ],
+              "cancelled": false
+            },
+            {
+              "id": "f75d692235",
+              "requestId": "deliver",
+              "line": "deliver:1",
+              "warehouse": "a",
+              "quantityDelta": "-3",
+              "valueDelta": "-6",
+              "quantity": "7",
+              "value": "14",
+              "incomingRate": "2",
+              "valuationRate": "2",
+              "fifo": [
+                [
+                  "7",
+                  "2"
+                ]
+              ],
+              "cancelled": false
+            }
+          ],
+          "gl": [
+            {
+              "id": "d6493f9f81",
+              "requestId": "receive",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "20",
+              "credit": "0",
+              "cancelled": false
+            },
+            {
+              "id": "ee85aac002",
+              "requestId": "receive",
+              "account": "srbnb",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "20",
+              "cancelled": false
+            },
+            {
+              "id": "f4533ae9df",
+              "requestId": "deliver",
+              "account": "stock-a",
+              "currency": "USD",
+              "debit": "0",
+              "credit": "6",
+              "cancelled": false
+            },
+            {
+              "id": "a04b07fd99",
+              "requestId": "deliver",
+              "account": "cogs",
+              "currency": "USD",
+              "debit": "6",
+              "credit": "0",
+              "cancelled": false
+            }
+          ],
+          "documents": [
+            {
+              "requestId": "receive",
+              "status": 1
+            },
+            {
+              "requestId": "deliver",
+              "status": 1
+            }
+          ]
+        }
+      ],
+      "initial": {
+        "step": -1,
+        "attempts": [],
+        "stock": [],
+        "gl": [],
+        "documents": []
+      }
+    }
+  ]
+}
