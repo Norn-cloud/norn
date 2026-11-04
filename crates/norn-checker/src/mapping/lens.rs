@@ -17,8 +17,8 @@ struct Declaration {
     map: String,
     property: String,
     sources: Vec<BTreeMap<String, bool>>,
-    /// For each source row, destination row for false, then true.
-    put: Vec<[usize; 2]>,
+    /// For each source row, decimal-string destination indices for false, then true.
+    put: Vec<[String; 2]>,
 }
 
 /// A live-checked lens, exhaustive only over its retained finite domain.
@@ -111,6 +111,10 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     if sources.is_empty() || sources.len() > 32 || put.len() != sources.len() {
         return Err("unknown: invalid finite domain or put table size".into());
     }
+    let put = put.into_iter().map(|[no, yes]| {
+        Ok([no.parse::<usize>().map_err(|_| "unknown: put index")?,
+            yes.parse::<usize>().map_err(|_| "unknown: put index")?])
+    }).collect::<Result<Vec<_>, String>>()?;
     for (row, source) in sources.iter().enumerate() {
         if source.is_empty()
             || source.len() > 16

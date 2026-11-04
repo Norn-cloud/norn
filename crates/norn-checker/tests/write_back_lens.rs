@@ -6,7 +6,12 @@ use norn_checker::mapping::{
 use norn_ir::mapping::MappingIr;
 use serde_json::{Value, json};
 
-fn mapping(get: &str, put: Value) -> MappingIr {
+fn mapping(get: &str, mut put: Value) -> MappingIr {
+    for row in put.as_array_mut().expect("put table") {
+        for index in row.as_array_mut().expect("put row") {
+            *index = json!(index.to_string());
+        }
+    }
     serde_json::from_value(json!({
         "format": "norn.mapping/1",
         "source": {"schemaId":"source", "version":"0.1.0", "sha256":"0".repeat(64)},
@@ -28,7 +33,7 @@ fn mapping(get: &str, put: Value) -> MappingIr {
 #[test]
 fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [2, 3], [2, 3]]));
-    assert!(check_mapping_local(&mapping).is_empty());
+    assert!(check_mapping_local(&mapping).is_empty(), "{:?}", check_mapping_local(&mapping));
     let lens = admit(&mapping).expect("checked").expect("declared");
     assert_eq!(lens.source_states(), 4);
     let source = [("approved".into(), false), ("other".into(), true)].into();
@@ -42,7 +47,7 @@ fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
 fn seeded_lossy_overwrite_refuses_live_mapping_admission() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [0, 1], [0, 1]]));
     let findings = check_mapping_local(&mapping);
-    assert!(findings.iter().any(|d| d.message.contains("GetPut")));
+    assert!(findings.iter().any(|d| d.message.contains("GetPut")), "{findings:?}");
     assert!(admit(&mapping).is_err());
 }
 
@@ -85,10 +90,16 @@ fn unknown_evaluation_or_fragment_never_passes() {
 fn oversized_and_unsupported_declarations_refuse() {
     let mut mapping = mapping("input.approved", json!([[0, 1], [0, 1], [2, 3], [2, 3]]));
     let extensions = mapping.extensions.as_mut().expect("extension");
-    extensions.insert("norn.write-back/99.0.0".into(), serde_json::from_value(json!({})).expect("JSON"));
+    extensions.insert(
+        "norn.write-back/99.0.0".into(),
+        serde_json::from_value(json!({})).expect("JSON"),
+    );
     assert!(admit(&mapping).is_err());
     let extensions = mapping.extensions.as_mut().expect("extension");
     extensions.remove("norn.write-back/99.0.0");
-    extensions.insert(LENS_SLOT.into(), serde_json::from_value(json!("x".repeat(65_537))).expect("JSON"));
+    extensions.insert(
+        LENS_SLOT.into(),
+        serde_json::from_value(json!("x".repeat(65_537))).expect("JSON"),
+    );
     assert!(admit(&mapping).is_err());
 }
