@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
+import { RecordsPanel } from "./objects.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
@@ -161,6 +162,7 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
             : <p className="text-muted-foreground">No rule is declared on this object type itself.</p>}
         </Well>
       </Panel>
+      {concept.kind === "concept" && <RecordsPanel objectType={concept.name} />}
       <Panel icon={Database} label="Where its records come from">
         <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-sm text-muted-foreground">No connected system maps records into it directly.</p>}</div>
       </Panel>

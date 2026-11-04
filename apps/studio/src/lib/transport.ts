@@ -6,6 +6,19 @@ export type Answer = Schemas["NornQueryResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
 export type ObjectType = Schemas["NornIrObjectTypeDef"]
 export type Artifact = Schemas["NornArtifactEnvelope"]
+export type ObjectPage = Schemas["NornObjectPage"]
+export type ObjectRecord = Schemas["NornObjectRecord"]
+export type LinkPage = Schemas["NornLinkPage"]
+export type SourceProvenance = Schemas["NornInstanceSourceProvenance"]
+
+/** One object as the cell serves it: the record, the links touching it and where it came from. */
+export interface ObjectRead {
+  readonly record: Read<ObjectRecord>
+  /** Nothing when the links touching it were not recorded. */
+  readonly links: Read<LinkPage> | undefined
+  /** Nothing when its source lineage was not recorded. */
+  readonly source: Read<SourceProvenance> | undefined
+}
 
 export interface QuestionAnswer {
   readonly question: Read<Question>
@@ -21,9 +34,21 @@ export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
+  /** The first page of an object type's records, or nothing when none was recorded. */
+  readonly objects: (objectType: string) => Promise<Read<ObjectPage> | undefined>
+  /** One object, or nothing when it was not recorded. */
+  readonly object: (objectType: string, id: string) => Promise<ObjectRead | undefined>
 }
 
 const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/*.json"], { query: "?raw", import: "default", eager: true })
+
+const OBJECTS = import.meta.glob<string>("../../../../fixtures/demo/explorer/objects/**/*.json", { query: "?raw", import: "default", eager: true })
+
+/** A recorded object read, or nothing; record files name an identity with `~` for `/`. */
+function recordedObject<T>(name: string): Read<T> | undefined {
+  const source = OBJECTS[`../../../../fixtures/demo/explorer/objects/${name}`]
+  return source === undefined ? undefined : readDocument<T>(source, "recorded")
+}
 
 function recorded<T>(name: string): Read<T> {
   const source = recordings[`../../../../fixtures/demo/${name}`]
@@ -40,4 +65,10 @@ export const recordedTransport: Transport = {
     objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
   }],
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
+  objects: async (objectType) => recordedObject<ObjectPage>(`${objectType}.page.json`),
+  object: async (objectType, id) => {
+    const at = `${objectType}/${id.replaceAll("/", "~")}`
+    const record = recordedObject<ObjectRecord>(`${at}.object.json`)
+    return record && { record, links: recordedObject<LinkPage>(`${at}.links.json`), source: recordedObject<SourceProvenance>(`${at}.source.json`) }
+  },
 }

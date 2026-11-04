@@ -4,6 +4,7 @@ import { ChartLine, Database, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
+import { ObjectRecordPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage, useQuestionsMenu } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
@@ -40,6 +41,7 @@ const router = createRouter({
       component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$type", component: ObjectTypePage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$type/$", component: ObjectRecordPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
   ]),
 })
