@@ -348,7 +348,7 @@ mod tests {
             };
             assert_eq!(
                 serde_json::from_slice::<GuaranteeScalar>(
-                    &serde_json::to_vec(&value).expect("encode")
+                    &norn_canonical::serialize_json_verbatim(&value).expect("encode")
                 )
                 .expect("decode"),
                 value
@@ -392,7 +392,7 @@ mod tests {
         fn guarantee_scalar_roundtrip_preserves_exact_coefficient(coefficient in any::<i64>(), scale in 0..=28_u32) {
             let value = GuaranteeScalar { coefficient, scale,
                 unit: Some(crate::UnitRef { system: crate::UnitSystem::Ucum, code: "g".into() }) };
-            let bytes = serde_json::to_vec(&value).expect("wire bytes");
+            let bytes = norn_canonical::serialize_json_verbatim(&value).expect("wire bytes");
             prop_assert_eq!(serde_json::from_slice::<GuaranteeScalar>(&bytes).expect("roundtrip"), value);
         }
     }
