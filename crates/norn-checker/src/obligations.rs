@@ -240,6 +240,11 @@ impl RetainedLayers {
                 &limits,
             )
             .map_err(|_error| ChallengeError::NotAdmitted)?;
+            if !crate::receipt::attests_fresh_diagnostics(layer.receipt, &checked.receipt)
+                .map_err(|_error| ChallengeError::NotAdmitted)?
+            {
+                return Err(ChallengeError::NotAdmitted);
+            }
             identities.push(layer.source.exact_digest.as_bytes().to_vec());
             identities.push(layer.receipt_sha256.as_bytes().to_vec());
             artifacts.extend(layer.source.artifacts.iter().cloned());
