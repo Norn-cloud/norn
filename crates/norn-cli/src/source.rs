@@ -246,7 +246,14 @@ fn env(name: &str) -> Result<String, String> {
 /// Credentials travel only over TLS, except to this machine.
 fn checked_base(base: &str) -> Result<String, String> {
     let base = base.trim_end_matches('/');
-    if base.starts_with("https://") || base.starts_with("http://127.0.0.1:") {
+    let uri: ureq::http::Uri = base.parse().map_err(|_| "invalid source URL")?;
+    let authority = uri.authority().ok_or("source URL lacks an authority")?;
+    if authority.as_str().contains('@') || uri.query().is_some() {
+        return Err("source URL must not contain credentials or a query".into());
+    }
+    if uri.scheme_str() == Some("https")
+        || (uri.scheme_str() == Some("http") && uri.host() == Some("127.0.0.1"))
+    {
         return Ok(base.to_owned());
     }
     Err("source URL must be HTTPS or loopback".into())
@@ -316,6 +323,8 @@ mod tests {
     fn src_read_1_credentials_require_tls_or_loopback() {
         assert!(checked_base("http://example.test").is_err());
         assert!(checked_base("http://127.0.0.1.example.test").is_err());
+        assert!(checked_base("http://127.0.0.1:8000@example.test").is_err());
+        assert!(checked_base("https://user:password@example.test").is_err());
         assert!(checked_base("http://127.0.0.1:8000").is_ok());
         assert!(checked_base("https://example.test").is_ok());
     }
