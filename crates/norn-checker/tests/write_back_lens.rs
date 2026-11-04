@@ -15,10 +15,16 @@ fn source_schema(complement: &str) -> norn_ir::source_schema::SourceSchemaIr {
     for member in ["codeSets", "constraints", "profiles", "lineage"] {
         raw[member] = json!([]);
     }
-    raw["fields"] = json!(["approved", complement].map(|name| json!({
-        "dataset":"orders", "name":name, "nativeType":"Check",
-        "typeCandidate":{"type":"boolean", "origin":"declared"}, "required":true
-    })));
+    raw["fields"] = json!(
+        ["approved", complement]
+            .iter()
+            .enumerate()
+            .map(|(ordinal, name)| json!({
+                "dataset":"orders", "name":name, "ordinal":ordinal, "nativeType":"Check",
+                "typeCandidate":{"type":"boolean", "origin":"declared"}, "required":true
+            }))
+            .collect::<Vec<_>>()
+    );
     serde_json::from_value(raw).expect("typed source")
 }
 
@@ -230,6 +236,7 @@ fn missing_required_source_field_refuses_artifact_admission() {
     let mut schema = source_schema("other");
     let mut field = schema.fields[0].clone();
     field.name = "missing".into();
+    field.ordinal = serde_json::from_value(json!(2)).expect("ordinal");
     schema.fields.push(field);
     assert_schema_refusal(schema, "unknown: lens source field \"missing\" is missing");
 }

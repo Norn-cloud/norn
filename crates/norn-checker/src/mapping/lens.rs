@@ -125,6 +125,9 @@ fn check_declaration(
             ])
         })
         .collect::<Result<Vec<_>, String>>()?;
+    if put.iter().flatten().any(|index| *index >= sources.len()) {
+        return Err("unknown put-back".into());
+    }
     for (row, source) in sources.iter().enumerate() {
         if source.is_empty()
             || source.len() > 16
@@ -149,7 +152,7 @@ fn check_declaration(
         let fields = super::input_fields(schema, &map.source.dataset)
             .ok_or("unknown: lens source dataset is not declared")?;
         // Every record already has identical keys and required Boolean values.
-        let declared = &sources[0];
+        let declared = sources.first().ok_or("unknown: empty lens source domain")?;
         for (field, ty) in &fields {
             if !declared.contains_key(field) {
                 return Err(format!("unknown: lens source field {field:?} is missing"));
