@@ -6,7 +6,7 @@
   },
   "knowledgeTimeMs": 1792972800000,
   "result": {
-    "queryPin": "61278dba981dd5661e9108062a9f7bca4e83e57fcff4da78b6a31136b07bfa2b",
+    "queryPin": "565f0db20437855cadedf01bef8a722d590989d83f8c3b1f63b85584828b1a79",
     "definitionPin": "a677e4f9aa1911d592194edac71208ee8eb37d9d5fc73d0d9148fd943f892170",
     "engine": "cell",
     "revision": {
@@ -17,7 +17,7 @@
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "bd08283b060443d5c7b010b51ab6d10e6768838b4e797df65993356209cc4493",
+    "lineageRef": "529b05f79ba99a1e7b370c311f46d90e7a205eedbbe403f9862e11882aeab1c7",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
