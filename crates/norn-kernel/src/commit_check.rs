@@ -501,7 +501,7 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
             });
         }
     }
-    check_versions(commit, model, view)?;
+    check_versions(commit, model, view, authorization)?;
     check_link_authority(commit, model, view, authorization)?;
     let links = live_links_after(commit, model, view)?;
     check_endpoints(commit, model, view, &links)?;
@@ -1589,7 +1589,21 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
+    authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Put { .. }) {
+            let key = model.canonical(&write.key);
+            let version = view.version(&key).map_err(CommitError::Host)?;
+            let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
+            if version.has_committed_deletion(live)
+                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+            {
+                return Err(CommitError::IdentityReuse);
+            }
+        }
+    }
     let expectations = commit
         .reads
         .iter()

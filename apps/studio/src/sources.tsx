@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { ArrowRight, Database } from "lucide-react"
+import { ArrowRight, Database, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
+import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { catalogOf, conceptTitle, type Catalog, type Concept } from "./lib/catalog.ts"
+import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
@@ -68,6 +69,52 @@ function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly 
   )
 }
 
+const GAP = { not_in_source: "not in this system", defaulted: "defaulted", deferred: "not mapped yet", derived_elsewhere: "derived elsewhere" } as const
+
+function SourceCell({ source }: { readonly source: Source | undefined }) {
+  switch (source?.kind) {
+    case undefined: return <span className="text-muted-foreground">not sent</span>
+    case "field": return <code className="text-xs">{source.field}</code>
+    case "fixed": return <span>always <code className="text-xs">{source.value}</code></span>
+    case "empty": return <span className="text-muted-foreground">left empty</span>
+    case "computed": return <code className="text-xs">{source.expression}</code>
+    case "nested": return <span title={`${source.collection} rows where ${source.where}`}><SourceCell source={source.value} /> <span className="text-muted-foreground">in each {source.dataset} row</span></span>
+    case "transition": return <span><span className="text-muted-foreground">from transition </span><code className="text-xs">{source.expression}</code></span>
+    case "gap": return <Badge variant="outline" title={source.note}>{GAP[source.reason]}</Badge>
+  }
+}
+
+/** Each fact against each system's record that feeds it, as the admitted mappings declare. */
+function SourceMatrix({ concept }: { readonly concept: Concept }) {
+  const gaps = new Map<string, { readonly system: string; readonly reason: string; readonly note: string; readonly facts: string[] }>()
+  for (const { system, facts } of concept.feeds) for (const [fact, [source]] of facts) {
+    if (source?.kind !== "gap" || source.note === undefined) continue
+    const key = `${system}\u0000${source.reason}\u0000${source.note}`
+    const gap = gaps.get(key) ?? { system, reason: GAP[source.reason], note: source.note, facts: [] }
+    gap.facts.push(fact.replaceAll("_", " "))
+    gaps.set(key, gap)
+  }
+  return (
+    <div className="space-y-3">
+      <DenseTable head={
+        <TableRow>
+          <TableHead>Fact</TableHead>
+          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+        </TableRow>
+      }>
+        {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
+          ...concept.relationships.map(({ id, target }) => ({ id, label: `${id.replaceAll("_", " ")} → ${conceptTitle(target)}` }))].map(({ id, label }) => (
+          <TableRow key={id}>
+            <TableCell className="font-medium">{label}</TableCell>
+            {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}>{(facts.get(id) ?? [undefined]).map((source, index) => <div key={index}><SourceCell source={source} /></div>)}</TableCell>)}
+          </TableRow>
+        ))}
+      </DenseTable>
+      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
+    </div>
+  )
+}
+
 function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; readonly name: string | undefined; readonly onOpen: (name: string | undefined) => void }) {
   const concept = name === undefined ? undefined : catalog.byName.get(name)
   const link = (target: string) => catalog.byName.has(target)
@@ -75,7 +122,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
     : <span>{conceptTitle(target)}</span>
   return (
     <Sheet open={concept !== undefined} onOpenChange={(open) => { if (!open) onOpen(undefined) }}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
         {concept && <>
           <SheetHeader>
             <SheetTitle className="text-xl">{concept.title}</SheetTitle>
@@ -115,9 +162,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
             </section>
             <section>
               <h3 className="pb-2 font-medium">Where its records come from</h3>
-              {concept.feeds.length > 0
-                ? <ul className="space-y-1 text-sm">{concept.feeds.map(({ system, dataset }) => <li key={`${system}/${dataset}`}><Badge variant="secondary">{system}</Badge> <span className="text-muted-foreground">{dataset}</span></li>)}</ul>
-                : <p className="text-sm text-muted-foreground">No connected system maps records into it directly.</p>}
+              {concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="text-sm text-muted-foreground">No connected system maps records into it directly.</p>}
             </section>
           </div>
         </>}
@@ -136,7 +181,7 @@ export function SourcesPage() {
     <section className="space-y-8">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Sources</h1>
+          <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
         <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
@@ -145,24 +190,25 @@ export function SourcesPage() {
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
         <Systems catalog={catalog} />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <h2 className="text-xl font-semibold">The business model</h2>
-          <label className="grid w-full max-w-xs gap-1 text-sm text-muted-foreground">
-            Find a concept
-            <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
-          </label>
-        </div>
-        {(["concept", "core idea"] as const).map((kind) => (
-          <div key={kind} className="space-y-3">
-            <h3 className="text-sm font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
-                <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
-              ))}
-            </div>
-          </div>
-        ))}
-        <p className="text-sm text-muted-foreground">The records inside each concept are not available yet.</p>
+        <Panel icon={Shapes} label="The business model">
+          <Well className="space-y-6 p-4">
+            <label className="grid w-full max-w-xs gap-1 text-meta text-muted-foreground">
+              Find a concept
+              <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+            {(["concept", "core idea"] as const).map((kind) => (
+              <div key={kind} className="space-y-3">
+                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
+                    <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Well>
+        </Panel>
+        <p className="text-meta text-muted-foreground">The records inside each concept are not available yet.</p>
         <ConceptSheet catalog={catalog} name={open} onOpen={setOpen} />
       </>}
     </section>

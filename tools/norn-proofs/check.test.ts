@@ -8,6 +8,10 @@ test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const tools = process.env.NORN_VERIFICATION_TOOL_ROOT
   if (!tools) throw new Error("NORN_VERIFICATION_TOOL_ROOT is required for real backend parity")
+  const build = Bun.spawn(["cargo", "build", "--locked", "-p", "norn-checker",
+    "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", join(root, "target")],
+    { cwd: root, stdout: "inherit", stderr: "inherit" })
+  expect(await build.exited).toBe(0)
   const work = await mkdtemp(join(tmpdir(), "norn-proof-parity-"))
   try {
     const fixture: unknown = await Bun.file(join(root, "crates/norn-cell/tests/fixtures/constitution.json")).json()
@@ -21,7 +25,7 @@ test("tla_ts_apalache_parity", async () => {
       base.push(await Bun.file(join(root, `registry/core/artifacts/${name}.json`)).json())
     }
     await Bun.write(join(work, "base.json"), JSON.stringify(base))
-    const process = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/examples/quint",
+    const process = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
       join(work, "original.json"), join(work, "mutant.json"), join(work, "base.json"),
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
