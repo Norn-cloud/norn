@@ -1,16 +1,16 @@
 {
-  "queryPin": "27b8021003dca6a2a5e9845fa52cb15ea730541eaa6753c29f99fb1b4dfb73f4",
+  "queryPin": "8507a0583b51c7fcbefe8856b28049a0a3751ff7d915941ba277837b113fce8c",
   "definitionPin": "synthetic-quality-v1",
   "engine": "cell",
   "revision": {
     "seq": 5,
-    "hash": "f865d8e9937ee101d980609ea10d039eb2c67cca8b22e8f98eb5e0c28fe982d8",
+    "hash": "5a166066f328c1e7fca65621e42583162fd3b10f3dde9e3bcbe2f96201b98282",
     "commits": 3
   },
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 3,
   "grain": "demo.Conversion",
-  "lineageRef": "0397b22ab60477523ff0f817945b3af8652227ef8ebe5dd10fe4b3e5f93599a2",
+  "lineageRef": "cbf674f4b803777b62385247a82ab2afaf33e4129d77a74ca117a133616faf9e",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -637,6 +637,6 @@
     }
   },
   "exclusions": {
-    "SYN-MELT-15-1": "data_quality_finding:edadc3bbf36bfda2d1c82f93aefe7c1b9a08981e8b25270b56eb377aa2db72ed"
+    "SYN-MELT-15-1": "data_quality_finding:fa752f4f44a9adcdc6c2032aeb10b334da0920e17cb7cbe2200fbbf74015409f"
   }
 }

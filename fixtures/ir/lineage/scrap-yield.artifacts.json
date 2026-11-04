@@ -71,6 +71,9 @@
           {
             "id": "input",
             "type": {
+              "additivity": {
+                "kind": "additive"
+              },
               "kind": "decimal",
               "scale": 3,
               "unit": {
@@ -82,6 +85,9 @@
           {
             "id": "recovered",
             "type": {
+              "additivity": {
+                "kind": "additive"
+              },
               "kind": "decimal",
               "scale": 3,
               "unit": {
@@ -93,6 +99,9 @@
           {
             "id": "loss",
             "type": {
+              "additivity": {
+                "kind": "additive"
+              },
               "kind": "decimal",
               "scale": 3,
               "unit": {

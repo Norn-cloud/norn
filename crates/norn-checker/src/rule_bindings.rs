@@ -490,7 +490,7 @@ fn snapshot_property_schema_error(
             | PropertyType::Date {}
             | PropertyType::Duration {},
         ) => Some("string"),
-        EffectiveKind::Base(PropertyType::Integer {}) => Some("integer"),
+        EffectiveKind::Base(PropertyType::Integer { .. }) => Some("integer"),
         EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("number"),
         EffectiveKind::Base(PropertyType::Boolean {}) => Some("boolean"),
         EffectiveKind::Base(PropertyType::Record { .. }) => Some("object"),
