@@ -72,8 +72,11 @@ fn lifecycle_inputs_are_exact_complete_and_source_bound() {
     let repeated = batch(&source(true), &bounds());
     assert_eq!(prepared.challenge.sha256(), repeated.challenge.sha256());
     assert_eq!(prepared.bounds_json, repeated.bounds_json);
-    let profile: Value=serde_json::from_str(&prepared.bounds_json).expect("pinned profile");
-    assert_eq!(prepared.bounds_json.as_bytes(),norn_canonical::canonical_json_exact_of(&profile).expect("canonical profile"));
+    let profile: Value = serde_json::from_str(&prepared.bounds_json).expect("pinned profile");
+    assert_eq!(
+        prepared.bounds_json.as_bytes(),
+        norn_canonical::canonical_json_exact_of(&profile).expect("canonical profile")
+    );
 }
 #[test]
 fn lifecycle_input_refusals_never_clip_the_domain() {
@@ -128,9 +131,15 @@ fn lifecycle_input_refusals_never_clip_the_domain() {
             .expect_err("byte product refuses as a whole")
             .contains("budget")
     );
-    let source=source(true);
-    profile = bounds();profile.object_type="x".repeat(10_001);
-    assert_eq!(super::lifecycle_tests::authority(&source).lifecycle_inputs(&source,&BTreeSet::new(),&profile).expect_err("oversized selector"),ChallengeError::Limit);
+    let source = source(true);
+    profile = bounds();
+    profile.object_type = "x".repeat(10_001);
+    assert_eq!(
+        super::lifecycle_tests::authority(&source)
+            .lifecycle_inputs(&source, &BTreeSet::new(), &profile)
+            .expect_err("oversized selector"),
+        ChallengeError::Limit
+    );
 }
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(32))]

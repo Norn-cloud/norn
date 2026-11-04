@@ -208,9 +208,14 @@ impl ApprovedContract {
         bounds: &Bounds,
     ) -> Result<Batch, ChallengeError> {
         let challenge = self.challenge(source, registry)?;
-        if bounds.object_type.len().saturating_add(bounds.property.len()) > 10_000
+        if bounds
+            .object_type
+            .len()
+            .saturating_add(bounds.property.len())
+            > 10_000
             || bounds.frozen.len() > 16
-            || bounds.frozen.values().any(|values| values.len() > 4096) {
+            || bounds.frozen.values().any(|values| values.len() > 4096)
+        {
             return Err(ChallengeError::Limit);
         }
         let raw_bytes = bounds.frozen.iter().fold(0_usize, |total, (name, values)| {
