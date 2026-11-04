@@ -1425,8 +1425,8 @@ define_payload_root!(
 );
 
 define_payload_root!(
-    /// The payload of a `law` artifact, strictly projected from LawIR.
-    #[schemars(with = "LawIR")]
+    /// The existing safety or structured normative form of a `law` artifact.
+    #[schemars(with = "deontic::LawDocument")]
     LawPayload {
         required {
             law_version => "lawVersion" as IrVersion01,
@@ -1440,7 +1440,11 @@ define_payload_root!(
             modality => "modality" as LawModality,
             response => "response" as LawResponse
         }
-        optional { condition => "condition" as ZenExpression, timing => "timing" as LawTiming }
+        optional {
+            condition => "condition" as ZenExpression,
+            timing => "timing" as LawTiming,
+            requirement => "requirement" as deontic::StructuredRequirement
+        }
     }
 );
 

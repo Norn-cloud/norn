@@ -1195,6 +1195,144 @@ fn verify_layers(
     norn_checker::obligations::RetainedLayers::verify(&retained, &BTreeSet::new())
 }
 
+fn normative_fixture(
+    padding: &str,
+) -> (
+    norn_checker::obligations::RetainedLayers,
+    norn_ir::PackInstanceRef,
+) {
+    let entity = pool()[0].clone();
+    let mut leaf = entity.clone();
+    leaf["artifactId"] = json!("erpnext.authority.pack");
+    leaf["kind"] = json!("business_pack");
+    leaf["payload"] = json!({"packId":"erpnext.authority", "packVersion":"0.1.0",
+        "artifacts":[{"artifactId":entity["artifactId"],"version":"0.1.0","kind":"entity"}]});
+    let typed = serde_json::from_value(leaf.clone()).expect("leaf");
+    let pin = norn_checker::ArtifactRef::of(&typed).expect("pin");
+    let reference: norn_ir::PackInstanceRef =
+        serde_json::from_value(json!({"instanceId":"app-authority",
+        "pack":{"artifactId":pin.artifact_id,"version":pin.version,"sha256":pin.sha256}}))
+        .expect("reference");
+    let mut holder = leaf.clone();
+    holder["artifactId"] = json!("erpnext.instances.pack");
+    holder["payload"]["packId"] = json!("erpnext.instances");
+    holder["payload"]["instances"] = json!([
+        {"instanceId":reference.instance_id,"scope":entity["scope"],"pack":reference.pack,"imports":{},"instances":[]},
+        {"instanceId":"other-authority","scope":entity["scope"],"pack":reference.pack,"imports":{},"instances":[]}
+    ]);
+    let documents = vec![entity, leaf, holder];
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(json!(documents)).expect("artifacts");
+    let source =
+        DefinitionSource::parse(&(padding.to_owned() + &json!(documents).to_string()), "[]")
+            .expect("source");
+    let sources = artifacts
+        .iter()
+        .map(|a| norn_ir::runtime::encode(a).expect("source"))
+        .collect::<Vec<_>>();
+    let registry = BTreeSet::new();
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&sources, &[]).expect("sources"),
+        &norn_checker::EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )
+    .expect("receipt");
+    assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+    let receipt =
+        String::from_utf8(checked.receipt.canonical_json().expect("canonical")).expect("text");
+    let digest = checked.receipt.content_sha256().expect("digest");
+    let retained = norn_checker::obligations::RetainedLayers::verify(
+        &[norn_checker::obligations::RetainedLayer {
+            source: &source,
+            source_sha256: source.exact_digest(),
+            receipt: &receipt,
+            receipt_sha256: &digest,
+        }],
+        &registry,
+    )
+    .expect("verified retained layer");
+    (retained, reference)
+}
+
+#[test]
+fn law_normative_context_binds_every_host_selection_and_refuses_stale_instances() {
+    use norn_checker::obligations::normative::RetainedNormativeContext as Context;
+    let (retained, enacting) = normative_fixture("");
+    let original =
+        Context::select(&retained, &enacting, "board", "1", 7, u64::MAX).expect("selection");
+    assert_eq!(
+        original.receipt()["authority"]["enactmentOrdinal"],
+        json!(u64::MAX.to_string())
+    );
+    let (other, _) = normative_fixture(" ");
+    for changed in [
+        Context::select(&other, &enacting, "board", "1", 7, u64::MAX),
+        Context::select(&retained, &enacting, "other", "1", 7, u64::MAX),
+        Context::select(&retained, &enacting, "board", "2", 7, u64::MAX),
+        Context::select(&retained, &enacting, "board", "1", 8, u64::MAX),
+        Context::select(&retained, &enacting, "board", "1", 7, 0),
+        Context::select(
+            &retained,
+            &norn_ir::PackInstanceRef {
+                instance_id: "other-authority".into(),
+                ..enacting.clone()
+            },
+            "board",
+            "1",
+            7,
+            u64::MAX,
+        ),
+    ] {
+        assert_ne!(
+            changed.expect("new host selection").exact_digest(),
+            original.exact_digest()
+        );
+    }
+    let mut stale = enacting.clone();
+    stale.pack.sha256 = "0".repeat(64);
+    assert!(Context::select(&retained, &stale, "board", "1", 7, 0).is_err());
+    stale = enacting;
+    stale.instance_id = "missing".into();
+    assert!(Context::select(&retained, &stale, "board", "1", 7, 0).is_err());
+    let source = retained_candidate(&[], &retained);
+    assert_eq!(
+        ApprovedContract::approve_normative(
+            &source,
+            &other,
+            &original,
+            json!({"s":1}),
+            json!({"a":1}),
+            json!({"r":1})
+        )
+        .err(),
+        Some(ChallengeError::InvalidSubmission)
+    );
+    let mut candidate = pool()[3]["payload"].clone();
+    candidate["normativeContext"] = original.receipt().clone();
+    assert!(serde_json::from_value::<norn_ir::deontic::LawDocument>(candidate).is_err());
+}
+
+proptest::proptest! {
+    #[test]
+    fn law_normative_receipt_and_challenge_change_with_any_enactment(rank in proptest::num::u32::ANY, ordinal in proptest::num::u64::ANY) {
+        use norn_checker::obligations::normative::RetainedNormativeContext as Context;
+        let (retained, enacting) = normative_fixture("");
+        let left = Context::select(&retained,&enacting,"board","1",rank,ordinal).expect("selection");
+        let right = Context::select(&retained,&enacting,"board","1",rank,ordinal^1).expect("selection");
+        proptest::prop_assert_ne!(left.exact_digest(),right.exact_digest());
+        let source = retained_candidate(&[], &retained);
+        let challenge = |context| ApprovedContract::approve_normative(&source,&retained,context,json!({"s":1}),json!({"a":1}),json!({"r":1})).expect("approval").challenge_retained(&source,&retained).expect("challenge");
+        let a = challenge(&left); let b = challenge(&right);
+        proptest::prop_assert_ne!(a.sha256(),b.sha256());
+        proptest::prop_assert!(a.bind_submission(b.body()).is_err());
+        proptest::prop_assert_eq!(&a.body()["normativeContext"]["receipt"],left.receipt());
+    }
+}
+
 #[test]
 fn layers_chain_retains_exact_order_without_enabling_flat_challenges() {
     let layers = retained_fixture();
@@ -1344,6 +1482,14 @@ fn layers_challenge_binds_checked_authority_and_refuses_substituted_base() {
         .err(),
         Some(ChallengeError::NotAdmitted),
         "unresolved app refuses"
+    );
+    let mut invalid = retained_law();
+    invalid["artifactId"] = json!("");
+    let invalid = retained_candidate(&[invalid], &retained);
+    assert_eq!(
+        ApprovedContract::approve_retained(&invalid, &retained, json!({}), json!({}), json!({}))
+            .err(),
+        Some(ChallengeError::NotAdmitted)
     );
 }
 

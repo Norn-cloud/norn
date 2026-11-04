@@ -3,6 +3,8 @@ import { escape, renderShell, UNLABELLED_READ } from "./shell.ts"
 
 type Artifact = Schemas["NornArtifactEnvelope"]
 type LawArtifact = Schemas["NornArtifactEnvelopeLaw"]
+
+const lawIR = (law: LawArtifact): Schemas["NornIrLawIR"] => "requirement" in law.payload ? law.payload.requirement.norm.law : law.payload
 type RelationArtifact = Schemas["NornArtifactEnvelopeRelation"]
 type PropertyType = Schemas["NornIrPropertyType"]
 type Constraints = Schemas["NornIrPropertyConstraints"]
@@ -161,7 +163,7 @@ function conceptCard(concept: Concept, catalog: Index): string {
     }).join("")}</dl>`
     : ""
   const extension = concept.kind === "extension" ? `<dl><dt>Adds to</dt><dd>${conceptRef(concept.name, catalog)}</dd></dl>` : ""
-  const laws = catalog.laws.filter((law) => law.payload.subject === concept.name)
+  const laws = catalog.laws.filter((law) => lawIR(law).subject === concept.name)
   const lawList = laws.length && concept.kind !== "extension"
     ? `<h4>Declared laws</h4><ul>${laws.map((law) => `<li><a href="#law-${catalog.laws.indexOf(law)}">${escape(law.name)}</a></li>`).join("")}</ul>`
     : ""
@@ -295,13 +297,21 @@ function timing(timing: Schemas["NornIrLawTiming"] | undefined): string {
 
 const absent = (what: string): string => `<p class="absent">${escape(what)} not exposed by the server.</p>`
 
+type Wording = Readonly<Record<string, { readonly scope: string; readonly activation: string; readonly component: string; readonly response: string } | undefined>>
+
+function wording(text: Wording, tag: "en" | "ar"): string | undefined {
+  const entry = text[tag]
+  return entry && `<p>${[entry.scope, entry.activation, entry.component, entry.response].map(escape).join(" ")}</p>`
+}
+
 function lawCard(law: LawArtifact, position: number, catalog: Index): string {
-  const payload = law.payload
+  const structured = "requirement" in law.payload ? law.payload.requirement : undefined
+  const payload = lawIR(law)
   const anchor = `law-${position}`
   const states = payload.scope.lifecycleStates?.map((scope) => `${conceptRef(scope.objectType, catalog)}.${code(scope.property)} in ${scope.states.map(code).join(" ")}`).join("; ")
   return `<article class="card" id="${anchor}" aria-labelledby="${anchor}-name">
   <header><div><h3 id="${anchor}-name">${escape(law.name)}</h3><span class="sub">${code(payload.id)} · ${escape(law.version)}</span></div>
-  <div class="chips"><span class="chip">${modality(payload.modality)}</span><span class="chip${payload.severity === "error" ? " error" : ""}">${payload.severity}</span></div></header>
+  <div class="chips">${structured ? `<span class="chip">${escape(structured.norm.modality)}</span>` : ""}<span class="chip">${modality(payload.modality)}</span><span class="chip${payload.severity === "error" ? " error" : ""}">${payload.severity}</span></div></header>
   <dl>
     <dt>Governs</dt><dd>${conceptRef(payload.subject, catalog)}</dd>
     ${payload.condition ? `<dt>When</dt><dd>${code(payload.condition)}</dd>` : ""}
@@ -314,8 +324,8 @@ function lawCard(law: LawArtifact, position: number, catalog: Index): string {
   </dl>
   <h4>Rationale</h4><p class="desc">${escape(payload.rationale)}</p>
   <div class="wording">
-    <div lang="en" dir="ltr"><h4>English wording</h4>${absent("Reviewed English wording is")}</div>
-    <div lang="ar" dir="rtl"><h4>الصياغة العربية</h4><p class="absent" lang="en" dir="ltr">Reviewed Arabic wording is not exposed by the server.</p></div>
+    <div lang="en" dir="ltr"><h4>English wording</h4>${(structured && wording(structured.wording, "en")) ?? absent("Reviewed English wording is")}</div>
+    <div lang="ar" dir="rtl"><h4>الصياغة العربية</h4>${(structured && wording(structured.wording, "ar")) ?? `<p class="absent" lang="en" dir="ltr">Reviewed Arabic wording is not exposed by the server.</p>`}</div>
   </div>
 </article>`
 }

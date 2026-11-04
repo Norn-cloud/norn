@@ -4882,6 +4882,57 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrDeonticModality": {
+        "type": "string",
+        "description": "The normative grade is separate from the temporal wrapper in `law`.",
+        "enum": [
+          "obligation",
+          "permission",
+          "prohibition"
+        ]
+      },
+      "NornIrDeonticRule": {
+        "type": "object",
+        "description": "A law template with explicit authority, exceptions and preferences.\n`law.condition`, `law.timing` and `law.response` supply typed slots;\n`law.modality` must agree with the normative grade before law lowering.",
+        "required": [
+          "law",
+          "modality",
+          "authorityId",
+          "authorityVersion",
+          "source"
+        ],
+        "properties": {
+          "authorityId": {
+            "type": "string"
+          },
+          "authorityVersion": {
+            "type": "string"
+          },
+          "defeatedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Explicit rule identities preferred to this rule; not numeric authority ranking."
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrRuleException"
+            }
+          },
+          "law": {
+            "$ref": "#/components/schemas/NornIrLawIR"
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrDeonticModality"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrDerivedPayload": {
         "type": "object",
         "required": [
@@ -8029,6 +8080,84 @@
         },
         "additionalProperties": false
       },
+      "NornIrLawIR": {
+        "type": "object",
+        "description": "One protected law; its predicates use the subject's `self` environment.",
+        "required": [
+          "lawVersion",
+          "id",
+          "owner",
+          "severity",
+          "rationale",
+          "provenance",
+          "scope",
+          "subject",
+          "modality",
+          "response"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string",
+            "description": "Optional pointwise activation predicate (not an edge trigger)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity, preserved by all authoring faces."
+          },
+          "lawVersion": {
+            "type": "string",
+            "description": "Wire format version.",
+            "enum": [
+              "0.1"
+            ]
+          },
+          "modality": {
+            "$ref": "#/components/schemas/NornIrLawModality",
+            "description": "Admitted temporal wrapper."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Principal or registry owner of changes to this law."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/NornIrLawProvenance",
+            "description": "Source and interpretation provenance."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reviewed explanation."
+          },
+          "response": {
+            "$ref": "#/components/schemas/NornIrLawResponse",
+            "description": "Predicate or exact ontology-bound behavior/invariant identity."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/NornIrLawScope",
+            "description": "Applicability, independent of the artifact's authorization scope."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Reporting severity, independent of proof status.",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "x-enumDescriptions": [
+              "Violations require attention.",
+              "Advisory law."
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "description": "Exact ontology object type whose record is bound as `self`."
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrLawTiming",
+            "description": "Optional progress bound."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLawInterpretationIr": {
         "type": "object",
         "description": "Typed interpretation contract. Admission refuses until conformance exists.",
@@ -8165,82 +8294,17 @@
         "additionalProperties": false
       },
       "NornIrLawPayload": {
-        "type": "object",
-        "description": "The payload of a `law` artifact, strictly projected from LawIR.",
-        "required": [
-          "lawVersion",
-          "id",
-          "owner",
-          "severity",
-          "rationale",
-          "provenance",
-          "scope",
-          "subject",
-          "modality",
-          "response"
-        ],
-        "properties": {
-          "condition": {
-            "type": "string",
-            "description": "Optional pointwise activation predicate (not an edge trigger)."
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrLawIR",
+            "description": "Existing protected safety law, with unchanged wire form."
           },
-          "id": {
-            "type": "string",
-            "description": "Stable identity, preserved by all authoring faces."
-          },
-          "lawVersion": {
-            "type": "string",
-            "description": "Wire format version.",
-            "enum": [
-              "0.1"
-            ]
-          },
-          "modality": {
-            "$ref": "#/components/schemas/NornIrLawModality",
-            "description": "Admitted temporal wrapper."
-          },
-          "owner": {
-            "type": "string",
-            "description": "Principal or registry owner of changes to this law."
-          },
-          "provenance": {
-            "$ref": "#/components/schemas/NornIrLawProvenance",
-            "description": "Source and interpretation provenance."
-          },
-          "rationale": {
-            "type": "string",
-            "description": "Reviewed explanation."
-          },
-          "response": {
-            "$ref": "#/components/schemas/NornIrLawResponse",
-            "description": "Predicate or exact ontology-bound behavior/invariant identity."
-          },
-          "scope": {
-            "$ref": "#/components/schemas/NornIrLawScope",
-            "description": "Applicability, independent of the artifact's authorization scope."
-          },
-          "severity": {
-            "type": "string",
-            "description": "Reporting severity, independent of proof status.",
-            "enum": [
-              "error",
-              "warning"
-            ],
-            "x-enumDescriptions": [
-              "Violations require attention.",
-              "Advisory law."
-            ]
-          },
-          "subject": {
-            "type": "string",
-            "description": "Exact ontology object type whose record is bound as `self`."
-          },
-          "timing": {
-            "$ref": "#/components/schemas/NornIrLawTiming",
-            "description": "Optional progress bound."
+          {
+            "$ref": "#/components/schemas/NornIrStructuredLaw",
+            "description": "Reviewed normative declaration; never erase its grade or source metadata."
           }
-        },
-        "additionalProperties": false
+        ],
+        "description": "The existing safety or structured normative form of a `law` artifact."
       },
       "NornIrLawProvenance": {
         "type": "object",
@@ -9155,6 +9219,47 @@
         "additionalProperties": {
           "type": "string"
         }
+      },
+      "NornIrLocalizedRequirement": {
+        "type": "object",
+        "description": "One complete translation, including every phrase used by the renderer.",
+        "required": [
+          "direction",
+          "scope",
+          "activation",
+          "component",
+          "response",
+          "labels",
+          "terms"
+        ],
+        "properties": {
+          "activation": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "component": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/NornIrTextDirection"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/NornIrRequirementLabels"
+          },
+          "response": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/NornIrRequirementTerms"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrLogicalSource": {
         "type": "object",
@@ -12485,6 +12590,60 @@
           "0.1"
         ]
       },
+      "NornIrRequirementLabels": {
+        "type": "object",
+        "description": "Complete display vocabulary; missing fields refuse at decode.",
+        "required": [
+          "scope",
+          "condition",
+          "component",
+          "grade",
+          "timing",
+          "response",
+          "source",
+          "preferences",
+          "exception"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "condition": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "exception": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "grade": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "preferences": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "response": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "source": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "timing": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementLawIR": {
         "type": "object",
         "description": "One protected law; its predicates use the subject's `self` environment.",
@@ -13287,11 +13446,95 @@
         },
         "additionalProperties": false
       },
+      "NornIrRequirementTerms": {
+        "type": "object",
+        "description": "Complete display vocabulary; missing fields refuse at decode.",
+        "required": [
+          "company",
+          "application",
+          "cell",
+          "entity",
+          "commitments",
+          "obligation",
+          "permission",
+          "prohibition",
+          "sameCommit",
+          "everyCommittedState",
+          "grounding"
+        ],
+        "properties": {
+          "application": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "cell": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "commitments": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "company": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "entity": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "everyCommittedState": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "grounding": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "obligation": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "pack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required to render a pack-rooted law; other roots never read it.",
+            "pattern": "\\S"
+          },
+          "permission": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "prohibition": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "sameCommit": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRequirementTextDirection": {
         "type": "string",
         "enum": [
           "ltr",
           "rtl"
+        ]
+      },
+      "NornIrRequirementTiming": {
+        "type": "string",
+        "description": "Closed safety fragment. No event activation, clocks, fairness or progress.",
+        "enum": [
+          "every_committed_state",
+          "same_commit"
+        ],
+        "x-enumDescriptions": [
+          "Condition and response are evaluated at every applicable committed state.",
+          "Condition and response refer to the same proposed commit's state.\nThis is not an edge trigger or a promise to respond in a later commit."
         ]
       },
       "NornIrRequirementView": {
@@ -13311,6 +13554,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrRequirementWording": {
+        "type": "object",
+        "description": "LAW-WORDING-LOCALE-1: complete reviewed display data, ordered by BCP 47 tag.\nWording is never executable and does not change the law's semantic identity.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrLocalizedRequirement"
+        },
+        "minProperties": 1
       },
       "NornIrRequirementZenExpression": {
         "type": "string",
@@ -13649,6 +13900,26 @@
           "half_even",
           "half_away_from_zero"
         ]
+      },
+      "NornIrRuleByteRange": {
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleConditionV1": {
         "oneOf": [
@@ -13992,6 +14263,27 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrRuleException": {
+        "type": "object",
+        "description": "A reviewed conditional exception. No implicit necessity or legal judgement.",
+        "required": [
+          "id",
+          "condition",
+          "source"
+        ],
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/NornIrZenExpression"
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrRuleSourceSpan"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRuleHitPolicyV1": {
         "type": "string",
         "description": "RuleIR v1 hit policy.",
@@ -14215,6 +14507,33 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
+      },
+      "NornIrRuleSourceSpan": {
+        "type": "object",
+        "description": "Source JSON pointer plus an optional half-open UTF-8 byte range.",
+        "required": [
+          "artifactId",
+          "pointer"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "bytes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrRuleByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrRuleTrigger": {
         "oneOf": [
@@ -15428,6 +15747,40 @@
           "$ref": "#/components/schemas/NornIrJsonValue"
         }
       },
+      "NornIrStructuredLaw": {
+        "type": "object",
+        "description": "Structured form of a `law` payload. Authority rank and enactment are absent:\nonly the trusted retained enacting instance/layer may supply those inputs.",
+        "required": [
+          "requirement"
+        ],
+        "properties": {
+          "requirement": {
+            "$ref": "#/components/schemas/NornIrStructuredRequirement"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrStructuredRequirement": {
+        "type": "object",
+        "description": "Structured authoring over the existing law and normative source model.",
+        "required": [
+          "norm",
+          "timing",
+          "wording"
+        ],
+        "properties": {
+          "norm": {
+            "$ref": "#/components/schemas/NornIrDeonticRule"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/NornIrRequirementTiming"
+          },
+          "wording": {
+            "$ref": "#/components/schemas/NornIrRequirementWording"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrTemporalScope": {
         "type": "object",
         "description": "Optional time-dimension declaration for a Derived view.",
@@ -15518,6 +15871,13 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrTextDirection": {
+        "type": "string",
+        "enum": [
+          "ltr",
+          "rtl"
+        ]
       },
       "NornIrTextFormat": {
         "type": "string",

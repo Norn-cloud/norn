@@ -17,6 +17,8 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
+/// Host-selected retained normative authority, outside candidate control.
+pub mod normative;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
@@ -419,6 +421,7 @@ fn contains_number(value: &norn_canonical::JsonValue) -> bool {
 #[derive(Debug, Clone)]
 pub struct ApprovedContract {
     retained: Option<String>,
+    normative: Option<normative::RetainedNormativeContext>,
     laws: BTreeMap<String, String>,
     reference_contracts: BTreeMap<String, String>,
     semantics: Value,
@@ -469,6 +472,27 @@ impl ApprovedContract {
         )
     }
 
+    /// LAW-NORMATIVE-CONTEXT-1: bind a host-selected enactment receipt to the approval.
+    /// Structural admission still refuses unsupported/ungrounded structured laws.
+    /// # Errors
+    /// Refuses a substituted retained layer or any ordinary admission/profile error.
+    pub fn approve_normative(
+        source: &DefinitionSource,
+        retained: &RetainedLayers,
+        normative: &normative::RetainedNormativeContext,
+        semantics: Value,
+        assumptions: Value,
+        assurance: Value,
+    ) -> Result<Self, ChallengeError> {
+        if !normative.matches(retained) {
+            return Err(ChallengeError::InvalidSubmission);
+        }
+        let mut contract =
+            Self::approve_retained(source, retained, semantics, assumptions, assurance)?;
+        contract.normative = Some(normative.clone());
+        Ok(contract)
+    }
+
     fn approve_checked(
         source: &DefinitionSource,
         registry: &BTreeSet<norn_ir::PropertyTypeName>,
@@ -500,6 +524,7 @@ impl ApprovedContract {
         }
         Ok(Self {
             retained: retained.map(|r| r.exact_digest.clone()),
+            normative: None,
             laws: law_refs(artifacts, context.base)?,
             reference_contracts: reference_contracts(artifacts, context.base)?,
             semantics,
@@ -685,6 +710,13 @@ impl ApprovedContract {
             "writerStatements": induction.writers,
             "obligations": induction.goals,
         });
+        if let Some(normative) = &self.normative {
+            let fields = body.as_object_mut().ok_or(ChallengeError::Closure)?;
+            fields.insert(
+                "normativeContext".into(),
+                json!({"sha256":normative.exact_digest(),"receipt":normative.receipt()}),
+            );
+        }
         if edges.is_some() {
             let fields = body.as_object_mut().ok_or(ChallengeError::Closure)?;
             fields.insert("generator".to_owned(), json!("norn.interpretation-goals/1"));
