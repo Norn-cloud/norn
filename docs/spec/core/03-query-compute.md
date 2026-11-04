@@ -57,3 +57,26 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 5. **Demo priority:** lower the inventory-value question to exact reference evaluation, then IVM delta/retraction, then OLAP pinned-snapshot evaluation (three separate PRs); each unsupported engine remains refused until qualified.
 6. **Demo priority:** QUERY-THREE and beat-6 incremental/full-recompute tests; bind #69 temporal tables/metrics analysis inputs to the same provenance and frontier.
 7. Generate fold/aggregate obligations after 05 semantics; add shared classified/derived concept dependency invalidation with 02/08.
+
+## Operator certificates (assurance PR 1)
+
+COMPUTE-DETERMINISTIC-1 uses `norn.ivm-algebra/1`: fixed selection,
+projection and exact grouped sums are homomorphisms over signed multisets.
+Bilinear joins require all three old-snapshot terms
+`J(dL,R) + J(L,dR) + J(dL,dR)`; an omitted or duplicated coefficient
+refutes the certificate. Composition requires certified prior dependencies.
+Only closed declared homomorphisms are supported. Undeclared/opaque folds
+are unknown; monoid-only folds cover inserts, while deletions need a group.
+Rounded ratios are shared finalization of maintained sums, not linear operators.
+Arithmetic refusals and stable interpretation/frontier pins remain assumptions.
+
+Evidence levels differ: **proved-algebraic** describes the certificate's
+symbolic rule check, conditional on faithful lowering into this algebra.
+The existing generated lane G tests supply **sampled runtime correspondence**
+for admitted sums and their shared ratio finalizer, including restatements.
+They do not certify arbitrary ordered folds. Join runtime correspondence is
+**unknown**, reason: "QuestionPlan does not admit joins". The exhaustive
+small signed-relation join test is algebraic evidence only. Wire runtime
+correspondence when #422/#341 admit joins. `Composition.lean` states and
+proves the abstract local-equation composition rule; it does not establish
+Rust implementation correspondence or source-bound Challenge evidence.
