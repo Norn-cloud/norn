@@ -135,7 +135,13 @@ fn jewelry_app_law_keeps_all_lifecycle_goals_unknown() {
     for goal in &lifecycle {
         let reason = goal["reason"].as_str().expect("specific blocker");
         assert!(reason.contains("UnsupportedUntilB2"));
-        assert!(reason.contains(artifacts[1]["artifactId"].as_str().expect("source law identity")));
+        assert!(
+            reason.contains(
+                artifacts[1]["artifactId"]
+                    .as_str()
+                    .expect("source law identity")
+            )
+        );
         assert!(reason.contains("App(\"demo.jewelry\")"));
     }
     assert_eq!(artifacts[1]["payload"]["scope"]["root"]["kind"], "app");
