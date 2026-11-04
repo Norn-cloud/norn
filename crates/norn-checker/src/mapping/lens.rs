@@ -141,7 +141,7 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     }
     norn_expr::validate_evaluation_source(
         rule.value.as_str(),
-        &norn_ir::ResourceLimitProfile::default(),
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
     )
     .map_err(|e| format!("unknown: Get outside bounded expression profile: {e:?}"))?;
     let expression = Expression::compile(rule.value.as_str()).map_err(|e| e.to_string())?;
