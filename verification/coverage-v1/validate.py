@@ -889,6 +889,8 @@ def validate(
                 and item.get("priority") == "P0"
                 and isinstance(item.get("statement"), str) and item["statement"].strip()
                 and isinstance(item.get("assumptions"), list) and item["assumptions"]
+                and all(isinstance(assumption, str) and assumption.strip()
+                        for assumption in item["assumptions"])
                 for item in certificate_obligations),
         "assurance certificate obligations need unique INV-CERT IDs, P0 priority, statements and assumptions",
     )
