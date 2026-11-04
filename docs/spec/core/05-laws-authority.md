@@ -132,6 +132,126 @@ Named scenarios: invariant refusal retains a declaration pin through the API;
 unauthorized projections are independent of arbitrary secret operands;
 a pre-change checker receipt verifies against its original hash.
 
+### Conditional linear certificate kernel (#711)
+
+**CONS-LINEAR-1:** the mathematical coefficient checker verifies every affine
+writer column against the declared rational functional, independently per exact
+scope and unit. Altered weights, malformed matrices and duplicate coordinates or
+writers refuse. Nonzero residuals identify writer, partition and symbolic column;
+unsupported writers and arithmetic/resource limits remain unknown. A residual is
+an algebraic witness, not a reachable runtime counterexample.
+
+This kernel alone establishes no application evidence. Declaration lowering must
+bind the complete writer closure and functional to a generated Challenge before
+its result can discharge a preservation goal. Initialization, non-vacuity and
+open boundaries remain separate obligations. Named kernel scenarios: valid affine
+balance, omitted loss, unit mismatch, cross-book cancellation, substituted/zero
+weights, unsupported writer, malformed shape and exact fractional balance.
+
+**CONS-LINEAR-DISCOVERY-1:** candidate weight discovery solves exact rational
+equalities per scope/unit partition, plus explicit coordinate anchors (the
+equality-only LP feasibility fragment). Require a nonzero anchor, choose zero
+for unanchored free variables, and return unknown on infeasibility or limits.
+Discovery is untrusted and never refutes a law. Every candidate must separately
+pass CONS-LINEAR-1 against the declared functional. Named scenarios: fractional
+exchange, conflicting/zero anchors, free coordinates, unit/book separation,
+opaque writer, duplicate identity and generated scaled exchanges.
+
+### Constraint diagnosis (DIAG-CORE-1 / DIAG-REPAIR-1 / DIAG-UNKNOWN-1)
+
+The chase-backed diagnosis profile enumerates irreducible declaration conflicts
+and correction proposals relative to fixed open-world facts. Every core is
+unsatisfiable and each one-member deletion is satisfiable. Every correction
+relaxes only explicitly editable declarations and is independently checked on
+the complete remaining input; restoring any member makes it unsatisfiable.
+These proposals grant no authority: concrete edits require ordinary admission.
+Protected laws are never repair candidates. Whole-search and per-chase ceilings
+are disclosed; an exhausted or refused subset query makes the diagnosis unknown.
+
+The `norn.finite-conjunction/1` diagnostic fragment uses the shared closed finite
+schema enumerator and expression evaluator. The universe and roster snapshot
+are explicit closed-world assumptions, never inferred from the open-world chase.
+Ceilings are 256 contexts, 65536 encoded domain bytes, 8192 predicate evaluations
+and 1000 expression fuel. A diagnosis discloses these plus its query ceiling.
+Unsupported/unbounded domains or exhausted enumeration return unknown, not a
+conflict. This fragment grants no admission or proof authority.
+
+DIAG-PIN-1: refused candidates receive diagnostics only: exact attempted-source/base digests,
+member identities/pointers, checker/expression/fragment profiles, enumeration and
+query budgets, explicit closed-world assumptions and retained editability
+policy are pinned together. The report type has no Challenge/EvidencePins or
+PROOF-BIND-1 conversion. Ordinary admission is unchanged; corrected candidates
+must be resubmitted. Editable/protected overlap refuses diagnosis. Duplicate or
+incomplete source identities are unknown rather than an unbound explanation.
+Stable codes: `consistency.diagnosis.conflict`, `.no_editable_repair`, `.unknown`.
+
+### Path equations (PATH-EQ-1, #712)
+
+Authors declare `pathEquations: [{ id: "provider", left: ["fulfils", "provider"],
+right: ["provider"] }]` on `Norn.type`. EntityIR retains these declarations in
+`extensions["norn.path-equations/1.0.0"]`. Each path begins at the declaring
+concept, traverses functional forward links with concrete targets, and ends at the same concrete type;
+empty paths denote identity. Missing links, interface targets (including those with one implementor),
+non-functional steps, duplicate IDs and different endpoint types refuse.
+
+PATH-EQ-1 lowers each equation to an existing chase EGD, with one shared root
+variable and equality between the two endpoints. Optional links give conditional
+equality when both paths exist; equations do not assert existence. Inherited
+link contracts resolve through the effective catalog. Admission limits are 128
+equations per concept and 64 links per path: at most 128 path-link atoms plus
+one shared-root concept atom (129 body atoms) per generated EGD. This declaration/lowering
+unit establishes structural evidence only: mapping preservation requires the
+exchange admission bridge and its separately qualified source/mapping lowering.
+No successful declaration is a preservation proof. The existing exchange search
+is bounded; absence of a witness is bounded-no-counterexample, never exhaustive.
+
+Named scenarios: PATH-EQ-VALID/IDENTITY; PATH-EQ-UNKNOWN-LINK/MANY/ENDPOINT/ID.
+
+PATH-MAP-1: a `PathMapping` `F: target -> source` names a source concept per
+target concept and a functional source path per mapped target link; data moves
+by pullback. `admit_path_mapping` lowers both catalogs' PATH-EQ-1 equations,
+functional EGDs for every reachable to-one link, source totality TGDs for
+required links, and one TGD per object and link image into an `Exchange`, then
+runs the existing schema-compatibility search. Ill-typed images and overlapping
+catalogs refuse (`consistency.path_mapping.invalid`); every verified witness
+refuses as `consistency.schema.unpreserved_constraint`. `compose_path_mappings`
+substitutes images and refuses components with two images of one link.
+Admission is bounded-no-counterexample, never exhaustive. A witness is
+attributed to the first EGD its mapped image breaks, so equations sharing a
+witness are named once; the mapping still refuses. Target totality and
+source endpoint typing are not lowered: the first leaves existence unchecked,
+the second can only add spurious witnesses. Named scenarios reproduce #574:
+swapped roles, dropped join, non-functional image and bad composite refuse;
+identity, equivalent path and identity composites admit.
+
+### Declared-only normative resolution (D1, #767)
+
+LAW-RETAIN-1 / OVERLAY-MONOTONE-1: `check_norm_precedence` requires exact source,
+layer, priority-edge and protection bindings over trusted exhaustive masks for
+one action/subject. Protection and cross-layer checks precede precedence. Any
+conflict core refuses the entire resolution with its exact rule indices; no
+partial survivors are returned. Same-layer opposing rules require explicit
+comparability, including the transitive closure of declared edges. Cycles refuse.
+Cross-layer clashes refuse even with an explicit higher-layer win. Lower-to-higher
+or protected-law defeat declarations refuse even when inactive or excepted.
+
+D1 applies everywhere: authority level, enactment and applicability specificity
+never break an undeclared tie. No within-layer opt-in exists. Missing optional
+legacy ranks do not prevent explicitly declared resolution. The old implicit
+comparison is private and used only for Info `consistency.normative.legacy_resolution`
+notes; it cannot select effective survivors or suppress conflict cores.
+
+Select effective versions before grounding; latest recorded is not lex posterior.
+Exceptions belong to their own rule and cannot narrow a higher law. A future
+specialis policy would need proven strict containment; equal specificity has no
+winner. CD diagnosis supplies exact protected cores and source locations;
+malformed bindings and exhausted budgets remain unknown. This is conditional
+finite-model consistency, not fulfilment, CTD/Datalog lowering or proof authority.
+
+Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
+transitive edges resolve; removing an edge refuses; cross-layer wins and protected
+defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
+three-rule groundings and generated catalog permutations preserve exact survivors.
 ## Generated bounded creation profile (#565)
 
 **PROOF-QUINT-1:** the checker reconstructs the admitted Challenge before lowering
@@ -164,24 +284,19 @@ the original/omitted-derivation update correspondence. Original/mutant model
 bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
+Each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
-`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
+producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
-
-Compiler transport must not determine discharge. Flattened Quint JSON uses the
-pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
-The initializer conversion accepts only a complete constant assignment to each
-state variable, with no initializer reuse; it changes assignment to equality
-only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
-as Unknown. Both compilation stages share the existing 120-second budget and
-own their process groups. The independent Apalache CLI checks the same emitted
-TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
-exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
-an exact typed ITF trace and agreement with the primary trace shape. Other exits,
-missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
-real generated output must match the prior RPC compiler bytes.
 
 Qualification is restricted to integer/Boolean states and one worker. Raw
 successful universal searches require nonempty initialization, a drained queue
@@ -197,7 +312,27 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
-**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+**PROOF-GUARANTEE-1:** the native binder emits one typed document per law, with
+all generated obligations, exact bound records and typed trace quantities. A
+recording is written only after the complete original/mutant/restored acceptance
+passes; failed runs retain Unknown in their output and produce no recording.
+Runtime and parity links remain explicitly not-yet unless separately supplied.
+Violation results require a non-empty reconstructed counterexample or witness;
+missing/null/empty traces remain Unknown. Named refusal scenario:
+`qualifying_violations_require_a_nonempty_reconstructed_scenario`.
+Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
+and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
+are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+Tool assets use logical name/version identities and exact content digests, without
+installation paths. Compiler stages retain exit codes; oracle records retain verdicts and exact scalar
+trace values in state order. Run-specific diagnostics and ITF creation metadata
+stay outside recorded evidence. Structured primary results remain bound.
+The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
+Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
+count, worker count and exclusions. Model digests, invariant selectors and step
+selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
+
+**PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
 generated goal inventory. Unsupported goals keep explicit Unknown reasons.
@@ -233,3 +368,25 @@ The host authorizer denies every operation unless a trusted server policy admits
 Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
 
 Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
+
+### Observed conservation suggestions (MINE-CONS-1, #736)
+
+The runtime `norn_cell::mining::suggest_conservation` question discovers one
+anchored exact rational functional from an explicit training prefix, then checks
+all supplied observed deltas with CONS-LINEAR-1. Its source-window identity,
+scope/unit coordinates, training count, supporting record/version identities and
+exact residual counterexamples remain visible. The adapter owns authorization,
+immutable window retention and faithful lowering; the function fetches no data.
+
+Results are always `SuggestedNotAdmitted`, including an entirely balanced
+window. Finite observed arithmetic supports validation but never certifies
+business truth, future behavior or writer coverage. No admission, law edit or
+commit follows from a result. Saving or accepting a proposal requires ordinary
+data actions and definition admission, outside this first cut. Empty/all-zero
+training, infeasible anchors, malformed input and exhausted exact/resource bounds
+yield no proposal. Scope/unit partitions cannot cancel each other. Limits: 256
+records, 64 coordinates, 64 scope bindings per coordinate, 4096 identity bytes,
+and the existing discovery coefficient/work ceilings. Named scenarios: true
+fractional candidate with full evidence, holdout near-miss with exact residual,
+no-signal control, duplicate record, unit separation, oversize window and measured
+256-record fixture. Law drift, misfit rules and statistical guards remain open.

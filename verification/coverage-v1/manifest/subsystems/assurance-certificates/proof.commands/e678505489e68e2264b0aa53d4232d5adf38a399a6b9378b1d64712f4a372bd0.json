@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "lean -DwarningAsError=true verification/query-compute-v1/Composition.lean"
+}

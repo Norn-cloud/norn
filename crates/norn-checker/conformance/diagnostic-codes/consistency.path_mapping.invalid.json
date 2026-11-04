@@ -1,0 +1,7 @@
+{
+  "code": "consistency.path_mapping.invalid",
+  "message": "A declared path mapping or composite is malformed, ill-typed or non-functional",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
