@@ -59,7 +59,7 @@ impl<'de> Deserialize<'de> for QuestionWording {
 pub struct QuestionRendering {
     /// Unchanged semantic declaration for lossless inspection.
     pub question: QuestionIR,
-    /// Norn1 identity of the unchanged QuestionIR, independent of locale.
+    /// Norn1 identity of the unchanged `QuestionIR`, independent of locale.
     pub question_digest: String,
     /// Binds displayed definitions and numeric contracts, including units.
     pub binding_digest: String,
@@ -80,11 +80,13 @@ pub struct QuestionSlot {
 }
 
 fn canonical(value: &impl Serialize) -> Result<String, &'static str> {
-    String::from_utf8(norn_canonical::canonical_json_of(value).map_err(|_| UNSUPPORTED_ENGINE)?)
-        .map_err(|_| UNSUPPORTED_ENGINE)
+    String::from_utf8(
+        norn_canonical::canonical_json_of(value).map_err(|_error| UNSUPPORTED_ENGINE)?,
+    )
+    .map_err(|_error| UNSUPPORTED_ENGINE)
 }
 fn digest(value: &impl Serialize) -> Result<String, &'static str> {
-    let bytes = norn_canonical::canonical_json_of(value).map_err(|_| UNSUPPORTED_ENGINE)?;
+    let bytes = norn_canonical::canonical_json_of(value).map_err(|_error| UNSUPPORTED_ENGINE)?;
     Ok(norn_canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes))
 }
 
@@ -107,7 +109,7 @@ pub fn render_question(
         .iter()
         .map(|sum| match &sum.property.kind {
             EffectiveKind::Base(kind) => Ok((&sum.property.id, kind)),
-            _ => Err(UNSUPPORTED_ENGINE),
+            EffectiveKind::Registry(_) | EffectiveKind::Unresolved => Err(UNSUPPORTED_ENGINE),
         })
         .collect::<Result<_, _>>()?;
     let question_digest = digest(question)?;
@@ -121,7 +123,16 @@ pub fn render_question(
                     .as_ref()
                     .map_or_else(|| top.to_owned(), |bottom| format!("{top}/{}", bottom.code))
             }
-            _ => "1".to_owned(),
+            PropertyType::Text { .. }
+            | PropertyType::Integer { .. }
+            | PropertyType::Boolean { .. }
+            | PropertyType::Timestamp { .. }
+            | PropertyType::Date { .. }
+            | PropertyType::Duration { .. }
+            | PropertyType::Enum { .. }
+            | PropertyType::Record { .. }
+            | PropertyType::JsonExt { .. }
+            | PropertyType::Ref { .. } => "1".to_owned(),
         };
         operands.push(format!(
             "Σ({}) [{units}]; {}",
