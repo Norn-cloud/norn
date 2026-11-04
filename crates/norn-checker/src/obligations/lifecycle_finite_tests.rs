@@ -119,7 +119,10 @@ fn lifecycle_input_refusals_never_clip_the_domain() {
     let reason = batch(&source(true), &profile)
         .snapshot
         .expect_err("full product refused");
-    assert_eq!(reason,"empty or excessive frozen context domain (4096 nodes)");
+    assert_eq!(
+        reason,
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
     profile = bounds();
     profile
         .frozen
@@ -146,48 +149,109 @@ fn lifecycle_input_refusals_never_clip_the_domain() {
 }
 // Separately attributed chart-only declarations isolate the finite input boundary.
 fn cap_source(empty_enum: bool) -> DefinitionSource {
-    let mut declarations: Value=serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json")).expect("source");
+    let mut declarations: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json"))
+            .expect("source");
     declarations.as_array_mut().expect("artifacts").truncate(1);
-    declarations[0]["provenance"]["sourcePath"]=json!("tests/lifecycle_finite_caps");
-    let object=&mut declarations[0]["payload"]["objectType"];
-    let status=object["properties"].as_array_mut().expect("properties").iter_mut().find(|p|p["id"]=="status").expect("status");
-    status["type"]["values"]=if empty_enum {json!([])} else {json!([{"value":"only"}])};
-    status["default"]=json!("only");
-    object["lifecycles"]=json!([{"property":"status","initial":["only"],"terminal":["only"],"transitions":[]}]);
+    declarations[0]["provenance"]["sourcePath"] = json!("tests/lifecycle_finite_caps");
+    let object = &mut declarations[0]["payload"]["objectType"];
+    let status = object["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .iter_mut()
+        .find(|p| p["id"] == "status")
+        .expect("status");
+    status["type"]["values"] = if empty_enum {
+        json!([])
+    } else {
+        json!([{"value":"only"}])
+    };
+    status["default"] = json!("only");
+    object["lifecycles"] =
+        json!([{"property":"status","initial":["only"],"terminal":["only"],"transitions":[]}]);
     definition_source(&declarations)
 }
 fn cap_bounds(inputs: u32, outputs: u32) -> Bounds {
-    let mut profile=bounds();
-    profile.frozen.insert("input_fine_g".into(),(0..inputs).map(|i|i.to_string()).collect());
-    profile.frozen.insert("output_fine_g".into(),(0..outputs).map(|i|i.to_string()).collect());
-    profile.frozen.insert("loss_fine_g".into(),vec!["0".into()]);
+    let mut profile = bounds();
+    profile.frozen.insert(
+        "input_fine_g".into(),
+        (0..inputs).map(|i| i.to_string()).collect(),
+    );
+    profile.frozen.insert(
+        "output_fine_g".into(),
+        (0..outputs).map(|i| i.to_string()).collect(),
+    );
+    profile
+        .frozen
+        .insert("loss_fine_g".into(), vec!["0".into()]);
     profile
 }
 #[test]
 fn lifecycle_inputs_accept_exactly_4096_nodes() {
-    let snapshot=batch(&cap_source(false),&cap_bounds(64,64)).snapshot.expect("64 by 64 by one state");
-    assert_eq!(snapshot.nodes.len(),4096);
-    let unique:BTreeSet<_>=snapshot.nodes.iter().map(|row|norn_canonical::serialize_json_verbatim(row).expect("row")).collect();
-    assert_eq!(unique.len(),4096);
+    let snapshot = batch(&cap_source(false), &cap_bounds(64, 64))
+        .snapshot
+        .expect("64 by 64 by one state");
+    assert_eq!(snapshot.nodes.len(), 4096);
+    let unique: BTreeSet<_> = snapshot
+        .nodes
+        .iter()
+        .map(|row| norn_canonical::serialize_json_verbatim(row).expect("row"))
+        .collect();
+    assert_eq!(unique.len(), 4096);
 }
 #[test]
 fn lifecycle_inputs_refuse_the_complete_4097_node_product() {
-    let reason=batch(&cap_source(false),&cap_bounds(17,241)).snapshot.expect_err("17 by 241 by one state");
-    assert_eq!(reason,"empty or excessive frozen context domain (4096 nodes)");
+    let reason = batch(&cap_source(false), &cap_bounds(17, 241))
+        .snapshot
+        .expect_err("17 by 241 by one state");
+    assert_eq!(
+        reason,
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
 }
 #[test]
 fn lifecycle_inputs_reject_an_empty_domain() {
-    let mut profile=cap_bounds(1,1);
-    profile.frozen.get_mut("loss_fine_g").expect("domain").clear();
-    assert_eq!(batch(&cap_source(false),&profile).snapshot.expect_err("empty domain"),"empty or excessive frozen context domain (4096 nodes)");
+    let mut profile = cap_bounds(1, 1);
+    profile
+        .frozen
+        .get_mut("loss_fine_g")
+        .expect("domain")
+        .clear();
+    assert_eq!(
+        batch(&cap_source(false), &profile)
+            .snapshot
+            .expect_err("empty domain"),
+        "empty or excessive frozen context domain (4096 nodes)"
+    );
 }
 #[test]
 fn lifecycle_inputs_reject_an_empty_enum_at_admission() {
-    let source=cap_source(true);
-    let registry=BTreeSet::new();
-    let diagnostics=crate::check_artifact_set(&source.artifacts,&crate::EntityArtifactSetContext{registry:&registry,base:&source.base,tenant:None});
-    assert!(diagnostics.iter().any(|d|d.code.as_str()==crate::property_types::codes::EMPTY_ENUM));
-    assert_eq!(ApprovedContract::approve(&source,&registry,json!({"expr":"norn-zen/6"}),json!({"store":"empty"}),json!({"level":"bounded"})).expect_err("empty enum"),ChallengeError::NotAdmitted);
+    let source = cap_source(true);
+    let registry = BTreeSet::new();
+    let diagnostics = crate::check_artifact_set(
+        &source.artifacts,
+        &crate::EntityArtifactSetContext {
+            registry: &registry,
+            base: &source.base,
+            tenant: None,
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == crate::property_types::codes::EMPTY_ENUM)
+    );
+    assert_eq!(
+        ApprovedContract::approve(
+            &source,
+            &registry,
+            json!({"expr":"norn-zen/6"}),
+            json!({"store":"empty"}),
+            json!({"level":"bounded"})
+        )
+        .expect_err("empty enum"),
+        ChallengeError::NotAdmitted
+    );
 }
 
 proptest::proptest! {
