@@ -8,6 +8,10 @@ test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const tools = process.env.NORN_VERIFICATION_TOOL_ROOT
   if (!tools) throw new Error("NORN_VERIFICATION_TOOL_ROOT is required for real backend parity")
+  const build = Bun.spawn(["cargo", "build", "--locked", "-p", "norn-checker",
+    "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", join(root, "target")],
+    { cwd: root, stdout: "inherit", stderr: "inherit" })
+  expect(await build.exited).toBe(0)
   const work = await mkdtemp(join(tmpdir(), "norn-proof-parity-"))
   try {
     const fixture: unknown = await Bun.file(join(root, "crates/norn-cell/tests/fixtures/constitution.json")).json()
