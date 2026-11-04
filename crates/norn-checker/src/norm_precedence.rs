@@ -393,7 +393,8 @@ pub(crate) fn diagnose_candidate_order(
             repair.iter().filter_map(|i| norms.get(*i).map(|n| n.id.as_str())).collect()).collect();
         for diagnostic in &mut report.diagnostics {
             if diagnostic.is_error() {
-                diagnostic.message.push_str(&format!(" Irreducible conflict sets and independently rechecked candidate-only relaxation proposals: {repairs:?}. Protected installed laws cannot be edited. Query budget: {}/{}. Concrete edits require ordinary admission.", report.diagnosis.calls, report.diagnosis.max_calls));
+                use std::fmt::Write;
+                write!(diagnostic.message, " Irreducible conflict sets and independently rechecked candidate-only relaxation proposals: {repairs:?}. Protected installed laws cannot be edited. Query budget: {}/{}. Concrete edits require ordinary admission.", report.diagnosis.calls, report.diagnosis.max_calls).map_err(|_| NormRefusal::InvalidBinding)?;
             }
         }
     }
