@@ -11,19 +11,26 @@ fn source_schema(complement: &str) -> norn_ir::source_schema::SourceSchemaIr {
         "../../norn-ir/tests/fixtures/source_schema/frappe.json"
     ))
     .expect("source fixture");
-    raw["datasets"] = json!([{"id":"orders", "nativeName":"orders", "kind":"document"}]);
+    let record = raw.as_object_mut().expect("source schema");
+    record.insert(
+        "datasets".into(),
+        json!([{"id":"orders", "nativeName":"orders", "kind":"document"}]),
+    );
     for member in ["codeSets", "constraints", "profiles", "lineage"] {
-        raw[member] = json!([]);
+        record.insert(member.into(), json!([]));
     }
-    raw["fields"] = json!(
-        ["approved", complement]
-            .iter()
-            .enumerate()
-            .map(|(ordinal, name)| json!({
-                "dataset":"orders", "name":name, "ordinal":ordinal, "nativeType":"Check",
-                "typeCandidate":{"type":"boolean", "origin":"declared"}, "required":true
-            }))
-            .collect::<Vec<_>>()
+    record.insert(
+        "fields".into(),
+        json!(
+            ["approved", complement]
+                .iter()
+                .enumerate()
+                .map(|(ordinal, name)| json!({
+                    "dataset":"orders", "name":name, "ordinal":ordinal, "nativeType":"Check",
+                    "typeCandidate":{"type":"boolean", "origin":"declared"}, "required":true
+                }))
+                .collect::<Vec<_>>()
+        ),
     );
     serde_json::from_value(raw).expect("typed source")
 }
