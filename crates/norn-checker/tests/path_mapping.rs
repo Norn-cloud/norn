@@ -1,6 +1,12 @@
 //! PATH-MAP-1 (#712): #574's schema-level catches and its valid controls,
-//! reproduced from declarations alone. Both catalogs are EntityIR with
+//! reproduced from declarations alone. Both catalogs are `EntityIR` with
 //! PATH-EQ-1 equations; mappings are typed `PathMapping` declarations.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "integration-test crate"
+)]
 
 use std::collections::BTreeSet;
 
@@ -220,7 +226,11 @@ fn preservation_cost_on_the_574_fixtures() {
     for case in &cases {
         let start = std::time::Instant::now();
         for _ in 0..50 {
-            let _ = admit(case);
+            let admitted = admit(case).is_ok();
+            assert_eq!(
+                admitted,
+                ["identity", "equivalent"].contains(&case.id.as_str())
+            );
         }
         eprintln!(
             "PATH-MAP-COST {} {:?}/admission",
