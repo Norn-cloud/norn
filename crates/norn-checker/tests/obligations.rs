@@ -1066,7 +1066,7 @@ fn public_induction_goals_bind_exact_law_and_transition_commitments() {
             right.bind_submission(left.body()),
             Err(ChallengeError::InvalidSubmission)
         );
-        assert_eq!(left.body()["generator"], "norn.application-obligations/8");
+        assert_eq!(left.body()["generator"], "norn.application-obligations/9");
         assert_eq!(
             left.body()["inductionRules"]["profile"],
             "norn.induction-statements/2"
@@ -1275,5 +1275,162 @@ proptest::proptest! {
             _ => unreachable!(),
         }
         proptest::prop_assert!(verify_layers(&layers).is_err());
+    }
+}
+
+fn retained_candidate(
+    candidate: &[Value],
+    retained: &norn_checker::obligations::RetainedLayers,
+) -> DefinitionSource {
+    DefinitionSource::parse(
+        &json!(candidate).to_string(),
+        &json!(retained.artifacts()).to_string(),
+    )
+    .expect("candidate")
+}
+
+fn retained_law() -> Value {
+    let mut law = pool()[3].clone();
+    law["payload"]["scope"]["root"] = json!({"kind":"company", "id":"org_demo"});
+    law
+}
+
+fn approve_layers(
+    source: &DefinitionSource,
+    retained: &norn_checker::obligations::RetainedLayers,
+) -> ApprovedContract {
+    ApprovedContract::approve_retained(
+        source,
+        retained,
+        json!({"semantics":1}),
+        json!({"assumptions":1}),
+        json!({"assurance":"unknown"}),
+    )
+    .expect("retained approval")
+}
+
+#[test]
+fn layers_challenge_binds_checked_authority_and_refuses_substituted_base() {
+    let layers = retained_fixture();
+    let retained = verify_layers(&layers).expect("authority");
+    let source = retained_candidate(&[retained_law()], &retained);
+    let approved = approve_layers(&source, &retained);
+    let challenge = approved
+        .challenge_retained(&source, &retained)
+        .expect("retained challenge");
+    assert_eq!(
+        challenge.body()["retainedLayers"],
+        json!(retained.exact_digest())
+    );
+    assert_eq!(
+        challenge.body()["generator"],
+        json!(norn_checker::obligations::GENERATOR_PROFILE)
+    );
+    assert!(approved.challenge(&source, &BTreeSet::new()).is_err());
+    let other = verify_layers(&layers[..2]).expect("checked prefix");
+    assert_eq!(
+        approved.challenge_retained(&source, &other).err(),
+        Some(ChallengeError::InvalidSubmission)
+    );
+    let substituted =
+        DefinitionSource::parse(&json!([retained_law()]).to_string(), "[]").expect("source");
+    assert!(
+        ApprovedContract::approve_retained(
+            &substituted,
+            &retained,
+            json!({"s":1}),
+            json!({"a":1}),
+            json!({"p":1})
+        )
+        .is_err()
+    );
+    let unsupported = retained_candidate(&[pool()[3].clone()], &retained);
+    assert_eq!(
+        ApprovedContract::approve_retained(
+            &unsupported,
+            &retained,
+            json!({"s":1}),
+            json!({"a":1}),
+            json!({"p":1})
+        )
+        .err(),
+        Some(ChallengeError::NotAdmitted),
+        "unresolved app refuses"
+    );
+}
+
+#[test]
+fn writer_new_regenerates_retained_goals_and_omissions_refuse() {
+    let retained = verify_layers(&retained_fixture()).expect("authority");
+    let source = retained_candidate(&[retained_law()], &retained);
+    let approved = approve_layers(&source, &retained);
+    let original = approved
+        .challenge_retained(&source, &retained)
+        .expect("challenge");
+    let source = retained_candidate(&[retained_law(), rule("erpnext.new_writer")], &retained);
+    let changed = approved
+        .challenge_retained(&source, &retained)
+        .expect("new writer");
+    assert_ne!(original.sha256(), changed.sha256());
+    assert!(changed.writers().contains(&LawWriter::Artifact {
+        artifact_id: "erpnext.new_writer".into()
+    }));
+    assert!(
+        changed.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .len()
+            > original.body()["obligations"]
+                .as_array()
+                .expect("goals")
+                .len()
+    );
+    assert_eq!(
+        changed.bind_submission(original.body()),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    let count = changed.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .len();
+    for index in 0..count {
+        let mut omitted = changed.body().clone();
+        omitted["obligations"]
+            .as_array_mut()
+            .expect("goals")
+            .remove(index);
+        assert_eq!(
+            changed.bind_submission(&omitted),
+            Err(ChallengeError::InvalidSubmission)
+        );
+    }
+    let mut forged = changed.body().clone();
+    forged["obligations"][0]["assessment"] = json!("proved");
+    assert_eq!(
+        changed.bind_submission(&forged),
+        Err(ChallengeError::InvalidSubmission)
+    );
+    let mut weakened = retained_law();
+    weakened["payload"]["response"]["expression"] = json!("false");
+    let changed_law = retained_candidate(&[weakened], &retained);
+    assert_eq!(
+        approved.challenge_retained(&changed_law, &retained).err(),
+        Some(ChallengeError::LawChanged)
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(8))]
+    #[test]
+    fn retained_challenge_source_spellings_change_commitment_without_changing_goals(padding in "[ \n\t]{1,8}") {
+        let retained = verify_layers(&retained_fixture()).expect("authority");
+        let source = retained_candidate(&[retained_law()], &retained);
+        let approved = approve_layers(&source, &retained);
+        let original = approved.challenge_retained(&source, &retained).expect("original");
+        let edited = DefinitionSource::parse(&(padding + &json!([retained_law()]).to_string()), &json!(retained.artifacts()).to_string()).expect("source bytes");
+        let changed = approved.challenge_retained(&edited, &retained).expect("same typed definitions");
+        proptest::prop_assert_ne!(original.sha256(), changed.sha256());
+        proptest::prop_assert_eq!(&original.body()["obligations"], &changed.body()["obligations"]);
+        proptest::prop_assert_eq!(changed.bind_submission(original.body()), Err(ChallengeError::InvalidSubmission));
     }
 }
