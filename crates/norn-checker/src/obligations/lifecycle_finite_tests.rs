@@ -24,8 +24,10 @@ fn source(entity_root: bool) -> DefinitionSource {
     ))
     .expect("units");
     DefinitionSource::parse(
-        &String::from_utf8(norn_canonical::canonical_json_exact_of(&declarations).expect("source")).expect("UTF8"),
-        &String::from_utf8(norn_canonical::canonical_json_exact_of(&vec![units]).expect("base")).expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&declarations).expect("source"))
+            .expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&vec![units]).expect("base"))
+            .expect("UTF8"),
     )
     .expect("exact source")
 }
@@ -70,6 +72,8 @@ fn lifecycle_inputs_are_exact_complete_and_source_bound() {
     let repeated = batch(&source(true), &bounds());
     assert_eq!(prepared.challenge.sha256(), repeated.challenge.sha256());
     assert_eq!(prepared.bounds_json, repeated.bounds_json);
+    let profile: Value=serde_json::from_str(&prepared.bounds_json).expect("pinned profile");
+    assert_eq!(prepared.bounds_json.as_bytes(),norn_canonical::canonical_json_exact_of(&profile).expect("canonical profile"));
 }
 #[test]
 fn lifecycle_input_refusals_never_clip_the_domain() {
@@ -111,9 +115,22 @@ fn lifecycle_input_refusals_never_clip_the_domain() {
         .expect_err("full product refused");
     assert!(reason.contains("4096") || reason.contains("budget"));
     profile = bounds();
-    profile.frozen.insert("id".into(),vec![format!("\"{}\"","x".repeat(4096))]);
-    profile.frozen.insert("input_fine_g".into(),(0..128).map(|i|i.to_string()).collect());
-    assert!(batch(&source(true),&profile).snapshot.expect_err("byte product refuses as a whole").contains("budget"));
+    profile
+        .frozen
+        .insert("id".into(), vec![format!("\"{}\"", "x".repeat(4096))]);
+    profile.frozen.insert(
+        "input_fine_g".into(),
+        (0..128).map(|i| i.to_string()).collect(),
+    );
+    assert!(
+        batch(&source(true), &profile)
+            .snapshot
+            .expect_err("byte product refuses as a whole")
+            .contains("budget")
+    );
+    let source=source(true);
+    profile = bounds();profile.object_type="x".repeat(10_001);
+    assert_eq!(super::lifecycle_tests::authority(&source).lifecycle_inputs(&source,&BTreeSet::new(),&profile).expect_err("oversized selector"),ChallengeError::Limit);
 }
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(32))]

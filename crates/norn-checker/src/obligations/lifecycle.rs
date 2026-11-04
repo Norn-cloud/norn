@@ -1,5 +1,5 @@
 //! PROOF-LIFECYCLE-1: append source-bound conditional chart goals; never solver evidence.
-/// Finite, law-filtered transition-only relation; no solver authority.
+/// Exact frozen input snapshots for transition consumers; no solver authority.
 pub mod finite;
 
 use super::ChallengeError;
