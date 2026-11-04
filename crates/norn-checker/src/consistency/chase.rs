@@ -82,11 +82,11 @@ impl Default for ChaseBudget {
 
 /// Whole-admission work shared by chases, conflict minimisation and unfolding.
 #[derive(Debug, Clone)]
-pub(crate) struct AdmissionWork(std::rc::Rc<std::cell::Cell<usize>>);
+pub(crate) struct AdmissionWork(std::rc::Rc<std::cell::Cell<usize>>, usize);
 
 impl AdmissionWork {
     pub(crate) fn new(steps: usize) -> Self {
-        Self(std::rc::Rc::new(std::cell::Cell::new(steps)))
+        Self(std::rc::Rc::new(std::cell::Cell::new(steps)), steps)
     }
 
     pub(crate) fn charge(&self) -> Result<(), ChaseError> {
@@ -98,7 +98,7 @@ impl AdmissionWork {
         if remaining < units {
             return Err(ChaseError::BudgetExceeded {
                 resource: "whole-admission work",
-                limit: 0,
+                limit: self.1,
             });
         }
         self.0.set(remaining - units);
@@ -183,7 +183,7 @@ pub(crate) fn chase_with_work(
         record_arity(&mut signature, &fact.relation, fact.values.len())
             .map_err(ChaseError::Theory)?;
     }
-    weakly_acyclic(theory, &signature, budget)?;
+    weakly_acyclic(theory, &signature, budget, work)?;
     let all_rules: Vec<usize> = (0..theory.dependencies.len()).collect();
     let all_facts: Vec<usize> = (0..facts.len()).collect();
     let failure = match run(
@@ -277,6 +277,7 @@ fn weakly_acyclic(
     theory: &Theory,
     signature: &BTreeMap<String, usize>,
     budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<(), ChaseError> {
     let nodes: Vec<(String, usize)> = signature
         .iter()
@@ -291,6 +292,7 @@ fn weakly_acyclic(
         let body_vars = variables(&tgd.body);
         for (variable, from) in positions(&tgd.body) {
             for (head_var, to) in positions(&tgd.head) {
+                work.charge()?;
                 if head_var == variable {
                     edges.insert((from.clone(), to));
                 } else if !body_vars.contains(head_var) && occurs(&tgd.head, variable) {
@@ -311,6 +313,7 @@ fn weakly_acyclic(
     };
     let mut cyclic = BTreeSet::new();
     for (from, to, rule) in special {
+        work.charge_units(graph.nodes.len().saturating_add(graph.edges.len()))?;
         let reached =
             reachability(&graph, &[to], Direction::Downstream, limits).map_err(|error| {
                 if let norn_graph::Error::BudgetExceeded(exceeded) = &error {
