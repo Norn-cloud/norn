@@ -7,7 +7,7 @@ use crate::{
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
 use norn_kernel::{
-    CellCommit, CommitModel, FactExpectation, FactKey, FactMutation, FactVersion, LinkKey,
+    CellCommit, CommitModel, CommitView, FactExpectation, FactKey, FactVersion, LinkKey,
     LinkMutation, LinkWrite, ObservationAuthorization, ObservationEvent, Observed, TypeCatalog,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,18 +48,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                       claim: ObservedLinkClaim|
          -> Result<(), CellError> {
             let id = if latest {
-                let mapping = claim.provenance.mapping_version.as_str();
-                let mapping_id = mapping.split_once('@').map_or(mapping, |(id, _)| id);
-                norn_ir::canonical::domain_hash_hex(
-                    b"norn.link.contribution.v1\0",
-                    &(
-                        &claim.source_type,
-                        &claim.source_key,
-                        &claim.role,
-                        &claim.provenance.source,
-                        mapping_id,
-                    ),
-                )?
+                claim.contribution_id()?
             } else {
                 claim.id()?
             };
@@ -140,9 +129,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces())
             .with_property_types(self.model().property_types());
-        let claims = self.retained_link_claims(Some(bundle), true)?;
+        let mut claims = self.retained_link_claims(Some(bundle), true)?;
         let model = CommitModel::new(&catalog);
         let mut intents = BTreeMap::<_, BTreeSet<_>>::new();
+        let mut latest = BTreeMap::new();
         for claim in &claims {
             let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
             let target = claim
@@ -152,26 +142,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let targets = intents
                 .entry((model.canonical(&source), claim.role.clone()))
                 .or_default();
+            latest.insert(claim.contribution_id()?, target.clone());
             targets.insert(target);
             if targets.len() > 1
-                && model
-                    .link(&source.object_type, claim.role.as_str())
-                    .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One)
+                && (targets.contains(&None)
+                    || model
+                        .link(&source.object_type, claim.role.as_str())
+                        .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One))
             {
                 return Err(CellError::UnsupportedMappingProfile);
             }
         }
-        let present = |key: &FactKey| -> Result<bool, CellError> {
-            if let Some(write) = commit
-                .writes
-                .iter()
-                .find(|w| model.canonical(&w.key) == model.canonical(key))
-            {
-                return Ok(matches!(write.mutation, FactMutation::Put { .. }));
-            }
-            Ok(self
-                .object(MAIN_WORLD, key.object_type.as_str(), &key.key)?
-                .is_some())
+        let present = |key: &FactKey| {
+            model
+                .contains_after(commit, &crate::host::GuardView(self), key)
+                .map_err(|e| CellError::Encoding(e.to_string()))
         };
         let mut links = BTreeMap::new();
         for claim in &claims {
@@ -185,55 +170,61 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     continue;
                 }
                 let key = LinkKey::new(source, claim.role.as_str(), target);
-                if self
-                    .link(
-                        MAIN_WORLD,
-                        key.source.object_type.as_str(),
-                        &key.link,
-                        &key.source.key,
-                        &key.target.key,
-                    )?
-                    .is_none()
-                {
+                if !self.mapping_link_exists(&key, model)? {
+                    let values = model
+                        .effective_link_values(
+                            commit,
+                            &crate::host::GuardView(self),
+                            &key,
+                            &RuntimeObject::new(),
+                        )
+                        .map_err(|e| CellError::Encoding(e.to_string()))?;
                     links.insert(
                         model.canonical_link(&key),
-                        self.mapping_link_write(
-                            key,
-                            LinkMutation::Add {
-                                values: catalog
-                                    .effective_link_values(
-                                        &claim.source_type,
-                                        claim.role.as_str(),
-                                        &RuntimeObject::new(),
-                                    )
-                                    .map_err(|e| CellError::Encoding(e.to_string()))?,
-                            },
-                        )?,
-                    );
-                }
-            } else {
-                for old in
-                    self.links_touching(MAIN_WORLD, source.object_type.as_str(), &source.key)?
-                {
-                    if model.canonical(&FactKey::new(&old.source_type, &old.source))
-                        != model.canonical(&source)
-                        || old.link != claim.role.as_str()
-                    {
-                        continue;
-                    }
-                    let key = LinkKey::new(
-                        source.clone(),
-                        claim.role.as_str(),
-                        FactKey::new(old.target_type, old.target),
-                    );
-                    links.insert(
-                        model.canonical_link(&key),
-                        self.mapping_link_write(key, LinkMutation::Remove)?,
+                        self.mapping_link_write(key, LinkMutation::Add { values })?,
                     );
                 }
             }
         }
+        for claim in self.retained_link_claims(None, false)? {
+            let Some(target) = &claim.target else {
+                continue;
+            };
+            let key = LinkKey::new(
+                FactKey::new(claim.source_type.as_str(), &claim.source_key),
+                claim.role.as_str(),
+                FactKey::new(target.object_type.as_str(), &target.key),
+            );
+            let canonical = model.canonical_link(&key);
+            let Some(next) = latest.get(&claim.contribution_id()?) else {
+                continue;
+            };
+            if next.as_ref() == Some(&canonical.target)
+                || intents
+                    .get(&(canonical.source.clone(), claim.role.clone()))
+                    .is_none_or(|targets| targets.contains(&Some(canonical.target.clone())))
+                || !self.mapping_link_exists(&key, model)?
+            {
+                continue;
+            }
+            links.insert(
+                canonical,
+                self.mapping_link_write(key, LinkMutation::Remove)?,
+            );
+            claims.push(claim);
+        }
         Ok((links.into_values().collect(), claims))
+    }
+
+    fn mapping_link_exists(
+        &self,
+        key: &LinkKey,
+        model: CommitModel<'_, '_>,
+    ) -> Result<bool, CellError> {
+        Ok(crate::host::GuardView(self)
+            .links_of(&key.source)?
+            .iter()
+            .any(|live| model.canonical_link(live) == model.canonical_link(key)))
     }
 
     fn mapping_link_write(

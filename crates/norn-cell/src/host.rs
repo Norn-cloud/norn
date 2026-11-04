@@ -571,7 +571,7 @@ fn link_state<S: SqlEngine>(
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
-struct GuardView<'r, 'c, S: SqlEngine>(&'r StoreReader<'c, S>);
+pub(crate) struct GuardView<'r, 'c, S: SqlEngine>(pub(crate) &'r StoreReader<'c, S>);
 
 impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
     type Error = CellError;
