@@ -44,6 +44,7 @@ pub mod decision_output;
 pub mod defined_concept;
 pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
+pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
@@ -151,8 +152,8 @@ pub use entity_v2::object::{
 };
 pub use entity_v2::property::{
     DECIMAL_LITERAL_PATTERN, DecimalLiteral, EnumValue, PROPERTY_TYPE_NAME_PATTERN,
-    PropertyConstraints, PropertyKind, PropertyType, PropertyTypeDef, PropertyTypeName,
-    RecordMember, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
+    PropertyAdditivity, PropertyConstraints, PropertyKind, PropertyType, PropertyTypeDef,
+    PropertyTypeName, RecordMember, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
 };
 pub use entity_v2::status::{CALENDAR_DATE_PATTERN, CalendarDate, ResourceStatus};
 pub use entity_v2::{
@@ -183,7 +184,9 @@ pub use lineage::{
 };
 pub use marking::{MARKING_ID_PATTERN, MarkingId, MarkingIr, MarkingSeverity, MaskPolicy};
 pub use members::{EmptyList, IrVersion01, JsonFalse, ProposalMetadata, WholeNumber};
-pub use metric::{MetricDefinition, QuestionIR, metric_ir_schema, question_ir_schema};
+pub use metric::{
+    MetricDefinition, QuestionIR, metric_definition_schema, metric_ir_schema, question_ir_schema,
+};
 pub use osi::MetricIR;
 pub use provenance::{
     FactRef, InstanceProvenance, MappingVersion, ProvenancedInstance, SourceRecordRef,
@@ -1419,7 +1422,8 @@ define_payload_root!(
             target_layer => "targetLayer" as mapping::InterpretationEndpoint,
             members => "members" as Vec<mapping::MemberInterpretation>,
             entitlements => "entitlements" as Vec<mapping::EntitlementMap>,
-            identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>
+            identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>,
+            path_mappings => "pathMappings" as Vec<mapping::PathMappingBinding>
         }
     }
 );

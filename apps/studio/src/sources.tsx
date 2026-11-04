@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { ArrowRight, Database } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { ArrowRight, Database, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
+import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,7 +12,7 @@ import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from
 import { recordedTransport } from "./lib/transport.ts"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
-function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table className="text-[13px] tabular-nums">
@@ -21,7 +23,7 @@ function DenseTable({ head, children }: { readonly head: ReactNode; readonly chi
   )
 }
 
-const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
+export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
 function Systems({ catalog }: { readonly catalog: Catalog }) {
   const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
@@ -126,6 +128,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
           <SheetHeader>
             <SheetTitle className="text-xl">{concept.title}</SheetTitle>
             <SheetDescription>{concept.description ?? concept.name}</SheetDescription>
+            {concept.kind === "concept" && <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-sm font-medium underline-offset-4 hover:underline">See the {concept.title.toLowerCase()} records →</Link>}
             {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
           </SheetHeader>
           <div className="space-y-6 px-4 pb-6">
@@ -170,9 +173,15 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
   )
 }
 
-export function SourcesPage() {
+/** The admitted catalog, indexed once per read. */
+export function useCatalog() {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  return { read, catalog }
+}
+
+export function SourcesPage() {
+  const { read, catalog } = useCatalog()
   const [open, setOpen] = useState<string>()
   const [search, setSearch] = useState("")
   const matches = (concept: Concept) => `${concept.title} ${concept.description ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -180,7 +189,7 @@ export function SourcesPage() {
     <section className="space-y-8">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Sources</h1>
+          <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
         <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
@@ -189,24 +198,24 @@ export function SourcesPage() {
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
         <Systems catalog={catalog} />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <h2 className="text-xl font-semibold">The business model</h2>
-          <label className="grid w-full max-w-xs gap-1 text-sm text-muted-foreground">
-            Find a concept
-            <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
-          </label>
-        </div>
-        {(["concept", "core idea"] as const).map((kind) => (
-          <div key={kind} className="space-y-3">
-            <h3 className="text-sm font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
-                <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
-              ))}
-            </div>
-          </div>
-        ))}
-        <p className="text-sm text-muted-foreground">The records inside each concept are not available yet.</p>
+        <Panel icon={Shapes} label="The business model">
+          <Well className="space-y-6 p-4">
+            <label className="grid w-full max-w-xs gap-1 text-meta text-muted-foreground">
+              Find a concept
+              <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+            {(["concept", "core idea"] as const).map((kind) => (
+              <div key={kind} className="space-y-3">
+                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
+                    <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Well>
+        </Panel>
         <ConceptSheet catalog={catalog} name={open} onOpen={setOpen} />
       </>}
     </section>

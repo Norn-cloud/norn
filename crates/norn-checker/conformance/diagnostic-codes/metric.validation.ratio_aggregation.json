@@ -1,0 +1,7 @@
+{
+  "code": "metric.validation.ratio_aggregation",
+  "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

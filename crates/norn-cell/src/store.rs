@@ -1732,6 +1732,7 @@ type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Resu
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
+    pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
@@ -2014,6 +2015,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
+            store
+                .transparency
+                .replace(crate::transparency::load(&store.conn)?);
         }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2108,6 +2112,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn unverified(conn: E, model: Model) -> Self {
         Self {
             conn,
+            transparency: RefCell::new(crate::transparency::ReceiptLog::new()),
             instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
@@ -2195,6 +2200,9 @@ impl<E: SqlEngine> CellStore<E> {
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
+        store
+            .transparency
+            .replace(crate::transparency::load(&store.conn)?);
         Ok(store)
     }
 
@@ -2950,6 +2958,12 @@ impl<E: SqlEngine> CellStore<E> {
                 Ok((admitted, CommitOutcome::Replayed(receipt)))
             }
             (admitted, CommitOutcome::Committed(receipt)) => {
+                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq)
+                {
+                    self.transparency.borrow_mut().push(receipt.hash.clone());
+                } else if let Err(error) = self.refresh_transparency() {
+                    tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
+                }
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
@@ -3101,6 +3115,7 @@ mod identity_history_tests {
                 extends: None,
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
+                    protected: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },

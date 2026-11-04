@@ -8,7 +8,7 @@ use super::quint::*;
 use super::*;
 use proptest::prelude::*;
 
-fn fixture() -> Vec<Value> {
+pub(super) fn fixture() -> Vec<Value> {
     let mut entities: Vec<Value> =
         serde_json::from_str(include_str!("../../../../fixtures/law-ir/entities.json"))
             .expect("generated entities");
@@ -21,6 +21,7 @@ fn fixture() -> Vec<Value> {
     object.object_type.properties = ["id", "amount", "remaining", "difference"]
         .into_iter()
         .map(|id| norn_ir::Property {
+            protected: false,
             id: norn_ir::PropertyId(id.into()),
             description: None,
             property_type: if id == "id" {
@@ -28,6 +29,7 @@ fn fixture() -> Vec<Value> {
             } else {
                 norn_ir::PropertyType::Decimal {
                     scale: norn_ir::WholeNumber(0),
+                    additivity: norn_ir::PropertyAdditivity::default(),
                     rounding: None,
                     unit: None,
                     currency_source: None,
@@ -71,7 +73,7 @@ fn fixture() -> Vec<Value> {
         "effectProgram":{"kind":"upsert_input_object","objectIdField":"id","objectKind":"erpnext.SalesOrder","entityArtifactId":"erpnext.SalesOrder.entity","entityArtifactVersion":"0.1.0","writeMode":{"kind":"create_only"}}});
     vec![entities.remove(0), envelope, action]
 }
-fn bounds(artifacts: &[Value]) -> Bounds {
+pub(super) fn bounds(artifacts: &[Value]) -> Bounds {
     Bounds {
         action: artifacts[2]["artifactId"].as_str().expect("id").into(),
         inputs: BTreeMap::from([
@@ -82,7 +84,7 @@ fn bounds(artifacts: &[Value]) -> Bounds {
         seed: 0,
     }
 }
-fn source(artifacts: &[Value]) -> DefinitionSource {
+pub(super) fn source(artifacts: &[Value]) -> DefinitionSource {
     DefinitionSource::parse(&serde_json::to_string(artifacts).expect("source"), "[]")
         .expect("source")
 }
@@ -296,4 +298,192 @@ fn finite_relation_is_backend_neutral() {
     assert_eq!(update(mutant), "0");
     assert_eq!(relation.inputs, mutant.inputs);
     assert_eq!(relation.state, mutant.state);
+}
+
+fn evaluate_law(text: &str, context: &norn_expr::Value) -> norn_expr::Value {
+    norn_expr::Expression::compile(text)
+        .expect("native expression")
+        .evaluate(context, norn_expr::EvaluationBudget::new(1000))
+        .expect("native evaluation")
+        .value()
+        .clone()
+}
+
+fn law_failures(
+    artifacts: &[Value],
+    batch: &super::finite::Batch,
+    mutated: bool,
+) -> BTreeSet<String> {
+    let mut failures = BTreeSet::new();
+    for (index, relation) in batch.goals.iter().enumerate() {
+        let Ok(relation) = relation else { continue };
+        let law_index = batch.challenge.body()["obligations"][index]["law"]
+            .as_u64()
+            .expect("law index");
+        assert_eq!(
+            batch.challenge.body()["lawStatements"][usize::try_from(law_index).expect("index")]["artifactId"],
+            relation.law_artifact
+        );
+        let law = artifacts
+            .iter()
+            .find(|a| a["artifactId"] == relation.law_artifact)
+            .expect("governing law");
+        for amount in 2_i64..=12 {
+            for remaining in 1_i64..=amount {
+                let input = norn_expr::Value::object([(
+                    "input",
+                    norn_expr::Value::object([
+                        ("amount", amount.into()),
+                        ("remaining", remaining.into()),
+                    ]),
+                )]);
+                let difference = if mutated {
+                    0.into()
+                } else {
+                    evaluate_law(
+                        artifacts[2]["payload"]["derive"][0]["expression"]
+                            .as_str()
+                            .expect("derivation"),
+                        &input,
+                    )
+                };
+                let native = norn_expr::Value::object([(
+                    "self",
+                    norn_expr::Value::object([
+                        ("amount", amount.into()),
+                        ("remaining", remaining.into()),
+                        ("difference", difference),
+                    ]),
+                )]);
+                let expected = evaluate_law(
+                    law["payload"]["response"]["expression"]
+                        .as_str()
+                        .expect("predicate"),
+                    &native,
+                );
+                let choices = norn_expr::Value::object(relation.inputs.iter().map(|field| {
+                    (
+                        field.symbol.clone(),
+                        if field.property.as_str() == "amount" {
+                            amount.into()
+                        } else {
+                            remaining.into()
+                        },
+                    )
+                }));
+                let post = norn_expr::Value::object(relation.updates.iter().map(
+                    |(symbol, expression)| {
+                        (symbol.clone(), evaluate_law(expression.as_str(), &choices))
+                    },
+                ));
+                let actual = evaluate_law(relation.response.as_str(), &post);
+                assert_eq!(
+                    actual, expected,
+                    "{} at {amount}/{remaining}",
+                    relation.law_artifact
+                );
+                if actual == norn_expr::Value::Bool(false) {
+                    failures.insert(relation.law_artifact.clone());
+                }
+            }
+        }
+    }
+    failures
+}
+
+fn two_laws() -> Vec<Value> {
+    let mut artifacts = fixture();
+    let mut second = artifacts[1].clone();
+    second["artifactId"] = json!("erpnext_nonnegative_difference_law");
+    second["payload"]["id"] = json!("erpnext.nonnegative_difference");
+    second["payload"]["response"]["expression"] = json!("self.difference >= 0");
+    artifacts.push(second);
+    artifacts
+}
+
+#[test]
+fn multiple_governing_laws_keep_distinct_goals_and_mutant_semantics() {
+    let artifacts = two_laws();
+    let registry = BTreeSet::new();
+    let original = source(&artifacts);
+    let authority = ApprovedContract::approve(
+        &original,
+        &registry,
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("both laws admitted");
+    let profile = bounds(&artifacts);
+    let good = authority
+        .finite(&original, &registry, &profile)
+        .expect("original");
+    assert_eq!(good.goals.len(), 20);
+    assert_eq!(good.goals.iter().filter(|goal| goal.is_ok()).count(), 6);
+    let rendered = authority
+        .quint(&original, &registry, &profile)
+        .expect("Quint projection");
+    assert_eq!(rendered.goals.len(), good.goals.len());
+    for (relation, model) in good.goals.iter().zip(&rendered.goals) {
+        assert_eq!(relation.is_ok(), model.is_ok());
+        if let (Ok(relation), Ok(model)) = (relation, model) {
+            assert!(model.contains(relation.response.as_str()));
+        }
+    }
+    let mut changed = artifacts.clone();
+    changed[2]["payload"]["derive"] = json!([]);
+    let mutant = authority
+        .finite(&source(&changed), &registry, &profile)
+        .expect("mutant");
+    assert_ne!(good.challenge.sha256(), mutant.challenge.sha256());
+    let restored = authority
+        .finite(&original, &registry, &profile)
+        .expect("restored");
+    assert_eq!(good.challenge.sha256(), restored.challenge.sha256());
+    assert_eq!(good.goals, restored.goals);
+    for (batch, mutated) in [(&good, false), (&mutant, true)] {
+        let failures = law_failures(&artifacts, batch, mutated);
+        assert_eq!(
+            failures,
+            if mutated {
+                BTreeSet::from([artifacts[1]["artifactId"].as_str().expect("law").to_owned()])
+            } else {
+                BTreeSet::new()
+            }
+        );
+    }
+}
+
+#[test]
+fn an_unsupported_governing_law_does_not_suppress_supported_laws() {
+    let mut artifacts = two_laws();
+    artifacts[3]["payload"]["response"]["expression"] = json!("self.amount * 1 >= 0");
+    let registry = BTreeSet::new();
+    let source = source(&artifacts);
+    let authority = ApprovedContract::approve(
+        &source,
+        &registry,
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("admitted native multiplication");
+    let batch = authority
+        .finite(&source, &registry, &bounds(&artifacts))
+        .expect("complete inventory");
+    assert_eq!(batch.goals.len(), 20);
+    assert_eq!(batch.goals.iter().filter(|goal| goal.is_ok()).count(), 3);
+    for (index, goal) in batch.goals.iter().enumerate() {
+        let law = batch.challenge.body()["obligations"][index]["law"]
+            .as_u64()
+            .expect("law");
+        let identity = &batch.challenge.body()["lawStatements"]
+            [usize::try_from(law).expect("index")]["artifactId"];
+        if identity == "erpnext_nonnegative_difference_law" {
+            assert_eq!(
+                goal.as_ref().expect_err("opaque law remains Unknown"),
+                "unsupported expression syntax"
+            );
+        }
+    }
 }

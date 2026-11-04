@@ -620,6 +620,27 @@ export interface components {
             pack_version: string;
         };
         /**
+         * @description Where one object version came from: the source record, its document and the
+         *     mapping that produced it. Describes the JSON of
+         *     `norn_cell::source_provenance::InstanceSourceProvenance`; it grants no authority.
+         */
+        NornInstanceSourceProvenance: {
+            /** @description Content address of the recomputed mapping bundle. */
+            bundleDigest: string;
+            /** @description Digest of the source document payload. */
+            documentDigest: string;
+            /** @description A source system and the record's identity in it. */
+            documentRef: components["schemas"]["NornIrSourceRecordRef"];
+            /** @description Field-level source and rule provenance, by property id. */
+            fieldProvenance: {
+                [key: string]: components["schemas"]["NornIrInstanceProvenance"];
+            };
+            /** @description The mapping declaration that produced the version. */
+            mappingPin: components["schemas"]["NornMappingPin"];
+            /** @description A source system and the record's identity in it. */
+            sourceRecordRef: components["schemas"]["NornIrSourceRecordRef"];
+        };
+        /**
          * @description One typed conjunct of [`AccessRule::all_of`]. Externally tagged and closed:
          *     an unknown node (for example `{"expression": "..."}`) fails to decode.
          */
@@ -1667,6 +1688,27 @@ export interface components {
             value: components["schemas"]["NornIrAccessLiteral"];
         };
         /**
+         * @description Conversion outputs.
+         * @enum {string}
+         */
+        NornIrConversionCalculation: "conversions" | "conversion_rate";
+        /** @description MetricFlow cohort conversion parameters. */
+        NornIrConversionTypeParams: {
+            /** @description Base population metric. */
+            base_metric: string;
+            /**
+             * @description Conversion count or rate.
+             * @enum {string}
+             */
+            calculation: "conversions" | "conversion_rate";
+            /** @description Converted population metric. */
+            conversion_metric: string;
+            /** @description Join entity. */
+            entity: string;
+            /** @description Allowed conversion interval. */
+            window: string;
+        };
+        /**
          * @description How a source term relates to its target terms.
          * @enum {string}
          */
@@ -1681,6 +1723,18 @@ export interface components {
          * @enum {string}
          */
         NornIrCsvDelimiter: "," | ";" | "\t";
+        /** @description MetricFlow cumulative window parameters. */
+        NornIrCumulativeTypeParams: {
+            /**
+             * @description Calendar grain to date.
+             * @enum {string}
+             */
+            grain_to_date?: "day" | "week" | "month" | "quarter" | "year";
+            /** @description Underlying metric. */
+            metric: string;
+            /** @description Rolling window, e.g. `7 days`. */
+            window?: string;
+        };
         /** @description Explicit source-to-target conversion, before any aggregation. */
         NornIrCurrencyConversion: {
             /** @description Dimensionless decimal rate (target units per source unit) at measure grain. */
@@ -3781,6 +3835,15 @@ export interface components {
          *     member name space per object type.
          */
         NornIrLinkId: string;
+        /** @description The source path a [`PathMapping`] assigns to one target link. */
+        NornIrLinkImage: {
+            /** @description The target concept declaring the link. */
+            concept: string;
+            /** @description The target link ID. */
+            link: string;
+            /** @description Forward source link IDs from the image of `concept`; empty is identity. */
+            path: string[];
+        };
         /**
          * @description One link rule: the produced object links to the object another map
          *     produces with this key (an RML referencing object map with its join).
@@ -3898,6 +3961,8 @@ export interface components {
             interfaces: string[];
             /** @description The object maps, in evaluation order. */
             maps: components["schemas"]["NornIrObjectMap"][];
+            /** @description Required path preservation obligations over the named entity artifacts. */
+            pathMappings?: components["schemas"]["NornIrPathMappingBinding"][];
             /**
              * @description The one `source_schema` artifact the mapping reads, pinned by
              *     content hash.
@@ -4111,6 +4176,20 @@ export interface components {
             /** @enum {string} */
             kind: "non_additive";
         };
+        /** @description Aggregate parameters use MetricFlow field names. */
+        NornIrMetricAggregationParams: {
+            /**
+             * @description Aggregate operator.
+             * @enum {string}
+             */
+            agg: "sum" | "count" | "min" | "max" | "average" | "count_distinct";
+            /** @description Generated scalar field name; directional ontology paths bind in `x-norn`. */
+            agg_time_dimension: string;
+            /** @description Snapshot dimension and series groupings. */
+            non_additive_dimension?: components["schemas"]["NornIrNonAdditiveDimension"];
+            /** @description Ontology-bound semantic model. */
+            semantic_model: string;
+        };
         /** @description Authorization remains a runtime boundary; checker admission never grants access. */
         NornIrMetricAuthorization: {
             /** @description Named authorization action evaluated for the object population. */
@@ -4128,6 +4207,26 @@ export interface components {
             /** @description ISO 4217 registry property or a closed currency-code enum. */
             property: components["schemas"]["NornIrDimensionPath"];
         };
+        /**
+         * MetricDefinition
+         * @description A MetricFlow definition carried by the OSI DBT extension.
+         *     Norn-specific policy is isolated in `x-norn`.
+         */
+        NornIrMetricDefinition: {
+            /** @description Human-readable MetricFlow label. */
+            label: string;
+            /** @description Stable metric identifier. */
+            name: string;
+            /**
+             * @description MetricFlow metric type.
+             * @enum {string}
+             */
+            type: "simple" | "ratio" | "cumulative" | "derived" | "conversion";
+            /** @description Closure-free MetricFlow calculation parameters. */
+            type_params: components["schemas"]["NornIrMetricTypeParams"];
+            /** @description Policies which do not belong to OSI or MetricFlow. */
+            "x-norn": components["schemas"]["NornIrMetricNorn"];
+        };
         /** @description A predicate over a resolved property; numeric values retain exact decimals. */
         NornIrMetricFilter: {
             /**
@@ -4139,6 +4238,13 @@ export interface components {
             path: components["schemas"]["NornIrDimensionPath"];
             /** @description Exact runtime literal checked against the effective property contract. */
             value: components["schemas"]["NornIrJsonValue"];
+        };
+        /** @description Named metric input in a derived calculation. */
+        NornIrMetricInput: {
+            /** @description Expression alias. */
+            alias?: string;
+            /** @description Metric name. */
+            name: string;
         };
         /** @description Norn policy extension. Units are derived from typed properties, never asserted here. */
         NornIrMetricNorn: {
@@ -4194,6 +4300,28 @@ export interface components {
             aggregate: "sum" | "first" | "last" | "min" | "max";
             /** @description Also collapse the metric's time axis (even if not in dimensions). */
             overTime: boolean;
+        };
+        /**
+         * @description MetricFlow's five metric types; conversion means cohort conversion, not FX.
+         * @enum {string}
+         */
+        NornIrMetricType: "simple" | "ratio" | "cumulative" | "derived" | "conversion";
+        /** @description MetricFlow calculation parameters. The checker enforces the fields for each type. */
+        NornIrMetricTypeParams: {
+            /** @description Conversion parameters. */
+            conversion_type_params?: components["schemas"]["NornIrConversionTypeParams"];
+            /** @description Cumulative parameters. */
+            cumulative_type_params?: components["schemas"]["NornIrCumulativeTypeParams"];
+            /** @description Denominator metric. */
+            denominator?: string;
+            /** @description Stored property for a simple metric, or derived expression. */
+            expr?: string;
+            /** @description Modern MetricFlow aggregate specification. */
+            metric_aggregation_params?: components["schemas"]["NornIrMetricAggregationParams"];
+            /** @description Derived metric inputs. */
+            metrics?: components["schemas"]["NornIrMetricInput"][];
+            /** @description Numerator metric. */
+            numerator?: string;
         };
         /**
          * @description How many objects one end of a link may relate to (Gel `single`/`multi`).
@@ -4258,6 +4386,21 @@ export interface components {
             dataset: string;
             /** @description The parent's field holding the rows (a Frappe `Table` field). */
             field: string;
+        };
+        /** @description MetricFlow snapshot metadata. Admission does not promise snapshot evaluation. */
+        NornIrNonAdditiveDimension: {
+            /** @description Time dimension. */
+            name: string;
+            /**
+             * @description Choose the earliest/latest timestamp, rather than a min/max amount.
+             * @enum {string}
+             */
+            window_choice: "min" | "max";
+            /**
+             * @description Snapshot series keys.
+             * @default []
+             */
+            window_groupings: string[];
         };
         /**
          * @description A deterministic text normalization step.
@@ -4744,6 +4887,35 @@ export interface components {
             instanceId: string;
             pack: components["schemas"]["NornIrInterpretationEndpoint"];
         };
+        /**
+         * @description PATH-MAP-1: a declared mapping `F: target -> source` between two concept
+         *     catalogs. Each target concept names its source concept and each mapped
+         *     target link a forward source path; source data moves to the target by
+         *     pullback along these paths. Unmapped target links are never produced.
+         */
+        NornIrPathMapping: {
+            /** @description Stable declaration identity, retained by generated TGDs. */
+            id: string;
+            /** @description Images of target links. Two images of one link make it non-functional. */
+            links: components["schemas"]["NornIrLinkImage"][];
+            objects: components["schemas"]["NornIrPathMappingPropertyObjects"];
+        };
+        /**
+         * @description Catalog bindings for a required path mapping. Admission binds evidence to
+         *     the exact envelopes (including equations), and the enclosing MappingIR.
+         */
+        NornIrPathMappingBinding: {
+            /** @description Declared object and link images. */
+            mapping: components["schemas"]["NornIrPathMapping"];
+            /** @description Source entity artifact IDs. */
+            sourceEntities: string[];
+            /** @description Target entity artifact IDs. */
+            targetEntities: string[];
+        };
+        /** @description Target concept name to source concept name. */
+        NornIrPathMappingPropertyObjects: {
+            [key: string]: string;
+        };
         /** @description One obligation of an [`ObligationPolicyRoot`]. */
         NornIrPolicyObligation: {
             appliesTo: string;
@@ -4797,8 +4969,44 @@ export interface components {
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /** @description FA-PROTECT-1: only sealed rule outputs may write this inherited field. */
+            protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
             type: components["schemas"]["NornIrPropertyType"];
+        };
+        /**
+         * @description METRIC-ADDITIVITY-1: aggregation semantics belong to the numeric type.
+         *     Missing declarations permit point reads but never authorize aggregation.
+         */
+        NornIrPropertyAdditivity: components["schemas"]["NornIrPropertyAdditivityOneOf0"] | components["schemas"]["NornIrPropertyAdditivityOneOf1"] | components["schemas"]["NornIrPropertyAdditivityOneOf2"] | components["schemas"]["NornIrPropertyAdditivityOneOf3"] | components["schemas"]["NornIrPropertyAdditivityOneOf4"];
+        /** @description No aggregation contract has been declared. */
+        NornIrPropertyAdditivityOneOf0: {
+            /** @enum {string} */
+            kind: "undeclared";
+        };
+        /** @description Summable across entities and time. */
+        NornIrPropertyAdditivityOneOf1: {
+            /** @enum {string} */
+            kind: "additive";
+        };
+        /** @description Summable across entities at a single instant, never across time. */
+        NornIrPropertyAdditivityOneOf2: {
+            /** @enum {string} */
+            kind: "semi_additive";
+        };
+        /** @description Requires a separately declared weighting calculation. */
+        NornIrPropertyAdditivityOneOf3: {
+            /** @enum {string} */
+            kind: "non_additive";
+        };
+        /** @description Recompute from the sums of these operands, never average stored ratios. */
+        NornIrPropertyAdditivityOneOf4: {
+            /** @description Denominator property at the same object grain. */
+            denominator: string;
+            /** @enum {string} */
+            kind: "ratio";
+            /** @description Numerator property at the same object grain. */
+            numerator: string;
         };
         /**
          * @description Constraints on the values of a property type.
@@ -4914,6 +5122,8 @@ export interface components {
         };
         /** @description A signed 64-bit integer. */
         NornIrPropertyTypeOneOf1: {
+            /** @description Explicit aggregation contract; a missing declaration fails closed. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /** @enum {string} */
             kind: "integer";
         };
@@ -4929,6 +5139,8 @@ export interface components {
          *     quantity in a declared unit.
          */
         NornIrPropertyTypeOneOf2: {
+            /** @description Explicit aggregation contract; units do not imply additivity. */
+            additivity?: components["schemas"]["NornIrPropertyAdditivity"];
             /**
              * @description Authoritative currency path relative to the object holding this amount.
              *     Monetary decimals declare this instead of a quantity unit. Metrics
@@ -7321,6 +7533,11 @@ export interface components {
          */
         NornIrWidgetViewStateKind: "empty" | "loading" | "ready" | "error" | "preview";
         /**
+         * @description MetricFlow timestamp selection.
+         * @enum {string}
+         */
+        NornIrWindowChoice: "min" | "max";
+        /**
          * @description How an action changes an entity kind in its write set.
          * @enum {string}
          */
@@ -7360,6 +7577,76 @@ export interface components {
              * @description The last event sequence number (`0` when empty).
              */
             seq: number;
+        };
+        /** @description One live link touching the requested object. */
+        NornLinkEdge: {
+            /** @description The link id. */
+            link: string;
+            /** @description The source object id. */
+            source: string;
+            /** @description The link's declaring (source) type. */
+            sourceType: string;
+            /** @description The target object id. */
+            target: string;
+            /** @description The declared target type. */
+            targetType: string;
+            /**
+             * Format: int64
+             * @description The link version.
+             */
+            version: number;
+        };
+        /** @description One bounded page of live links touching an object, in both directions. */
+        NornLinkPage: {
+            /** @description Whether more candidate links remain after this page. */
+            hasMore: boolean;
+            /** @description The requested object's identity. */
+            id: string;
+            /** @description Live links on this page. */
+            items: components["schemas"]["NornLinkEdge"][];
+            /** @description The requested object's type. */
+            objectType: string;
+        };
+        /** @description The exact admitted mapping declaration that produced an object version. */
+        NornMappingPin: {
+            /** @description Mapping artifact ID. */
+            artifactId: string;
+            /** @description Canonical artifact digest. */
+            sha256: string;
+            /** @description Admitted artifact version. */
+            version: string;
+        };
+        /** @description One bounded page of a concept's authoritative objects. */
+        NornObjectPage: {
+            /** @description The concept read; records may be of its subtypes. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Candidates on this page held back by source disputes or open quarantining findings.
+             */
+            quarantineCount: number;
+            /** @description Authoritative records on this page. */
+            records: components["schemas"]["NornObjectRecord"][];
+            /** @description The last scanned identity: the next page starts after it. */
+            scannedThrough: string | null;
+        };
+        /** @description One object as the cell stores it, at its current version. */
+        NornObjectRecord: {
+            /** @description The object's identity. */
+            id: string;
+            /** @description The concrete object type. */
+            objectType: string;
+            /** @description The tenant scope. */
+            scope: string;
+            /** @description Every stored property by property id; decimals are exact JSON number tokens. */
+            values: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description The owner version (`+1` per write).
+             */
+            version: number;
         };
         /**
          * @description The evaluator that produced an answer.

@@ -9,6 +9,14 @@ description = "shared contract/lifecycle diagnostics (ring 0; see AGENTS.md)"
 [lib]
 path = "src/lib.rs"
 
+[features]
+native-proof-driver = []
+
+[[bin]]
+name = "norn-proof-quint"
+path = "src/bin/norn-proof-quint.rs"
+required-features = ["native-proof-driver"]
+
 [[example]]
 name = "jewelry_demo"
 test = true
