@@ -10,10 +10,10 @@ import { Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { member } from "./lib/exact.ts"
-import { FRESHNESS, bucketLabel, day, headline, period, scope } from "./lib/format.ts"
+import { FRESHNESS, bucketLabel, day, headline, percent, period, scope } from "./lib/format.ts"
 import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
 import { measured, operandUnits } from "./lib/units.ts"
-import { MenuItem } from "./shell.tsx"
+import type { MenuEntry } from "./shell.tsx"
 
 interface Bucket {
   readonly key: string
@@ -44,6 +44,9 @@ function buckets({ question, answer, metrics, objectType }: QuestionAnswer): Buc
 }
 
 const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+
+/** A ratio reads as a percentage at one precision everywhere; a sum stays the server's text. */
+const shown = (bucket: Pick<Bucket, "value" | "totals">): string => bucket.totals.length > 1 ? percent(bucket.value) : bucket.value
 
 function Exact({ value, totals }: { readonly value: string; readonly totals: readonly string[] }) {
   return totals.length > 1
@@ -88,6 +91,10 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
   const rows = buckets(read)
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
+  // Chart positions only (whole-percent scale padded by one point); every label is server text.
+  const points = rows.map((bucket) => ({ label: bucket.label, position: Number(bucket.value) * 100, shown: shown(bucket), exact: bucket.value }))
+  const positions = points.map(({ position }) => position)
+  const scale: [number, number] = [Math.floor(Math.min(...positions)) - 1, Math.ceil(Math.max(...positions)) + 1]
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
     Object.values(partitions).map(({ complete }) => `${source} ${complete ? "complete" : "incomplete"}`))
   return (
@@ -102,34 +109,34 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
       </div>
       {latest && (
         <StatStrip>
-          <button type="button" className="block h-full rounded-xl text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px" onClick={() => setOpen(latest)}>
-            <KpiTile icon={Sigma} label={latest.label} value={latest.value} sub={fraction(latest.totals)} />
+          <button type="button" className="block h-full rounded-lg text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px" onClick={() => setOpen(latest)}>
+            <KpiTile icon={Sigma} label={latest.label} value={shown(latest)} sub={latest.totals.length > 1 ? `${fraction(latest.totals)} = ${latest.value} exactly` : undefined} />
           </button>
           <KpiTile icon={Rows3} label="Records counted" value={latest.members.length} sub={latest.label} />
           <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`} />
         </StatStrip>
       )}
-      <Panel icon={ChartLine} label={headline(question)} action={period(question.window)}>
+      <Panel icon={ChartLine} label={headline(question)} action={`${period(question.window)} · scale ${scale[0]}%–${scale[1]}%`}>
         <Well className="px-2 pt-4 pb-1">
-          <ChartContainer config={{ value: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
-            <AreaChart data={rows.map(({ label, value }) => ({ label, value: Number(value), exact: value }))} margin={{ left: 8, right: 8 }}>
+          <ChartContainer config={{ position: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
+            <AreaChart data={points} margin={{ left: 8, right: 8 }}>
               <CartesianGrid vertical={false} strokeDasharray="2 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
-              <YAxis domain={["auto", "auto"]} tickLine={false} axisLine={false} width={56} tickFormatter={(tick: number) => tick.toFixed(4)} />
+              <YAxis domain={scale} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={scale[1] - scale[0] + 1} tickFormatter={(tick: number) => `${tick}%`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
                   <span className="text-muted-foreground">{headline(question)}</span>
-                  <span className="font-mono tabular-nums">{String(item.payload?.exact)}</span>
+                  <span className="font-mono tabular-nums">{String(item.payload?.shown)} <span className="text-muted-foreground">({String(item.payload?.exact)})</span></span>
                 </div>
               )} />} />
-              <Area dataKey="value" type="monotone" stroke="var(--color-value)" strokeWidth={1.5} fill="var(--color-value)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
         </Well>
       </Panel>
       <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
         <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
@@ -138,8 +145,9 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
                     {bucket.label}
                   </button>
                 </TableCell>
-                <TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell>
-                <TableCell className="text-right tabular-nums">{bucket.members.length}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{fraction(bucket.totals)} = {bucket.value}</TableCell>
+                <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -151,11 +159,9 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
 }
 
 /** The questions on the board, for the submenu island. */
-export function QuestionsMenu() {
+export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
   const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
-  return <>{board.data?.map(({ question }) => (
-    <MenuItem key={question.document.name} href={`#${question.document.name}`}>{headline(question.document)}</MenuItem>
-  ))}</>
+  return board.data?.map(({ question }) => ({ href: `#${question.document.name}`, label: headline(question.document) }))
 }
 
 export function QuestionsPage() {

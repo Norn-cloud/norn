@@ -4,14 +4,14 @@ import { ChartLine, Database, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
-import { QuestionsMenu, QuestionsPage } from "./questions.tsx"
+import { QuestionsPage, useQuestionsMenu } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
-import { SourcesPage } from "./sources.tsx"
+import { SourcesPage, useSourcesMenu } from "./sources.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why." },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", menu: QuestionsMenu },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu },
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step." },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "Every rule the system keeps, and how strongly each one is checked." },
 ]
