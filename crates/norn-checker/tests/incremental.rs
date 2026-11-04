@@ -122,6 +122,21 @@ fn dependency_edits_and_new_writers_cannot_reuse_global_evidence() {
     compare(&mut cache, &pool, &context);
 }
 
+#[test]
+fn conflicting_versions_retain_independent_local_evidence() {
+    let registry = registry();
+    let context = EntityArtifactSetContext { registry: &registry, base: &[], tenant: None };
+    let mut pool = fixture();
+    let mut conflicting = pool.last().expect("writer").clone();
+    conflicting.version = "2.0.0".into();
+    pool.push(conflicting);
+    let mut cache = AdmissionCache::new(&[7; 32], "structural", "no solver");
+    compare(&mut cache, &pool, &context);
+    pool[0].name = "changed catalog label".into();
+    let result = compare(&mut cache, &pool, &context);
+    assert_eq!(result.evidence.iter().filter(|e| e.origin == EvidenceOrigin::Rechecked).count(), 2);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
