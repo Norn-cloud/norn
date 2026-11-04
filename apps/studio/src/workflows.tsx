@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react"
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow, useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -82,6 +82,8 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const route = active === undefined ? undefined : pathTo(tree, active)
   const lit = route && new Set([...route.path, ...route.next])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
+  // The first view: the start and the first steps along the spine, at a readable size.
+  const start = tree.nodes.filter((node) => node.column <= 4 && shown.has(node.id)).map(({ id }) => id)
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
     const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active, onPick: onPin, onHover: setHover }
@@ -115,23 +117,26 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
         // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
         // Pinning happens on pointer down: hover re-renders the cards, which can swallow a click.
         onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-        colorMode="system" fitView fitViewOptions={{ padding: 0.12, maxZoom: 1, nodes: nodes.filter(({ id }) => (tree.nodes.find((node) => node.id === id)?.column ?? 0) <= 4).map(({ id }) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
+        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: start.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
         <Background />
         <Controls showInteractive={false} />
-        <Follow ids={pinned === undefined ? undefined : pathTo(tree, pinned).path} />
+        <Follow ids={pinned === undefined ? start : pathTo(tree, pinned).path} />
         {tree.nodes.filter(({ kind }) => kind === "state").length > 8 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
       </ReactFlow>
     </div>
   )
 }
 
-/** Bring a pinned path into view. */
-function Follow({ ids }: { readonly ids: readonly string[] | undefined }) {
+/** Keep the focus in view: the start on mount, the pinned path whenever the pin changes, once the cards are measured. */
+function Follow({ ids }: { readonly ids: readonly string[] }) {
   const flow = useReactFlow()
-  const key = ids?.join(">")
+  const measured = useNodesInitialized()
+  const key = ids.join(">")
   useEffect(() => {
-    if (ids !== undefined && ids.length > 0) void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 300 })
-  }, [key])
+    if (!measured || ids.length === 0) return
+    const frame = requestAnimationFrame(() => { void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.2, maxZoom: 1, duration: 250 }) })
+    return () => cancelAnimationFrame(frame)
+  }, [key, measured])
   return null
 }
 
