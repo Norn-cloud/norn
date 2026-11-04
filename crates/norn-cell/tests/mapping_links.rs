@@ -24,7 +24,7 @@ type Cell = SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject>;
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
-fn setup(path: &Path) -> Cell {
+fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
     let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
     for dir in [
         "core",
@@ -55,6 +55,16 @@ fn setup(path: &Path) -> Cell {
             }
         }
     }
+    artifacts
+}
+
+fn setup(path: &Path) -> Cell {
+    setup_with(path, |_| {})
+}
+
+fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
+    let mut artifacts = fixture_artifacts();
+    edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
@@ -125,7 +135,7 @@ fn fixture(system: &str) -> Value {
     )
     .expect("json")
 }
-fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
+fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, connector: &str) -> String {
     let record = &row["record"];
     let alias = record
         .get("name")
@@ -162,11 +172,16 @@ fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
     let input = MappingInput {
         mapping: format!("{system}.three.mapping"),
         dataset: row["dataset"].as_str().expect("dataset").into(),
-        connector_instance: "demo".into(),
+        connector_instance: connector.into(),
         partition: "snapshot".into(),
         recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
     };
     let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+    id
+}
+
+fn capture(cell: &mut Cell, system: &str, row: &Value, event: &str) -> String {
+    let id = retain_in(cell, system, row, event, "demo");
     cell.process_mapping_bundle(&id).expect("process");
     id
 }
@@ -396,5 +411,280 @@ fn obs_link_delivery_incremental_reports_converge_without_duplicate_contribution
             .expect("deliveries")
             .len(),
         1
+    );
+}
+
+fn edit_artifact(artifacts: &mut [ArtifactEnvelope], id: &str, edit: impl FnOnce(&mut Value)) {
+    let artifact = artifacts
+        .iter_mut()
+        .find(|a| a.artifact_id == id)
+        .expect("artifact");
+    let mut wire = serde_json::to_value(&*artifact).expect("wire");
+    edit(&mut wire);
+    *artifact = serde_json::from_value(wire).expect("edited fixture declaration");
+}
+
+/// A separate to-many relation keeps the production owner contract unchanged.
+fn many_holding(artifacts: &mut Vec<ArtifactEnvelope>) {
+    edit_artifact(artifacts, "canon.Holding.entity", |a| {
+        a["payload"]["objectType"]["links"]
+            .as_array_mut()
+            .expect("links")
+            .push(json!({
+                "id":"peers", "target":"canon.Party", "cardinality":{"to":"many","from":"many"}
+            }));
+    });
+    for system in ["erpnext", "odoo", "shopify"] {
+        edit_artifact(artifacts, &format!("{system}.three.mapping"), |a| {
+            let map = a["payload"]["maps"]
+                .as_array_mut()
+                .expect("maps")
+                .iter_mut()
+                .find(|m| m["id"] == "holding")
+                .expect("holding");
+            let link = map["links"]
+                .as_array_mut()
+                .expect("links")
+                .iter_mut()
+                .find(|l| l["link"] == "owner")
+                .expect("owner");
+            link["link"] = json!("peers");
+            link["key"] = json!("input.owner_ref == 'clear' ? null : input.owner_ref");
+        });
+    }
+}
+
+#[test]
+fn obs_link_retarget_and_redelivery_replace_only_the_latest_contribution() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("retarget.sqlite"));
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let mut changed = rows[6].clone();
+    changed["record"]["provider_ref"] = json!("demo/party/custodian");
+    capture(&mut cell, "erpnext", &changed, "2");
+    let reader = cell.store().read();
+    assert!(
+        reader
+            .link(
+                MAIN_WORLD,
+                "canon.OrderLine",
+                "provider",
+                "demo/order/1/line/1",
+                "demo/party/owner"
+            )
+            .expect("old")
+            .is_none()
+    );
+    assert!(
+        reader
+            .link(
+                MAIN_WORLD,
+                "canon.OrderLine",
+                "provider",
+                "demo/order/1/line/1",
+                "demo/party/custodian"
+            )
+            .expect("new")
+            .is_some()
+    );
+    assert_eq!(graph(&cell).len(), 12);
+    capture(&mut cell, "erpnext", &rows[6], "3");
+    let before = cell.store().export_commit_count().expect("head");
+    capture(&mut cell, "erpnext", &changed, "2");
+    assert_eq!(cell.store().export_commit_count().expect("head"), before);
+    assert!(
+        cell.store()
+            .read()
+            .link(
+                MAIN_WORLD,
+                "canon.OrderLine",
+                "provider",
+                "demo/order/1/line/1",
+                "demo/party/owner"
+            )
+            .expect("restored")
+            .is_some()
+    );
+}
+
+#[test]
+fn obs_link_withdrawal_preserves_unbacked_authored_edges() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("authored.sqlite"), many_holding);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let key = LinkKey::new(
+        FactKey::new("canon.Holding", "demo/holding/owner/north/gold"),
+        "peers",
+        FactKey::new("canon.Party", "demo/party/custodian"),
+    );
+    norn_kernel::CellHost::commit(
+        &mut cell,
+        norn_kernel::CellCommit {
+            links: vec![norn_kernel::LinkWrite {
+                key,
+                expected: norn_kernel::FactVersion(0),
+                mutation: norn_kernel::LinkMutation::Add {
+                    values: RuntimeObject::new(),
+                },
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("authored edge");
+    let mut changed = rows[4].clone();
+    changed["record"]["owner_ref"] = json!("demo/party/customer");
+    capture(&mut cell, "erpnext", &changed, "2");
+    let reader = cell.store().read();
+    let peers = reader
+        .links(
+            MAIN_WORLD,
+            "canon.Holding",
+            "peers",
+            "demo/holding/owner/north/gold",
+        )
+        .expect("peers");
+    assert_eq!(
+        peers.into_iter().map(|l| l.target).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["demo/party/customer".into(), "demo/party/custodian".into()])
+    );
+}
+
+#[test]
+fn obs_link_mixed_clear_and_assert_never_oscillate_or_consume() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("clear.sqlite"), many_holding);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let second = fixture("odoo");
+    capture(&mut cell, "odoo", &second["snapshot"][4], "snapshot");
+    let expected = graph(&cell);
+    let mut changed = rows[4].clone();
+    changed["record"]["owner_ref"] = json!("clear");
+    let id = retain_in(&mut cell, "erpnext", &changed, "2", "demo");
+    let before = cell.store().export_commit_count().expect("head");
+    for _ in 0..3 {
+        assert!(matches!(
+            cell.process_mapping_bundle(&id),
+            Err(norn_cell::CellError::UnsupportedMappingProfile)
+        ));
+        assert_eq!(graph(&cell), expected);
+        assert_eq!(cell.store().export_commit_count().expect("head"), before);
+    }
+}
+
+#[test]
+fn obs_link_connectors_with_identical_row_aliases_are_independent_contributors() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("connectors.sqlite"));
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let id = retain_in(&mut cell, "erpnext", &rows[6], "snapshot", "second");
+    cell.process_mapping_bundle(&id).expect("second connector");
+    let claims: Vec<_> = cell
+        .store()
+        .read()
+        .observed_link_claims()
+        .expect("claims")
+        .into_iter()
+        .filter(|c| c.source_key == "demo/order/1/line/1" && c.role.as_str() == "provider")
+        .collect();
+    assert_eq!(claims.len(), 2);
+    assert_ne!(claims[0].source_scope, claims[1].source_scope);
+    let mut changed = rows[6].clone();
+    changed["record"]["provider_ref"] = json!("demo/party/custodian");
+    let id = retain_in(&mut cell, "erpnext", &changed, "2", "demo");
+    assert!(matches!(
+        cell.process_mapping_bundle(&id),
+        Err(norn_cell::CellError::UnsupportedMappingProfile)
+    ));
+    assert!(
+        cell.store()
+            .read()
+            .link(
+                MAIN_WORLD,
+                "canon.OrderLine",
+                "provider",
+                "demo/order/1/line/1",
+                "demo/party/owner"
+            )
+            .expect("old")
+            .is_some()
+    );
+}
+
+#[test]
+fn obs_link_pending_base_claim_uses_the_live_subtype_link_defaults() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("subtype.sqlite"), |artifacts| {
+        let mut subtype = serde_json::to_value(
+            artifacts
+                .iter()
+                .find(|a| a.artifact_id == "canon.Holding.entity")
+                .expect("base"),
+        )
+        .expect("wire");
+        subtype["artifactId"] = json!("canon.SpecialHolding.entity");
+        subtype["payload"] = json!({"entityVersion":"2.0", "objectType": {
+            "name":"canon.SpecialHolding", "extends":"canon.Holding", "links":[{
+                "id":"owner", "target":"canon.Party", "cardinality":{"to":"one","from":"many"},
+                "properties":[{"id":"marker","type":{"kind":"text"},"default":"special"}]
+            }]
+        }});
+        artifacts.push(serde_json::from_value(subtype).expect("subtype fixture"));
+    });
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    capture(&mut cell, "erpnext", &rows[3], "snapshot");
+    capture(&mut cell, "erpnext", &rows[4], "snapshot");
+    let holding = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Holding", "demo/holding/owner/north/gold")
+        .expect("read")
+        .expect("holding");
+    norn_kernel::CellHost::commit(
+        &mut cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: FactKey::new("canon.SpecialHolding", &holding.id),
+                expected: norn_kernel::FactVersion(holding.version),
+                mutation: norn_kernel::FactMutation::Put {
+                    values: holding.values,
+                },
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("specialized holding");
+    capture(&mut cell, "erpnext", &rows[0], "snapshot");
+    let link = cell
+        .store()
+        .read()
+        .link(
+            MAIN_WORLD,
+            "canon.SpecialHolding",
+            "owner",
+            "demo/holding/owner/north/gold",
+            "demo/party/owner",
+        )
+        .expect("read")
+        .expect("resolved");
+    assert_eq!(
+        link.values.get("marker"),
+        Some(&RuntimeValue::from("special"))
     );
 }

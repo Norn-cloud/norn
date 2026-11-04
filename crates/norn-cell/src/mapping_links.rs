@@ -74,18 +74,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             if latest && self.mapping_event_is_disputed(&bundle)? {
                 continue;
             }
-            for record in &bundle.records {
-                for claim in record.link_claims(&id) {
-                    insert(&mut claims, claim)?;
-                }
+            for claim in bundle.link_claims()? {
+                insert(&mut claims, claim)?;
             }
         }
         if let Some(bundle) = current {
-            let id = format!("mapping-bundle:{}", bundle.digest);
-            for record in &bundle.records {
-                for claim in record.link_claims(&id) {
-                    insert(&mut claims, claim)?;
-                }
+            for claim in bundle.link_claims()? {
+                insert(&mut claims, claim)?;
             }
         }
         if claims.len() > 20_000 {
@@ -254,11 +249,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         commit: &mut MappingCommit,
         authority: &mut ObservationAuthorization,
     ) -> Result<(), CellError> {
-        for claim in bundle
-            .records
-            .iter()
-            .flat_map(|record| record.link_claims(&turn.id))
-        {
+        for claim in bundle.link_claims()? {
             self.prepare_claim_snapshot(catalog, turn, &claim, commit, authority)?;
         }
         let (links, claims) = self.mapping_link_plan(bundle, commit)?;
