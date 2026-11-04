@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_ir::entity::{LinkImage, PathMapping};
 use norn_ir::{ArtifactEnvelope, Multiplicity, PropertyTypeName};
 
-use super::chase::ChaseBudget;
-use super::exchange::{Exchange, check_schema_compatibility};
+use super::chase::{AdmissionWork, ChaseBudget};
+use super::exchange::{Exchange, check_schema_compatibility_with_work};
 use super::theory::{
     Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, equation_path, lower_path_equations,
 };
@@ -221,6 +221,32 @@ pub fn admit_path_mapping(
     registry: &BTreeSet<PropertyTypeName>,
     budget: ChaseBudget,
 ) -> Result<PreservationEvidence, Vec<Diagnostic>> {
+    admit_with_work(
+        source,
+        target,
+        mapping,
+        registry,
+        budget,
+        &AdmissionWork::new(10_000_000),
+    )
+}
+
+pub(crate) fn admit_with_work(
+    source: &[ArtifactEnvelope],
+    target: &[ArtifactEnvelope],
+    mapping: &PathMapping,
+    registry: &BTreeSet<PropertyTypeName>,
+    budget: ChaseBudget,
+    work: &AdmissionWork,
+) -> Result<PreservationEvidence, Vec<Diagnostic>> {
+    // Charge input bytes before lowering; large theories and long paths
+    // consume the same admission allowance as search and unfolding work.
+    norn_canonical::meter_json_verbatim(work, &(source, target, mapping)).map_err(|error| {
+        vec![super::refusal(
+            &Theory::default(),
+            &super::chase::ChaseError::Internal(error.to_string()),
+        )]
+    })?;
     let source_catalog = EffectiveCatalog::from_artifacts_with_registry(source, registry);
     let target_catalog = EffectiveCatalog::from_artifacts_with_registry(target, registry);
     let mut source_theory = lower_path_equations(source, registry)?;
@@ -261,7 +287,7 @@ pub fn admit_path_mapping(
         mapping: &lowered,
         target: &target_theory,
     };
-    let findings = check_schema_compatibility(&exchange, budget);
+    let findings = check_schema_compatibility_with_work(&exchange, budget, work);
     if findings.is_empty() {
         Ok(PreservationEvidence {
             obligations: target_theory.dependencies.len(),

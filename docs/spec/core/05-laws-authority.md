@@ -353,3 +353,25 @@ The host authorizer denies every operation unless a trusted server policy admits
 Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
 
 Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
+
+### Observed conservation suggestions (MINE-CONS-1, #736)
+
+The runtime `norn_cell::mining::suggest_conservation` question discovers one
+anchored exact rational functional from an explicit training prefix, then checks
+all supplied observed deltas with CONS-LINEAR-1. Its source-window identity,
+scope/unit coordinates, training count, supporting record/version identities and
+exact residual counterexamples remain visible. The adapter owns authorization,
+immutable window retention and faithful lowering; the function fetches no data.
+
+Results are always `SuggestedNotAdmitted`, including an entirely balanced
+window. Finite observed arithmetic supports validation but never certifies
+business truth, future behavior or writer coverage. No admission, law edit or
+commit follows from a result. Saving or accepting a proposal requires ordinary
+data actions and definition admission, outside this first cut. Empty/all-zero
+training, infeasible anchors, malformed input and exhausted exact/resource bounds
+yield no proposal. Scope/unit partitions cannot cancel each other. Limits: 256
+records, 64 coordinates, 64 scope bindings per coordinate, 4096 identity bytes,
+and the existing discovery coefficient/work ceilings. Named scenarios: true
+fractional candidate with full evidence, holdout near-miss with exact residual,
+no-signal control, duplicate record, unit separation, oversize window and measured
+256-record fixture. Law drift, misfit rules and statistical guards remain open.

@@ -45,6 +45,7 @@ pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_process;
 mod migration;
+pub mod mining;
 mod observation_quality;
 pub use observation_quality::AuthoritativePage;
 mod identity;
