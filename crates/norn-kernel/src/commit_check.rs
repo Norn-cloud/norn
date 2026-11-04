@@ -127,6 +127,20 @@ impl<'m, 'a> CommitModel<'m, 'a> {
             })
     }
 
+    /// Resolve endpoint presence against the same final concrete identity as admission.
+    ///
+    /// # Errors
+    /// A host identity lookup failed.
+    pub fn contains_after<E, C, T, V: CommitView + ?Sized>(
+        &self,
+        commit: &CellCommit<E, C, T>,
+        view: &V,
+        key: &FactKey,
+    ) -> Result<bool, CommitError<V::Error>> {
+        Ok(concrete_after(commit, *self, view, &self.canonical(key))?
+            .is_some_and(|concrete| self.is_a(&concrete, &key.object_type)))
+    }
+
     /// Materialize link properties under the source's effective concrete
     /// contract, including defaults and canonical UTC timestamps.
     ///
