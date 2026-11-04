@@ -335,7 +335,7 @@ pub fn lower_path_equations(
     }
 }
 
-fn equation_path(
+pub(crate) fn equation_path(
     catalog: &crate::entity_instance::EffectiveCatalog,
     owner: &str,
     path: &[String],
