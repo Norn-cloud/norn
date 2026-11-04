@@ -19,7 +19,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from verification_attestation import selector_is_declared  # noqa: E402
+from verification_attestation import selector_is_declared, strip_comments_and_strings  # noqa: E402
 from proof_enrollment import validate as validate_enrollment  # noqa: E402
 import coverage_manifest  # noqa: E402
 
@@ -767,7 +767,7 @@ def validate_claim_evidence_shape(
                     name = selector.split(":", 1)[1]
                     require(
                         harness.suffix == ".rs" and harness.is_file()
-                        and re.search(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b", harness.read_text()) is not None
+                        and re.search(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b", strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))) is not None
                         and "kani" in shlex.split(command)
                         and shlex.split(command)[shlex.split(command).index("kani"):] == [
                             "kani", "--fail-fast", "--output-format", "terse", artifact
