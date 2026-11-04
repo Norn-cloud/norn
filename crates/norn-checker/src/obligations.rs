@@ -19,6 +19,9 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
+mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
@@ -405,7 +408,7 @@ impl ApprovedContract {
             "writerStatements": induction.writers,
             "obligations": induction.goals,
         });
-        let bytes = norn_canonical::serialize_json_verbatim(&body)
+        let bytes = norn_canonical::canonical_json_exact_of(&body)
             .map_err(|_error| ChallengeError::Closure)?;
         if bytes.len() > 8_388_608 {
             return Err(ChallengeError::Limit);
