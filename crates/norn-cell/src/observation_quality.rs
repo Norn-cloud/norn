@@ -1,7 +1,7 @@
 //! OBS-EVIDENCE-1: durable finding identity and explicit authoritative population filtering.
 use crate::{
     CellError, CommitBatch, ObjectRecord, StoreReader,
-    engine::{SqlEngine, params},
+    engine::{SqlEngine, SqlValue, params},
     read::to_i64,
     system::LEDGER,
 };
@@ -21,7 +21,8 @@ pub struct AuthoritativePage {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    /// QUERY-ENGINE-1: only subjects of authenticated finding events in this receipt.
+    /// QUERY-ENGINE-1: receipt subjects are invalidation hints, never finding authority.
+    /// The shared record read rechecks findings using the same first-subject lookup.
     pub(crate) fn question_finding_keys(
         &self,
         receipt: &crate::Receipt,
@@ -31,21 +32,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(keys);
         }
         let rows = self.conn.query(
-            &format!("SELECT seq FROM {LEDGER} WHERE commit_seq = ?1 AND world = ?2 AND json_extract(event, '$.op') = 'data_quality_finding' ORDER BY seq"),
+            &format!("SELECT json_extract(event, '$.fact.subjects[0].key') FROM {LEDGER} WHERE commit_seq = ?1 AND world = ?2 AND json_extract(event, '$.op') = 'data_quality_finding' ORDER BY seq"),
             params![to_i64(receipt.body.commit_seq, "finding receipt")?, &receipt.body.world],
         )?;
-        for row in rows {
-            let seq: i64 = crate::engine::SqlRow(row).get(0)?;
-            if let Some((event, _)) =
-                self.verified_finding_at(crate::read::to_u64(seq, "finding sequence")?)?
-            {
-                let finding: DataQualityFinding = norn_ir::runtime::decode(
-                    event
-                        .get("fact")
-                        .ok_or(CellError::OutOfRange("finding fact"))?,
-                )
-                .map_err(CellError::Encoding)?;
-                keys.extend(finding.subjects.into_iter().map(|subject| subject.key));
+        for mut row in rows {
+            if let Some(SqlValue::Text(key)) = row.pop() {
+                keys.insert(key);
             }
         }
         Ok(keys)
