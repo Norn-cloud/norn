@@ -737,8 +737,9 @@ fn path_equation_base_only_errors_do_not_reject_tenant() {
 
 #[test]
 fn path_equation_inherited_failure_names_tenant_subtype() {
-    let base = [path_concept(&serde_json::json!([{"id":"identity","left":["next"],"right":[]}]), false).unwrap()];
+    let base = [path_concept(&serde_json::json!([{"id":"identity","left":["next"],"right":[]}]), true).unwrap()];
     let mut child = serde_json::to_value(path_concept(&serde_json::json!([]), true).unwrap()).unwrap();
+    child["payload"]["objectType"]["links"] = serde_json::json!([]);
     child["artifactId"] = serde_json::json!("paths.Child.entity");
     child["name"] = serde_json::json!("Child");
     child["payload"]["objectType"]["name"] = serde_json::json!("paths.Child");
