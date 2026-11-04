@@ -632,6 +632,529 @@ proptest::proptest! {
 }
 
 #[test]
+fn native_order_preserves_explicit_defeat_and_own_exception() {
+    use norn_checker::deontic::lower_declared_order;
+    use norn_checker::norm_precedence::{ConstitutionLayer, check_norm_precedence};
+    use std::collections::BTreeSet;
+    let mut low = obligation().expect("fixture");
+    low.law.modality = LawModality::Always {};
+    low.law.timing = None;
+    low.law.condition = Some(norn_ir::ZenExpression("true".into()));
+    low.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("true".into()),
+    };
+    let mut high = low.clone();
+    high.law.id = "sales.block".into();
+    high.source.pointer = "/rules/1".into();
+    high.modality = DeonticModality::Prohibition;
+    high.law.modality = LawModality::Never {};
+    low.defeated_by.push(high.law.id.clone());
+    let rules = [low.clone(), high.clone()];
+    let grounded = lower_declared_order(&rules, &norn_expr::schema::Schema::Boolean)
+        .expect("native declarations lower");
+    assert_eq!(grounded.edges, vec![(1, 0)]);
+    let layers = [ConstitutionLayer::Company; 2];
+    assert!(
+        check_norm_precedence(
+            &grounded.norms,
+            &grounded.origins,
+            &layers,
+            &grounded.edges,
+            &BTreeSet::new(),
+            grounded.contexts,
+            1000
+        )
+        .is_ok()
+    );
+    low.defeated_by.clear();
+    let tied = lower_declared_order(
+        &[low.clone(), high.clone()],
+        &norn_expr::schema::Schema::Boolean,
+    )
+    .expect("ties lower without resolution");
+    assert!(
+        check_norm_precedence(
+            &tied.norms,
+            &tied.origins,
+            &layers,
+            &tied.edges,
+            &BTreeSet::new(),
+            tied.contexts,
+            1000
+        )
+        .is_err()
+    );
+    low.exceptions.push(norn_ir::deontic::RuleException {
+        id: "explicit".into(),
+        condition: norn_ir::ZenExpression("true".into()),
+        source: low.source.clone(),
+    });
+    let excepted = lower_declared_order(&[low.clone(), high], &norn_expr::schema::Schema::Boolean)
+        .expect("explicit exceptions lower");
+    assert_eq!(excepted.norms[0].excepted, excepted.norms[0].applicable);
+    assert!(excepted.norms[1].excepted.is_empty());
+    low.defeated_by.push("missing".into());
+    assert!(lower_declared_order(&[low], &norn_expr::schema::Schema::Boolean).is_err());
+}
+
+#[test]
+fn native_order_refuses_unbounded_and_temporal_grounding() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut rule = obligation().expect("fixture");
+    assert!(lower_declared_order(&[rule.clone()], &norn_expr::schema::Schema::Boolean).is_err());
+    rule.law.modality = LawModality::Always {};
+    rule.law.timing = None;
+    assert!(lower_declared_order(&[rule], &norn_expr::schema::Schema::Integer).is_err());
+}
+
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "typed admission test fixture"
+)]
+fn admission_fixture() -> (serde_json::Value, DeonticRule, DeonticRule) {
+    let mut wire: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json"))
+            .expect("fixture");
+    let mut entity = wire.remove(0);
+    entity["payload"]["objectType"] =
+        json!({"name":"erpnext.SalesOrder","properties":[{"id":"paid","type":{"kind":"boolean"}}]});
+    let mut low = obligation().expect("rule");
+    low.law.modality = LawModality::Always {};
+    low.law.timing = None;
+    low.law.condition = None;
+    low.law.subject = "erpnext.SalesOrder".into();
+    low.law.scope.object_types = vec!["erpnext.SalesOrder".into()];
+    low.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("self.paid".into()),
+    };
+    low.source.artifact_id = "erpnext.SalesOrder.entity".into();
+    low.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+    let mut high = low.clone();
+    high.law.id = "sales.block".into();
+    high.source.pointer = "/payload/extensions/norn.normative~11.0.0/1".into();
+    high.modality = DeonticModality::Prohibition;
+    high.law.modality = LawModality::Never {};
+    (entity, low, high)
+}
+
+#[test]
+fn ordinary_admission_runs_native_declared_order() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (entity, mut low, mut high) = admission_fixture();
+    let registry = BTreeSet::new();
+    let run = |rules: &[DeonticRule]| {
+        let mut candidate = entity.clone();
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+        let artifact: norn_ir::ArtifactEnvelope =
+            serde_json::from_value(candidate).expect("artifact");
+        check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[],
+                tenant: None,
+            },
+        )
+    };
+    assert!(run(&[]).is_empty(), "no declarations unchanged");
+    let tie = run(&[low.clone(), high.clone()]);
+    assert!(
+        tie.iter()
+            .any(|d| d.message.contains("sales.approve") && d.message.contains("sales.block")),
+        "{tie:?}"
+    );
+    assert!(tie.iter().filter(|d| d.is_error()).all(|d| {
+        d.message.contains("Canonical attempted/base SHA256:")
+            && d.message.contains("candidate-only relaxation proposals")
+            && d.message.contains("Query budget:")
+    }));
+    low.defeated_by.push(high.law.id.clone());
+    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    high.defeated_by.push(low.law.id.clone());
+    assert!(
+        run(&[low.clone(), high.clone()])
+            .iter()
+            .any(norn_checker::Diagnostic::is_error)
+    );
+    high.defeated_by.clear();
+    low.defeated_by.clear();
+    low.exceptions.push(norn_ir::deontic::RuleException {
+        id: "exempt".into(),
+        condition: norn_ir::ZenExpression("true".into()),
+        source: low.source.clone(),
+    });
+    assert!(run(&[low.clone(), high.clone()]).is_empty());
+    let mut missing = low.clone();
+    missing.defeated_by = vec!["missing".into()];
+    assert!(
+        run(&[missing])
+            .iter()
+            .any(norn_checker::Diagnostic::is_error)
+    );
+    let many: Vec<_> = (0..65).map(|_| low.clone()).collect();
+    assert!(
+        run(&many)
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown")
+    );
+}
+
+#[test]
+fn ordinary_admission_protects_base_and_refuses_cross_layer_wins() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    for scenario in ["protected", "higher-wins", "undeclared"] {
+        let (entity, mut low, mut high) = admission_fixture();
+        if scenario == "protected" {
+            low.defeated_by.push(high.law.id.clone());
+            low.exceptions.push(norn_ir::deontic::RuleException {
+                id: "masked".into(),
+                condition: norn_ir::ZenExpression("true".into()),
+                source: low.source.clone(),
+            });
+        } else if scenario == "higher-wins" {
+            high.defeated_by.push(low.law.id.clone());
+        }
+        let mut installed = entity.clone();
+        installed["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low]});
+        let base: norn_ir::ArtifactEnvelope = serde_json::from_value(installed).expect("base");
+        let mut candidate = entity.clone();
+        candidate["artifactId"] = json!("candidate.entity");
+        candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+        high.source.artifact_id = "candidate.entity".into();
+        high.source.pointer = "/payload/extensions/norn.normative~11.0.0/0".into();
+        candidate["dependencies"] = json!([{"artifactId":"erpnext.SalesOrder.entity","kind":"entity","version":"0.1.0","required":true}]);
+        candidate["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[high]});
+        let artifact = serde_json::from_value(candidate).expect("candidate");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[base],
+                tenant: None,
+            },
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "consistency.normative.conflict"
+                    && d.message.contains("sales.approve")
+                    && d.message.contains("sales.block")),
+            "{scenario}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn native_order_rejects_incomplete_law_identities() {
+    use norn_checker::deontic::lower_declared_order;
+    let mut rule = obligation().expect("fixture");
+    rule.law.timing = None;
+    rule.law.modality = LawModality::Always {};
+    rule.law.condition = Some(norn_ir::ZenExpression("true".into()));
+    rule.law.response = norn_ir::LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("true".into()),
+    };
+    assert!(lower_declared_order(&[rule.clone()], &norn_expr::schema::Schema::Boolean).is_ok());
+    for slot in ["owner", "subject", "root", "types", "long"] {
+        let mut broken = rule.clone();
+        match slot {
+            "long" => broken.law.id = "x".repeat(257),
+            "owner" => broken.law.owner.clear(),
+            "subject" => broken.law.subject.clear(),
+            "root" => broken.law.scope.root = norn_ir::LawRoot::App(String::new()),
+            _ => broken.law.scope.object_types.clear(),
+        }
+        assert!(lower_declared_order(&[broken], &norn_expr::schema::Schema::Boolean).is_err());
+    }
+}
+
+#[test]
+fn live_diagnosis_exhaustion_refuses_without_partial_repairs() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    let rules: Vec<_> = (0..32)
+        .map(|index| {
+            let mut rule = if index % 2 == 0 {
+                low.clone()
+            } else {
+                high.clone()
+            };
+            rule.law.id = format!("rule-{index}");
+            rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            rule
+        })
+        .collect();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|d| !d.message.contains("relaxation proposals"))
+    );
+}
+
+#[test]
+fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    for scenario in ["version", "carrier", "mixed"] {
+        let (mut entity, low, _) = admission_fixture();
+        let slot = if scenario == "version" {
+            "norn.normative/2.0.0"
+        } else {
+            norn_checker::deontic::NORMATIVE_SLOT
+        };
+        entity["payload"]["extensions"] = json!({slot:[low]});
+        if scenario == "carrier" {
+            let object = entity["payload"]["objectType"].take();
+            entity["payload"]
+                .as_object_mut()
+                .expect("payload")
+                .remove("objectType");
+            entity["payload"]["interface"] = object;
+        }
+        let laws: Vec<norn_ir::ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
+        let base = if scenario == "mixed" { &laws[..1] } else { &[] };
+        let artifact = serde_json::from_value(entity).expect("candidate");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base,
+                tenant: None,
+            },
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+            "{scenario}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn live_diagnosis_pins_reproduce_and_change_with_attempted_source() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low, high]});
+    let run = |value| {
+        let artifact = serde_json::from_value(value).expect("candidate");
+        check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &[],
+                tenant: None,
+            },
+        )
+        .into_iter()
+        .map(|d| d.message)
+        .collect::<Vec<_>>()
+    };
+    let original = run(entity.clone());
+    assert_eq!(original, run(entity.clone()));
+    assert!(
+        original
+            .iter()
+            .all(|message| message.contains("profile SHA256:"))
+    );
+    entity["name"] = json!("edited");
+    assert_ne!(original, run(entity));
+}
+
+#[test]
+fn admitted_normative_resolution_survives_installation() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, mut low, high) = admission_fixture();
+    low.defeated_by.push(high.law.id.clone());
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[low,high]});
+    let installed: norn_ir::ArtifactEnvelope = serde_json::from_value(entity).expect("installed");
+    let registry = BTreeSet::new();
+    assert!(
+        check_artifact_set(
+            std::slice::from_ref(&installed),
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[],
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    assert!(
+        check_artifact_set(
+            &[],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: std::slice::from_ref(&installed),
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    let (mut unrelated, _, _) = admission_fixture();
+    unrelated["artifactId"] = json!("unrelated.entity");
+    unrelated["payload"]["objectType"]["name"] = json!("unrelated.Subject");
+    let unrelated = serde_json::from_value(unrelated).expect("unrelated");
+    assert!(
+        check_artifact_set(
+            &[unrelated],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: std::slice::from_ref(&installed),
+                tenant: None
+            }
+        )
+        .is_empty()
+    );
+    // A candidate cannot redeclare the inherited law under its existing identity.
+    let (_, mut replacement, high) = admission_fixture();
+    replacement.defeated_by.push(high.law.id);
+    let mut candidate = serde_json::to_value(&installed).expect("wire");
+    candidate["artifactId"] = json!("candidate.entity");
+    candidate["payload"]["objectType"]["name"] = json!("candidate.Subject");
+    candidate["dependencies"] = json!([{
+        "artifactId": installed.artifact_id,
+        "version": installed.version,
+        "kind": "entity",
+        "required": true
+    }]);
+    replacement.source.artifact_id = "candidate.entity".into();
+    let mut run = |replacement: &DeonticRule| {
+        candidate["payload"]["extensions"] =
+            json!({norn_checker::deontic::NORMATIVE_SLOT:[replacement]});
+        check_artifact_set(
+            &[serde_json::from_value(candidate.clone()).expect("candidate")],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: std::slice::from_ref(&installed),
+                tenant: None,
+            },
+        )
+    };
+    let findings = run(&replacement);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].code.as_str(), "consistency.diagnosis.unknown");
+    assert_eq!(
+        findings[0]
+            .message
+            .split_once(" Canonical attempted/base SHA256:")
+            .expect("diagnosis provenance")
+            .0,
+        "Normative admission refused: Expression(\"invalid normative source or binding\"). Limits: 64 declarations, 256 contexts, 8192 evaluations, 4096 diagnosis queries."
+    );
+    // Changing only the identity reaches conflict diagnosis instead of refusing lowering.
+    replacement.law.id = "sales.candidate".into();
+    let findings = run(&replacement);
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|d| d.code.as_str() == "consistency.normative.conflict"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn all_four_normative_cores_retain_their_attribution() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, low, high) = admission_fixture();
+    let rules: Vec<_> = (0..4)
+        .map(|index| {
+            let mut rule = if index < 2 { low.clone() } else { high.clone() };
+            rule.law.id = format!("rule-{index}");
+            rule.source.pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            rule
+        })
+        .collect();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:rules});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    for left in 0..2 {
+        for right in 2..4 {
+            let pair = format!("rule-{left}, rule-{right}");
+            assert_eq!(
+                findings
+                    .iter()
+                    .filter(|d| d.code.as_str() == "consistency.normative.conflict"
+                        && d.message.contains(&pair))
+                    .count(),
+                2,
+                "{findings:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn live_repairs_account_for_removed_transitive_priorities() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (mut entity, mut a, mut c) = admission_fixture();
+    let mut b = a.clone();
+    a.law.id = "A".into();
+    b.law.id = "B".into();
+    c.law.id = "C".into();
+    a.defeated_by.clear();
+    b.defeated_by = vec!["A".into(), "B".into()];
+    c.defeated_by = vec!["B".into()];
+    b.source.pointer = "/payload/extensions/norn.normative~11.0.0/1".into();
+    c.source.pointer = "/payload/extensions/norn.normative~11.0.0/2".into();
+    entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[a,b,c]});
+    let artifact = serde_json::from_value(entity).expect("candidate");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        !findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.message.contains(r#"[["A", "B"], ["B", "C"]]"#)),
+        "{findings:?}"
+    );
+}
+
+#[test]
 #[allow(clippy::expect_used, reason = "locale conformance fixtures")]
 fn wording_pack_term_is_required_in_every_declared_locale_for_both_views() {
     use norn_ir::requirement_display::RequirementView;
@@ -662,4 +1185,29 @@ fn wording_pack_term_is_required_in_every_declared_locale_for_both_views() {
             }
         }
     }
+}
+
+#[test]
+fn normative_subject_names_cannot_be_installed_twice() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    let (entity, _, _) = admission_fixture();
+    let mut other = entity.clone();
+    other["artifactId"] = json!("other.entity");
+    let installed = serde_json::from_value(entity).expect("installed");
+    let candidate = serde_json::from_value(other).expect("candidate");
+    let findings = check_artifact_set(
+        &[candidate],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[installed],
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == "object_type.validation.shadows_base"),
+        "{findings:?}"
+    );
 }

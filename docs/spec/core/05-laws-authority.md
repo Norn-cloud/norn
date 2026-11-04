@@ -284,24 +284,19 @@ the original/omitted-derivation update correspondence. Original/mutant model
 bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
+Each generated obligation selects its governing
+LawIR by the retained Challenge law identity; a subject may have multiple laws.
+All generated goals remain in Challenge order. An opaque law remains Unknown
+without suppressing independent supported laws. Native correspondence scenarios:
+`multiple_governing_laws_keep_distinct_goals_and_mutant_semantics` and
+`an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
+unit adds no solver discharge authority.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
-`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
+producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
-
-Compiler transport must not determine discharge. Flattened Quint JSON uses the
-pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
-The initializer conversion accepts only a complete constant assignment to each
-state variable, with no initializer reuse; it changes assignment to equality
-only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
-as Unknown. Both compilation stages share the existing 120-second budget and
-own their process groups. The independent Apalache CLI checks the same emitted
-TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
-exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
-an exact typed ITF trace and agreement with the primary trace shape. Other exits,
-missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
-real generated output must match the prior RPC compiler bytes.
 
 Qualification is restricted to integer/Boolean states and one worker. Raw
 successful universal searches require nonempty initialization, a drained queue
@@ -317,7 +312,27 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
-**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+**PROOF-GUARANTEE-1:** the native binder emits one typed document per law, with
+all generated obligations, exact bound records and typed trace quantities. A
+recording is written only after the complete original/mutant/restored acceptance
+passes; failed runs retain Unknown in their output and produce no recording.
+Runtime and parity links remain explicitly not-yet unless separately supplied.
+Violation results require a non-empty reconstructed counterexample or witness;
+missing/null/empty traces remain Unknown. Named refusal scenario:
+`qualifying_violations_require_a_nonempty_reconstructed_scenario`.
+Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_empty_state`
+and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
+are bless-gated fixtures from actual backend output, not fresh solver verdicts.
+Tool assets use logical name/version identities and exact content digests, without
+installation paths. Compiler stages retain exit codes; oracle records retain verdicts and exact scalar
+trace values in state order. Run-specific diagnostics and ITF creation metadata
+stay outside recorded evidence. Structured primary results remain bound.
+The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
+Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
+count, worker count and exclusions. Model digests, invariant selectors and step
+selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
+
+**PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
 generated goal inventory. Unsupported goals keep explicit Unknown reasons.
@@ -353,3 +368,25 @@ The host authorizer denies every operation unless a trusted server policy admits
 Complete refusal detail (law/invariant pin, reason, subject and operands) requires the server's independent scoped `norn.disclose_refusal_detail` decision through the existing AccessIR → Cedar PDP and capability conjunction. Its resource is `norn.RefusalDetail`, identified by the admitted action id; trusted context binds `governedAction`. A grant covers that action's complete diagnostic in that physical scope, not general business reads. Action permission, `norn.read`, and marking grants never imply it. Missing policy, principal, role, capability, exact scope or a changed mapper binding denies. Visibility and internal refusals remain opaque even with the grant. Fixture claims enter through the same trusted mapper that later resolves production principals; no client claims establish authority.
 
 Named cases: `explicit_grant_preserves_the_complete_shared_reason`, `absent_capability_policy_role_principal_or_scope_stays_redacted`, and `trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope`. The fixture policy is typed TypeScript and its generated policy bytes are checked against recompilation; decisions use the real scoped PDP. Evidence is runtime correspondence and sampled scope mutation, not universal proof. Deeper engine proof reruns are deferred under the demo deadline; this adapter changes no evaluator or stored receipt semantics.
+
+### Observed conservation suggestions (MINE-CONS-1, #736)
+
+The runtime `norn_cell::mining::suggest_conservation` question discovers one
+anchored exact rational functional from an explicit training prefix, then checks
+all supplied observed deltas with CONS-LINEAR-1. Its source-window identity,
+scope/unit coordinates, training count, supporting record/version identities and
+exact residual counterexamples remain visible. The adapter owns authorization,
+immutable window retention and faithful lowering; the function fetches no data.
+
+Results are always `SuggestedNotAdmitted`, including an entirely balanced
+window. Finite observed arithmetic supports validation but never certifies
+business truth, future behavior or writer coverage. No admission, law edit or
+commit follows from a result. Saving or accepting a proposal requires ordinary
+data actions and definition admission, outside this first cut. Empty/all-zero
+training, infeasible anchors, malformed input and exhausted exact/resource bounds
+yield no proposal. Scope/unit partitions cannot cancel each other. Limits: 256
+records, 64 coordinates, 64 scope bindings per coordinate, 4096 identity bytes,
+and the existing discovery coefficient/work ceilings. Named scenarios: true
+fractional candidate with full evidence, holdout near-miss with exact residual,
+no-signal control, duplicate record, unit separation, oversize window and measured
+256-record fixture. Law drift, misfit rules and statistical guards remain open.

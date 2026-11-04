@@ -6,6 +6,7 @@ use norn_ir::deontic::DeonticModality;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// One definition norm grounded over one common finite action/subject universe.
+#[derive(Clone)]
 pub struct GroundedNorm {
     /// Exact definition rule identity, used to explain every result.
     pub id: String,
@@ -250,7 +251,7 @@ pub enum ConstitutionLayer {
 /// Diagnostic-only result for a supplied grounding of one action/subject.
 /// This is not source lowering, admission, fulfilment or Datalog evidence.
 pub struct DeclaredOrderReport {
-    /// Exact rule-index cores; all declarations are protected from repair.
+    /// Exact rule-index cores and corrections under the retained editability profile.
     pub diagnosis: crate::consistency::diagnosis::Diagnosis,
     /// Source-located errors and constitutional-policy gap notes (#767).
     pub diagnostics: Vec<crate::Diagnostic>,
@@ -274,6 +275,14 @@ pub enum NormRefusal {
 struct OrderOracle<'a> {
     edges: &'a [(usize, usize)],
     conflicts: Vec<BTreeSet<usize>>,
+    dynamic: Option<SubsetOrder<'a>>,
+}
+
+struct SubsetOrder<'a> {
+    norms: &'a [GroundedNorm],
+    layers: &'a [ConstitutionLayer],
+    protected: &'a BTreeSet<usize>,
+    contexts: usize,
 }
 
 impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
@@ -283,9 +292,27 @@ impl crate::consistency::diagnosis::Oracle for OrderOracle<'_> {
         active: &BTreeSet<usize>,
     ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
         use crate::consistency::diagnosis::Verdict;
+        let conflicts = self.dynamic.as_ref().map(|order| {
+            let edges: Vec<_> = self
+                .edges
+                .iter()
+                .copied()
+                .filter(|(a, b)| active.contains(a) && active.contains(b))
+                .collect();
+            let audit = crate::deontic::installed_protection(order.protected, &edges);
+            order_conflicts(
+                order.norms,
+                order.layers,
+                &edges,
+                &audit,
+                order.contexts,
+                active,
+            )
+        });
+        let conflicts = conflicts.as_ref().unwrap_or(&self.conflicts);
         let reach = order_closure(self.edges, active);
         if active.iter().any(|i| reach.contains(&(*i, *i)))
-            || self.conflicts.iter().any(|pair| pair.is_subset(active))
+            || conflicts.iter().any(|pair| pair.is_subset(active))
         {
             Verdict::Unsat
         } else {
@@ -371,6 +398,70 @@ pub fn diagnose_declared_order(
     contexts: usize,
     max_calls: usize,
 ) -> Result<DeclaredOrderReport, NormRefusal> {
+    diagnose_order(
+        norms,
+        origins,
+        layers,
+        edges,
+        protected,
+        contexts,
+        (max_calls, None),
+    )
+}
+
+/// Admission repairs may relax only candidate declarations; base laws remain fixed.
+pub(crate) fn diagnose_candidate_order(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    max_calls: usize,
+) -> Result<DeclaredOrderReport, NormRefusal> {
+    let editable = (0..norms.len())
+        .filter(|i| !protected.contains(i))
+        .collect();
+    let mut report = diagnose_order(
+        norms,
+        origins,
+        layers,
+        edges,
+        protected,
+        contexts,
+        (max_calls, Some(&editable)),
+    )?;
+    if !report.diagnosis.cores.is_empty() {
+        let repairs: Vec<Vec<_>> = report
+            .diagnosis
+            .corrections
+            .iter()
+            .map(|repair| {
+                repair
+                    .iter()
+                    .filter_map(|i| norms.get(*i).map(|n| n.id.as_str()))
+                    .collect()
+            })
+            .collect();
+        for diagnostic in &mut report.diagnostics {
+            if diagnostic.is_error() {
+                use std::fmt::Write;
+                write!(diagnostic.message, " Irreducible conflict sets and independently rechecked candidate-only relaxation proposals: {repairs:?}. Protected installed laws cannot be edited. Query budget: {}/{}. Concrete edits require ordinary admission.", report.diagnosis.calls, report.diagnosis.max_calls).map_err(|_| NormRefusal::InvalidBinding)?;
+            }
+        }
+    }
+    Ok(report)
+}
+
+fn diagnose_order(
+    norms: &[GroundedNorm],
+    origins: &[crate::consistency::RuleOrigin],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    budget: (usize, Option<&BTreeSet<usize>>),
+) -> Result<DeclaredOrderReport, NormRefusal> {
     use crate::consistency::{diagnosis, report::core_findings};
     if norms.len() > diagnosis::MAX_DECLARATIONS || edges.len() > 4096 {
         return Err(NormRefusal::Limit);
@@ -395,33 +486,27 @@ pub fn diagnose_declared_order(
         return Err(NormRefusal::InvalidBinding);
     }
     let all: BTreeSet<_> = (0..norms.len()).collect();
-    let mut conflicts = Vec::new();
-    // Reject even inactive or exception-masked lower-to-higher override declarations.
-    for &(high, low) in edges {
-        if layers.get(high) > layers.get(low) || protected.contains(&low) {
-            conflicts.push(BTreeSet::from([high, low]));
-        }
+    let conflicts = if budget.1.is_none() {
+        order_conflicts(norms, layers, edges, protected, contexts, &all)
+    } else {
+        Vec::new()
+    };
+    let mut oracle = OrderOracle {
+        edges,
+        conflicts,
+        dynamic: budget.1.map(|_| SubsetOrder {
+            norms,
+            layers,
+            protected,
+            contexts,
+        }),
+    };
+    let diagnosis = if let Some(editable) = budget.1 {
+        diagnose_subsets(&mut oracle, norms.len(), editable, budget.0)
+    } else {
+        diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), budget.0)
     }
-    let reach = order_closure(edges, &all);
-    for (i, left) in norms.iter().enumerate() {
-        for (j, right) in norms.iter().enumerate().skip(i.saturating_add(1)) {
-            if opposed(left.modality, right.modality)
-                && (0..contexts).any(|c| {
-                    left.applicable.contains(&c)
-                        && right.applicable.contains(&c)
-                        && !left.excepted.contains(&c)
-                        && !right.excepted.contains(&c)
-                })
-                && (layers.get(i) != layers.get(j)
-                    || (!reach.contains(&(i, j)) && !reach.contains(&(j, i))))
-            {
-                conflicts.push(BTreeSet::from([i, j]));
-            }
-        }
-    }
-    let mut oracle = OrderOracle { edges, conflicts };
-    let diagnosis = diagnosis::diagnose(&mut oracle, norms.len(), &BTreeSet::new(), max_calls)
-        .map_err(NormRefusal::Diagnosis)?;
+    .map_err(NormRefusal::Diagnosis)?;
     let mut diagnostics = Vec::new();
     for core in &diagnosis.cores {
         let ids: Vec<_> = core
@@ -465,4 +550,315 @@ fn legacy_notes(
         }
     }
     diagnostics
+}
+
+fn order_conflicts(
+    norms: &[GroundedNorm],
+    layers: &[ConstitutionLayer],
+    edges: &[(usize, usize)],
+    protected: &BTreeSet<usize>,
+    contexts: usize,
+    active: &BTreeSet<usize>,
+) -> Vec<BTreeSet<usize>> {
+    let mut conflicts = Vec::new();
+    // Reject even inactive or exception-masked lower-to-higher override declarations.
+    for &(high, low) in edges {
+        if layers.get(high) > layers.get(low) || protected.contains(&low) {
+            conflicts.push(BTreeSet::from([high, low]));
+        }
+    }
+    let reach = order_closure(edges, active);
+    for (i, left) in norms.iter().enumerate() {
+        for (j, right) in norms.iter().enumerate().skip(i.saturating_add(1)) {
+            if active.contains(&i)
+                && active.contains(&j)
+                && opposed(left.modality, right.modality)
+                && (0..contexts).any(|c| {
+                    left.applicable.contains(&c)
+                        && right.applicable.contains(&c)
+                        && !left.excepted.contains(&c)
+                        && !right.excepted.contains(&c)
+                })
+                && (layers.get(i) != layers.get(j)
+                    || (!reach.contains(&(i, j)) && !reach.contains(&(j, i))))
+            {
+                conflicts.push(BTreeSet::from([i, j]));
+            }
+        }
+    }
+    conflicts
+}
+
+// Declaration removal can erase a priority path, so this oracle is not
+// monotone. Enumerate subsets rather than pruning by monotone hitting sets.
+fn diagnose_subsets(
+    oracle: &mut impl crate::consistency::diagnosis::Oracle<Unknown = std::convert::Infallible>,
+    declarations: usize,
+    editable: &BTreeSet<usize>,
+    max_calls: usize,
+) -> Result<
+    crate::consistency::diagnosis::Diagnosis,
+    crate::consistency::diagnosis::Unknown<std::convert::Infallible>,
+> {
+    use crate::consistency::diagnosis::{Diagnosis, Unknown, Verdict};
+    let all: BTreeSet<_> = (0..declarations).collect();
+    let calls = std::cell::Cell::new(0_usize);
+    let mut unsat = |active: &BTreeSet<usize>| {
+        if calls.get() >= max_calls {
+            return Err(Unknown::Budget);
+        }
+        calls.set(calls.get().saturating_add(1));
+        Ok(matches!(oracle.check(active), Verdict::Unsat))
+    };
+    let mut cores = BTreeSet::new();
+    let mut corrections = BTreeSet::new();
+    if unsat(&all)? {
+        // Non-monotone diagnosis visits every subset, including inherited rules.
+        // The full-set query is included in that count. At least one minimal
+        // core must also be independently revalidated after enumeration.
+        let minimum_calls = u32::try_from(declarations)
+            .ok()
+            .and_then(|n| 1_usize.checked_shl(n))
+            .and_then(|count| count.checked_add(1));
+        if minimum_calls.is_none_or(|count| count > max_calls) {
+            return Err(Unknown::Budget);
+        }
+        let mut pending = vec![all.clone()];
+        let mut checked = BTreeMap::from([(all.clone(), true)]);
+        while let Some(active) = pending.pop() {
+            for member in &active {
+                let mut subset = active.clone();
+                subset.remove(member);
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    checked.entry(subset.clone())
+                {
+                    entry.insert(unsat(&subset)?);
+                    pending.push(subset);
+                }
+            }
+        }
+        for (active, conflict) in &checked {
+            if *conflict {
+                if !checked
+                    .iter()
+                    .any(|(subset, bad)| *bad && subset != active && subset.is_subset(active))
+                {
+                    cores.insert(active.clone());
+                }
+            } else {
+                let repair: BTreeSet<_> = all.difference(active).copied().collect();
+                if repair.is_subset(editable)
+                    && !checked
+                        .iter()
+                        .any(|(kept, bad)| !bad && kept != active && active.is_subset(kept))
+                {
+                    corrections.insert(repair);
+                }
+            }
+        }
+    } else {
+        corrections.insert(BTreeSet::new());
+    }
+    // Independent checks consume the same ceiling as subset recomputation.
+    crate::consistency::diagnosis::require_validation_budget(
+        &cores,
+        &corrections,
+        max_calls.saturating_sub(calls.get()),
+    )?;
+    for core in &cores {
+        if !unsat(core)? {
+            return Err(Unknown::InconsistentOracle);
+        }
+        for member in core {
+            let mut subset = core.clone();
+            subset.remove(member);
+            if unsat(&subset)? {
+                return Err(Unknown::InconsistentOracle);
+            }
+        }
+    }
+    for repair in &corrections {
+        let kept: BTreeSet<_> = all.difference(repair).copied().collect();
+        if unsat(&kept)? {
+            return Err(Unknown::InconsistentOracle);
+        }
+        for member in repair {
+            let mut restored = kept.clone();
+            restored.insert(*member);
+            if !unsat(&restored)? {
+                return Err(Unknown::InconsistentOracle);
+            }
+        }
+    }
+    Ok(Diagnosis {
+        cores,
+        corrections,
+        calls: calls.get(),
+        max_calls,
+    })
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    struct CountingOracle {
+        calls: usize,
+    }
+
+    impl crate::consistency::diagnosis::Oracle for CountingOracle {
+        type Unknown = std::convert::Infallible;
+
+        fn check(
+            &mut self,
+            active: &BTreeSet<usize>,
+        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+            use crate::consistency::diagnosis::Verdict;
+            self.calls = self.calls.saturating_add(1);
+            if active.contains(&1) && (active.contains(&0) || active.contains(&2)) {
+                Verdict::Unsat
+            } else {
+                Verdict::Sat
+            }
+        }
+    }
+
+    #[test]
+    fn impossible_subset_search_stops_after_full_set_query() {
+        use crate::consistency::diagnosis::Unknown;
+        for declarations in [12, 13, 32, 64, 65] {
+            let mut oracle = CountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096),
+                Err(Unknown::Budget)
+            );
+            assert_eq!(oracle.calls, 1);
+        }
+    }
+
+    struct SatCountingOracle {
+        calls: usize,
+    }
+
+    impl crate::consistency::diagnosis::Oracle for SatCountingOracle {
+        type Unknown = std::convert::Infallible;
+
+        fn check(
+            &mut self,
+            _active: &BTreeSet<usize>,
+        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+            self.calls = self.calls.saturating_add(1);
+            crate::consistency::diagnosis::Verdict::Sat
+        }
+    }
+
+    #[test]
+    fn satisfiable_sets_keep_two_call_fast_path_regardless_of_subset_count() {
+        use crate::consistency::diagnosis::Unknown;
+        for declarations in [13, 64, 65] {
+            let mut oracle = SatCountingOracle { calls: 0 };
+            let result = diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096)
+                .expect("SAT needs no subset enumeration");
+            assert!(result.cores.is_empty());
+            assert_eq!(result.corrections, BTreeSet::from([BTreeSet::new()]));
+            assert_eq!(result.calls, 2);
+            assert_eq!(oracle.calls, 2);
+            let mut oracle = SatCountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 2)
+                    .expect("exact SAT budget")
+                    .calls,
+                2
+            );
+            assert_eq!(oracle.calls, 2);
+            let mut oracle = SatCountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 1),
+                Err(Unknown::Budget)
+            );
+            assert_eq!(oracle.calls, 1);
+        }
+    }
+
+    #[test]
+    fn twelve_declarations_search_and_recheck_overlapping_cores() {
+        use crate::consistency::diagnosis::Unknown;
+        let editable = (0..12).collect();
+        let mut oracle = CountingOracle { calls: 0 };
+        // 4096 subsets, two three-query core checks, two repair/restoration
+        // checks (two and three queries): the exact complete budget is 4107.
+        let result = diagnose_subsets(&mut oracle, 12, &editable, 4107).expect("fits");
+        assert_eq!(result.calls, 4107);
+        assert_eq!(oracle.calls, result.calls);
+        assert_eq!(
+            result.cores,
+            BTreeSet::from([BTreeSet::from([0, 1]), BTreeSet::from([1, 2])])
+        );
+        assert_eq!(
+            result.corrections,
+            BTreeSet::from([BTreeSet::from([1]), BTreeSet::from([0, 2])])
+        );
+        let mut oracle = CountingOracle { calls: 0 };
+        assert_eq!(
+            diagnose_subsets(&mut oracle, 12, &editable, result.calls - 1),
+            Err(Unknown::Budget)
+        );
+        // Refuse the known-incomplete validation batch before querying it.
+        assert_eq!(oracle.calls, 4096);
+    }
+
+    #[test]
+    fn repairs_recompute_paths_with_one_shared_budget() -> Result<(), NormRefusal> {
+        use crate::consistency::{RuleOrigin, diagnosis::Unknown};
+        use DeonticModality::{Obligation, Prohibition};
+        let norms: Vec<_> = [Obligation, Obligation, Prohibition]
+            .into_iter()
+            .enumerate()
+            .map(|(i, modality)| GroundedNorm {
+                id: format!("{i}"),
+                modality,
+                authority: ("board".into(), "1".into()),
+                authority_level: Some(0),
+                enacted: 0,
+                applicable: BTreeSet::from([0]),
+                excepted: BTreeSet::new(),
+            })
+            .collect();
+        let origins: Vec<_> = (0..3)
+            .map(|i| RuleOrigin {
+                artifact_id: Some("rules".into()),
+                pointer: format!("/{i}"),
+            })
+            .collect();
+        let run = |budget| {
+            diagnose_candidate_order(
+                &norms,
+                &origins,
+                &[ConstitutionLayer::Company; 3],
+                &[(0, 1), (1, 1), (1, 2)],
+                &BTreeSet::new(),
+                1,
+                budget,
+            )
+        };
+        let report = run(100)?;
+        assert_eq!(
+            report.diagnosis.cores,
+            BTreeSet::from([BTreeSet::from([1]), BTreeSet::from([0, 2])])
+        );
+        assert_eq!(
+            report.diagnosis.corrections,
+            BTreeSet::from([BTreeSet::from([0, 1]), BTreeSet::from([1, 2])])
+        );
+        assert!(report.diagnosis.calls <= 100);
+        assert!(matches!(
+            run(report.diagnosis.calls.saturating_sub(1)),
+            Err(NormRefusal::Diagnosis(Unknown::Budget))
+        ));
+        assert_eq!(
+            run(report.diagnosis.calls)?.diagnosis.calls,
+            report.diagnosis.calls
+        );
+        Ok(())
+    }
 }
