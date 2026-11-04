@@ -1244,11 +1244,11 @@ fn bound_authored_edits_keep_standing_metadata_and_require_live_exact_head_right
             "missing" => target_ledger(&mut doc, &head)["entries"] = json!([]),
             "edited" => {
                 target_ledger(&mut doc, &head)["entries"][0]["comment"]["updated_at"] =
-                    json!("2026-11-03T01:00:00Z")
+                    json!("2026-11-03T01:00:00Z");
             }
             "nonadmin" => {
                 target_ledger(&mut doc, &head)["entries"][0]["comment"]["permission"] =
-                    json!("write")
+                    json!("write");
             }
             "revoked" => target_ledger(&mut doc, &head)["entries"]
                 .as_array_mut()
