@@ -1274,7 +1274,21 @@ pub fn prepare_observed_snapshot(
         }
     }
     for snapshot in lifecycles {
-        check_observed_lifecycle_authority(catalog, key, effective_original.as_ref(), snapshot)?;
+        if catalog
+            .effective_type(&key.object_type)
+            .and_then(|effective| effective.property(snapshot.property.as_str()))
+            .is_some_and(norn_checker::EffectiveProperty::protected)
+            && effective_original
+                .as_ref()
+                .and_then(|values| values.get(snapshot.property.as_str()))
+                .and_then(JsonValue::as_str)
+                != Some(snapshot.state.as_str())
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "protected lifecycle properties are writable only by rules",
+            ));
+        }
     }
     let facts = property_changes(key, &original_for_changes, values);
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
@@ -1525,6 +1539,17 @@ pub fn prepare_observed_delete(
     if buried.exists() {
         return unchanged();
     }
+    if let Some(property) = catalog.effective_type(&key.object_type).and_then(|effective| {
+        effective
+            .properties
+            .iter()
+            .find(|property| property.protected())
+    }) {
+        return Err(invalid(
+            &property.id,
+            "objects with protected properties may be deleted only by rules",
+        ));
+    }
     let before = effective_observed_values(catalog, key, values)?;
     let mut current = before.clone();
     let reached = reach_on_delete(catalog, key, &mut current, lifecycles)?;
@@ -1654,7 +1679,6 @@ fn reach_on_delete(
         let Ok(path) = shortest_path(&lifecycle, &from, &snapshot.state) else {
             return Ok(None);
         };
-        check_observed_lifecycle_authority(catalog, key, Some(current), snapshot)?;
         let mut left = from;
         for transition in path {
             events.push(ObservationEvent::ObservedTransition {
@@ -1673,29 +1697,6 @@ fn reach_on_delete(
         );
     }
     Ok(Some(events))
-}
-
-fn check_observed_lifecycle_authority(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    before: Option<&JsonObject>,
-    snapshot: &ObservedLifecycleSnapshot,
-) -> Result<(), ObservationRefusal> {
-    if catalog
-        .effective_type(&key.object_type)
-        .and_then(|effective| effective.property(snapshot.property.as_str()))
-        .is_some_and(norn_checker::EffectiveProperty::protected)
-        && before
-            .and_then(|values| values.get(snapshot.property.as_str()))
-            .and_then(JsonValue::as_str)
-            != Some(snapshot.state.as_str())
-    {
-        return Err(invalid(
-            &snapshot.property,
-            "protected lifecycle properties are writable only by rules",
-        ));
-    }
-    Ok(())
 }
 
 /// Compare-and-swap expectations on every slice object the writes leave.

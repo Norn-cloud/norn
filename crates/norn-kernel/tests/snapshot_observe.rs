@@ -1031,47 +1031,45 @@ fn an_observed_delete_reaches_its_on_delete_state_when_a_path_is_declared() {
 
 #[test]
 fn an_observed_delete_cannot_transition_a_protected_lifecycle() {
-    let (mut object_type, target) = lifecycle_chain(1);
-    object_type.properties[0].protected = true;
-    let catalog = TypeCatalog::new([&object_type]);
-    let key = FactKey::new(object_type.name.as_str(), "protected-delete");
-    let provenance = provenance("protected.delete");
-    let mut cell = cell();
-    seed_observed_snapshot(
-        &mut cell,
-        &catalog,
-        &key,
-        &JsonObject::new(),
-        &provenance,
-        "seed",
-    );
-    let before = cell.load(&key).unwrap();
-    let ledger = cell.ledger().to_vec();
-    let slice = load_slice(&cell, [key.clone(), tombstone_key(&key)]).unwrap();
-    let lifecycles = [ObservedLifecycleSnapshot {
-        property: PropertyId("status".into()),
-        state: target,
-        provenance: provenance.clone(),
-    }];
-    let refusal = prepare_observed_delete(
-        &catalog,
-        &slice,
-        &unconsumed_turn("protected-delete"),
-        ObservedDelete {
-            key: &key,
-            lifecycles: &lifecycles,
-            provenance: &provenance,
-        },
-    )
-    .unwrap_err();
-    assert!(matches!(
-        refusal,
-        norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { property, reason }
-            if property == "status" && reason.contains("protected")
-    ));
-    assert_eq!(cell.load(&key).unwrap(), before);
-    assert_eq!(cell.ledger(), ledger.as_slice());
-    assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+    for protected_lifecycle in [false, true] {
+        let (mut object_type, target) = lifecycle_chain(1);
+        let protected_property = if protected_lifecycle {
+            object_type.properties[0].protected = true;
+            "status"
+        } else {
+            object_type.properties.push(serde_json::from_value(json!({
+                "id":"system_marker", "type":{"kind":"text"},
+                "protected":true, "default":"initial"
+            })).unwrap());
+            "system_marker"
+        };
+        let catalog = TypeCatalog::new([&object_type]);
+        let key = FactKey::new(object_type.name.as_str(), "protected-delete");
+        let provenance = provenance("protected.delete");
+        let mut cell = cell();
+        seed_observed_snapshot(
+            &mut cell, &catalog, &key, &JsonObject::new(), &provenance, "seed",
+        );
+        let before = cell.load(&key).unwrap();
+        let ledger = cell.ledger().to_vec();
+        let slice = load_slice(&cell, [key.clone(), tombstone_key(&key)]).unwrap();
+        for target in [None, Some("state_0"), Some(target.as_str())] {
+            let lifecycles: Vec<_> = target.map(|state| ObservedLifecycleSnapshot {
+                property: PropertyId("status".into()),
+                state: state.to_owned(),
+                provenance: provenance.clone(),
+            }).into_iter().collect();
+            let refusal = prepare_observed_delete(
+                &catalog, &slice, &unconsumed_turn("protected-delete"),
+                ObservedDelete { key: &key, lifecycles: &lifecycles, provenance: &provenance },
+            ).unwrap_err();
+            assert!(matches!(refusal, norn_kernel::snapshot_observe::ObservationRefusal::InvalidLifecycle { property, reason }
+                if property == protected_property && reason.contains("protected")));
+            assert_eq!(cell.load(&key).unwrap(), before);
+            assert_eq!(cell.ledger(), ledger.as_slice());
+            assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+        }
+    }
 }
 
 #[test]
