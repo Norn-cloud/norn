@@ -432,23 +432,37 @@ fn admission_order(
         .map(|a| (a, true))
         .chain(artifacts.iter().map(|a| (a, false)))
     {
-        let crate::entity_artifacts::Decoded::Root(root) =
-            crate::entity_artifacts::decode_v2(artifact)
+        let payload =
+            serde_json::to_value(artifact.payload.to_json_value()).map_err(|e| e.to_string())?;
+        let Some(extensions) = payload
+            .get("extensions")
+            .and_then(serde_json::Value::as_object)
         else {
             continue;
         };
-        let norn_ir::EntityRoot::V2(root) = *root else {
+        if !extensions
+            .keys()
+            .any(|key| key.starts_with("norn.normative/"))
+        {
             continue;
-        };
-        if root.extensions.as_ref().is_some_and(|e| {
-            e.keys()
-                .any(|key| key.starts_with("norn.normative/") && key != NORMATIVE_SLOT)
-        }) {
+        }
+        if extensions
+            .keys()
+            .any(|key| key.starts_with("norn.normative/") && key != NORMATIVE_SLOT)
+        {
             return Err("unsupported normative extension version".into());
         }
-        let Some(value) = root.extensions.as_ref().and_then(|e| e.get(NORMATIVE_SLOT)) else {
-            continue;
+        let crate::entity_artifacts::Decoded::Root(root) =
+            crate::entity_artifacts::decode_v2(artifact)
+        else {
+            return Err("normative carrier requires an admitted EntityIR v2 object type".into());
         };
+        if !matches!(*root, norn_ir::EntityRoot::V2(_)) {
+            return Err("normative carrier kind is unsupported".into());
+        }
+        let value = extensions
+            .get(NORMATIVE_SLOT)
+            .ok_or("missing normative declaration slot")?;
         let declared: Vec<DeonticRule> = serde_json::from_slice(
             &norn_canonical::canonical_json_of(value).map_err(|e| e.to_string())?,
         )
@@ -486,6 +500,13 @@ fn admission_order(
     }
     if rules.is_empty() {
         return Ok(None);
+    }
+    if artifacts
+        .iter()
+        .chain(base)
+        .any(|a| a.kind() == norn_ir::ArtifactKind::Law)
+    {
+        return Err("mixed ordinary LawIR and normative declarations require unsupported joint grounding; no inherited law is ignored".into());
     }
     let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
         .map_err(|e| format!("{e:?}"))?;

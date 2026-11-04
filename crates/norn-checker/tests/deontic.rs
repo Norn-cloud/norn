@@ -881,3 +881,44 @@ fn live_diagnosis_exhaustion_refuses_without_partial_repairs() {
     assert!(findings.iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"), "{findings:?}");
     assert!(findings.iter().all(|d| !d.message.contains("relaxation proposals")));
 }
+
+#[test]
+fn live_normative_unsupported_carriers_and_mixed_laws_refuse() {
+    use norn_checker::{EntityArtifactSetContext, check_artifact_set};
+    use std::collections::BTreeSet;
+    for scenario in ["version", "carrier", "mixed"] {
+        let (mut entity, low, _) = admission_fixture();
+        let slot = if scenario == "version" {
+            "norn.normative/2.0.0"
+        } else {
+            norn_checker::deontic::NORMATIVE_SLOT
+        };
+        entity["payload"]["extensions"] = json!({slot:[low]});
+        if scenario == "carrier" {
+            let object = entity["payload"]["objectType"].take();
+            entity["payload"]
+                .as_object_mut()
+                .expect("payload")
+                .remove("objectType");
+            entity["payload"]["interface"] = object;
+        }
+        let laws: Vec<norn_ir::ArtifactEnvelope> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/laws.json")).expect("laws");
+        let base = if scenario == "mixed" { &laws[..1] } else { &[] };
+        let artifact = serde_json::from_value(entity).expect("candidate");
+        let findings = check_artifact_set(
+            &[artifact],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base,
+                tenant: None,
+            },
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+            "{scenario}: {findings:?}"
+        );
+    }
+}
