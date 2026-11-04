@@ -196,27 +196,23 @@ fn a_bad_component_breaks_its_composite_and_identity_composes() {
     let mut missing = identity.clone();
     missing.objects.remove("t.Delivery");
     missing.links[0].path.clear();
-    assert!(
-        compose_path_mappings(
-            &missing,
-            &mapping("endo", "s", "s", &[]),
-            &middle,
-            &BTreeSet::new()
-        )
-        .is_err()
+    let refused = compose_path_mappings(
+        &missing,
+        &mapping("endo", "s", "s", &[]),
+        &middle,
+        &BTreeSet::new(),
     );
+    assert_eq!(refused.unwrap_err()[0].code.as_str(), PATH_MAPPING_INVALID);
     let mut many = serde_json::to_value(&middle).unwrap();
     many[0]["payload"]["objectType"]["links"][0]["cardinality"]["to"] = json!("many");
     let many: Vec<ArtifactEnvelope> = serde_json::from_value(many).unwrap();
-    assert!(
-        compose_path_mappings(
-            &identity,
-            &mapping("endo", "s", "s", &[]),
-            &many,
-            &BTreeSet::new()
-        )
-        .is_err()
+    let refused = compose_path_mappings(
+        &identity,
+        &mapping("endo", "s", "s", &[]),
+        &many,
+        &BTreeSet::new(),
     );
+    assert_eq!(refused.unwrap_err()[0].code.as_str(), PATH_MAPPING_INVALID);
 }
 
 #[test]
@@ -300,6 +296,7 @@ fn preservation_cost_on_the_574_fixtures() {
 
 fn inherited_equation_mapping(
     preserves: bool,
+    identity: bool,
 ) -> (Vec<ArtifactEnvelope>, Vec<ArtifactEnvelope>, PathMapping) {
     let entity = |name: &str, extends: Option<&str>, constrained: bool| -> ArtifactEnvelope {
         let mut value = json!({
@@ -311,10 +308,10 @@ fn inherited_equation_mapping(
             "payload": {"entityVersion": "2.0", "objectType": {
                 "name": name,
                 "links": if extends.is_some() || name.ends_with(".End") { vec![] } else {
-                    ["f", "g"].map(|id| json!({"id": id, "target": format!("{}.End", name.split('.').next().unwrap()),
+                    ["f", "g"].map(|id| json!({"id": id, "target": format!("{}.{}", name.split('.').next().unwrap(), if identity { "Parent" } else { "End" }),
                         "cardinality": {"to": "one", "from": "many", "required": false}})).to_vec()
                 }}, "extensions": {"norn.path-equations/1.0.0": if constrained {
-                    vec![json!({"id": "fg", "left": ["f"], "right": ["g"]})]
+                    vec![json!({"id": "fg", "left": if identity { vec![] } else { vec!["g"] }, "right": ["f"]})]
                 } else { vec![] }}}
         });
         if let Some(parent) = extends {
@@ -324,7 +321,11 @@ fn inherited_equation_mapping(
     };
     let source = vec![
         entity("s.Parent", None, true),
-        entity("s.Child", None, preserves),
+        entity(
+            "s.Child",
+            identity.then_some("s.Parent"),
+            preserves && !identity,
+        ),
         entity("s.End", None, false),
     ];
     let target = vec![
@@ -342,7 +343,7 @@ fn inherited_equation_mapping(
 
 #[test]
 fn inherited_target_equation_refuses_unconstrained_subtype_image() {
-    let (source, target, mapping) = inherited_equation_mapping(false);
+    let (source, target, mapping) = inherited_equation_mapping(false, false);
     let findings = admit_path_mapping(
         &source,
         &target,
@@ -360,15 +361,17 @@ fn inherited_target_equation_refuses_unconstrained_subtype_image() {
 
 #[test]
 fn inherited_target_equation_admits_preserving_subtype_image() {
-    let (source, target, mapping) = inherited_equation_mapping(true);
-    admit_path_mapping(
-        &source,
-        &target,
-        &mapping,
-        &BTreeSet::new(),
-        ChaseBudget::default(),
-    )
-    .unwrap();
+    for identity in [false, true] {
+        let (source, target, mapping) = inherited_equation_mapping(true, identity);
+        admit_path_mapping(
+            &source,
+            &target,
+            &mapping,
+            &BTreeSet::new(),
+            ChaseBudget::default(),
+        )
+        .unwrap();
+    }
 }
 
 // Exercise the runtime's admission entry point with an otherwise valid import.
