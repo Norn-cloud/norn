@@ -1,15 +1,51 @@
 {
-  "verdict": "Thesis: working, not stitched. One definition drives runtime law enforcement and the generated proof models; guarantees pin each proof to the definition hash. Gaps are scope, not the idea.",
+  "verdict": "Thesis: working, not stitched. One definition drives runtime law enforcement and the generated proof models; guarantees pin each proof to the definition hash. Gaps are scope, not the idea. Today the proof side covers a narrow profile (create-only events, one law per subject); extending it to workflows is the next engineering unit.",
   "areas": [
-    { "area": "Thesis core", "percent": 70, "detail": "One definition drives runtime law enforcement and generated proof models, pinned by definition hash." },
-    { "area": "Engine core", "percent": 70, "detail": "Cell, kernel and checker run exact typed answers, as-of reads and restatements." },
-    { "area": "Safety & authz", "percent": 65, "detail": "Refusals carry the law; server-only authority; scope and authorization checks on every read." },
-    { "area": "Proofs", "percent": 60, "detail": "Generated model checks discharge 3 of 3 eligible goals and refute the broken copy; 7 of 10 goals still unknown." },
-    { "area": "Workflows & actions", "percent": 55, "detail": "Lifecycles, guards and laws are declared and checked; the live action route is pending." },
-    { "area": "Studio UI", "percent": 45, "detail": "Sources, questions, workflows and guarantees render recorded server documents; live reads are pending." },
-    { "area": "Connectors & live data", "percent": 20, "detail": "Source mappings are declared and recorded; live ingestion is not wired yet." },
-    { "area": "Production", "percent": 15, "detail": "Demo deploy only; hosting, tenancy and operations are not in place yet." },
-    { "area": "Agent + canvas", "percent": 5, "detail": "Design spike written (#772); nothing built yet." }
+    {
+      "area": "Thesis core",
+      "percent": 55,
+      "detail": "Working end to end on the demo profile; proofs don't yet cover workflow (lifecycle) subjects or multiple laws per subject; that extension is next."
+    },
+    {
+      "area": "Engine core",
+      "percent": 70,
+      "detail": "Cell, kernel and checker run exact typed answers, as-of reads and restatements."
+    },
+    {
+      "area": "Safety & authz",
+      "percent": 65,
+      "detail": "Refusals carry the law; server-only authority; scope and authorization checks on every read."
+    },
+    {
+      "area": "Proofs",
+      "percent": 45,
+      "detail": "Lean kernel, Kani, generated Quint→Apalache, binder on main; demo recording landing; workflow/multi-law lowering not built yet."
+    },
+    {
+      "area": "Workflows & actions",
+      "percent": 55,
+      "detail": "Lifecycles, guards and laws are declared and checked; the live action route is pending."
+    },
+    {
+      "area": "Studio UI",
+      "percent": 45,
+      "detail": "Sources, questions, workflows and guarantees render recorded server documents; live reads are pending."
+    },
+    {
+      "area": "Connectors & live data",
+      "percent": 20,
+      "detail": "Source mappings are declared and recorded; live ingestion is not wired yet."
+    },
+    {
+      "area": "Production",
+      "percent": 15,
+      "detail": "Demo deploy only; hosting, tenancy and operations are not in place yet."
+    },
+    {
+      "area": "Agent + canvas",
+      "percent": 5,
+      "detail": "Design spike written (#772); nothing built yet."
+    }
   ],
   "footnote": "Estimates of alpha scope from merged PRs vs open issues, 2026-11-04."
 }
