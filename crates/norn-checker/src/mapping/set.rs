@@ -46,6 +46,7 @@ pub fn check_mapping_artifacts(
     base: &[ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    let work = crate::consistency::chase::AdmissionWork::new(100_000);
     for artifact in artifacts {
         if let Some(document) = source_payload(artifact) {
             out.extend(
@@ -64,6 +65,7 @@ pub fn check_mapping_artifacts(
     }
     let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base));
     for (artifact, mapping) in &mappings {
+        out.extend(path_findings(artifact, mapping, artifacts, base, &work));
         out.extend(key_findings(artifact));
         out.extend(dependency_findings(artifact, mapping));
         let findings = match (&model, resolve_source(mapping, artifacts, base)) {
@@ -91,6 +93,48 @@ pub fn check_mapping_artifacts(
         );
     }
     out
+}
+
+/// Run required obligations even when other mapping checks also refuse.
+fn path_findings(
+    artifact: &ArtifactEnvelope, mapping: &MappingIr,
+    artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope],
+    work: &crate::consistency::chase::AdmissionWork,
+) -> Vec<Diagnostic> {
+    use crate::consistency::{ChaseBudget, PATH_MAPPING_INVALID, path_mapping::admit_with_work};
+    let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
+        ids.iter().map(|id| {
+            artifacts.iter().chain(base).find(|a| a.artifact_id == *id
+                && matches!(a.payload, ArtifactPayload::Entity(_)))
+                .cloned().ok_or_else(|| vec![error(PATH_MAPPING_INVALID,
+                    format!("unresolved path catalog entity {id:?}"), Span::pointer("/pathMappings"))])
+        }).collect()
+    };
+    let mut out = Vec::new();
+    for binding in &mapping.path_mappings {
+        let result = (|| {
+            let source = resolve(&binding.source_entities)?;
+            let target = resolve(&binding.target_entities)?;
+            let evidence = admit_with_work(&source, &target, &binding.mapping,
+                &BTreeSet::new(), ChaseBudget::default(), work)?;
+            // The mapping envelope commits the declaration; catalog envelope
+            // hashes commit the exact equations and link contracts checked.
+            let pins: Vec<_> = source.iter().chain(&target).chain([artifact])
+                .map(ArtifactRef::of).collect::<Result<_, _>>()
+                .map_err(|_| vec![error(PATH_MAPPING_INVALID, "cannot hash path inputs".into(), Span::pointer("/pathMappings"))])?;
+            Ok::<_, Vec<Diagnostic>>(crate::consistency::finding(
+                "consistency.path_mapping.preserved", crate::DiagnosticSeverity::Info,
+                format!("bounded-no-counterexample; obligations={}; inputs={pins:?}", evidence.obligations), None))
+        })();
+        match result {
+            Ok(finding) => out.push(finding),
+            Err(findings) => out.extend(findings.into_iter().map(|mut d| {
+                d.severity = crate::DiagnosticSeverity::Error;
+                d
+            })),
+        }
+    }
+    out.into_iter().map(|d| in_payload(d, artifact)).collect()
 }
 
 /// Compile the candidate `mapping` artifact `mapping` against the set: its

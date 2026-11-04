@@ -20,12 +20,12 @@
 //!
 //! Behavioural equivalence is a separate obligation, not checked here.
 
-mod chase;
+pub(crate) mod chase;
 pub mod diagnosis;
 mod divergence;
 mod exchange;
 pub mod finite;
-mod path_mapping;
+pub(crate) mod path_mapping;
 pub mod report;
 mod theory;
 
@@ -188,7 +188,7 @@ fn origin_of<'a>(theory: &'a Theory, rule: &str) -> Option<&'a RuleOrigin> {
         .map(Dependency::origin)
 }
 
-fn finding(
+pub(crate) fn finding(
     code: &str,
     severity: DiagnosticSeverity,
     message: String,

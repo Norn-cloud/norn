@@ -297,3 +297,77 @@ fn preservation_cost_on_the_574_fixtures() {
         );
     }
 }
+
+// Exercise the runtime's admission entry point with an otherwise valid import.
+fn runtime_set(paths: &[PathMapping]) -> Vec<ArtifactEnvelope> {
+    let envelope = |id: &str, kind: &str, payload: Value| -> ArtifactEnvelope {
+        serde_json::from_value(json!({
+            "irVersion":"0.1", "artifactId":id, "kind":kind, "namespace":"erpnext",
+            "name":id, "version":"0.1.0", "lifecycle":"draft",
+            "scope":{"orgId":"org_demo","environmentId":"dev"}, "dependencies":[],
+            "provenance":{"source":"import"}, "payload":payload
+        })).unwrap()
+    };
+    let read = |path: &std::path::Path| serde_json::from_str::<Value>(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut set: Vec<ArtifactEnvelope> = std::fs::read_dir(root.join("tests/fixtures/mapping/model")).unwrap()
+        .map(|e| serde_json::from_value(read(&e.unwrap().path())).unwrap()).collect();
+    let source = envelope("erpnext.source_schema", "source_schema", read(&root.join("../norn-ir/tests/fixtures/source_schema/frappe.json")));
+    let mut payload = read(&root.join("../norn-ir/tests/fixtures/mapping/erpnext.mapping.json"));
+    payload["source"]["sha256"] = json!(norn_checker::receipt::ArtifactRef::of(&source).unwrap().sha256);
+    let sources = catalog("s");
+    let targets = catalog("t");
+    payload["pathMappings"] = json!(paths.iter().map(|p| json!({
+        "sourceEntities": sources.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(),
+        "targetEntities": targets.iter().map(|a| &a.artifact_id).collect::<Vec<_>>(), "mapping": p
+    })).collect::<Vec<_>>());
+    set.extend(sources);
+    set.extend(targets);
+    set.push(source);
+    let mut import = envelope("erpnext.mapping", "mapping", payload);
+    import.dependencies = set.iter().map(|a| norn_ir::ArtifactDependency {
+        artifact_id: a.artifact_id.clone(), kind: a.kind(), version: Some(a.version.clone()), required:true
+    }).collect();
+    set.push(import);
+    set
+}
+
+fn runtime_check(set: &[ArtifactEnvelope]) -> Vec<norn_checker::Diagnostic> {
+    norn_checker::check_artifact_set(set, &norn_checker::EntityArtifactSetContext {
+        registry: &BTreeSet::new(), base: &[], tenant: None,
+    })
+}
+
+#[test]
+fn runtime_admission_enforces_required_paths_and_budget() {
+    let identity = mapping("identity", "t", "s", &[]);
+    let good = runtime_set(std::slice::from_ref(&identity));
+    let findings = runtime_check(&good);
+    assert!(!findings.iter().any(|d| d.is_error()), "{findings:?}");
+    let evidence = findings.iter().find(|d| d.code == "consistency.path_mapping.preserved").unwrap();
+    assert!(evidence.message.contains("bounded-no-counterexample"));
+    assert!(evidence.message.contains(&norn_checker::receipt::ArtifactRef::of(good.last().unwrap()).unwrap().sha256));
+    let composite = compose_path_mappings(&identity, &mapping("swap", "s", "s", SWAPPED), &catalog("s"), &BTreeSet::new()).unwrap();
+    for broken in [
+        mapping("swapped", "t", "s", SWAPPED),
+        mapping("dropped", "t", "s", &[("fulfils", &["unjoined"])]),
+        mapping("both", "t", "s", &[("provider", &["provider"]), ("provider", &["receiver"])]), composite,
+    ] {
+        let findings = runtime_check(&runtime_set(&[broken]));
+        assert!(findings.iter().any(|d| d.is_error() && d.code == codes::UNPRESERVED && d.message.contains("breaks")), "{findings:?}");
+    }
+    let exhausted = runtime_check(&runtime_set(&vec![identity; 100]));
+    assert!(exhausted.iter().any(|d| d.is_error() && d.code == codes::CHASE_REFUSED && d.message.contains("whole-admission")), "{exhausted:?}");
+    assert!(runtime_check(&runtime_set(&[])).is_empty());
+}
+
+#[test]
+fn runtime_admission_cost_before_and_after() {
+    let baseline = runtime_set(&[]);
+    let enforced = runtime_set(&[mapping("identity", "t", "s", &[])]);
+    for (label, set) in [("without-paths", baseline), ("with-paths", enforced)] {
+        let start = std::time::Instant::now();
+        for _ in 0..20 { assert!(!runtime_check(&set).iter().any(|d| d.is_error())); }
+        eprintln!("RUNTIME-PATH-COST {label} {:?}/admission", start.elapsed()/20);
+    }
+}
