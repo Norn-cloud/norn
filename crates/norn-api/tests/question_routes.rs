@@ -26,11 +26,7 @@ use norn_cell::{
     compute::{Freshness, QueryContext},
     engine::NativeEngine,
 };
-use norn_checker::{
-    EffectiveCatalog,
-    metric::compute::{QuestionPlan, admit},
-};
-use norn_ir::{ArtifactEnvelope, metric::FreshnessPolicy};
+use norn_checker::metric::compute::QuestionPlan;
 use norn_kernel::{
     LogicalTime,
     authz::{
@@ -175,22 +171,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
     let mut cutoff = None;
     match mode {
         Mode::Historical | Mode::MissingCutoff | Mode::WrongCutoff => {
-            let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
-                "../../../fixtures/ir/lineage/scrap-yield.artifacts.json"
-            ))
-            .expect("typed definitions");
-            artifacts.push(
-                serde_json::from_str(include_str!(
-                    "../../../registry/core/artifacts/core.units.json"
-                ))
-                .expect("units"),
-            );
-            let catalog = EffectiveCatalog::from_artifacts(&artifacts);
-            let mut question = plan.question().clone();
-            question.freshness = FreshnessPolicy::AsOf {
-                at: norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into()),
-            };
-            plan = admit(plan.definitions(), &question, &catalog, 100).expect("admitted as-of");
+            plan = asof_plan(&store, &plan, "2026-10-26T00:00:00Z");
             if !matches!(mode, Mode::MissingCutoff) {
                 cutoff = Some(KnowledgeCutoff {
                     recorded_at: LogicalTime::from_millis(receipt.body.logical_time),
