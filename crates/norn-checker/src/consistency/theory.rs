@@ -238,25 +238,18 @@ pub fn lower_path_equations(
     artifacts: &[norn_ir::ArtifactEnvelope],
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
 ) -> Result<Theory, Vec<crate::Diagnostic>> {
-    use crate::entity_artifacts::{Decoded, decode_v2};
-    use norn_ir::entity::{PATH_EQUATIONS_SLOT, PathEquation};
+    use norn_ir::entity::PathEquation;
     let declarations: Vec<_> = artifacts
         .iter()
-        .filter_map(|artifact| {
-            let Decoded::Root(root) = decode_v2(artifact) else {
-                return None;
-            };
-            let norn_ir::EntityRoot::V2(root) = *root else {
-                return None;
-            };
-            let value = root.extensions.as_ref()?.get(PATH_EQUATIONS_SLOT)?.clone();
-            Some((artifact, root.object_type.name, value))
-        })
+        .filter_map(path_equation_declaration)
+        .collect();
+    // Declaration IDs accept arbitrary nonempty strings, so no delimiter is
+    // reserved. Reserve every declaration before allocating inherited IDs.
+    let mut rule_ids: BTreeSet<String> = declarations
+        .iter()
+        .flat_map(|(artifact, _, value)| declared_equation_rule_ids(&artifact.artifact_id, value))
         .collect();
     let mut theory = Theory::default();
-    if declarations.is_empty() {
-        return Ok(theory);
-    }
     let catalog =
         crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
     let mut findings = Vec::new();
@@ -297,45 +290,98 @@ pub fn lower_path_equations(
         let mut ids = BTreeSet::new();
         for (index, equation) in equations.into_iter().enumerate() {
             let origin = at(format!("{slot}/{index}"));
-            let lowered = (|| -> Result<Egd, String> {
-                if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
-                    return Err("ID must be nonempty and unique".into());
-                }
+            let label = format!("equation {:?}", equation.id);
+            if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
+                refuse(&origin, format!("{label}: ID must be nonempty and unique"));
+                continue;
+            }
+            // Inherited equations constrain each subtype's effective links, whose
+            // relations are distinct from the declaring type's relations.
+            let instances = catalog
+                .object_type_names()
+                .filter(|name| catalog.lineage(name).is_some_and(|l| l.contains(&owner)));
+            let id = format!("{}:path-equation:{}", artifact.artifact_id, equation.id);
+            let lower = |instance: &str| -> Result<Egd, String> {
                 let mut body = vec![Atom {
-                    relation: format!("concept:{}", owner.as_str()),
+                    relation: format!("concept:{instance}"),
                     terms: vec![Term::Var("root".into())],
                 }];
                 let (left_type, left) =
-                    equation_path(&catalog, owner.as_str(), &equation.left, "l", &mut body)?;
+                    equation_path(&catalog, instance, &equation.left, "l", &mut body)?;
                 let (right_type, right) =
-                    equation_path(&catalog, owner.as_str(), &equation.right, "r", &mut body)?;
-                if left_type != right_type {
+                    equation_path(&catalog, instance, &equation.right, "r", &mut body)?;
+                if instance == owner.as_str() && left_type != right_type {
                     return Err(format!(
-                        "endpoint types differ ({left_type} vs {right_type})"
+                        "endpoint types differ: {left_type} vs {right_type}"
                     ));
                 }
                 Ok(Egd {
-                    id: format!("{}:path-equation:{}", artifact.artifact_id, equation.id),
+                    id: if instance == owner.as_str() {
+                        id.clone()
+                    } else {
+                        format!("{id}:{instance}")
+                    },
                     origin: origin.clone(),
                     body,
                     left,
                     right,
                 })
-            })();
-            match lowered {
-                Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
-                Err(message) => refuse(&origin, format!("equation {:?}: {message}", equation.id)),
+            };
+            for instance in instances {
+                match lower(instance) {
+                    Ok(mut egd) => {
+                        if instance != owner.as_str() {
+                            egd.id = unique_inherited_id(egd.id, &mut rule_ids);
+                        }
+                        theory.dependencies.push(Dependency::Egd(egd));
+                    }
+                    Err(message) => refuse(&origin, format!("{label}: {message}")),
+                }
             }
         }
     }
-    if findings.is_empty() {
-        Ok(theory)
-    } else {
-        Err(findings)
-    }
+    findings.is_empty().then_some(theory).ok_or(findings)
 }
 
-fn equation_path(
+fn path_equation_declaration(
+    artifact: &norn_ir::ArtifactEnvelope,
+) -> Option<(
+    &norn_ir::ArtifactEnvelope,
+    norn_ir::ObjectTypeName,
+    norn_ir::JsonValue,
+)> {
+    use crate::entity_artifacts::{Decoded, decode_v2};
+    let Decoded::Root(root) = decode_v2(artifact) else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2(root) = *root else {
+        return None;
+    };
+    let value = root
+        .extensions
+        .as_ref()?
+        .get(norn_ir::entity::PATH_EQUATIONS_SLOT)?
+        .clone();
+    Some((artifact, root.object_type.name, value))
+}
+
+fn unique_inherited_id(mut id: String, used: &mut BTreeSet<String>) -> String {
+    while !used.insert(id.clone()) {
+        id.push_str(":inherited");
+    }
+    id
+}
+
+fn declared_equation_rule_ids(artifact: &str, value: &norn_ir::JsonValue) -> Vec<String> {
+    serde_json::to_value(value)
+        .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|equation| format!("{artifact}:path-equation:{}", equation.id))
+        .collect()
+}
+
+pub(crate) fn equation_path(
     catalog: &crate::entity_instance::EffectiveCatalog,
     owner: &str,
     path: &[String],

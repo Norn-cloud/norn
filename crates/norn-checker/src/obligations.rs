@@ -17,6 +17,8 @@ pub mod conservation;
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
 mod induction;
+/// Conjunction-only specialisation evidence provenance.
+pub mod specialisation;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
@@ -153,7 +155,7 @@ pub(crate) fn exact_artifact_digest(artifact: &ArtifactEnvelope) -> Result<Strin
 // SHA-256 over a fixed versioned prefix followed by u64 big-endian length-framed
 // domain and members. Framing is portable across native/WASM hosts and distinguishes
 // member splits, empty members, and domains without normalizing any input bytes.
-fn exact_commitment(domain: &[u8], members: &[&[u8]]) -> Result<String, ChallengeError> {
+pub(crate) fn exact_commitment(domain: &[u8], members: &[&[u8]]) -> Result<String, ChallengeError> {
     let mut hash = Sha256::new();
     hash.update(b"norn.obligation-exact/1\0");
     for bytes in std::iter::once(domain).chain(members.iter().copied()) {
