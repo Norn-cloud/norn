@@ -12,7 +12,7 @@ Reuse `RuleRoot`, `RuleDecisionV1`, `JdmGraph`, `SliceDeclaration`, `ZenExpressi
 | Operators | closed variants: select/filter/project/link/group/aggregate/classify/ordered_fold/as_of; typed member/expression references; each records dependencies and input completeness. No arbitrary function node. |
 | Ordered fold | `item_schema`, `accumulator_schema`, `initial: Exact record`, `order: [typed key + direction]` ending in stable ID, `step: pinned RuleIR`, `result: Expr`, `max_items`, `max_steps`, `scale`, `rounding`, residual/allocation provenance fields. Follow #323's wire contract when landed. |
 | Freshness policy | Reuse admitted `FreshnessPolicy::Live { max_age_ms }`, `Delayed { max_age_ms }`, `AsOf { at: UtcTimestamp }`; no replacement wire variants. Source completeness and unmet-policy handling are target query-plan fields, not changes to this enum; governed law reads always exact. |
-| Result envelope | `query_pin`, `engine: cell/ivm/olap`, `revision`, `effective_as_of`, `known_as_of`, `source_cursors: map(source,partition→cursor)`, `watermarks`, `freshness: exact/fresh/stale/incomplete`, `complete`, `grain`, `lineage_ref`, `rows`. |
+| Result envelope | `query_pin`, `engine: cell/ivm/olap`, `revision`, `effective_as_of`, `known_as_of`, `source_cursors: map(source,partition→cursor)`, `watermarks`, `freshness: exact/fresh/stale/incomplete`, `complete`, `grain`, `lineage_ref`, `exclusions: map(identity → finding_id)`, `rows`. |
 
 Derived concepts and questions share this algebra. Source cursors are opaque and compared only by their connector's declared ordering; never take a meaningless minimum across unrelated sources. Expose a vector frontier, not a fabricated global source sequence.
 
@@ -111,6 +111,25 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 **METRIC-ADDITIVITY-MIGRATION:** additivity changes aggregation semantics and the full plan/model contract, not which stored values are admitted. An additivity-only change remains a governed declared model change in `additivityChanges`, with previous/candidate classes, and never triggers a live-value narrowing scan. Actual kind, scale or constraint narrowing still scans, including when additivity changes in the same update. Object, link and nested-record property changes retain their affected identities; ledger summaries bound rows and identifiers.
 
 Named scenarios: `additivity_only_change_skips_live_scan_over_4096_rows` (Integer and Decimal), `additivity_change_with_value_narrowing_still_scans_live_rows`, `additivity_change_is_declared_separately_from_value_narrowing`, `additivity_changes_preserve_values_but_change_the_plan_contract`. Ratio authoring operands must match the complete `PropertyId` grammar before emission; `ratio operands must be complete PropertyId values` covers malformed operands.
+
+## Cell-owned quarantine exclusions (DATA-QUARANTINE)
+
+Question execution resolves exclusion identity → finding ID from durable open
+findings under their retained governing definitions. Recovery evaluates the
+selected record incarnation; historical selection admits only findings committed
+by its authenticated knowledge frontier. The existing observation findings read
+returns the evidence document (rule, source, offending values and reason).
+`QueryContext` cannot represent exclusions; unknown wire fields refuse decoding.
+Only `QueryResult.exclusions` carries engine-derived finding pins.
+Visible candidates only disclose exclusion pins. Incremental maintenance retracts
+changes in finding disposition even when the aggregate input is unchanged.
+Historical source-dispute overlays remain refused as
+`core.world.source_dispute_unqualified` until their frontier is retained.
+
+Named scenario: `data_quarantine_pins_real_findings_and_historical_recovery_equals_ivm`.
+
+Regression: `quarantined_restatement_rebuilds_from_result_context_and_rederives_finding_pins`
+checks that reusing an answer context re-derives pins at the historical frontier.
 ## Structural sum extraction
 
 `EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
