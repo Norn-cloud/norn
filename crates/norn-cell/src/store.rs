@@ -1985,7 +1985,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
-            store.transparency.replace(crate::transparency::load(&store.conn)?);
+            store
+                .transparency
+                .replace(crate::transparency::load(&store.conn)?);
         }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2151,7 +2153,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn init(conn: E, model: Model) -> Result<Self, CellError> {
         conn.transaction(|| Self::init_schema(&conn, &model))?;
-        let mut store = Self::unverified(conn, model);
+        let store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
@@ -2166,7 +2168,9 @@ impl<E: SqlEngine> CellStore<E> {
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
-        store.transparency.replace(crate::transparency::load(&store.conn)?);
+        store
+            .transparency
+            .replace(crate::transparency::load(&store.conn)?);
         Ok(store)
     }
 
@@ -2841,7 +2845,8 @@ impl<E: SqlEngine> CellStore<E> {
                 Ok((admitted, CommitOutcome::Replayed(receipt)))
             }
             (admitted, CommitOutcome::Committed(receipt)) => {
-                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq) {
+                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq)
+                {
                     self.transparency.borrow_mut().push(receipt.hash.clone());
                 } else {
                     self.refresh_transparency().map_err(GuardedError::Store)?;

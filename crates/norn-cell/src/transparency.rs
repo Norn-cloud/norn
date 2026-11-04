@@ -10,7 +10,10 @@ use ct_merkle::mem_backed_tree::MemoryBackedTree;
 use serde::Serialize;
 use transparency_sha2::Sha256;
 
-use crate::{CellError, CellStore, engine::{SqlEngine, params}};
+use crate::{
+    CellError, CellStore,
+    engine::{SqlEngine, params},
+};
 
 /// RFC 6962 inclusion path (concatenated SHA-256 hashes).
 pub type InclusionProof = ct_merkle::InclusionProof<Sha256>;
@@ -65,7 +68,8 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Current receipt-stream commitment. Ordinary commits append in O(log n)
     /// hash work after SQL success. Opening rebuilds the O(n) memory cache
-    /// from durable receipts; no network is involved.
+    /// from durable receipts; no network is involved. Catching up k commits
+    /// from another handle costs O(k log n); the cell runtime owns commit order.
     ///
     /// # Errors
     /// SQL failures while catching up receipts from another store handle.
@@ -79,7 +83,10 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// SQL failures while catching up receipts from another store handle.
-    pub fn transparency_inclusion(&self, index: usize) -> Result<Option<InclusionProof>, CellError> {
+    pub fn transparency_inclusion(
+        &self,
+        index: usize,
+    ) -> Result<Option<InclusionProof>, CellError> {
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         Ok(log.get(index).map(|_| log.prove_inclusion(index)))
@@ -92,13 +99,17 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     /// SQL failures or a tree too large for this platform.
-    pub fn transparency_consistency(&self, old_size: u64) -> Result<Option<ConsistencyProof>, CellError> {
+    pub fn transparency_consistency(
+        &self,
+        old_size: u64,
+    ) -> Result<Option<ConsistencyProof>, CellError> {
         self.refresh_transparency()?;
         let log = self.transparency.borrow();
         if old_size == 0 || old_size > log.len() {
             return Ok(None);
         }
-        let additions = usize::try_from(log.len() - old_size).map_err(|_| CellError::OutOfRange("transparency size"))?;
+        let additions = usize::try_from(log.len() - old_size)
+            .map_err(|_| CellError::OutOfRange("transparency size"))?;
         Ok(Some(log.prove_consistency(additions)))
     }
 }
