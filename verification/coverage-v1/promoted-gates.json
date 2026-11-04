@@ -849,6 +849,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "integer-negation-mutations",
+      "profile": "full",
+      "command": "python3 verification/implementation-v1/check_mutations.py --claim INV-CERT-INTEGER-NEGATION-CORRESPONDENCE",
+      "evidenceKind": "command",
+      "role": "evidence-integrity",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "integer-negation-kani",
       "profile": "full",
       "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse --harness integer_negation_correspondence verification/implementation-v1/rational_neg_kani.rs",
@@ -1245,21 +1260,6 @@
         {
           "subsystem": "verification-integrity",
           "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
-      "id": "integer-negation-mutations",
-      "profile": "full",
-      "command": "python3 verification/implementation-v1/check_mutations.py --claim INV-CERT-INTEGER-NEGATION-CORRESPONDENCE",
-      "evidenceKind": "command",
-      "role": "evidence-integrity",
-      "classifications": [
-        {
-          "subsystem": "assurance-certificates",
-          "layer": "proof"
         }
       ],
       "resultArtifacts": [],
