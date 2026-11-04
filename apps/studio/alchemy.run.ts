@@ -29,6 +29,8 @@ export const studio = await Vite("studio", {
   spa: true,
   url: false,
   adopt: true,
+  // Never write the Worker's secrets into the local wrangler.jsonc.
+  wrangler: { secrets: false },
   domains: target.domains.map((domainName) => ({ domainName, adopt: true })),
   ...agent === undefined ? { assets: "dist" } : {
     assets: { directory: "dist", run_worker_first: ["/api/*"] },
