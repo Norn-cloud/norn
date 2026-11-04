@@ -12,7 +12,7 @@ use query_support::*;
 
 const DIRECTORY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers");
 
-fn retained(name: &str, document: &impl serde::Serialize) {
+fn retained(name: &str, document: &(impl serde::Serialize + ?Sized)) {
     let path = format!("{DIRECTORY}/{name}");
     let mut text = serde_json::to_string_pretty(document).expect("exact JSON text");
     text.push('\n');
@@ -31,6 +31,8 @@ fn scrap_yield_answers_are_the_evaluators_exact_documents() {
     let (mut store, plan, context) = fixture();
     load(&mut store);
     retained("scrap-yield.question.json", plan.question());
+    retained("scrap-yield.metrics.json", plan.definitions());
+    retained("scrap-yield.object-type.json", &object_type());
     let k1 = KnowledgeCutoff {
         recorded_at: LogicalTime::from_millis(CLOCK),
         frontier: store.verified_head().expect("K1").commits,
@@ -39,14 +41,21 @@ fn scrap_yield_answers_are_the_evaluators_exact_documents() {
         .evaluate_question(&plan, context.clone(), |_| Ok(true))
         .expect("K1 answer");
     retained("scrap-yield.k1.answer.json", &live);
-    let mut quarantined = context.clone();
-    quarantined
-        .exclusions
-        .insert("SYN-MELT-15-1".into(), "core07-finding".into());
-    let excluded = store
-        .evaluate_question(&plan, quarantined, |_| Ok(true))
-        .expect("quarantined answer");
+    let (mut host, quarantine_plan, quarantine_context) = quality_fixture();
+    capture_quality(&mut host, 80_000, "bad-source");
+    let excluded = host
+        .store()
+        .evaluate_question(&quarantine_plan, quarantine_context.clone(), |_| Ok(true))
+        .expect("engine-owned quarantine answer");
+    let finding = host
+        .store()
+        .read()
+        .observation_findings(&quarantine_context.world, TYPE, "SYN-MELT-15-1")
+        .expect("finding")
+        .remove(0);
+    assert_eq!(excluded.exclusions.get("SYN-MELT-15-1"), Some(&finding.id));
     retained("scrap-yield.k1-quarantined.answer.json", &excluded);
+    retained("scrap-yield.quarantine.finding.json", &finding);
 
     let now = CLOCK.checked_add(86_400_000).expect("K2 clock");
     store

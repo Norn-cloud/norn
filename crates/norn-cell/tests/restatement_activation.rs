@@ -569,7 +569,7 @@ fn governed_activation_switches_all_slices_and_preserves_old_answers() {
     drop(interrupted);
     activate(&path, &model, "K2");
     let store = open(&path, &model);
-    assert_activated_showcase(&store, &context, &old, old_version, k2, &old_bytes);
+    assert_activated_showcase(&store, &plan, &context, &old, old_version, k2, &old_bytes);
 }
 fn interrupt_staging(
     store: &mut CellStore,
@@ -596,6 +596,7 @@ fn interrupt_staging(
 }
 fn assert_activated_showcase(
     store: &CellStore,
+    plan: &QuestionPlan,
     context: &QueryContext,
     old: &RestatementView,
     old_version: u64,
@@ -614,6 +615,18 @@ fn assert_activated_showcase(
     }
     assert_eq!(week(&current).totals[1].canonical(), "300");
     assert_eq!(week(&current).value.expect("ratio").canonical(), "0.975");
+    assert_same_slice(store, plan, context, k2);
+    for (id, operand, expected) in [("week", 0, "-1.5"), ("week", 1, "0"), ("loss", 0, "1.5")] {
+        let delta = &current.deltas[id];
+        assert_eq!(
+            signed_delta(
+                &delta.retract["\"2026-10-19\""].totals[operand],
+                &delta.replace["\"2026-10-19\""].totals[operand]
+            )
+            .canonical(),
+            expected
+        );
+    }
     let delta = &current.deltas["week"];
     assert_eq!(delta.retract["\"2026-10-19\""].totals[0].canonical(), "294");
     assert_eq!(
@@ -693,8 +706,12 @@ fn missing_incomplete_and_stale_candidates_never_replace_the_complete_output() {
     let mut incomplete = requests(&plan, &context, point);
     incomplete[0]
         .context
-        .exclusions
-        .insert("SYN-MELT-15-1".into(), "quarantine".into());
+        .watermarks
+        .get_mut("erp")
+        .expect("source")
+        .get_mut("measurements")
+        .expect("partition")
+        .complete = false;
     assert!(
         store
             .prepare_restatement(build, incomplete, |_| Ok(true))

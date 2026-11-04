@@ -3,6 +3,8 @@ import { readDocument, type Read } from "./exact.ts"
 
 export type Question = Schemas["NornIrQuestion"]
 export type Answer = Schemas["NornQueryResult"]
+export type Metric = Schemas["NornIrMetricDefinition"]
+export type ObjectType = Schemas["NornIrObjectTypeDef"]
 export type Artifact = Schemas["NornArtifactEnvelope"]
 export type ObjectPage = Schemas["NornObjectPage"]
 export type ObjectRecord = Schemas["NornObjectRecord"]
@@ -20,6 +22,10 @@ export interface ObjectReads {
 export interface QuestionAnswer {
   readonly question: Read<Question>
   readonly answer: Read<Answer>
+  /** The metric declarations the question was admitted with. */
+  readonly metrics: Read<readonly Metric[]>
+  /** The object type the answer's records belong to, with each property's unit. */
+  readonly objectType: Read<ObjectType>
 }
 
 /** The app's only way to read server documents. Live HTTP joins once the host's read API lands. */
@@ -52,6 +58,8 @@ export const recordedTransport: Transport = {
   questionBoard: async () => [{
     question: recorded<Question>("answers/scrap-yield.question.json"),
     answer: recorded<Answer>("answers/scrap-yield.k1.answer.json"),
+    metrics: recorded<readonly Metric[]>("answers/scrap-yield.metrics.json"),
+    objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
   }],
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
   objectPage: async (objectType) => optional<ObjectPage>(`explorer/objects/${objectType}.page.json`),

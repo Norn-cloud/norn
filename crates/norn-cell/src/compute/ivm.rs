@@ -7,7 +7,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{QuestionPlan, contribution::project};
 use norn_ir::ResourceLimitProfile;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Private complete generation; restart explicitly rebuilds from the cell.
 #[derive(Clone)]
@@ -108,6 +108,7 @@ impl IncrementalQuestion {
     }
 
     /// RESTATE-HISTORY-1: retract/replace only receipt-changed members at the next slice.
+    /// ASOF-KNOWLEDGE-1: maintenance retains the declared `AsOf` instant.
     /// This maintains a private cache; governed activation and durable outputs are separate.
     /// # Errors
     /// Backward/skipped frontiers, changed authority/interpretation or any source refusal.
@@ -121,6 +122,13 @@ impl IncrementalQuestion {
         let prior = self
             .knowledge
             .ok_or_else(|| refused("core.world.invalid_restatement"))?;
+        if matches!(
+            self.plan.question().freshness,
+            norn_ir::metric::FreshnessPolicy::AsOf { .. }
+        ) && !super::asof_matches(&self.plan, cutoff.recorded_at.as_millis())
+        {
+            return Err(refused("core.compute.stale_input"));
+        }
         if !crate::history_selection::next_known_slice(
             prior.frontier,
             prior.recorded_at.as_millis(),
@@ -186,7 +194,6 @@ impl IncrementalQuestion {
         head: &crate::LedgerHead,
     ) -> Result<BTreeSet<String>, CellError> {
         let reader = store.read();
-        let old = &self.result.context;
         let stale = || refused("core.compute.stale_input");
         let mut changed = BTreeSet::new();
         if head != &self.result.revision {
@@ -215,13 +222,6 @@ impl IncrementalQuestion {
                 );
             }
         }
-        changed.extend(
-            old.exclusions
-                .keys()
-                .chain(context.exclusions.keys())
-                .filter(|id| old.exclusions.get(*id) != context.exclusions.get(*id))
-                .cloned(),
-        );
         Ok(changed)
     }
 
@@ -231,6 +231,7 @@ impl IncrementalQuestion {
         context: QueryContext,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<(), CellError> {
+        let mut exclusions = BTreeMap::new();
         let definition_pin = self.check_binding(store, &context)?;
         let stale = || refused("core.compute.stale_input");
         let reader = store.read();
@@ -242,13 +243,12 @@ impl IncrementalQuestion {
         } else {
             (verified, None)
         };
-        let changed = self.changed_keys(store, &context, &head)?;
+        let mut changed = self.changed_keys(store, &context, &head)?;
         let mut history = reader.history_read_seeded(receipt);
-        for id in changed {
-            if let Some((_, previous)) = self.contributions.remove(&id) {
-                self.totals.adjust(&previous, true)?;
-            }
-            let record = if let Some(cutoff) = self.knowledge {
+        let candidates: BTreeSet<_> = self.members.union(&changed).cloned().collect();
+        let mut records = BTreeMap::new();
+        for id in candidates {
+            let selected = if let Some(cutoff) = self.knowledge {
                 super::historical::historical_record(
                     &mut history,
                     &context.world,
@@ -266,24 +266,45 @@ impl IncrementalQuestion {
                     &mut budget,
                 )?
             };
-            match record {
+            match selected {
                 BudgetedRead::Found(record) => {
-                    if record.scope != context.scope {
-                        return Err(stale());
-                    }
+                    let authorized = context.include_record(
+                        &reader,
+                        &record,
+                        self.knowledge.map(|c| c.frontier),
+                        &mut exclusions,
+                        visible,
+                    )?;
+                    records.insert(id, (record, authorized));
+                }
+                BudgetedRead::Missing => {}
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            }
+        }
+        let old = &self.result.exclusions;
+        changed.extend(
+            old.keys()
+                .chain(exclusions.keys())
+                .filter(|id| old.get(*id) != exclusions.get(*id))
+                .cloned(),
+        );
+        for id in changed {
+            if let Some((_, previous)) = self.contributions.remove(&id) {
+                self.totals.adjust(&previous, true)?;
+            }
+            match records.remove(&id) {
+                Some((record, authorized)) => {
                     self.members.insert(id.clone());
-                    if visible(&record)?
-                        && !context.exclusions.contains_key(&id)
+                    if authorized
                         && let Some(value) = project(&self.plan, &record.values).map_err(refused)?
                     {
                         self.totals.adjust(&value, false)?;
                         self.contributions.insert(id, (record.version, value));
                     }
                 }
-                BudgetedRead::Missing => {
+                None => {
                     self.members.remove(&id);
                 }
-                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             }
         }
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
@@ -291,7 +312,7 @@ impl IncrementalQuestion {
         }
         let mut result = finish(
             &self.plan,
-            context,
+            (context, exclusions),
             head,
             super::historical::query_pin(
                 store.model().model_hash(),

@@ -20,9 +20,30 @@ export interface Relationship {
   readonly count: "many" | "one" | "at most one"
 }
 
+/** Where one fact's value comes from in one source record, as the mapping declares it. */
+export type Source =
+  | { readonly kind: "field"; readonly field: string }
+  | { readonly kind: "fixed"; readonly value: string }
+  | { readonly kind: "empty" }
+  | { readonly kind: "computed"; readonly expression: string }
+  | { readonly kind: "nested"; readonly dataset: string; readonly collection: string; readonly where: string; readonly value: Source }
+  | { readonly kind: "transition"; readonly expression: string }
+  | { readonly kind: "gap"; readonly reason: "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere"; readonly note: string | undefined }
+
 export interface Feed {
   readonly system: string
   readonly dataset: string
+  /** Declared sources per fact or relationship id (a link may be declared more than once); one missing here is not mapped by this system. */
+  readonly facts: ReadonlyMap<string, readonly Source[]>
+}
+
+/** Read one declared mapping expression: `input.code`, `'on_hand'`, `null` or anything else. */
+export function sourceOf(expression: string): Source {
+  const field = /^input\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression)
+  if (field?.[1]) return { kind: "field", field: field[1] }
+  const fixed = /^'([^']*)'$/.exec(expression)
+  if (fixed?.[1] !== undefined) return { kind: "fixed", value: fixed[1] }
+  return expression === "null" ? { kind: "empty" } : { kind: "computed", expression }
 }
 
 export interface Concept {
@@ -116,13 +137,25 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
     }
   }
   for (const artifact of artifacts) {
-    if (artifact.kind !== "mapping") continue
+    // Interpretation documents carry no source maps; only source mappings feed concepts.
+    if (artifact.kind !== "mapping" || !("maps" in artifact.payload)) continue
     const system = systemName(sourceSystem.get(artifact.payload.source.schemaId) ?? artifact.payload.source.schemaId)
     const targets = new Set<string>()
     for (const map of artifact.payload.maps) {
       const target = entityName.get(map.target.entity) ?? map.target.entity
       targets.add(target)
-      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset }])
+      const facts = new Map<string, Source[]>()
+      const add = (id: string, source: Source) => facts.set(id, [...facts.get(id) ?? [], source])
+      for (const { property, value, nested } of map.properties ?? []) {
+        add(property, nested ? { kind: "nested", dataset: nested.dataset, collection: nested.field, where: nested.where, value: sourceOf(value) } : sourceOf(value))
+      }
+      for (const { link, key } of map.links ?? []) add(link, sourceOf(key))
+      for (const { property, state, transition } of map.lifecycles ?? []) {
+        if (state !== undefined) add(property, sourceOf(state))
+        else if (transition !== undefined) add(property, { kind: "transition", expression: transition })
+      }
+      for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", reason, note }])
+      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]
     systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets] })
