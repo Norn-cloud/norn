@@ -35,7 +35,7 @@ The stable app ID is the root composition-pack instance’s `instance_id`, resol
 1. Resolve an acyclic exact dependency graph and explicit instances. Type/unit substitutions instantiate inherited laws and member contracts before checking executable writers. Two instances of one generic ledger may use USD and fine grams; currency-specific laws never apply to grams by accident.
 2. B1 checks source-required totality, member kind, relation role/target/cardinality, identity and unit/scale compatibility. B3 reconstructs each admitted layer using `verify_admission_receipt` against already checked predecessors. Reject forged/reordered/missing receipts, same-version byte changes and lossy numbers; flat multilayer input still refuses without retained authority.
 3. Generate mapping totality/domain coverage, identity/unit preservation, transition simulation and law-preservation goals, plus per-writer refinement over all layers. Neither a reviewed mapping nor a receipt proves those goals. Bind complete paths and source/member interpretations into the challenge.
-4. Resolve runtime settings by explicitly ordered scope precedence, then effective interval at the action's declared effective date, within its recorded-time snapshot. Equal-precedence overlapping candidates refuse. If no candidate matches, require an explicit default or refuse with `core.composition.parameter_missing`; never leave the setting unbound. Replace binary64 economic settings with common exact types; persist selected version in the commit.
+4. Resolve runtime settings by explicitly ordered scope precedence, then effective interval at the action's declared effective date, within its recorded-time snapshot. Equal-precedence overlapping candidates refuse. When a higher-precedence scope has no active candidate, resolution falls through to the next scope. Only when no scope has an active candidate, require an explicit default or refuse with `core.composition.parameter_missing`; never leave the setting unbound. Replace binary64 economic settings with common exact types; persist selected version in the commit.
 5. Overlays are scoped conjunctions on pinned definitions, independent of declaration order; contradictory guards or impossible progress refuse within the supported analysis profile. New behavior has a new action identity. Restrictiveness is logical implication: effective guard = `base ∧ overlay`, monotone by construction; no numeric order is inferred or declared. The initial analysis profile is specified below.
 6. Plan migration against pinned definitions/data. Keep in-flight instances/pending effects on their original version unless explicitly transformed; preflight keys, links, states, settings, authority and laws. Atomically activate within a cell with conflict checks and projection generation switch. Larger migrations expose governed resumable availability; rollback is a new validated migration. Never reinterpret old event bytes silently.
 
@@ -46,6 +46,7 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 - An overlay may only conjoin (a) quantifier-free guards over the target's typed fields, admitted parameters and action inputs using exact-decimal linear arithmetic, enum and identity equality, and booleans; or (b) additional obligations or laws on the same target.
 - The checker generates a satisfiability obligation for `base ∧ overlay` and dispatches it to the existing SMT path. Unsatisfiable on every admissible input refuses with `core.composition.overlay_conflict`.
 - For each statechart transition an `eventually` / `until` law requires to be enabled, check that conjunction for satisfiability within the reachable-state invariant. Unsatisfiable refuses with the same code and `reason: impossible_progress`.
+- Satisfiability is a necessary refusal check, not a progress proof. Passing leaves progress `unknown` unless a generated liveness obligation is discharged.
 - Anything outside the fragment refuses with `core.composition.overlay_conflict` and `reason: unsupported_predicate`, including function or `perform` calls, quantifiers, non-linear arithmetic and opaque constraints. Never assume compatibility.
 
 | Invariant / layer | Stable target diagnostic |
@@ -59,6 +60,10 @@ Per the [coordinator ruling, point 2](https://github.com/Norn-cloud/norn/issues/
 | MIGRATE-PIN-1: explicit migration for in-flight work; admission/commit | `core.composition.migration_required` |
 
 Evidence: structural identity/admission, runtime activation/parameter pins, generated interpretation/refinement goals; semantic preservation stays unknown until checked. Published releases pin IR, dependencies, parameter schema, migrations, Function/tool digests and evidence.
+
+`OVERLAY-LINEAR-1` projects the supported typed Boolean/linear/equality syntax into source-derived SMT goals using the ordinary bounded parser and type environment. Unsupported AST forms and string characters outside SMT Unicode planes 0–2 refuse; projection alone supplies no solver evidence or admission authority.
+
+`overlay_obligations` binds a pending entity-guard conjunction to checked B3 retained layers and B2 law instances. Replacement, stale target pins and unsupported syntax refuse through `core.composition.overlay_conflict`. Pending goals grant no admission or proof; solver dispatch, progress analysis and additional-law overlays remain unqualified in this preparatory cut.
 
 ## Named acceptance scenarios
 

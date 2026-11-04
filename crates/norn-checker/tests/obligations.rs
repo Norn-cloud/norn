@@ -1422,3 +1422,75 @@ proptest::proptest! {
         proptest::prop_assert_eq!(changed.bind_submission(original.body()), Err(ChallengeError::InvalidSubmission));
     }
 }
+
+proptest::proptest! {
+#[test]
+fn overlay_monotone_retains_authority_and_refuses_replacement_or_stale_pins(paid in proptest::bool::ANY) {
+    use norn_checker::overlay::overlay_obligations;
+    let layers = retained_fixture();
+    let retained = verify_layers(&layers).expect("B3 authority");
+    let target = &retained.artifacts()[0];
+    let pin = norn_checker::ArtifactRef::of(target).expect("pin");
+    let mut envelope: norn_ir::ArtifactEnvelope = serde_json::from_str(include_str!(
+        "../../../fixtures/ir/retail-sku-reorder-point.customization.json"
+    ))
+    .expect("customization template");
+    envelope.dependencies.clear();
+    envelope.scope = target.scope.clone();
+    let mut overlay: norn_ir::CustomizationRoot = serde_json::from_value(
+        serde_json::to_value(envelope.payload.to_json_value()).expect("payload"),
+    )
+    .expect("typed customization");
+    overlay.target_artifact.artifact_id = target.artifact_id.clone();
+    overlay.target_artifact.version = target.version.clone();
+    overlay.target_artifact.additional = std::collections::BTreeMap::from([(
+        "sha256".into(),
+        norn_ir::JsonValue::String(pin.sha256),
+    )]);
+    let additional = std::collections::BTreeMap::from([
+        ("id".into(), norn_ir::JsonValue::String("paid_only".into())),
+        (
+            "expression".into(),
+            norn_ir::JsonValue::String(format!("self.paid == {paid}")),
+        ),
+    ]);
+    overlay.overlay.operations = vec![norn_ir::CustomizationOverlayOp::AddValidation {
+        additional: additional.clone(),
+    }];
+    let base = serde_json::to_string(retained.artifacts()).expect("base source");
+    let input = |overlay: &norn_ir::CustomizationRoot| {
+        let mut candidate = envelope.clone();
+        candidate.payload = norn_ir::ArtifactPayload::from_kind_json(
+            &norn_ir::ArtifactKind::Customization,
+            serde_json::from_value(serde_json::to_value(overlay).expect("typed overlay"))
+                .expect("payload JSON"),
+        )
+        .expect("envelope payload");
+        DefinitionSource::parse(&serde_json::to_string(&[candidate]).expect("source"), &base)
+            .expect("exact source")
+    };
+    let source = input(&overlay);
+    let plan = overlay_obligations(&source, &retained, &target.scope).expect("pending goals");
+    assert_eq!(plan.source_sha256(), source.exact_digest());
+    assert_eq!(plan.retained_sha256(), retained.exact_digest());
+    assert!(!plan.goals().next().expect("goal").1.is_empty());
+    overlay.overlay.operations =
+        vec![norn_ir::CustomizationOverlayOp::UpdateValidation { additional }];
+    let error = overlay_obligations(&input(&overlay), &retained, &target.scope)
+        .expect_err("replacement refuses");
+    assert_eq!(
+        (error.code(), error.reason()),
+        ("core.composition.overlay_conflict", "weakens_inherited")
+    );
+    overlay
+        .target_artifact
+        .additional
+        .insert("sha256".into(), norn_ir::JsonValue::String("0".repeat(64)));
+    assert_eq!(
+        overlay_obligations(&input(&overlay), &retained, &target.scope)
+            .expect_err("stale pin")
+            .reason(),
+        "unresolved_pin"
+    );
+}
+}
