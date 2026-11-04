@@ -717,13 +717,17 @@ fn obs_link_unrelated_item_labels_do_not_spend_the_claim_budget() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup(&directory.path().join("labels.sqlite"));
     let source = fixture("erpnext");
-    let template = source["snapshot"].as_array().expect("rows").iter()
-        .find(|row| row["dataset"] == "Item").expect("Item");
-    for index in 0..1001 {
+    let template = source["snapshot"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["dataset"] == "Item")
+        .expect("Item");
+    for index in 0..33 {
         let mut row = template.clone();
         row["record"]["name"] = json!(format!("SYN-OTHER-{index}"));
         row["record"]["custom_norn_ref"] = json!(format!("demo/item/other/{index}"));
-        row["record"]["code"] = json!(format!("OTHER-{index}"));
+        row["record"]["code"] = json!(format!("OTHER-{index}-{}", "x".repeat(160_000)));
         row["record"]["label"] = json!("demo/item/probe");
         capture(&mut cell, "erpnext", &row, "snapshot");
     }
@@ -731,5 +735,6 @@ fn obs_link_unrelated_item_labels_do_not_spend_the_claim_budget() {
     probe["record"]["name"] = json!("SYN-PROBE");
     probe["record"]["custom_norn_ref"] = json!("demo/item/probe");
     let id = retain_in(&mut cell, "erpnext", &probe, "snapshot", "snapshot");
-    cell.process_mapping_bundle(&id).expect("unrelated labels are not link claims");
+    cell.process_mapping_bundle(&id)
+        .expect("unrelated labels are not link claims");
 }

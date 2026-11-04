@@ -47,9 +47,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 )?);
             }
         } else {
-            rows = self
-                .conn
-                .query(&format!("{select} {journal} {order} LIMIT {cap}"), params![])?;
+            rows = self.conn.query(
+                &format!("{select} {journal} {order} LIMIT {cap}"),
+                params![],
+            )?;
         }
         let mut selected = BTreeMap::new();
         for row in rows {
@@ -61,7 +62,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         if selected.len() > limit {
             return Err(CellError::OutOfRange("link claim bundles"));
         }
-        if selected.values().fold(0u64, |sum, length| sum.saturating_add(*length)) > 4 * 1024 * 1024
+        if selected
+            .values()
+            .fold(0u64, |sum, length| sum.saturating_add(*length))
+            > 4 * 1024 * 1024
         {
             return Err(CellError::OutOfRange("link claim evidence bytes"));
         }
@@ -164,7 +168,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .iter()
             .map(|record| record.key.clone())
             .chain(current.iter().map(|claim| claim.source_key.clone()))
-            .chain(current.iter().filter_map(|c| c.target.as_ref().map(|t| t.key.clone())))
+            .chain(
+                current
+                    .iter()
+                    .filter_map(|c| c.target.as_ref().map(|t| t.key.clone())),
+            )
             .collect();
         let mut claims = self.retained_link_claims(Some(bundle), Some(&scope), true)?;
         let model = CommitModel::new(&catalog);
@@ -388,7 +396,10 @@ mod tests {
 
     #[test]
     fn obs_link_budget_bounds_the_scoped_claim_set_not_the_journal() {
-        let store = CellStore::open_in_memory(Model::from_definitions_with_interfaces(&[], &[], &[]).expect("model")).expect("store");
+        let store = CellStore::open_in_memory(
+            Model::from_definitions_with_interfaces(&[], &[], &[]).expect("model"),
+        )
+        .expect("store");
         consumed(&store, 1, "demo/\"quoted\"");
         for position in 2..=1002 {
             consumed(&store, position, &format!("demo/other/{position}"));
@@ -400,7 +411,10 @@ mod tests {
             reader.claim_bundles(Some(&scope), 1000).expect("scoped"),
             ["mapping-bundle:1", "mapping-bundle:1003"],
         );
-        for refused in [reader.claim_bundles(None, 1000), reader.claim_bundles(Some(&scope), 1)] {
+        for refused in [
+            reader.claim_bundles(None, 1000),
+            reader.claim_bundles(Some(&scope), 1),
+        ] {
             assert!(matches!(
                 refused,
                 Err(CellError::OutOfRange("link claim bundles"))
