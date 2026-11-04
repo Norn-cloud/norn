@@ -175,7 +175,7 @@ fn rounding_scales_and_non_nfc_buckets_preserve_envelopes_after_correction_and_r
         let (mut store, plan, context) = scaled_fixture(scales, false);
         for recovered in [recovered, recovered.checked_neg().expect("bounded sign")] {
             commit(&mut store, vec![scaled_row(id, input, recovered, scales)]);
-            compare(&store, &plan, context.clone());
+            assert_eq!(compare(&store, &plan, context.clone()).rows.len(), 1);
         }
         commit(
             &mut store,
@@ -184,7 +184,7 @@ fn rounding_scales_and_non_nfc_buckets_preserve_envelopes_after_correction_and_r
                 key: id.into(),
             }],
         );
-        compare(&store, &plan, context);
+        assert!(compare(&store, &plan, context).rows.is_empty());
     }
 }
 
