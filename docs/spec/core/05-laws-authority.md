@@ -207,9 +207,12 @@ the emitted schema reject every other combination. Named refusal scenario:
 Rust also enforces document count relations at both wire boundaries:
 `total == goals.len()`, `eligible == count(goals where eligible)`, and
 `discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Rust also rejects duplicate goal indices at both boundaries. Indices refer to
+the retained Challenge, so a per-law document may contain non-contiguous indices.
 Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
 `document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
 `document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
+Named index scenario: `document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries`.
 Exact trace quantities serialize as canonical integer text with declared scale
 and units; counterexamples and non-vacuity witnesses have distinct kinds.
 Runtime enforcement and application parity links are either independently
