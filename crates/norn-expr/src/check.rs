@@ -87,7 +87,8 @@ use std::fmt;
 use std::rc::Rc;
 
 use zen_expression::functions::{
-    ClosureFunction, FunctionKind, InternalFunction, MAX_TAKE_SCALARS, MAX_TOKEN_BYTES, MAX_TOKEN_COUNT,
+    ClosureFunction, FunctionKind, InternalFunction, MAX_TAKE_SCALARS, MAX_TOKEN_BYTES,
+    MAX_TOKEN_COUNT,
 };
 use zen_expression::intellisense::diagnostic::Severity;
 use zen_expression::intellisense::{AstMetadata, IntelliSense};
