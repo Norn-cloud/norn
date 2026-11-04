@@ -84,8 +84,8 @@ export function Submenu({ section }: { readonly section: Section }) {
       <SidebarHeader className="gap-2 px-5 pt-6 pb-3">
         <div className="text-[1.75rem] leading-tight font-semibold tracking-tight">{section.label}</div>
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-fit items-center gap-1 rounded-md text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
-            Recorded · synthetic world <ChevronDown className="size-4" />
+          <DropdownMenuTrigger className="flex w-fit max-w-full items-center gap-1 rounded-md text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30">
+            <span className="truncate" title="Recorded · synthetic world">Recorded · synthetic world</span> <ChevronDown className="size-4 shrink-0" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuLabel>Data</DropdownMenuLabel>
