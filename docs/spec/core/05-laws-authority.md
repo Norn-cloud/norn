@@ -184,6 +184,11 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
+**PROOF-GUARANTEE-1:** an ineligible goal must have Unknown verdict and level;
+decoding and encoding reject any other combination. The emitted schema carries
+the same constraint. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
+
 **PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
