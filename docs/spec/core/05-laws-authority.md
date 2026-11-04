@@ -165,23 +165,10 @@ bytes must also match the pre-refactor generator's check-time golden outputs.
 Constructing or inspecting the relation supplies no solver verdict or authority.
 
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
-`norn_checker::obligations::quint::driver` producer/binder reconstructs every Challenge, checks controller-retained model
+producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
 identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
 pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
-
-Compiler transport must not determine discharge. Flattened Quint JSON uses the
-pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
-The initializer conversion accepts only a complete constant assignment to each
-state variable, with no initializer reuse; it changes assignment to equality
-only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
-as Unknown. Both compilation stages share the existing 120-second budget and
-own their process groups. The independent Apalache CLI checks the same emitted
-TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
-exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
-an exact typed ITF trace and agreement with the primary trace shape. Other exits,
-missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
-real generated output must match the prior RPC compiler bytes.
 
 Qualification is restricted to integer/Boolean states and one worker. Raw
 successful universal searches require nonempty initialization, a drained queue
@@ -210,6 +197,9 @@ are bless-gated fixtures from actual backend output, not fresh solver verdicts.
 law artifact/version, bounded verdict and evidence level as closed enums,
 Challenge identity, exact bounds JSON, actual tool/result pins and the complete
 generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+An ineligible goal must have Unknown verdict and level; encoding, decoding and
+the emitted schema reject every other combination. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
 Exact trace quantities serialize as canonical integer text with declared scale
 and units; counterexamples and non-vacuity witnesses have distinct kinds.
 Runtime enforcement and application parity links are either independently

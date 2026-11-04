@@ -117,8 +117,9 @@ pub struct GuaranteeScenario {
 }
 
 /// One generated obligation, including every unsupported goal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(transform = ineligible_is_unknown)]
 pub struct GoalGuarantee {
     /// Index in the retained Challenge.
     pub index: u32,
@@ -135,6 +136,64 @@ pub struct GoalGuarantee {
     pub evidence: Option<EvidenceRecord>,
     /// Actual trace when a counterexample or reachability witness was returned.
     pub scenario: Option<GuaranteeScenario>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(
+    remote = "GoalGuarantee",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+struct GoalGuaranteeWire {
+    index: u32,
+    goal_kind: String,
+    eligible: bool,
+    verdict: GuaranteeVerdict,
+    level: GuaranteeLevel,
+    evidence: Option<EvidenceRecord>,
+    scenario: Option<GuaranteeScenario>,
+}
+
+impl GoalGuarantee {
+    fn eligibility_valid(&self) -> bool {
+        self.eligible
+            || (matches!(self.verdict, GuaranteeVerdict::Unknown { .. })
+                && matches!(self.level, GuaranteeLevel::Unknown { .. }))
+    }
+}
+impl Serialize for GoalGuarantee {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if !self.eligibility_valid() {
+            return Err(serde::ser::Error::custom(
+                "ineligible goals require Unknown verdict and level",
+            ));
+        }
+        GoalGuaranteeWire::serialize(self, serializer)
+    }
+}
+impl<'de> Deserialize<'de> for GoalGuarantee {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let goal = GoalGuaranteeWire::deserialize(deserializer)?;
+        if !goal.eligibility_valid() {
+            return Err(serde::de::Error::custom(
+                "ineligible goals require Unknown verdict and level",
+            ));
+        }
+        Ok(goal)
+    }
+}
+fn ineligible_is_unknown(schema: &mut schemars::Schema) {
+    schema.insert(
+        "oneOf".into(),
+        serde_json::json!([
+            {"properties":{"eligible":{"const":true}},"required":["eligible"]},
+            {"properties":{
+                "eligible":{"const":false},
+                "verdict":{"properties":{"kind":{"const":"unknown"}}},
+                "level":{"properties":{"kind":{"const":"unknown"}}}
+            },"required":["eligible"]}
+        ]),
+    );
 }
 
 /// The presentation contract consumed by Studio; identity alone grants no verdict.
@@ -294,6 +353,36 @@ mod tests {
                 .expect("decode"),
                 value
             );
+        }
+    }
+
+    #[test]
+    fn ineligible_goals_require_unknown_on_both_wire_boundaries() {
+        use super::GoalGuarantee;
+        let unknown = json!({"kind":"unknown","reason":"outside qualified fragment"});
+        for eligible in [false, true] {
+            for verdict in [
+                unknown.clone(),
+                json!({"kind":"bounded-pass"}),
+                json!({"kind":"refuted"}),
+            ] {
+                for level in [
+                    unknown.clone(),
+                    json!({"kind":"exhaustive-finite/bounded"}),
+                    json!({"kind":"runtime-enforced"}),
+                    json!({"kind":"parity-tested"}),
+                ] {
+                    let input = json!({"index":0,"goalKind":"preservation","eligible":eligible,"verdict":verdict,"level":level,"evidence":null,"scenario":null});
+                    let valid = eligible || (verdict == unknown && level == unknown);
+                    assert_eq!(
+                        serde_json::from_value::<GoalGuarantee>(input.clone()).is_ok(),
+                        valid
+                    );
+                    let mut constructed:GoalGuarantee=serde_json::from_value(json!({"eligible":true,"index":0,"goalKind":"preservation","verdict":verdict,"level":level,"evidence":null,"scenario":null})).expect("eligible fixture");
+                    constructed.eligible = eligible;
+                    assert_eq!(serde_json::to_value(&constructed).is_ok(), valid);
+                }
+            }
         }
     }
 
