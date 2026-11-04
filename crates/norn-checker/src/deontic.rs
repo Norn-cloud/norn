@@ -1,5 +1,5 @@
-//! Deterministic, conservative lowering of normative declarations (#3563/#3320).
-//! This is not signature verification, admission, a proof or an evaluator.
+//! Conservative lowering and finite admission of normative declarations.
+//! Structural authority bindings grant no permissions or proof status.
 use norn_ir::deontic::{DeonticModality, DeonticRule, RuleSourceSpan};
 use norn_ir::{LawIR, LawModality, LawResponse, LawRoot};
 
@@ -386,6 +386,206 @@ fn normative_binding(rule: &DeonticRule, first: &DeonticRule) -> bool {
         })
 }
 
+/// Customer-authored declarations in the existing `EntityIR` extension map.
+pub const NORMATIVE_SLOT: &str = "norn.normative/1.0.0";
+/// One whole-admission query ceiling; unknown always refuses admission.
+const ADMISSION_CALLS: usize = 4096;
+
+pub(crate) fn check_declared_order_set(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> Vec<crate::Diagnostic> {
+    match admission_order(artifacts, base) {
+        Ok(Some(report)) => report.diagnostics,
+        Ok(None) => Vec::new(),
+        Err(error) => vec![crate::consistency::finding(
+            "consistency.diagnosis.unknown",
+            crate::DiagnosticSeverity::Error,
+            format!(
+                "Normative admission refused: {error}. Limits: 64 declarations, 256 contexts, 8192 evaluations, {ADMISSION_CALLS} diagnosis queries."
+            ),
+            None,
+        )],
+    }
+}
+
+fn admission_order(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+) -> Result<Option<crate::norm_precedence::DeclaredOrderReport>, String> {
+    use crate::norm_precedence::{ConstitutionLayer, diagnose_declared_order};
+    use std::collections::BTreeSet;
+    let mut rules = Vec::new();
+    let mut layers = Vec::new();
+    let mut protected = BTreeSet::new();
+    let mut schema = None;
+    for (artifact, inherited) in base
+        .iter()
+        .map(|a| (a, true))
+        .chain(artifacts.iter().map(|a| (a, false)))
+    {
+        let payload =
+            serde_json::to_value(artifact.payload.to_json_value()).map_err(|e| e.to_string())?;
+        let Some(extensions) = payload
+            .get("extensions")
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        if !extensions
+            .keys()
+            .any(|key| key.starts_with("norn.normative/"))
+        {
+            continue;
+        }
+        if extensions
+            .keys()
+            .any(|key| key.starts_with("norn.normative/") && key != NORMATIVE_SLOT)
+        {
+            return Err("unsupported normative extension version".into());
+        }
+        let crate::entity_artifacts::Decoded::Root(root) =
+            crate::entity_artifacts::decode_v2(artifact)
+        else {
+            return Err("normative carrier requires an admitted EntityIR v2 object type".into());
+        };
+        if !matches!(*root, norn_ir::EntityRoot::V2(_)) {
+            return Err("normative carrier kind is unsupported".into());
+        }
+        let value = extensions
+            .get(NORMATIVE_SLOT)
+            .ok_or("missing normative declaration slot")?;
+        let declared: Vec<DeonticRule> = serde_json::from_slice(
+            &norn_canonical::canonical_json_of(value).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        if rules.len().saturating_add(declared.len())
+            > crate::consistency::diagnosis::MAX_DECLARATIONS
+        {
+            return Err("declaration limit".into());
+        }
+        for (index, rule) in declared.into_iter().enumerate() {
+            let pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+            if rule.source.artifact_id != artifact.artifact_id || rule.source.pointer != pointer {
+                return Err(
+                    "normative source/subject does not identify its containing artifact".into(),
+                );
+            }
+            if rule.law.scope.object_types != [rule.law.subject.clone()] {
+                return Err("normative scope must name exactly its grounded subject".into());
+            }
+            let derived = admission_schema(&rule.law.subject, artifacts, base, artifact)?;
+            if schema.as_ref().is_some_and(|prior| prior != &derived) {
+                return Err("different subject domains are unsupported".into());
+            }
+            schema = Some(derived);
+            if inherited {
+                protected.insert(rules.len());
+            }
+            layers.push(if inherited {
+                ConstitutionLayer::Legal
+            } else {
+                ConstitutionLayer::Company
+            });
+            rules.push(rule);
+        }
+    }
+    if rules.is_empty() {
+        return Ok(None);
+    }
+    if artifacts
+        .iter()
+        .chain(base)
+        .any(|a| a.kind() == norn_ir::ArtifactKind::Law)
+    {
+        return Err("mixed ordinary LawIR and normative declarations require unsupported joint grounding; no inherited law is ignored".into());
+    }
+    let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
+        .map_err(|e| format!("{e:?}"))?;
+    diagnose_declared_order(
+        &lowered.norms,
+        &lowered.origins,
+        &layers,
+        &lowered.edges,
+        &installed_protection(&protected, &lowered.edges),
+        lowered.contexts,
+        ADMISSION_CALLS,
+    )
+    .map(Some)
+    .map_err(|e| format!("{e:?}"))
+}
+
+fn normative_schema(object: &norn_ir::ObjectTypeDef) -> Result<norn_expr::schema::Schema, String> {
+    use norn_expr::schema::Schema;
+    use std::collections::{BTreeMap, BTreeSet};
+    if object.extends.is_some()
+        || !object.implements.is_empty()
+        || !object.links.is_empty()
+        || !object.invariants.is_empty()
+        || !object.lifecycles.is_empty()
+    {
+        return Err(
+            "normative subject requires unsupported inherited/relational constraints".into(),
+        );
+    }
+    let mut properties = BTreeMap::new();
+    for property in &object.properties {
+        // Enumerating an unconstrained superset is safe for refusal but cannot
+        // establish fulfilment. This fragment accepts plain Boolean properties.
+        if property.computed.is_some()
+            || property.constraints != norn_ir::PropertyConstraints::default()
+        {
+            return Err("normative property constraints are unsupported".into());
+        }
+        let norn_ir::PropertyType::Boolean {} = property.property_type else {
+            return Err("normative subject domain is not a closed Boolean domain".into());
+        };
+        properties.insert(property.id.0.clone(), Schema::Boolean);
+    }
+    let required = properties.keys().cloned().collect();
+    let subject = Schema::Object {
+        properties,
+        required,
+    };
+    Ok(Schema::Object {
+        properties: BTreeMap::from([("self".into(), subject)]),
+        required: BTreeSet::from(["self".into()]),
+    })
+}
+
+fn admission_schema(
+    subject: &str,
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    base: &[norn_ir::ArtifactEnvelope],
+    owner: &norn_ir::ArtifactEnvelope,
+) -> Result<norn_expr::schema::Schema, String> {
+    for artifact in artifacts.iter().chain(base) {
+        let crate::entity_artifacts::Decoded::Root(root) =
+            crate::entity_artifacts::decode_v2(artifact)
+        else {
+            continue;
+        };
+        let norn_ir::EntityRoot::V2(root) = *root else {
+            continue;
+        };
+        if root.object_type.name.0 != subject {
+            continue;
+        }
+        if crate::scope_conflict(&owner.scope, &artifact.scope).is_some()
+            || (artifact.artifact_id != owner.artifact_id
+                && !owner.dependencies.iter().any(|d| {
+                    d.artifact_id == artifact.artifact_id
+                        && d.version.as_deref() == Some(artifact.version.as_str())
+                        && d.required
+                }))
+        {
+            return Err("normative subject requires a visible, exact pinned dependency".into());
+        }
+        return normative_schema(&root.object_type);
+    }
+    Err("normative subject is not installed or admitted".into())
+}
+
 fn valid_norm_identity(rule: &DeonticRule) -> bool {
     let law = &rule.law;
     let root = match &law.scope.root {
@@ -398,4 +598,20 @@ fn valid_norm_identity(rule: &DeonticRule) -> bool {
             .into_iter()
             .chain(&law.scope.object_types)
             .all(|id| !id.trim().is_empty())
+}
+
+/// Existing base-to-base resolutions were already admitted. Preserve them;
+/// only newly introduced incoming edges participate in the protection audit.
+pub(crate) fn installed_protection(
+    inherited: &std::collections::BTreeSet<usize>,
+    edges: &[(usize, usize)],
+) -> std::collections::BTreeSet<usize> {
+    inherited
+        .iter()
+        .copied()
+        .filter(|low| {
+            let incoming: Vec<_> = edges.iter().filter(|(_, target)| target == low).collect();
+            incoming.is_empty() || incoming.iter().any(|(high, _)| !inherited.contains(high))
+        })
+        .collect()
 }
