@@ -204,9 +204,10 @@ pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) ->
                     .as_ref()
                     .map(|span| span.pointer.clone())
                     .unwrap_or_default(),
-                (diagnostic.code.as_str() == "widget.validation.invalid_payload"
+                ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
                     && diagnostic.message.starts_with("UI law:"))
-                .then(|| diagnostic.message.clone()),
+                    || diagnostic.code.as_str() == "consistency.normative.conflict")
+                    .then(|| diagnostic.message.clone()),
             ))
         })
         .collect()
