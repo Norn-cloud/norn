@@ -20,6 +20,11 @@ use serde::{Deserialize, Serialize};
 use crate::members::{IrVersion01, one_of_forms, present_non_null};
 use crate::rule::JsonObject;
 
+/// Explicit authority to disclose one complete action-refusal diagnostic.
+pub const DISCLOSE_REFUSAL_DETAIL_ACTION: &str = "norn.disclose_refusal_detail";
+/// Host resource whose identity is the admitted action id.
+pub const REFUSAL_DETAIL_RESOURCE: &str = "norn.RefusalDetail";
+
 /// Typed payload of a `policy` (Access) artifact.
 ///
 /// The variants are distinguished by their members, not by a tag: the checker
