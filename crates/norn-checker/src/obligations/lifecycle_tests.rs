@@ -1,29 +1,58 @@
 //! Source-bound lifecycle inventory, not solver evidence.
-#![allow(clippy::expect_used, clippy::indexing_slicing, reason = "bounded generated fixtures")]
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "bounded generated fixtures"
+)]
 use super::*;
 use sha2::{Digest, Sha256};
 
 fn constitution() -> DefinitionSource {
-    let fixture: Value = serde_json::from_str(include_str!("../../../../crates/norn-cell/tests/fixtures/constitution.json")).expect("constitution");
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../crates/norn-cell/tests/fixtures/constitution.json"
+    ))
+    .expect("constitution");
     let base: Vec<Value> = [
         include_str!("../../../../registry/core/artifacts/core.units.json"),
         include_str!("../../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../../registry/core/artifacts/core.Conversion.interface.json"),
-    ].into_iter().map(|text| serde_json::from_str(text).expect("base")).collect();
-    DefinitionSource::parse(&serde_json::to_string(&fixture["withLoss"]).expect("source"), &serde_json::to_string(&base).expect("base")).expect("exact source")
+    ]
+    .into_iter()
+    .map(|text| serde_json::from_str(text).expect("base"))
+    .collect();
+    DefinitionSource::parse(
+        &serde_json::to_string(&fixture["withLoss"]).expect("source"),
+        &serde_json::to_string(&base).expect("base"),
+    )
+    .expect("exact source")
 }
 fn authority(source: &DefinitionSource) -> ApprovedContract {
-    ApprovedContract::approve(source, &BTreeSet::new(), json!({"expr":"norn-zen/6"}), json!({"store":"empty"}), json!({"level":"bounded"})).expect("admitted")
+    ApprovedContract::approve(
+        source,
+        &BTreeSet::new(),
+        json!({"expr":"norn-zen/6"}),
+        json!({"store":"empty"}),
+        json!({"level":"bounded"}),
+    )
+    .expect("admitted")
 }
 #[test]
 fn constitution_ten_goal_inventory_golden() {
     let source = constitution();
-    let challenge = authority(&source).challenge(&source, &BTreeSet::new()).expect("challenge");
+    let challenge = authority(&source)
+        .challenge(&source, &BTreeSet::new())
+        .expect("challenge");
     let goals = &challenge.body()["obligations"];
     assert_eq!(goals.as_array().expect("inventory").len(), 10);
     let bytes = norn_canonical::serialize_json_verbatim(goals).expect("exact goals");
-    assert_eq!(format!("{:x}", Sha256::digest(&bytes)), "8540b972f75056de05b2183332455aa58464a5332ee76dca0ac394593bdc5b6b");
-    assert_eq!(challenge.sha256(), "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        "8540b972f75056de05b2183332455aa58464a5332ee76dca0ac394593bdc5b6b"
+    );
+    assert_eq!(
+        challenge.sha256(),
+        "2d116687af5f4dda4b23813edfb04e91ac3f839c8071b49e93ef2205d2df63fc"
+    );
 }
 
 fn chart(guard: &str) -> Value {
@@ -39,54 +68,85 @@ fn chart(guard: &str) -> Value {
                     {"id":"finish","from":["review"],"to":"done"}]}]}}})
 }
 fn challenge(artifacts: &Value, base: &Value) -> Challenge {
-    let source = DefinitionSource::parse(&serde_json::to_string(artifacts).expect("source"),
-        &serde_json::to_string(base).expect("base")).expect("exact source");
-    authority(&source).challenge(&source,&BTreeSet::new()).expect("challenge")
+    let source = DefinitionSource::parse(
+        &serde_json::to_string(artifacts).expect("source"),
+        &serde_json::to_string(base).expect("base"),
+    )
+    .expect("exact source");
+    authority(&source)
+        .challenge(&source, &BTreeSet::new())
+        .expect("challenge")
 }
 #[test]
 fn generated_lifecycle_reachability() {
     let original = challenge(&json!([chart("self.status == 'draft'")]), &json!([]));
     let goals = original.body()["obligations"].as_array().expect("goals");
     assert_eq!(goals.len(), 4);
-    assert_eq!(goals[0]["goal"],json!({"kind":"lifecycle_terminal_reachability","terminal":"done"}));
-    assert_eq!(goals[1]["goal"]["kind"],"lifecycle_no_stuck_non_terminal");
-    assert_eq!(goals[2]["goal"]["transition"],"submit");
-    assert_eq!(goals[3]["goal"]["transition"],"finish");
+    assert_eq!(
+        goals[0]["goal"],
+        json!({"kind":"lifecycle_terminal_reachability","terminal":"done"})
+    );
+    assert_eq!(goals[1]["goal"]["kind"], "lifecycle_no_stuck_non_terminal");
+    assert_eq!(goals[2]["goal"]["transition"], "submit");
+    assert_eq!(goals[3]["goal"]["transition"], "finish");
     for goal in goals {
-        assert_eq!(goal["assessment"],"unknown");
+        assert_eq!(goal["assessment"], "unknown");
         assert!(!goal["reason"].as_str().expect("reason").is_empty());
-        assert_eq!(goal["statement"]["maxSteps"],3);
-        assert_eq!(goal["statement"]["maxObjects"],1);
-        assert_eq!(goal["statement"]["property"],"status");
+        assert_eq!(goal["statement"]["maxSteps"], 3);
+        assert_eq!(goal["statement"]["maxObjects"], 1);
+        assert_eq!(goal["statement"]["property"], "status");
     }
     // A structurally legal but disabled guard must not disappear from the denominator.
     let mutant = challenge(&json!([chart("false")]), &json!([]));
-    assert_eq!(mutant.body()["obligations"].as_array().expect("goals").len(),4);
-    assert_ne!(goals[0]["statement"]["lifecycleDigest"],mutant.body()["obligations"][0]["statement"]["lifecycleDigest"]);
-    assert_ne!(original.sha256(),mutant.sha256());
-    assert_eq!(original.sha256(),challenge(&json!([chart("self.status == 'draft'")]), &json!([])).sha256());
+    assert_eq!(
+        mutant.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .len(),
+        4
+    );
+    assert_ne!(
+        goals[0]["statement"]["lifecycleDigest"],
+        mutant.body()["obligations"][0]["statement"]["lifecycleDigest"]
+    );
+    assert_ne!(original.sha256(), mutant.sha256());
+    assert_eq!(
+        original.sha256(),
+        challenge(&json!([chart("self.status == 'draft'")]), &json!([])).sha256()
+    );
 }
 #[test]
 fn jewelry_app_law_keeps_all_lifecycle_goals_unknown() {
-    let artifacts: Value=serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json")).expect("actual source golden");
-    let units:Value=serde_json::from_str(include_str!("../../../../registry/core/artifacts/core.units.json")).expect("units");
-    let generated=challenge(&artifacts,&json!([units]));
-    let goals=generated.body()["obligations"].as_array().expect("goals");
-    let lifecycle:Vec<_>=goals.iter().filter(|goal|goal["statement"]["rule"]=="norn.lifecycle.transition-only/1").collect();
-    assert_eq!(lifecycle.len(),7); // two terminals + no stuck + four transitions
-    assert!(lifecycle.iter().all(|g|g["assessment"]=="unknown"));
-    assert_eq!(artifacts[1]["payload"]["scope"]["root"]["kind"],"app");
-    let first=goals.len()-lifecycle.len();
-    assert!(goals[..first].iter().all(|goal|goal.get("law").is_some()));
-    assert!(goals[first..].iter().all(|goal|goal.get("law").is_none()));
+    let artifacts: Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/jewelry_demo.json"))
+            .expect("actual source golden");
+    let units: Value = serde_json::from_str(include_str!(
+        "../../../../registry/core/artifacts/core.units.json"
+    ))
+    .expect("units");
+    let generated = challenge(&artifacts, &json!([units]));
+    let goals = generated.body()["obligations"].as_array().expect("goals");
+    let lifecycle: Vec<_> = goals
+        .iter()
+        .filter(|goal| goal["statement"]["rule"] == "norn.lifecycle.transition-only/1")
+        .collect();
+    assert_eq!(lifecycle.len(), 7); // two terminals + no stuck + four transitions
+    assert!(lifecycle.iter().all(|g| g["assessment"] == "unknown"));
+    assert_eq!(artifacts[1]["payload"]["scope"]["root"]["kind"], "app");
+    let first = goals.len() - lifecycle.len();
+    assert!(goals[..first].iter().all(|goal| goal.get("law").is_some()));
+    assert!(goals[first..].iter().all(|goal| goal.get("law").is_none()));
 }
 #[test]
 fn lifecycle_goal_cap_is_checked_before_append() {
-    let artifact:ArtifactEnvelope=serde_json::from_value(chart("true")).expect("entity");
-    let catalog=crate::EffectiveCatalog::from_artifacts(&[artifact]);
-    let mut goals=vec![Value::Null;8_192];
-    assert_eq!(super::lifecycle::append(&catalog,&mut goals),Err(ChallengeError::Limit));
-    assert_eq!(goals.len(),8_192);
+    let artifact: ArtifactEnvelope = serde_json::from_value(chart("true")).expect("entity");
+    let catalog = crate::EffectiveCatalog::from_artifacts(&[artifact]);
+    let mut goals = vec![Value::Null; 8_192];
+    assert_eq!(
+        super::lifecycle::append(&catalog, &mut goals),
+        Err(ChallengeError::Limit)
+    );
+    assert_eq!(goals.len(), 8_192);
 }
 proptest::proptest! {
     #[test]
