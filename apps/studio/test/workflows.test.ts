@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
-import { pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
+import { backOf, pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
 import { guardedFields, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
@@ -76,3 +76,12 @@ test("a twenty-state lifecycle folds to the focused path and two hops on, and un
   expect(visibleOf(treeOf(named("commerce.SalesOrder")?.lifecycle ?? lifecycle), undefined, false).hidden).toBe(0)
 })
 
+
+test("a step back is found by its id, so its chip can open the step itself", () => {
+  const order = named("commerce.SalesOrder")
+  if (order === undefined) throw new Error("SalesOrder")
+  const tree = treeOf(order.lifecycle)
+  const amend = backOf(tree, stepId({ id: "amend", from: ["submitted"], to: "draft" }, "submitted"))
+  expect(amend && { id: amend.transition.id, from: amend.from, to: amend.to }).toEqual({ id: "amend", from: "submitted", to: "draft" })
+  expect(backOf(tree, "draft")).toBeUndefined()
+})

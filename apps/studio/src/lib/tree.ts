@@ -140,3 +140,10 @@ export function visibleOf(tree: Tree, focus: string | undefined, expanded: boole
   const hidden = tree.nodes.filter((node) => node.kind === "state" && !shown.has(node.id)).length
   return { shown, hidden }
 }
+
+/** A step back to an earlier state, by its id (as a chip it is not a node of the tree). */
+export function backOf(tree: Tree, id: string | undefined): { readonly transition: Transition; readonly from: string; readonly to: string } | undefined {
+  if (id === undefined) return undefined
+  for (const [from, list] of tree.backs) for (const { transition, to } of list) if (stepId(transition, from) === id) return { transition, from, to }
+  return undefined
+}

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState, type KeyboardEvent } from "react"
+import { useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
@@ -8,14 +8,14 @@ import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { recordedTransport } from "./lib/transport.ts"
-import { pathTo, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
+import { backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
 import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
 import type { MenuEntry } from "./shell.tsx"
 
 const state = (name: string) => words(name)
 
 type Pick = (id: string | undefined) => void
-type StateData = { label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { label: string; to: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
+type StateData = { label: string; start: boolean; terminal: boolean; description?: string; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
 type StepData = { order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
 type MoreData = { count: number; onExpand: () => void }
 
@@ -27,7 +27,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
     <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-60 p-3" : "w-48 px-3 py-2")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
-      <button type="button" onPointerDown={() => data.onPick(id)} className="block w-full text-start outline-none">
+      <button type="button" onClick={() => data.onPick(id)} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
         <div className={cn("font-medium", data.start && "text-base")}>{data.label}</div>
         {data.start && data.description && <div className="line-clamp-1 text-meta text-muted-foreground">{data.description}</div>}
       </button>
@@ -35,8 +35,12 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         {data.start && <Badge variant="secondary">Starts here</Badge>}
         {data.terminal && <Badge variant="outline">Ends here</Badge>}
         {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
+        {/* A step back: the chip opens the step itself; the arrow goes to the state it returns to. */}
         {data.backs.map((back) => (
-          <button key={back.label} type="button" onPointerDown={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-full border px-2 py-0.5 text-meta text-muted-foreground hover:bg-muted hover:text-foreground">↺ {back.label}</button>
+          <span key={back.id} className="inline-flex items-center rounded-full border text-meta text-muted-foreground">
+            <button type="button" onClick={(event) => { event.stopPropagation(); data.onPick(back.id) }} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">↺ {back.label}</button>
+            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} onClick={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">→</button>
+          </span>
         ))}
       </div>
     </div>
@@ -45,7 +49,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" onPointerDown={() => data.onPick(data.id)} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none")}>
+    <button type="button" onClick={() => data.onPick(data.id)} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
       <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[11px] tabular-nums">{data.order}</span>{data.label}</div>
@@ -79,18 +83,20 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const [hover, setHover] = useState<string>()
   const [expanded, setExpanded] = useState(false)
   const active = hover ?? pinned
-  const route = active === undefined ? undefined : pathTo(tree, active)
-  const lit = route && new Set([...route.path, ...route.next])
+  // A step back is a chip on its source state: light the path to that state.
+  const back = backOf(tree, active)
+  const route = active === undefined ? undefined : pathTo(tree, back?.from ?? active)
+  const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
   // The first view: the start and the first steps along the spine, at a readable size.
   const start = tree.nodes.filter((node) => node.column <= 4 && shown.has(node.id)).map(({ id }) => id)
   const focusIds = pinned === undefined ? start : pathTo(tree, pinned).path.filter((id) => shown.has(id))
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
     const position = { x: (node.column >> 1) * 420 + (node.column % 2) * 230, y: node.row * 120 }
-    const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active, onPick: onPin, onHover: setHover }
+    const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
       return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, description: workflow.description, laws: workflow.laws.length,
-        backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ label: `${state(transition.id)} → ${state(to)}`, to })) } }
+        backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
     }
     const guards = node.transition.guards ?? []
     const fields = guardedFields(guards)
@@ -104,22 +110,30 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     id: `${source}>${target}`, source, target, type: "default",
     style: { stroke: lit?.has(source) && lit.has(target) ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: 1.25, opacity: lit && !(lit.has(source) && lit.has(target)) ? 0.3 : 1, transition: "opacity 200ms" },
   }))
+  // Pinning remounts the canvas; keep keyboard focus on it when the pin came from inside.
+  const frame = useRef<HTMLDivElement>(null)
+  const pin: Pick = (id) => {
+    const inside = frame.current?.contains(document.activeElement) ?? false
+    onPin(id)
+    if (inside) requestAnimationFrame(() => frame.current?.focus())
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") { onPin(undefined); setHover(undefined); return }
-    if (event.key === "Enter" && hover) { onPin(hover); return }
+    if (event.key === "Escape") { pin(undefined); setHover(undefined); return }
+    // A focused card or chip handles its own Enter and Space as a click.
+    if (event.target !== event.currentTarget && (event.key === "Enter" || event.key === " ")) return
+    if (event.key === "Enter" && active) { pin(active); return }
     if (!event.key.startsWith("Arrow")) return
     event.preventDefault()
     const next = moveFrom(tree, active ?? tree.spine[0] ?? "", event.key)
-    if (next) { setHover(next); onPin(next) }
+    if (next) { setHover(next); pin(next) }
   }
   return (
-    <div className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+    <div ref={frame} className="h-[26rem] w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       {/* Remounted per pin: React Flow fits reliably on mount, which keeps the start or the pinned path in view. */}
       <ReactFlow key={pinned ?? "start"} nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
         // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
-        // Pinning happens on pointer down: hover re-renders the cards, which can swallow a click.
         onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: focusIds.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
+        colorMode="system" fitView fitViewOptions={{ padding: 0.2, maxZoom: 1, nodes: focusIds.map((id) => ({ id })) }} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }} minZoom={0.3}>
         <Background />
         <Controls showInteractive={false} />
         {tree.nodes.filter(({ kind }) => kind === "state").length > 8 && <MiniMap pannable zoomable className="!bg-card" maskColor="color-mix(in oklab, var(--background) 70%, transparent)" nodeColor="var(--muted-foreground)" />}
@@ -130,9 +144,14 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
 
 /** The pinned element's place on its path, as a breadcrumb. */
 function Breadcrumb({ tree, pinned }: { readonly tree: Tree; readonly pinned: string }) {
-  const { path } = pathTo(tree, pinned)
-  const name = (id: string) => { const node = tree.nodes.find((each) => each.id === id); return node === undefined ? id : state(node.kind === "state" ? node.state : node.transition.id) }
-  const steps = path.filter((id) => tree.nodes.find((node) => node.id === id)?.kind === "step").length
+  const back = backOf(tree, pinned)
+  const path = back ? [...pathTo(tree, back.from).path, pinned] : pathTo(tree, pinned).path
+  const name = (id: string) => {
+    if (back && id === pinned) return `${state(back.transition.id)} (back to ${state(back.to)})`
+    const node = tree.nodes.find((each) => each.id === id)
+    return node === undefined ? id : state(node.kind === "state" ? node.state : node.transition.id)
+  }
+  const steps = path.filter((id) => id === pinned && back !== undefined || tree.nodes.find((node) => node.id === id)?.kind === "step").length
   return <p className="px-1 text-meta text-muted-foreground">{steps} {steps === 1 ? "step" : "steps"} from the start · {path.map(name).join(" › ")}</p>
 }
 
@@ -197,7 +216,9 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [pinned, setPinned] = useState<string>()
   const node = tree.nodes.find(({ id }) => id === pinned)
-  const step = node?.kind === "step" ? workflow.steps.find(({ transition }) => transition.id === node.transition.id) : undefined
+  const back = backOf(tree, pinned)
+  const stepped = node?.kind === "step" ? node.transition : back?.transition
+  const step = stepped && workflow.steps.find(({ transition }) => transition.id === stepped.id)
   return (
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
@@ -222,7 +243,7 @@ function WorkflowCard({ workflow }: { readonly workflow: Workflow }) {
           <Well>
             {step && <StepCard workflow={workflow} step={step} />}
             {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
-            {node === undefined && <p className="p-4 text-sm text-muted-foreground">Select a state or a step to see its condition, action and laws.</p>}
+            {node === undefined && step === undefined && <p className="p-4 text-sm text-muted-foreground">Select a state or a step to see its condition, action and laws.</p>}
           </Well>
         </Panel>
       </div>
