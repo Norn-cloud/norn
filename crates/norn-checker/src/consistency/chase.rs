@@ -97,7 +97,8 @@ impl AdmissionWork {
         let remaining = self.0.get();
         if remaining < units {
             return Err(ChaseError::BudgetExceeded {
-                resource: "whole-admission work", limit: 0,
+                resource: "whole-admission work",
+                limit: 0,
             });
         }
         self.0.set(remaining - units);
@@ -171,7 +172,10 @@ pub fn chase(
 }
 
 pub(crate) fn chase_with_work(
-    theory: &Theory, facts: &[Fact], budget: ChaseBudget, work: &AdmissionWork,
+    theory: &Theory,
+    facts: &[Fact],
+    budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<ChaseOutcome, ChaseError> {
     work.charge()?;
     let mut signature = theory.signature().map_err(ChaseError::Theory)?;
@@ -182,7 +186,14 @@ pub(crate) fn chase_with_work(
     weakly_acyclic(theory, &signature, budget)?;
     let all_rules: Vec<usize> = (0..theory.dependencies.len()).collect();
     let all_facts: Vec<usize> = (0..facts.len()).collect();
-    let failure = match run(&theory.dependencies, &all_rules, facts, &all_facts, budget, work) {
+    let failure = match run(
+        &theory.dependencies,
+        &all_rules,
+        facts,
+        &all_facts,
+        budget,
+        work,
+    ) {
         Ok(model) => return Ok(ChaseOutcome::Model(model)),
         Err(Halt::Refused(error)) => return Err(error),
         Err(Halt::Conflict(failure)) => *failure,
@@ -355,7 +366,10 @@ pub fn first_violation(
 }
 
 pub(crate) fn first_violation_with_work(
-    dependency: &Dependency, facts: &[Fact], budget: ChaseBudget, work: &AdmissionWork,
+    dependency: &Dependency,
+    facts: &[Fact],
+    budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Result<Option<Vec<Fact>>, ChaseError> {
     let records: Vec<Record> = facts
         .iter()

@@ -166,12 +166,16 @@ fn path_findings(
         match result {
             Ok(finding) => out.push(finding),
             Err(findings) => {
-                let exhausted = findings.iter().any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+                let exhausted = findings
+                    .iter()
+                    .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
                 out.extend(findings.into_iter().map(|mut d| {
                     d.severity = crate::DiagnosticSeverity::Error;
                     d
                 }));
-                if exhausted { break; }
+                if exhausted {
+                    break;
+                }
             }
         }
     }
@@ -459,8 +463,17 @@ fn dependency_findings(artifact: &ArtifactEnvelope, mapping: &MappingIr) -> Vec<
         Span::pointer("/source"),
     );
     for binding in &mapping.path_mappings {
-        for id in binding.source_entities.iter().chain(&binding.target_entities) {
-            require(id, ArtifactKind::Entity, None, Span::pointer("/pathMappings"));
+        for id in binding
+            .source_entities
+            .iter()
+            .chain(&binding.target_entities)
+        {
+            require(
+                id,
+                ArtifactKind::Entity,
+                None,
+                Span::pointer("/pathMappings"),
+            );
         }
     }
     for (index, interface) in mapping.interfaces.iter().enumerate() {

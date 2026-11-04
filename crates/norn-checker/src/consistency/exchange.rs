@@ -7,7 +7,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::chase::{AdmissionWork, chase_with_work, first_violation_with_work, ChaseBudget, ChaseError, ChaseOutcome, Fact, Value, chase, first_violation};
+use super::chase::{
+    AdmissionWork, ChaseBudget, ChaseError, ChaseOutcome, Fact, Value, chase, chase_with_work,
+    first_violation, first_violation_with_work,
+};
 use super::theory::{Atom, Dependency, RuleOrigin, Term, Tgd, Theory, TheoryError};
 use super::{codes, conflict_message, finding, origin_of, refusal};
 use crate::{Diagnostic, DiagnosticSeverity};
@@ -75,7 +78,9 @@ pub fn check_schema_compatibility(exchange: &Exchange<'_>, budget: ChaseBudget) 
 }
 
 pub(crate) fn check_schema_compatibility_with_work(
-    exchange: &Exchange<'_>, budget: ChaseBudget, work: &AdmissionWork,
+    exchange: &Exchange<'_>,
+    budget: ChaseBudget,
+    work: &AdmissionWork,
 ) -> Vec<Diagnostic> {
     if let Err(error) = exchange.validate() {
         return vec![refusal(exchange.mapping, &error)];
@@ -174,7 +179,8 @@ fn unpreserved(
             .cloned(),
     );
     for candidate in unfoldings(body, mapping, budget, work)? {
-        let ChaseOutcome::Model(model) = chase_with_work(source_side, &candidate, budget, work)? else {
+        let ChaseOutcome::Model(model) = chase_with_work(source_side, &candidate, budget, work)?
+        else {
             continue;
         };
         // Report the verified source instance, not the unfolding seed.
@@ -331,7 +337,10 @@ fn unfoldings(
                     .collect();
                 work.charge()?;
                 if facts.len() >= budget.max_facts {
-                    return Err(ChaseError::BudgetExceeded { resource: "unfolding facts", limit: budget.max_facts });
+                    return Err(ChaseError::BudgetExceeded {
+                        resource: "unfolding facts",
+                        limit: budget.max_facts,
+                    });
                 }
                 facts.insert(Fact {
                     relation: atom.relation.clone(),
