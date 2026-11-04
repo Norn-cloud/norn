@@ -228,3 +228,221 @@ pub(crate) fn variables(atoms: &[Atom]) -> BTreeSet<&str> {
         })
         .collect()
 }
+
+/// Lower PATH-EQ-1 declarations to shared-root EGDs, retaining their origins.
+/// This validates shape and paths, not preservation through a mapping.
+///
+/// # Errors
+/// Malformed declarations or paths outside the functional concrete-type fragment.
+pub fn lower_path_equations(
+    artifacts: &[norn_ir::ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+) -> Result<Theory, Vec<crate::Diagnostic>> {
+    use norn_ir::entity::PathEquation;
+    let declarations: Vec<_> = artifacts
+        .iter()
+        .filter_map(path_equation_declaration)
+        .collect();
+    // Declaration IDs accept arbitrary nonempty strings, so no delimiter is
+    // reserved. Reserve every declaration before allocating inherited IDs.
+    let mut rule_ids: BTreeSet<String> = declarations
+        .iter()
+        .flat_map(|(artifact, _, value)| declared_equation_rule_ids(&artifact.artifact_id, value))
+        .collect();
+    let mut theory = Theory::default();
+    let catalog =
+        crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
+    let mut findings = Vec::new();
+    for (artifact, owner, value) in declarations {
+        let slot = "/payload/extensions/norn.path-equations~11.0.0";
+        let at = |pointer: String| RuleOrigin {
+            artifact_id: Some(artifact.artifact_id.clone()),
+            pointer,
+        };
+        let mut refuse = |origin: &RuleOrigin, message: String| {
+            findings.push(super::finding(
+                "consistency.path_equation.invalid",
+                crate::DiagnosticSeverity::Error,
+                message,
+                Some(origin),
+            ));
+        };
+        let whole = at(slot.into());
+        if !matches!(catalog.object_type_named(owner.as_str()), Some(Ok(_))) {
+            refuse(
+                &whole,
+                "equation owner is not an available concrete type".into(),
+            );
+            continue;
+        }
+        let equations: Vec<PathEquation> =
+            match serde_json::to_value(&value).and_then(serde_json::from_value) {
+                Ok(equations) => equations,
+                Err(error) => {
+                    refuse(&whole, error.to_string());
+                    continue;
+                }
+            };
+        if equations.len() > 128 {
+            refuse(&whole, "at most 128 equations per concept".into());
+            continue;
+        }
+        let mut ids = BTreeSet::new();
+        for (index, equation) in equations.into_iter().enumerate() {
+            let origin = at(format!("{slot}/{index}"));
+            let label = format!("equation {:?}", equation.id);
+            if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
+                refuse(&origin, format!("{label}: ID must be nonempty and unique"));
+                continue;
+            }
+            // Inherited equations constrain each subtype's effective links, whose
+            // relations are distinct from the declaring type's relations.
+            let instances = catalog
+                .object_type_names()
+                .filter(|name| catalog.lineage(name).is_some_and(|l| l.contains(&owner)));
+            let id = format!("{}:path-equation:{}", artifact.artifact_id, equation.id);
+            for instance in instances {
+                match lower_path_equation_instance(
+                    &catalog,
+                    instance,
+                    owner.as_str(),
+                    &equation,
+                    &id,
+                    &origin,
+                ) {
+                    Ok(mut egd) => {
+                        if instance != owner.as_str() {
+                            egd.id = unique_inherited_id(egd.id, &mut rule_ids);
+                        }
+                        theory.dependencies.push(Dependency::Egd(egd));
+                    }
+                    Err(message) => {
+                        let instance_origin = if instance == owner.as_str() {
+                            origin.clone()
+                        } else {
+                            RuleOrigin {
+                                artifact_id: artifacts.iter().find_map(|artifact| {
+                                    catalog
+                                        .object_type(&artifact.artifact_id)
+                                        .and_then(Result::ok)
+                                        .filter(|object| object.name.as_str() == instance)
+                                        .map(|_| artifact.artifact_id.clone())
+                                }),
+                                pointer: "/payload/objectType".into(),
+                            }
+                        };
+                        refuse(&instance_origin, format!("{label}: {message}"));
+                    }
+                }
+            }
+        }
+    }
+    findings.is_empty().then_some(theory).ok_or(findings)
+}
+
+fn lower_path_equation_instance(
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    instance: &str,
+    owner: &str,
+    equation: &norn_ir::entity::PathEquation,
+    id: &str,
+    origin: &RuleOrigin,
+) -> Result<Egd, String> {
+    let mut body = vec![Atom {
+        relation: format!("concept:{instance}"),
+        terms: vec![Term::Var("root".into())],
+    }];
+    let (left_type, left) = equation_path(catalog, instance, &equation.left, "l", &mut body)?;
+    let (right_type, right) = equation_path(catalog, instance, &equation.right, "r", &mut body)?;
+    if instance == owner && left_type != right_type {
+        return Err(format!(
+            "endpoint types differ: {left_type} vs {right_type}"
+        ));
+    }
+    Ok(Egd {
+        id: if instance == owner {
+            id.to_owned()
+        } else {
+            format!("{id}:{instance}")
+        },
+        origin: origin.clone(),
+        body,
+        left,
+        right,
+    })
+}
+
+fn path_equation_declaration(
+    artifact: &norn_ir::ArtifactEnvelope,
+) -> Option<(
+    &norn_ir::ArtifactEnvelope,
+    norn_ir::ObjectTypeName,
+    norn_ir::JsonValue,
+)> {
+    use crate::entity_artifacts::{Decoded, decode_v2};
+    let Decoded::Root(root) = decode_v2(artifact) else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2(root) = *root else {
+        return None;
+    };
+    let value = root
+        .extensions
+        .as_ref()?
+        .get(norn_ir::entity::PATH_EQUATIONS_SLOT)?
+        .clone();
+    Some((artifact, root.object_type.name, value))
+}
+
+fn unique_inherited_id(mut id: String, used: &mut BTreeSet<String>) -> String {
+    while !used.insert(id.clone()) {
+        id.push_str(":inherited");
+    }
+    id
+}
+
+fn declared_equation_rule_ids(artifact: &str, value: &norn_ir::JsonValue) -> Vec<String> {
+    serde_json::to_value(value)
+        .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|equation| format!("{artifact}:path-equation:{}", equation.id))
+        .collect()
+}
+
+pub(crate) fn equation_path(
+    catalog: &crate::entity_instance::EffectiveCatalog,
+    owner: &str,
+    path: &[String],
+    prefix: &str,
+    body: &mut Vec<Atom>,
+) -> Result<(String, Term), String> {
+    if path.len() > 64 {
+        return Err("path exceeds 64 links".into());
+    }
+    let mut current = owner.to_owned();
+    let mut term = Term::Var("root".into());
+    for (index, id) in path.iter().enumerate() {
+        let link = catalog
+            .links_for_object_type(&current)
+            .and_then(|links| links.iter().find(|link| link.id.as_str() == id))
+            .ok_or_else(|| format!("unknown path link {current}.{id}"))?;
+        if link.cardinality.to != norn_ir::Multiplicity::One {
+            return Err(format!("path link {current}.{id} is not functional"));
+        }
+        if !matches!(catalog.object_type_named(link.target.as_str()), Some(Ok(_))) {
+            return Err(format!(
+                "path target {} is not an available concrete type",
+                link.target.as_str()
+            ));
+        }
+        let next = Term::Var(format!("{prefix}{index}"));
+        body.push(Atom {
+            relation: format!("link:{current}:{id}"),
+            terms: vec![term, next.clone()],
+        });
+        current = link.target.as_str().to_owned();
+        term = next;
+    }
+    Ok((current, term))
+}

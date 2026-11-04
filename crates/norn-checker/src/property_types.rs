@@ -223,7 +223,7 @@ pub(crate) fn check_record_refs(
                     }
                 }
                 PropertyType::Text { .. }
-                | PropertyType::Integer {}
+                | PropertyType::Integer { .. }
                 | PropertyType::Decimal { .. }
                 | PropertyType::Boolean {}
                 | PropertyType::Timestamp { .. }
@@ -269,7 +269,7 @@ pub(crate) fn structured_metadata(
                 pending.extend(members.iter().map(|member| &member.property_type));
             }
             PropertyType::Text { .. }
-            | PropertyType::Integer {}
+            | PropertyType::Integer { .. }
             | PropertyType::Decimal { .. }
             | PropertyType::Boolean {}
             | PropertyType::Timestamp { .. }
@@ -444,6 +444,7 @@ fn check_decimal_members(base: &[&str], property_type: &PropertyType, out: &mut 
         rounding,
         per_unit,
         currency_source,
+        ..
     } = property_type
     else {
         return;
@@ -556,7 +557,7 @@ pub(crate) fn check_type_members(
             }
         }
         PropertyType::Text { .. }
-        | PropertyType::Integer {}
+        | PropertyType::Integer { .. }
         | PropertyType::Boolean {}
         | PropertyType::Timestamp { .. }
         | PropertyType::Date {}
@@ -604,7 +605,7 @@ pub(crate) fn check_constraints(
             continue;
         };
         match base {
-            Some(PropertyType::Integer {})
+            Some(PropertyType::Integer { .. })
                 if !parsed.fraction.is_empty() || bound.as_str().parse::<i64>().is_err() =>
             {
                 out.push(error(

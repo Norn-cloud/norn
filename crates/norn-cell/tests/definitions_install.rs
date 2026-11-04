@@ -7284,6 +7284,117 @@ fn mapping_dispute_arriving_before_commit_refuses_without_consumption() {
     }
 }
 
+fn additivity_migration_model(integer: bool, scale: u64, additive: bool) -> Model {
+    let mut snapshot = model(false).definitions_snapshot();
+    let additivity = if additive {
+        norn_ir::PropertyAdditivity::Additive {}
+    } else {
+        norn_ir::PropertyAdditivity::Undeclared {}
+    };
+    let kind = if integer {
+        norn_ir::PropertyType::Integer { additivity }
+    } else {
+        norn_ir::PropertyType::Decimal {
+            scale: norn_ir::WholeNumber(scale),
+            additivity,
+            rounding: None,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+        }
+    };
+    snapshot.object_types[0].properties.push(norn_ir::Property {
+        id: norn_ir::PropertyId("amount".into()),
+        property_type: kind,
+        protected: false,
+        description: None,
+        constraints: norn_ir::PropertyConstraints::default(),
+        default: None,
+        markings: vec![],
+        computed: None,
+    });
+    Model::from_snapshot(&snapshot).expect("numeric model")
+}
+
+fn additivity_migration_store(original: &Model) -> CellStore {
+    let mut store = CellStore::open_in_memory(original.clone()).expect("store");
+    store
+        .install_definitions(
+            original.clone(),
+            install_input("additivity-v1", 1, original),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("initial definition");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: 2,
+            writes: (0..4_097)
+                .map(|index| FactWriteRow::Put {
+                    object_type: "defs.Item".into(),
+                    key: format!("row-{index}"),
+                    values: BTreeMap::from([
+                        ("name".into(), Value::from("item")),
+                        ("amount".into(), integer_value(1)),
+                    ]),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("4,097 valid values");
+    store
+}
+
+#[test]
+fn additivity_only_change_skips_live_scan_over_4096_rows() {
+    for integer in [false, true] {
+        let original = additivity_migration_model(integer, 3, false);
+        let candidate = additivity_migration_model(integer, 3, true);
+        let mut store = additivity_migration_store(&original);
+        let before = store.read().verify_ledger().expect("ledger");
+        let input = install_input("additivity-v2", 3, &candidate);
+        let checked = store
+            .check_definitions(&candidate, &input, Some(1))
+            .expect("aggregation-only change needs no value scan");
+        assert_eq!(
+            store.read().verify_ledger().expect("read-only check"),
+            before
+        );
+        assert_eq!(
+            checked,
+            store
+                .install_definitions(candidate, input, Some(1), "org_demo/dev")
+                .expect("aggregation contract update installs over 4,097 rows")
+        );
+        assert_eq!(checked.version, 2);
+    }
+}
+
+#[test]
+fn additivity_change_with_value_narrowing_still_scans_live_rows() {
+    let original = additivity_migration_model(false, 3, false);
+    let candidate = additivity_migration_model(false, 2, true);
+    let mut store = additivity_migration_store(&original);
+    let before = store.read().verify_ledger().expect("ledger");
+    let input = install_input("additivity-and-scale-v2", 3, &candidate);
+    let checked = store.check_definitions(&candidate, &input, Some(1));
+    assert!(
+        matches!(checked, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    let installed = store.install_definitions(candidate, input, Some(1), "org_demo/dev");
+    assert!(
+        matches!(installed, Err(CellError::DefinitionMigrationRefused(message))
+        if message.contains("4,096-row migration scan limit"))
+    );
+    assert_eq!(
+        store.read().verify_ledger().expect("atomic refusal"),
+        before
+    );
+}
+
 #[test]
 fn active_definition_pointer_and_latest_version_share_one_snapshot_during_install() {
     let directory = tempfile::tempdir().expect("directory");

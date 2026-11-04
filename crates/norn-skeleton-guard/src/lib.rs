@@ -147,7 +147,7 @@ pub const CRATES: &[CrateRule] = &[
     r0(
         "norn-authz",
         &["norn-ir", "norn-projections"],
-        &["cedar-policy"],
+        &["cedar-policy", "cedar-policy-symcc"],
     ),
     r0(
         "norn-kernel",
@@ -364,6 +364,7 @@ pub const SINGLE_OWNER: &[(&str, &str)] = &[
     ("worker", "norn-cell-do"),
     ("rusqlite", "norn-cell"),
     ("cedar-policy", "norn-authz"),
+    ("cedar-policy-symcc", "norn-authz"),
     ("zen-expression", "norn-expr"),
     ("zen-engine", "norn-decisions"),
     ("helix-db", "norn-retrieval"),

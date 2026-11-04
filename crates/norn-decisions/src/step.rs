@@ -17,6 +17,7 @@ use crate::convert::from_variable;
 
 #[derive(Debug, Default)]
 pub(crate) struct StepContracts {
+    pub(crate) assignment_fuel: Vec<norn_expr::graph::BoundAssignment>,
     pub(crate) schemas: BTreeMap<String, (Schema, Schema)>,
     pub(crate) expressions:
         BTreeMap<(String, String, String), zen_engine::nodes::ExpressionContract>,
@@ -35,6 +36,7 @@ impl StepContracts {
                 reason,
             }
         })?;
+        self.assignment_fuel.extend(assignments.iter().cloned());
         for binding in assignments {
             let key = (binding.node, binding.key, binding.source);
             let contract = zen_engine::nodes::ExpressionContract {
@@ -195,6 +197,7 @@ mod tests {
         let contracts = StepContracts {
             schemas: BTreeMap::from([("step".into(), (record.clone(), record))]),
             folds: BTreeMap::new(),
+            assignment_fuel: Vec::new(),
             expressions: BTreeMap::new(),
         };
         let meter = Meter::new(100);
