@@ -33,7 +33,11 @@ fn mapping(get: &str, mut put: Value) -> MappingIr {
 #[test]
 fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [2, 3], [2, 3]]));
-    assert!(check_mapping_local(&mapping).is_empty(), "{:?}", check_mapping_local(&mapping));
+    assert!(
+        check_mapping_local(&mapping).is_empty(),
+        "{:?}",
+        check_mapping_local(&mapping)
+    );
     let lens = admit(&mapping).expect("checked").expect("declared");
     assert_eq!(lens.source_states(), 4);
     let source = [("approved".into(), false), ("other".into(), true)].into();
@@ -47,7 +51,10 @@ fn lawful_projection_preserves_complement_and_refuses_outside_domain() {
 fn seeded_lossy_overwrite_refuses_live_mapping_admission() {
     let mapping = mapping("input.approved", json!([[0, 1], [0, 1], [0, 1], [0, 1]]));
     let findings = check_mapping_local(&mapping);
-    assert!(findings.iter().any(|d| d.message.contains("GetPut")), "{findings:?}");
+    assert!(
+        findings.iter().any(|d| d.message.contains("GetPut")),
+        "{findings:?}"
+    );
     assert!(admit(&mapping).is_err());
 }
 

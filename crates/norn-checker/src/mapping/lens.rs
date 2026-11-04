@@ -111,10 +111,15 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     if sources.is_empty() || sources.len() > 32 || put.len() != sources.len() {
         return Err("unknown: invalid finite domain or put table size".into());
     }
-    let put = put.into_iter().map(|[no, yes]| {
-        Ok([no.parse::<usize>().map_err(|_| "unknown: put index")?,
-            yes.parse::<usize>().map_err(|_| "unknown: put index")?])
-    }).collect::<Result<Vec<_>, String>>()?;
+    let put = put
+        .into_iter()
+        .map(|[no, yes]| {
+            Ok([
+                no.parse::<usize>().map_err(|_| "unknown: put index")?,
+                yes.parse::<usize>().map_err(|_| "unknown: put index")?,
+            ])
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     for (row, source) in sources.iter().enumerate() {
         if source.is_empty()
             || source.len() > 16
