@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "Only per-experiment abstract certificate rules are proved; no implementation correspondence, Rust lowering or runtime soundness is claimed."
+}

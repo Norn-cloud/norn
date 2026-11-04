@@ -68,6 +68,7 @@ REQUIRED_KERNEL_INVARIANTS = frozenset(
     }
 )
 MANDATORY = {
+    "assurance-certificates",
     "transition-authority",
     "artifact-governance",
     "authorization",
@@ -874,13 +875,34 @@ def validate(
         f"missing={sorted(REQUIRED_CORE_PHYSICS_OBLIGATION_IDS - core_physics_ids)}, "
         f"unexpected={sorted(core_physics_ids - REQUIRED_CORE_PHYSICS_OBLIGATION_IDS)}",
     )
+    certificate_registry = load(ROOT / "verification/coverage-v1/assurance-certificate-obligations.json")
+    certificate_obligations = certificate_registry.get("obligations")
+    require(
+        certificate_registry.get("registry_version") == "norn.verification.obligations.v1"
+        and isinstance(certificate_obligations, list) and certificate_obligations,
+        "assurance certificate obligations must be a nonempty obligation registry",
+    )
+    certificate_ids = obligation_ids(certificate_registry)
+    require(
+        len(certificate_ids) == len(certificate_obligations)
+        and all(isinstance(item.get("id"), str) and item["id"].startswith("INV-CERT-")
+                and item.get("priority") == "P0"
+                and isinstance(item.get("statement"), str) and item["statement"].strip()
+                and isinstance(item.get("assumptions"), list) and item["assumptions"]
+                and all(isinstance(assumption, str) and assumption.strip()
+                        for assumption in item["assumptions"])
+                for item in certificate_obligations),
+        "assurance certificate obligations need unique INV-CERT IDs, P0 priority, statements and assumptions",
+    )
     known_obligations = (
         central_ids
         | obligation_ids(phase1_registry)
         | core_physics_ids
+        | certificate_ids
     )
     p0_obligations = (
         p0_obligation_ids(central_registry)
+        | p0_obligation_ids(certificate_registry)
         | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
     )
@@ -1067,6 +1089,10 @@ def validate(
                     f"{subsystem_id}.{layer_name}: aggregate {status} disagrees with obligation claims {sorted(obligation_statuses)}",
                 )
 
+    require(
+        set(by_id.get("assurance-certificates", {}).get("obligations", [])) == certificate_ids,
+        "assurance-certificates must own exactly the certificate registry obligations",
+    )
     core_physics_claimed = set(by_id.get("core-physics", {}).get("obligations", []))
     require(
         core_physics_claimed == REQUIRED_CORE_PHYSICS_OBLIGATION_IDS,
