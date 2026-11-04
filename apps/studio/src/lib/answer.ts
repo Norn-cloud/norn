@@ -1,5 +1,5 @@
 import { member } from "./exact.ts"
-import { bucketLabel } from "./format.ts"
+import { bucketLabel, percent } from "./format.ts"
 import type { Answer, Metric, ObjectType, Question, QuestionAnswer } from "./transport.ts"
 import { measured, operandUnits } from "./units.ts"
 
@@ -56,3 +56,6 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
 }
 
 export const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+
+/** A ratio reads as a percentage at one precision everywhere; a sum stays the server's text. */
+export const shown = (bucket: Pick<Bucket, "value" | "totals">): string => bucket.totals.length > 1 ? percent(bucket.value) : bucket.value

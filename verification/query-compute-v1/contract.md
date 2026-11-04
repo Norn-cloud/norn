@@ -77,3 +77,46 @@ G3 aggregate mechanism (COMPUTE-DETERMINISTIC-1 / QUERY-ENGINE-1): cell recomput
 ## G3 receipt-maintained generations
 QUERY-ENGINE-1 / COMPUTE-DETERMINISTIC-1: maintenance follows gapless verified cell receipts, retracts each changed identity's prior contribution and adds its new projection. Duplicate written IDs and same-frontier delivery cannot double count. Complete source membership enforces the original population bound even for hidden/noncontributing rows. Definition, world/scope, mapping, population or authorization changes require explicit rebuild; a skipped receipt refuses with `core.compute.stale_input`.
 A staged generation publishes atomically only after all reads and exact adjustments succeed. Restart closes/reopens the real cell and performs a labelled complete rebuild; no partial generation is exposed. The generated DATA-DELTA correspondence scenario compares the full envelope/rows/member versions and lineage with native recompute after corrections, insertions, deletions, effective-time changes, quarantine/recovery, duplicate delivery and restart. This is sampled implementation correspondence, not a universal IVM proof. OLAP and governed read fencing remain separate qualifications.
+
+## G5 native numeric drill-through
+LINEAGE-SUM-1 / DATA-LINEAGE (numeric path): `trace_question` re-evaluates the admitted plan under current host population visibility and requires the expected exact/complete result lineage pin. One transaction and shared decode budget cover membership, immutable canonical fact incarnations and authenticated emitting receipts. A revision/frontier/population/epoch change requires a fresh result. Exact operand sums are reconciled using the existing aggregate arithmetic; fact-version IDs remain ordered and catalog enrichment cannot enter numeric membership. Canonical values require a separate whole-record disclosure grant; denial remains explicit and does not alter amounts.
+Native scenarios cover the unchanged 294/300 fixture, receipt/version correspondence, masked values, revocation and changed/nonexact generations with no disclosure or writes. Generated populations independently sum input/recovered grams and check identity/amount preservation under redaction. No new pure arithmetic or bounded standalone kernel is added: existing arithmetic proptests/Kani cover exact adjustment; the new transaction/SQL/callback operation is runtime correspondence, not a Kani proof. The source edge consumes Core 07's authority-checked bundle API. Each
+contribution carries an explicit resolved,
+restricted or unavailable source state. Resolved source rows/documents, mapping
+pins, field provenance and source digests are independent of numeric amounts and
+whole-value disclosure. The full canonical fact digest follows the value grant. A trace never infers source edges from CSV identity or
+counts catalog tags as numeric members. H's receipt-bound evidence is the only
+canonical incarnation proof path; exports retain H's separate contract.
+
+## Scrap-yield incremental acceptance
+
+DATA-INCREMENTAL / DATA-RESTATEMENT-DELTA bind QUERY-ENGINE-1,
+COMPUTE-DETERMINISTIC-1 and RESTATE-HISTORY-1 to the unchanged pinned CSV.
+`crates/norn-cell/tests/scrap_yield_incremental.rs` starts without G4, adds
+83.300/85.000 g, and requires K1 totals 294.000/300.000 g, ratio 0.98 and loss
+6.000 g. The K2 correction requires 292.500/300.000 g, ratio 0.975 and loss
+7.500 g: signed recovered delta -1.500 g, input delta zero and loss delta
++1.500 g. Only G2's versioned contribution ID changes; K1 remains reproducible
+after K2 and a real SQLite reopen.
+
+At every receipt and duplicate delivery, both live and knowledge-cutoff IVM
+must equal full recomputation at that exact frontier. Equality covers the
+entire result envelope, including decimal values, member versions, exclusions,
+scope, definitions, mappings and source progress; only the engine label differs.
+Every generated sequence includes insertion, update, deletion, redelivery and
+restart, with possible generated amount, metal and effective-week changes.
+Forward/reverse runs reorder independent identities within each batch and the
+initial fixture, preserving each identity's update order. Their values and
+versioned contribution IDs must agree; their physical ledger hashes may differ.
+This does not qualify arbitrary out-of-order corrections to one identity.
+
+`restatement_activation.rs` also checks these signed deltas and full same-slice
+recomputation after the existing governed atomic activation. The new evidence
+is runtime-enforced scenario assertions plus sampled generated correspondence.
+It adds no evaluator or arithmetic kernel; the existing bounded arithmetic
+Kani harness remains its arithmetic evidence. Synthetic native receipts do not
+qualify mapped-feed authority, training knowledge, OLAP or a demo surface.
+
+## G6 numeric QUERY-FANOUT correspondence
+QUERY-GRAIN-1: the native root-grain sum returns 80 for one Holding linked to two real Tag objects; two distinct holdings each valued at 80 return 160. Numeric contributions are keyed by holding identity/version, not measure value or catalog multiplicity. Typed Rust fixture definitions compile through the existing IR/checker and use actual native objects/links. No monetary/currency or joined-dimension execution is qualified.
+The named expanded-tag case refuses ambiguous grain; symmetric linked grouping stays unsupported. A generated native population varies scalar amounts and tag multiplicities, commits link-only receipts and compares complete IVM/recompute envelopes plus independent root sums and unchanged numeric rows. This test-only cut adds no pure engine function or Kani target; the existing exact-arithmetic harnesses remain unchanged.

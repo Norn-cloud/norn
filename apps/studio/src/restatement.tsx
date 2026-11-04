@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { buckets, declarations, fraction, type Bucket } from "./lib/answer.ts"
+import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
 import { recordedTransport, type Answer } from "./lib/transport.ts"
@@ -16,8 +16,8 @@ function Reading({ title, when, bucket, note }: { readonly title: string; readon
       <div className="text-xs text-muted-foreground">{when}</div>
       {bucket
         ? <>
-            <div className="pt-2 text-4xl font-semibold tracking-tight tabular-nums">{bucket.value}</div>
-            <div className="text-muted-foreground tabular-nums">{fraction(bucket.totals)}</div>
+            <div className="pt-2 text-figure leading-none font-normal tracking-[-0.02em] tabular-nums">{shown(bucket)}</div>
+            <div className="text-meta text-muted-foreground tabular-nums">{fraction(bucket.totals)}{bucket.totals.length > 1 && ` = ${bucket.value} exactly`}</div>
           </>
         : <div className="pt-2 text-muted-foreground">Not in this read.</div>}
       {note && <div className="pt-2 text-xs text-muted-foreground">{note}</div>}
@@ -38,7 +38,7 @@ export function RestatementCard() {
   const then = buckets(declared, { answer: asOf.document.result, numbers: asOf.numbers, at: "/result" })
   const recorded = [answer, corrected, asOf].some(({ origin }) => origin === "recorded")
   return (
-    <Card>
+    <Card id="corrections" className="scroll-mt-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle className="text-xl">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>

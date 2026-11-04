@@ -642,7 +642,7 @@ fn pack_members(artifact: &ArtifactEnvelope) -> Vec<PackArtifactRef> {
         .unwrap_or_default()
 }
 
-const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
+pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
     match kind {
         PackArtifactKind::Entity => ArtifactKind::Entity,
         PackArtifactKind::Relation => ArtifactKind::Relation,
