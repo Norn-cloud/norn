@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Stable law diagnostic codes.
 pub mod codes {
+    /// Retained pack/app membership is unavailable in this cut.
+    pub const UNRESOLVED_SCOPE: &str = "core.laws.unresolved_scope";
     /// Malformed closed `LawIR` document.
     pub const INVALID_DOCUMENT: &str = "law.validation.invalid_document";
     /// Unsupported temporal combination.
@@ -67,7 +69,11 @@ fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, String> {
 fn local(law: &LawIR, artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let root = match &law.scope.root {
-        LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        LawRoot::Company(id)
+        | LawRoot::App(id)
+        | LawRoot::Pack(id)
+        | LawRoot::Cell(id)
+        | LawRoot::Entity(id) => id,
     };
     if [&law.id, &law.owner, &law.rationale, &law.subject, root]
         .iter()
@@ -235,6 +241,15 @@ impl LawContext<'_> {
             ));
             return;
         };
+        if matches!(law.scope.root, LawRoot::Pack(_)) {
+            out.push(finding(
+                codes::UNRESOLVED_SCOPE,
+                artifact,
+                "/payload/scope/root",
+                "retained pack scope resolution is not supported by this cut",
+            ));
+            return;
+        }
         self.check_scope(law, artifact, subject, out);
         self.check_predicates(law, artifact, subject, out);
     }
