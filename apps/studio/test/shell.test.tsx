@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { Database } from "lucide-react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Submenu, type Section } from "../src/shell.tsx"
+import { Submenu, sectionOf, type Section } from "../src/shell.tsx"
 
 const section: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -15,4 +15,12 @@ test("a submenu shows its title, data context and entries, and no action the ser
   expect(html).toContain("Recorded · synthetic world")
   expect(html).toContain("Holding")
   expect(html).not.toContain('data-slot="button"')
+})
+
+test("a record page under a section keeps that section current", () => {
+  const questions: Section = { path: "/questions", label: "Questions", icon: Database, summary: "" }
+  expect(sectionOf([section, questions], "/sources")).toBe(section)
+  expect(sectionOf([section, questions], "/sources/canon.Item")).toBe(section)
+  expect(sectionOf([section, questions], "/sources/canon.Item/demo/item/gold")).toBe(section)
+  expect(sectionOf([section, questions], "/sourcesx")).toBeUndefined()
 })

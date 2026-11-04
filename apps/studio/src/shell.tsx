@@ -124,10 +124,14 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   )
 }
 
+/** The section a route belongs to: its own path, or a record page under it. */
+export const sectionOf = (sections: readonly Section[], pathname: string) =>
+  sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))
+
 /** A thin icon rail, the active section's submenu beside it, and the page card. */
 export function Shell({ sections }: { sections: readonly Section[] }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const current = sections.find(({ path }) => path === pathname)
+  const current = sectionOf(sections, pathname)
   return (
     <TooltipProvider>
       <SidebarProvider style={{ "--sidebar-width": "21rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
@@ -142,7 +146,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
             </SidebarHeader>
             <SidebarContent>
               <SidebarGroup><SidebarGroupContent className="px-1.5 md:px-0">
-                <SidebarMenu>{sections.map((section) => <RailItem key={section.path} section={section} active={section.path === pathname} />)}</SidebarMenu>
+                <SidebarMenu>{sections.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>
               </SidebarGroupContent></SidebarGroup>
             </SidebarContent>
             <SidebarFooter>
