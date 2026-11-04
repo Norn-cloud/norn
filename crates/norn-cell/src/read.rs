@@ -732,14 +732,19 @@ pub(crate) fn active_definition_version(engine: &impl SqlEngine) -> Result<Optio
 pub(crate) fn validate_active_definition_pointer(
     engine: &impl SqlEngine,
 ) -> Result<Option<u64>, CellError> {
-    let active = active_definition_version(engine)?;
-    let latest: Option<i64> = engine.query_optional(
+    // One statement pins both values to the same SQLite snapshot, including
+    // when another CellStore installs definitions on a separate connection.
+    let (active, latest): (Option<i64>, Option<i64>) = engine.query_row(
         &format!(
-            "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1"
+            "SELECT (SELECT \"version\" FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1), \
+             (SELECT \"version\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\" DESC LIMIT 1)"
         ),
         params![],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    let active = active
+        .map(|version| to_u64(version, "definitions version"))
+        .transpose()?;
     let latest = latest
         .map(|version| to_u64(version, "definitions version"))
         .transpose()?;
