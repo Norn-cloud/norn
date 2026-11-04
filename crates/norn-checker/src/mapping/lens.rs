@@ -149,25 +149,11 @@ fn check_declaration(
         return Err("unknown: guarded or nested lens".into());
     }
     if let Some(schema) = source_schema {
-        let fields = super::input_fields(schema, &map.source.dataset)
-            .ok_or("unknown: lens source dataset is not declared")?;
-        // Every record already has identical keys and required Boolean values.
-        let declared = sources.first().ok_or("unknown: empty lens source domain")?;
-        for (field, ty) in &fields {
-            if !declared.contains_key(field) {
-                return Err(format!("unknown: lens source field {field:?} is missing"));
-            }
-            if *ty != Type::Bool {
-                return Err(format!(
-                    "unknown: lens source field {field:?} requires {ty:?}, declared required Boolean"
-                ));
-            }
-        }
-        if let Some(field) = declared.keys().find(|field| !fields.contains_key(*field)) {
-            return Err(format!(
-                "unknown: lens source field {field:?} is undeclared"
-            ));
-        }
+        check_source_schema(
+            schema,
+            &map.source.dataset,
+            sources.first().ok_or("unknown: empty lens source domain")?,
+        )?;
     }
     let rule = map
         .properties
@@ -204,6 +190,32 @@ fn check_declaration(
     let lens = AdmittedLens { sources, get, put };
     check_laws(&lens)?;
     Ok(Some(lens))
+}
+
+fn check_source_schema(
+    schema: &SourceSchemaIr,
+    dataset: &str,
+    declared: &BTreeMap<String, bool>,
+) -> Result<(), String> {
+    let fields = super::input_fields(schema, dataset)
+        .ok_or("unknown: lens source dataset is not declared")?;
+    // Every record already has identical keys and required Boolean values.
+    for (field, ty) in &fields {
+        if !declared.contains_key(field) {
+            return Err(format!("unknown: lens source field {field:?} is missing"));
+        }
+        if *ty != Type::Bool {
+            return Err(format!(
+                "unknown: lens source field {field:?} requires {ty:?}, declared required Boolean"
+            ));
+        }
+    }
+    if let Some(field) = declared.keys().find(|field| !fields.contains_key(*field)) {
+        return Err(format!(
+            "unknown: lens source field {field:?} is undeclared"
+        ));
+    }
+    Ok(())
 }
 
 fn check_laws(lens: &AdmittedLens) -> Result<(), String> {

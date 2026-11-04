@@ -184,7 +184,8 @@ fn assert_schema_refusal(schema: norn_ir::source_schema::SourceSchemaIr, expecte
     use norn_ir::ArtifactEnvelope;
     let envelope = |id: &str, kind: &str, payload: Value| -> ArtifactEnvelope {
         serde_json::from_value(json!({
-            "artifactId":id, "kind":kind, "version":"0.1.0", "lifecycle":"draft",
+            "irVersion":"0.1", "artifactId":id, "kind":kind,
+            "namespace":"toy", "name":id, "version":"0.1.0", "lifecycle":"draft",
             "scope":{"orgId":"org_demo", "environmentId":"dev"},
             "dependencies":[], "provenance":{"source":"import"}, "payload":payload
         }))
