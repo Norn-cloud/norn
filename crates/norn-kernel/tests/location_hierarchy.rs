@@ -989,3 +989,77 @@ fn obs_link_generic_claim_creation_and_existing_claim_rewrite_refuse() {
     ));
     assert_eq!(cell.load(&key).expect("retained"), original);
 }
+
+#[test]
+fn obs_link_extension_defaults_seal_and_redeliver_but_changed_defaults_require_migration() {
+    let (types, cell, claim) = claim_fixture();
+    let extension: norn_ir::ObjectTypeExtension = serde_json::from_value(serde_json::json!({
+        "namespace":"demo", "target":"norn.ObservedLinkClaim",
+        "properties":[{"id":"demo__note", "type":{"kind":"string"}, "default":"reviewed"}]
+    }))
+    .expect("extension");
+    let diagnostics = norn_checker::check_entity_model(
+        &norn_checker::EntityModel {
+            interfaces: &[],
+            object_types: &[],
+            extensions: std::slice::from_ref(&extension),
+        },
+        &norn_checker::EntityContext {
+            catalog: &[],
+            registry: &std::collections::BTreeSet::new(),
+            tenant: None,
+            base: norn_checker::EntityModel {
+                interfaces: &[],
+                object_types: &types,
+                extensions: &[],
+            },
+        },
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    let catalog = norn_kernel::TypeCatalog::new(&types).with_extensions([&extension]);
+    let mut resolved = types.clone();
+    resolved
+        .iter_mut()
+        .find(|t| t.name.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+        .expect("claim type")
+        .properties
+        .extend(extension.properties.clone());
+    let mut cell = cell.with_types(resolved);
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    cell.commit_observed(commit, authority)
+        .expect("extended claim");
+    let key = FactKey::new(
+        norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+        claim.id().expect("id"),
+    );
+    let retained = cell.load(&key).expect("retained");
+    assert_eq!(
+        retained.values.as_ref().expect("values")["demo__note"],
+        norn_ir::RuntimeValue::from("reviewed")
+    );
+    let (commit, authority) = claimed_commit(&catalog, &cell, &claim);
+    assert!(commit.writes.is_empty());
+    cell.commit_observed(commit, authority)
+        .expect("retained extended claim");
+    let mut evolved = extension;
+    evolved.properties[0].default =
+        Some(serde_json::from_value(serde_json::json!("changed")).expect("default"));
+    let evolved_catalog = norn_kernel::TypeCatalog::new(&types).with_extensions([&evolved]);
+    let slice = norn_kernel::load_slice(&cell, [key.clone()]).expect("slice");
+    let turn = norn_kernel::DecisionTurn {
+        id: claim.observation_id.clone(),
+        now: norn_kernel::LogicalTime::EPOCH,
+        world: norn_kernel::World::Main,
+        consumes: None,
+    };
+    assert!(
+        norn_kernel::snapshot_observe::prepare_observed_link_claim_snapshot(
+            &evolved_catalog,
+            &slice,
+            &turn,
+            &claim
+        )
+        .is_err()
+    );
+    assert_eq!(cell.load(&key).expect("unchanged"), retained);
+}
