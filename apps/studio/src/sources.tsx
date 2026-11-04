@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { ArrowRight, Database, Shapes } from "lucide-react"
+import { ArrowRight, Database, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
-import { Panel, Well } from "@/components/panel"
+import { KpiTile } from "@/components/kpi-tile"
+import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,6 +11,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
+import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
@@ -29,25 +31,20 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
   return (
-    <div className="grid items-center gap-4 md:grid-cols-[1fr_auto_1fr]">
-      <div className="grid gap-3">
-        {catalog.systems.map((system) => (
-          <Card key={system.id} className="py-4">
-            <CardHeader className="px-4">
-              <CardTitle className="flex items-center gap-2"><Database className="size-4" />{system.name}</CardTitle>
-              <CardDescription>{system.datasets.length} kinds of record · feeds {system.feeds.length} concepts</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
-      <ArrowRight className="mx-auto size-8 rotate-90 text-muted-foreground md:rotate-0" />
-      <Card>
-        <CardHeader>
-          <CardDescription>One business model</CardDescription>
-          <CardTitle className="text-5xl tabular-nums">{concepts.length}</CardTitle>
-          <CardDescription>concepts, {relationships} relationships between them, built on {catalog.concepts.length - concepts.length} core ideas</CardDescription>
-        </CardHeader>
-      </Card>
+    <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+      <Panel icon={Database} label="Connected systems">
+        <Well className="divide-y">
+          {catalog.systems.map((system) => (
+            <div key={system.id} className="flex items-baseline justify-between gap-3 px-4 py-3">
+              <span className="font-medium">{system.name}</span>
+              <span className="text-meta text-muted-foreground tabular-nums">{system.datasets.length} kinds of record · feeds {system.feeds.length} concepts</span>
+            </div>
+          ))}
+        </Well>
+      </Panel>
+      <ArrowRight aria-hidden className="mx-auto size-5 self-center text-muted-foreground max-md:rotate-90" />
+      <KpiTile icon={Shapes} label="One business model" value={concepts.length}
+        sub={`concepts, ${relationships} relationships between them, built on ${catalog.concepts.length - concepts.length} core ideas`} />
     </div>
   )
 }
@@ -55,13 +52,13 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
 function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly onOpen: () => void }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
-    <button type="button" className="text-left" onClick={onOpen}>
-      <Card className="h-full transition-colors hover:border-primary">
+    <button type="button" id={`concept-${concept.name}`} className="h-full scroll-mt-4 rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30" onClick={onOpen}>
+      <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle>{concept.title}</CardTitle>
-          {concept.description && <CardDescription className="line-clamp-2">{concept.description}</CardDescription>}
+          <CardDescription className="line-clamp-2 min-h-[2lh]">{concept.description ?? "No description declared."}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 text-sm">
+        <CardContent className="mt-auto space-y-3 text-sm">
           <p className="text-muted-foreground tabular-nums">{concept.fields.length} facts · {concept.relationships.length} relationships</p>
           {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
         </CardContent>
@@ -123,7 +120,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
     : <span>{conceptTitle(target)}</span>
   return (
     <Sheet open={concept !== undefined} onOpenChange={(open) => { if (!open) onOpen(undefined) }}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+      <SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
         {concept && <>
           <SheetHeader>
             <SheetTitle className="text-xl">{concept.title}</SheetTitle>
@@ -173,6 +170,13 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
   )
 }
 
+/** The concepts the systems feed, for the submenu island. */
+export function useSourcesMenu(): readonly MenuEntry[] | undefined {
+  const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
+  const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `#concept-${concept.name}`, label: concept.title }))
+}
+
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
@@ -200,18 +204,22 @@ export function SourcesPage() {
         <Systems catalog={catalog} />
         <Panel icon={Shapes} label="The business model">
           <Well className="space-y-6 p-4">
-            <label className="grid w-full max-w-xs gap-1 text-meta text-muted-foreground">
-              Find a concept
-              <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <label className="relative block w-full max-w-sm">
+              <span className="sr-only">Find a concept</span>
+              <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input type="search" placeholder="Find a concept" value={search} onChange={(event) => setSearch(event.target.value)}
+                className="border-border bg-background ps-9 dark:bg-background" />
             </label>
             {(["concept", "core idea"] as const).map((kind) => (
               <div key={kind} className="space-y-3">
                 <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
-                    <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
-                  ))}
-                </div>
+                {catalog.concepts.some((concept) => concept.kind === kind && matches(concept))
+                  ? <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
+                        <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
+                      ))}
+                    </div>
+                  : <EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState>}
               </div>
             ))}
           </Well>

@@ -144,8 +144,10 @@
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --radius-2xl: calc(var(--radius) + 12px);
-  --radius-3xl: calc(var(--radius) + 16px);
-  --radius-4xl: calc(var(--radius) + 20px);
+  /* Cards, inputs and badges use the 3xl/4xl steps; flat and modest, never pill-shaped panels. */
+  --radius-3xl: calc(var(--radius) + 4px);
+  --radius-4xl: calc(var(--radius) + 4px);
+  --shadow-md: 0 0 #0000;
 }
 
 @layer base {
