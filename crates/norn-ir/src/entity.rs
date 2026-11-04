@@ -483,3 +483,19 @@ pub enum RelationCardinalityV1 {
     ManyToOne,
     ManyToMany,
 }
+
+/// Reserved EntityIR extension containing typed path-equation declarations.
+pub const PATH_EQUATIONS_SLOT: &str = "norn.path-equations/1.0.0";
+
+/// PATH-EQ-1: equality of two functional link paths from the declaring concept.
+/// Empty paths denote identity; neither path asserts existence of optional links.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathEquation {
+    /// Stable declaration-local identity, retained by generated EGDs.
+    pub id: String,
+    /// Forward link IDs from the declaring concept.
+    pub left: Vec<String>,
+    /// Forward link IDs from the same concept, ending at the same type.
+    pub right: Vec<String>,
+}
