@@ -80,7 +80,7 @@ K1 is reread at its original knowledge cutoff after K2 and a SQLite reopen.
 compares live and knowledge-cutoff IVM with full recomputation at every
 receipt, including the complete result envelope and versioned contribution
 IDs. Each generated sequence contains insert, update, delete, duplicate and
-restart, then generated changes of amount, metal and effective week.
+restart, with possible generated changes of amount, metal and effective week.
 Independent identities arrive in forward/reverse batch order; updates of the
 same identity retain their order. Different physical ledger hashes are not
 claimed equal across these runs. Restart is explicitly a complete rebuild;
