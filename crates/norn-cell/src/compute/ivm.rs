@@ -312,13 +312,8 @@ impl IncrementalQuestion {
                             &record,
                             self.knowledge.map(|c| c.frontier),
                             &mut exclusions,
-                            &mut |record| {
-                                let allowed = visible(record)?;
-                                if allowed {
-                                    self.finding_members.insert(record.id.clone());
-                                }
-                                Ok(allowed)
-                            },
+                            &mut self.finding_members,
+                            visible,
                         )?;
                         self.members.insert(id.clone());
                         if authorized
