@@ -298,7 +298,9 @@ fn preservation_cost_on_the_574_fixtures() {
     }
 }
 
-fn inherited_equation_mapping(preserves: bool) -> Result<(), Vec<norn_checker::Diagnostic>> {
+fn inherited_equation_mapping(
+    preserves: bool,
+) -> (Vec<ArtifactEnvelope>, Vec<ArtifactEnvelope>, PathMapping) {
     let entity = |name: &str, extends: Option<&str>, constrained: bool| -> ArtifactEnvelope {
         let mut value = json!({
             "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
@@ -335,19 +337,20 @@ fn inherited_equation_mapping(preserves: bool) -> Result<(), Vec<norn_checker::D
         "links": (["Parent", "Child"].into_iter().flat_map(|name| ["f", "g"].map(|link|
             json!({"concept": format!("t.{name}"), "link": link, "path": [link]}))).collect::<Vec<_>>())
     })).unwrap();
-    admit_path_mapping(
+    (source, target, mapping)
+}
+
+#[test]
+fn inherited_target_equation_refuses_unconstrained_subtype_image() {
+    let (source, target, mapping) = inherited_equation_mapping(false);
+    let findings = admit_path_mapping(
         &source,
         &target,
         &mapping,
         &BTreeSet::new(),
         ChaseBudget::default(),
     )
-    .map(|_| ())
-}
-
-#[test]
-fn inherited_target_equation_refuses_unconstrained_subtype_image() {
-    let findings = inherited_equation_mapping(false).unwrap_err();
+    .unwrap_err();
     assert!(
         findings
             .iter()
@@ -357,5 +360,13 @@ fn inherited_target_equation_refuses_unconstrained_subtype_image() {
 
 #[test]
 fn inherited_target_equation_admits_preserving_subtype_image() {
-    inherited_equation_mapping(true).unwrap();
+    let (source, target, mapping) = inherited_equation_mapping(true);
+    admit_path_mapping(
+        &source,
+        &target,
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    )
+    .unwrap();
 }
