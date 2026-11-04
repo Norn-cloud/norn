@@ -1,0 +1,63 @@
+namespace Norn {
+  entity Actor in [Role] = {
+    represents?: { type: String, key: String },
+    scope: Scope
+  };
+}
+
+namespace norn {
+  entity Ledger = {
+    scope: Norn::Scope
+  };
+  entity Definitions = {
+    scope: Norn::Scope
+  };
+  entity Marking = {
+    scope: Norn::Scope,
+    id: String
+  };
+  entity Source = {
+    scope: Norn::Scope
+  };
+  entity RefusalDetail = {
+    scope: Norn::Scope
+  };
+}
+namespace Norn {
+  action "norn.read" appliesTo {
+    principal: [Actor],
+    resource: [norn::Definitions, norn::Ledger],
+    context: {
+      scope: Scope
+    }
+  };
+  action "norn.disclose_refusal_detail" appliesTo {
+    principal: [Actor],
+    resource: [norn::RefusalDetail],
+    context: {
+      scope: Scope,
+      governedAction: String
+    }
+  };
+  action "norn.observe" appliesTo {
+    principal: [Actor],
+    resource: [norn::Source],
+    context: {
+      scope: Scope
+    }
+  };
+  action "norn.reveal" appliesTo {
+    principal: [Actor],
+    resource: [norn::Marking],
+    context: {
+      scope: Scope
+    }
+  };
+  action "norn.declassify" appliesTo {
+    principal: [Actor],
+    resource: [norn::Marking],
+    context: {
+      scope: Scope
+    }
+  };
+}
