@@ -135,7 +135,7 @@ fn fixture(system: &str) -> Value {
     )
     .expect("json")
 }
-fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, connector: &str) -> String {
+fn retain_in(cell: &mut Cell, system: &str, row: &Value, event: &str, partition: &str) -> String {
     let record = &row["record"];
     let alias = record
         .get("name")
