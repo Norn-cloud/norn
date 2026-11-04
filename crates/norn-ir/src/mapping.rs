@@ -758,3 +758,19 @@ pub fn mapping_ir_schema() -> Schema {
 fn is_false(value: &bool) -> bool {
     !*value
 }
+
+/// Closed finite Boolean write-back declaration in `norn.write-back/0.1.0`.
+/// Evidence covers only these source states and grants no mutation authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FiniteWriteBackLens {
+    /// Existing direct, unguarded object map id.
+    pub map: String,
+    /// Existing property projection supplying Get.
+    pub property: String,
+    /// Closed domain of unique, same-shaped Boolean source records.
+    pub sources: Vec<BTreeMap<String, bool>>,
+    /// For each source, destination indices for false then true, encoded as
+    /// decimal strings to avoid floating-point interpretation in extension JSON.
+    pub put: Vec<[String; 2]>,
+}

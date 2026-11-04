@@ -5,21 +5,10 @@
 use std::collections::BTreeMap;
 
 use norn_expr::{EvaluationBudget, Expression, Value};
-use norn_ir::mapping::MappingIr;
-use serde::Deserialize;
+use norn_ir::mapping::{FiniteWriteBackLens, MappingIr};
 
 /// Reserved mapping extension for finite Boolean write-back projections.
 pub const LENS_SLOT: &str = "norn.write-back/0.1.0";
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Declaration {
-    map: String,
-    property: String,
-    sources: Vec<BTreeMap<String, bool>>,
-    /// For each source row, decimal-string destination indices for false, then true.
-    put: Vec<[String; 2]>,
-}
 
 /// A live-checked lens, exhaustive only over its retained finite domain.
 /// Construction is private: deserialized assertions never confer admission.
@@ -99,10 +88,10 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     serde_json::to_writer(&mut remaining, raw)
         .map_err(|_| "unknown: lens declaration exceeds byte bound")?;
     let used = 65_536_usize.saturating_sub(remaining.len());
-    let declaration: Declaration =
+    let declaration: FiniteWriteBackLens =
         serde_json::from_slice(bytes.get(..used).ok_or("unknown: byte bound")?)
             .map_err(|e| e.to_string())?;
-    let Declaration {
+    let FiniteWriteBackLens {
         map,
         property,
         sources,
@@ -173,6 +162,11 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
         get.push(value);
     }
     let lens = AdmittedLens { sources, get, put };
+    check_laws(&lens)?;
+    Ok(Some(lens))
+}
+
+fn check_laws(lens: &AdmittedLens) -> Result<(), String> {
     for (row, source) in lens.sources.iter().enumerate() {
         let current = lens.get(source)?;
         if lens.put(source, current)? != source {
@@ -192,5 +186,5 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
             }
         }
     }
-    Ok(Some(lens))
+    Ok(())
 }
