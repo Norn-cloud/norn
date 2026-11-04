@@ -2,9 +2,9 @@
 /// Native trusted prepare/bind controller; solver processes remain outside the checker.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod driver;
-pub use super::finite::Bounds;
+pub use super::transition::Bounds;
 use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
-use norn_ir::verification::finite::CreateRelation;
+use super::transition::CreateRelation;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
