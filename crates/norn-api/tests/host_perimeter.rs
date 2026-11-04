@@ -145,6 +145,16 @@ fn invariant_refusal_retains_pin_and_typed_reason_through_api()
 
 proptest::proptest! {
     #[test]
+    fn scope_refusal_payload_is_independent_of_physical_scope(org in "[a-z]{8,24}", env in "[a-z]{8,24}") {
+        let secret = CellScope { org_id: format!("private-org-{org}"), environment_id: format!("private-env-{env}") };
+        let other = CellScope { org_id: "different-org".into(), environment_id: "different-env".into() };
+        for (org, env) in [(None, None), (Some(""), Some("requested-env")), (Some("requested-org"), Some("requested-env"))] {
+            let left = secret.admit(org, env).unwrap_err();
+            let right = other.admit(org, env).unwrap_err();
+            proptest::prop_assert_eq!(serde_json::to_value(left).unwrap(), serde_json::to_value(right).unwrap());
+        }
+    }
+    #[test]
     fn unauthorized_reason_projection_is_independent_of_secret(secret in "(?s:.{0,256})") {
         use norn_kernel::RefusalCategory as Category;
         for category in [Category::Visibility, Category::Permission, Category::Precondition, Category::Conflict, Category::Invalid, Category::Limit, Category::Internal] {

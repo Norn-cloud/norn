@@ -43,6 +43,11 @@ impl Modify for ContractSchemas {
                 "NornIrRequirement",
             ))
             .chain(project_schemars_components(
+                norn_ir::verification::guarantees::guarantees_document_schema(),
+                "NornGuaranteesDocument",
+                "NornGuarantees",
+            ))
+            .chain(project_schemars_components(
                 norn_ir::layout_sidecar_schema(),
                 "LayoutSidecar",
                 "NornIrLayout",
@@ -1179,6 +1184,74 @@ mod tests {
         project_schemars_components,
     };
     use serde_json::{Value, json};
+
+    #[test]
+    fn guarantee_projection_matches_typed_eligibility_and_exact_scalars() {
+        use norn_ir::verification::guarantees::{GoalGuarantee, GuaranteeScalar};
+        let schemas: serde_json::Map<String, Value> = project_schemars_components(
+            norn_ir::verification::guarantees::guarantees_document_schema(),
+            "NornGuaranteesDocument",
+            "NornGuarantees",
+        )
+        .into_iter()
+        .map(|(name, schema)| (name, serde_json::to_value(schema).expect("component")))
+        .collect();
+        let validator = |name: &str| {
+            jsonschema::validator_for(&json!({
+                "$ref": format!("#/components/schemas/NornGuarantees{name}"),
+                "components": {"schemas": schemas},
+            }))
+            .expect("projected guarantee schema")
+        };
+        let goals = validator("GoalGuarantee");
+        let unknown = json!({"kind":"unknown","reason":"outside qualified fragment"});
+        for eligible in [false, true] {
+            for verdict in [
+                unknown.clone(),
+                json!({"kind":"bounded-pass"}),
+                json!({"kind":"refuted"}),
+            ] {
+                for level in [
+                    unknown.clone(),
+                    json!({"kind":"exhaustive-finite/bounded"}),
+                    json!({"kind":"runtime-enforced"}),
+                    json!({"kind":"parity-tested"}),
+                ] {
+                    let value = json!({"index":0,"goalKind":"preservation","eligible":eligible,"verdict":verdict,"level":level,"evidence":null,"scenario":null});
+                    let valid = eligible || verdict == unknown && level == unknown;
+                    assert_eq!(goals.is_valid(&value), valid, "{value}");
+                    assert_eq!(
+                        serde_json::from_value::<GoalGuarantee>(value).is_ok(),
+                        valid
+                    );
+                }
+            }
+        }
+        let scalars = validator("GuaranteeScalar");
+        for coefficient in [
+            json!("0"),
+            json!("-1"),
+            json!(i64::MIN.to_string()),
+            json!(i64::MAX.to_string()),
+            json!("-0"),
+            json!("01"),
+            json!("+1"),
+            json!("1.5"),
+            json!("9223372036854775808"),
+            json!(1),
+            json!("1\n"),
+            json!("1\r"),
+            json!("1\u{2028}"),
+            json!("1\u{2029}"),
+        ] {
+            let value = json!({"coefficient":coefficient,"scale":0,"unit":null});
+            assert_eq!(
+                scalars.is_valid(&value),
+                serde_json::from_value::<GuaranteeScalar>(value.clone()).is_ok(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn projection_preserves_owned_row_derivation_map_values_and_key_pattern() {
