@@ -11,6 +11,38 @@ use crate::{IrVersion01, ProvenanceSource, ZenExpression};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// LAW-INSTANCE-CONTRACT-1: an application of a law retains its original
+/// identity, concrete subject, attachment and complete origin paths.
+/// This projection is not a new law or evidence of preservation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectiveLawInstance {
+    /// Original law artifact/version and stable law member ID.
+    pub law: crate::definition_catalog::MemberRef,
+    /// Norn1 identity of the unchanged law artifact.
+    pub law_digest: String,
+    /// Concrete implementing type, independently pinned.
+    pub subject: crate::definition_catalog::MemberRef,
+    /// Norn1 identity of that concrete type artifact.
+    pub subject_digest: String,
+    /// Declared governing boundary, including retained pack/app attachments.
+    pub attachment: LawRoot,
+    /// Original governed concept/interface/container identity.
+    pub origin: crate::definition_catalog::MemberRef,
+    /// Every inheritance, containment or mapping path; a diamond retains all.
+    pub paths: Vec<Vec<crate::definition_catalog::MemberRef>>,
+    /// LAW-CONTAINED-PATH-1: exact instance paths; empty outside retained pack/app scope.
+    pub instance_paths: Vec<Vec<crate::PackInstanceRef>>,
+    /// Explicit typed member substitutions; no rewritten child LawIR.
+    pub bindings: std::collections::BTreeMap<String, crate::definition_catalog::MemberRef>,
+}
+
+/// Published contract for separately projected effective law instances.
+#[must_use]
+pub fn effective_law_instance_schema() -> schemars::Schema {
+    schemars::schema_for!(EffectiveLawInstance)
+}
+
 /// One protected law; its predicates use the subject's `self` environment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -86,6 +118,8 @@ pub enum LawRoot {
     Cell(String),
     /// Exact entity type boundary.
     Entity(String),
+    /// Exact retained composition-pack boundary.
+    Pack(String),
 }
 
 /// One lifecycle-state selector.

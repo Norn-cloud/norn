@@ -21,8 +21,22 @@ impl Modify for ContractSchemas {
         let components = openapi
             .components
             .get_or_insert_with(utoipa::openapi::Components::new);
-        for (name, schema) in artifact_envelope_schemas()
+        let artifact_schemas = artifact_envelope_schemas();
+        let effective_law_schemas = project_schemars_components(
+            norn_ir::verification::effective_law_instance_schema(),
+            "NornIrEffectiveLawInstance",
+            "NornIr",
+        )
+        .into_iter()
+        .filter(|(name, _)| {
+            !artifact_schemas
+                .iter()
+                .any(|(existing, _)| existing == name)
+        })
+        .collect::<Vec<_>>();
+        for (name, schema) in artifact_schemas
             .into_iter()
+            .chain(effective_law_schemas)
             .chain(project_schemars_components(
                 norn_ir::requirement_display::requirement_view_schema(),
                 "NornIrRequirementView",
@@ -1139,6 +1153,27 @@ fn normalize_scalar_literal_union(object: &mut serde_json::Map<String, Value>) {
     reason = "unit tests assert schema conversion invariants"
 )]
 mod tests {
+    #[test]
+    fn effective_law_projection_preserves_exported_artifact_components() {
+        let document: serde_json::Value =
+            serde_json::from_str(&crate::openapi::openapi_json().expect("OpenAPI document"))
+                .expect("OpenAPI JSON");
+        for (name, schema) in super::artifact_envelope_schemas() {
+            if matches!(name.as_str(), "NornIrLawRoot" | "NornIrMember") {
+                let expected = serde_json::to_value(schema).expect("artifact schema");
+                assert_eq!(
+                    document.pointer(&format!("/components/schemas/{name}")),
+                    Some(&expected)
+                );
+            }
+        }
+        assert!(
+            document
+                .pointer("/components/schemas/NornIrEffectiveLawInstance")
+                .is_some()
+        );
+    }
+
     use super::{
         adapt_schemars_schema, hoist_inline_objects, parse_openapi_schema,
         project_schemars_components,

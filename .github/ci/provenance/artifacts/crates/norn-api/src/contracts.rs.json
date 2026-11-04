@@ -1,11 +1,10 @@
 {
-  "sha256": "a8668ac672a36c101969659b97a3469f3bba53461f8c12fc98881f3a69429f00",
+  "sha256": "b740d65c9fabb2c0cbfd115c5402c786b241922172cd9dde5bdc67b8f0917aa2",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",
@@ -13,5 +12,6 @@
     }
   ],
   "notices": [],
-  "connector": null
+  "connector": null,
+  "parents": []
 }
