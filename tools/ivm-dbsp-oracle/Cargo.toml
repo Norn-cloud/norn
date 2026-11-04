@@ -10,7 +10,9 @@ publish = false
 
 [workspace]
 
-[dev-dependencies]
+# This entire standalone package is test-only. Normal edges let cargo-deny
+# audit the complete oracle graph (including DBSP), rather than only the root.
+[dependencies]
 # Feldera DBSP, MIT OR Apache-2.0.
 dbsp = "=0.375.0"
 norn-cell = { path = "../../crates/norn-cell" }
