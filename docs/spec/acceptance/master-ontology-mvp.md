@@ -35,7 +35,7 @@ ERPNext/Shopify change feeds are live demo priority under [data engineering](dat
 - **MVP-MAP-GAP:** Given a Shopify price with no cost/book information, when asked for canonical valuation, then report incomplete coverage; do not label sales price as stock cost.
 - **MVP-CONSTITUTION:** Given an invalid core or jewelry law writer, when generated obligations and live commits run, then produce the named counterexample/refusal; no handwritten theorem substitutes.
 
-The bounded constitution driver is `bash scripts/demo/drop-constitution.sh` on
+The bounded constitution driver is `cargo nextest run --profile drop-constitution` on
 clean main. Its typed `core.Conversion` specialisation records input, output and
 loss in pinned UCUM grams at scale zero. The approved LawIR stays unchanged while
 the compiler removes the writer's loss derivation, then restores it.

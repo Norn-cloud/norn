@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
-import { ArrowRight, Database } from "lucide-react"
+import { ArrowRight, Database, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
+import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -180,7 +181,7 @@ export function SourcesPage() {
     <section className="space-y-8">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Sources</h1>
+          <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
         <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
@@ -189,24 +190,25 @@ export function SourcesPage() {
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && <>
         <Systems catalog={catalog} />
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <h2 className="text-xl font-semibold">The business model</h2>
-          <label className="grid w-full max-w-xs gap-1 text-sm text-muted-foreground">
-            Find a concept
-            <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
-          </label>
-        </div>
-        {(["concept", "core idea"] as const).map((kind) => (
-          <div key={kind} className="space-y-3">
-            <h3 className="text-sm font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
-                <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
-              ))}
-            </div>
-          </div>
-        ))}
-        <p className="text-sm text-muted-foreground">The records inside each concept are not available yet.</p>
+        <Panel icon={Shapes} label="The business model">
+          <Well className="space-y-6 p-4">
+            <label className="grid w-full max-w-xs gap-1 text-meta text-muted-foreground">
+              Find a concept
+              <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+            {(["concept", "core idea"] as const).map((kind) => (
+              <div key={kind} className="space-y-3">
+                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Concepts the systems feed" : "Core ideas they build on"}</h3>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
+                    <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Well>
+        </Panel>
+        <p className="text-meta text-muted-foreground">The records inside each concept are not available yet.</p>
         <ConceptSheet catalog={catalog} name={open} onOpen={setOpen} />
       </>}
     </section>
