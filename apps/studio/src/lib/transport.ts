@@ -5,6 +5,7 @@ export type { Schemas }
 export type Envelope = Schemas["NornArtifactEnvelope"]
 export type Question = Schemas["NornIrQuestion"]
 export type Answer = Schemas["NornQueryResult"]
+export type HistoricalAnswer = Schemas["NornHistoricalQuestionResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
 export type ObjectType = Schemas["NornIrObjectTypeDef"]
 export type Artifact = Schemas["NornArtifactEnvelope"]
@@ -18,11 +19,18 @@ export interface QuestionAnswer {
   readonly objectType: Read<ObjectType>
 }
 
+/** One answer published, the same question answered again after a source correction, and the first answer read back at its knowledge cutoff. */
+export interface Restatement extends QuestionAnswer {
+  readonly corrected: Read<Answer>
+  readonly asOf: Read<HistoricalAnswer>
+}
+
 /** The app's only way to read server documents. Live HTTP joins once the host's read API lands. */
 export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted core definitions: object types, actions, laws and the rest, as artifact envelopes. */
   readonly definitions: () => Promise<readonly Read<Envelope>[]>
+  readonly restatement: () => Promise<Restatement>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
 }
@@ -37,14 +45,21 @@ function recorded<T>(name: string): Read<T> {
 
 const DEFINITIONS = import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
 
+const scrapYield = (): QuestionAnswer => ({
+  question: recorded<Question>("answers/scrap-yield.question.json"),
+  answer: recorded<Answer>("answers/scrap-yield.k1.answer.json"),
+  metrics: recorded<readonly Metric[]>("answers/scrap-yield.metrics.json"),
+  objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
+})
+
 /** Documents the engine produced for the synthetic scrap-yield and three-systems worlds, replayed byte for byte. */
 export const recordedTransport: Transport = {
   definitions: async () => Object.values(DEFINITIONS).map((source) => readDocument<Envelope>(source, "recorded")),
-  questionBoard: async () => [{
-    question: recorded<Question>("answers/scrap-yield.question.json"),
-    answer: recorded<Answer>("answers/scrap-yield.k1.answer.json"),
-    metrics: recorded<readonly Metric[]>("answers/scrap-yield.metrics.json"),
-    objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
-  }],
+  questionBoard: async () => [scrapYield()],
+  restatement: async () => ({
+    ...scrapYield(),
+    corrected: recorded<Answer>("answers/scrap-yield.k2.answer.json"),
+    asOf: recorded<HistoricalAnswer>("answers/scrap-yield.k1-as-of.answer.json"),
+  }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
 }
