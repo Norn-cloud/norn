@@ -1484,7 +1484,7 @@ impl<'a> Checker<'a, '_> {
                 && child_table
                     .get(&collection.ordering_key)
                     .is_some_and(|property| {
-                        matches!(property.base(), Some(PropertyType::Integer {}))
+                        matches!(property.base(), Some(PropertyType::Integer { .. }))
                             && !ordering_key_admits_dense_positions(property, collection.max_rows.0)
                     })
             {
@@ -2276,6 +2276,10 @@ fn type_narrows(sub: &Shape<'_, '_>, sup: &Shape<'_, '_>) -> Option<bool> {
 }
 
 fn base_narrows(narrow: &PropertyType, wide: &PropertyType) -> bool {
+    if narrow.additivity() != wide.additivity() {
+        return false;
+    }
+
     match (narrow, wide) {
         (PropertyType::Text { format: narrow }, PropertyType::Text { format: wide }) => {
             wide.is_none() || narrow == wide
@@ -2350,6 +2354,27 @@ mod tests {
         };
         assert!(base_narrows(&values(&["a"]), &values(&["a", "b"])));
         assert!(!base_narrows(&values(&["a", "c"]), &values(&["a", "b"])));
-        assert!(!base_narrows(&PropertyType::Integer {}, &text));
+        assert!(!base_narrows(
+            &PropertyType::Integer {
+                additivity: norn_ir::PropertyAdditivity::Undeclared {}
+            },
+            &text
+        ));
+    }
+    #[test]
+    fn metric_additivity_is_preserved_by_numeric_overrides() {
+        use norn_ir::PropertyAdditivity;
+        let balance = PropertyType::Integer {
+            additivity: PropertyAdditivity::SemiAdditive {},
+        };
+        let additive = PropertyType::Integer {
+            additivity: PropertyAdditivity::Additive {},
+        };
+        let undeclared = PropertyType::Integer {
+            additivity: PropertyAdditivity::Undeclared {},
+        };
+        assert!(base_narrows(&balance, &balance));
+        assert!(!base_narrows(&additive, &balance));
+        assert!(!base_narrows(&undeclared, &balance));
     }
 }
