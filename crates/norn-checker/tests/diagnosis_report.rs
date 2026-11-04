@@ -160,7 +160,7 @@ fn invalid_member_identity_and_protected_indices_are_unknown() {
 
 #[test]
 fn an_unencodable_profile_stays_unknown_without_a_profile_digest() {
-    let schema=(0..130).fold(Schema::Boolean,|schema,_|Schema::Array(Box::new(schema)));
+    let schema=(0..300).fold(Schema::Boolean,|schema,_|Schema::Array(Box::new(schema)));
     let none=BTreeSet::new();
     let report=diagnose_attempt(&Attempt{source:b"source",base:b"base",profile:b"profile",assumptions:"bounded",schema:&schema,members:&[],editable:&none,protected:&none,max_calls:100});
     assert!(report.diagnosis.is_err());
