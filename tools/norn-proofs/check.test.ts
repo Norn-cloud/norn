@@ -9,6 +9,10 @@ test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const tools = process.env.NORN_VERIFICATION_TOOL_ROOT
   if (!tools) throw new Error("NORN_VERIFICATION_TOOL_ROOT is required for real backend parity")
+  const build = Bun.spawn(["cargo", "build", "--locked", "-p", "norn-checker",
+    "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", join(root, "target")],
+    { cwd: root, stdout: "inherit", stderr: "inherit" })
+  expect(await build.exited).toBe(0)
   const work = process.env.NORN_PROOF_ACCEPTANCE_OUT ?? await mkdtemp(join(tmpdir(), "norn-proof-parity-"))
   await mkdir(work, { recursive: true })
   try {
@@ -32,19 +36,23 @@ test("tla_ts_apalache_parity", async () => {
     if (object(report) && array(report.cases)) process.stdout.write(`${JSON.stringify({
       acceptancePassed: report.acceptancePassed, staleRejected: report.staleRejected,
       cases: report.cases.map(value => object(value) ? { case: value.case, total: value.total,
-        eligible: value.eligible, discharged: value.discharged, acceptancePassed: value.acceptancePassed,
-        goals: array(value.goals) ? value.goals.map(goal => object(goal) ? {
-          goal: goal.goal, kind: goal.kind, status: goal.status, reason: goal.reason, scenario: goal.scenario,
-        } : goal) : value.goals } : value),
+        eligible: value.eligible, discharged: value.discharged, acceptancePassed: value.acceptancePassed } : value),
     })}\n`)
     expect(await child.exited).toBe(0)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
       {case: "original", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
       {case: "mutant", total: 10, eligible: 3, discharged: 2, acceptancePassed: true,
-        goals: expect.arrayContaining([expect.objectContaining({kind: "preservation", status: "refuted",
-          scenario: expect.objectContaining({law: "constitution.fine_mass.law", writer: "constitution.melt.convert.action"})})])},
+        documents: expect.arrayContaining([expect.objectContaining({lawArtifactId: "constitution.fine_mass.law", verdict: {kind: "refuted"},
+          goals: expect.arrayContaining([expect.objectContaining({goalKind: "preservation", verdict: {kind: "refuted"},
+            scenario: expect.objectContaining({kind: "counterexample", writerArtifactId: "constitution.melt.convert.action"})})])})])},
       {case: "restored", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
     ]})
+    if (process.env.NORN_BLESS === "1") {
+      for (const label of ["original", "mutant"]) {
+        const bytes = await Bun.file(join(work, "jobs", `${label}-law-0.guarantees.json`)).arrayBuffer()
+        await Bun.write(join(root, "fixtures/demo/guarantees", `constitution.${label}.guarantees.json`), bytes)
+      }
+    }
   } finally {
     if (!process.env.NORN_PROOF_ACCEPTANCE_OUT) await rm(work, {recursive: true, force: true})
   }

@@ -4,6 +4,12 @@ import { object, strings, array, integer } from "./protocol"
 export type Trace = { state: Record<string, boolean | number> }[]
 export type Verdict = { status: "ok" } | { status: "violation"; trace: Trace } | { status: "unknown"; reason: string }
 
+/** Preserve actual verdict markers; full diagnostic bytes are committed separately. */
+export function verdictText(stdout: string): string {
+  return [...stdout.matchAll(/^The outcome is: \w+\b|State \d+: state invariant \d+ violated\./gm)]
+    .map(match => match[0]).join("\n")
+}
+
 /** Strict pinned ITF boundary: no rounding, missing variables, duplicate names or reordered states. */
 export function decodeTrace(value: unknown): Trace {
   if (!object(value) || !strings(value.vars) || value.vars.length === 0 ||

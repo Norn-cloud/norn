@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test"
-import { runProcess, environment } from "./host"
-import { decodeTrace, oracleVerdict, parity } from "./oracle"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { runProcess, environment, assetPins, diagnosticCommitment, sha } from "./host"
+import { decodeTrace, oracleVerdict, parity, verdictText } from "./oracle"
 import { integer, parseJob } from "./protocol"
 import { checkFinite } from "./core"
 
@@ -9,6 +12,43 @@ const itf = { vars: ["present", "v"], states: trace.map(({ state }, index) =>
   ({ "#meta": { index }, present: state.present, v: { "#bigint": String(state.v) } })) }
 const success = "The outcome is: NoError I@00:00\n"
 const failure = "State 1: state invariant 0 violated. I@00:00\nThe outcome is: Error I@00:00\n"
+
+test("logical asset commitments survive relocation and detect changed content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "norn-tool-assets-"))
+  try {
+    const left = join(directory, "checkout-a"), right = join(directory, "checkout-b")
+    await writeFile(left, "same tool bytes"); await writeFile(right, "same tool bytes")
+    const name = "tool/1.2.3/binary"
+    expect(await assetPins([[name, left]])).toEqual(await assetPins([[name, right]]))
+    expect(JSON.stringify(await assetPins([[name, left]]))).not.toContain(directory)
+    await writeFile(right, "changed tool bytes")
+    expect(await assetPins([[name, left]])).not.toEqual(await assetPins([[name, right]]))
+    for (const entries of [[["/host/tool", left]], [["../tool", left]], [[name, left], [name, right]]] satisfies [string, string][][]) {
+      await expect(assetPins(entries)).rejects.toThrow()
+    }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test("retained verdict markers preserve qualification without diagnostic host paths", () => {
+  for (const stdout of [success, failure, success + success, "", "The outcome is: Other\n",
+    `/home/example/private.tla\n${failure}diagnostic /tmp/tool.log\n`]) {
+    const markers = verdictText(stdout)
+    expect(markers).not.toContain("/home/"); expect(markers).not.toContain("/tmp/")
+    expect(diagnosticCommitment(stdout)).toEqual({ bytes: Buffer.byteLength(stdout), sha256: sha(stdout) })
+    for (const code of [0, 1, 12, 75, 255]) {
+      expect(oracleVerdict({ kind: "exited", code, stdout: markers, stderr: "" }, itf).status)
+        .toBe(oracleVerdict({ kind: "exited", code, stdout, stderr: "" }, itf).status)
+    }
+  }
+})
+
+test("strict UTF-8 transport preserves BOM bytes for exact diagnostic commitments", async () => {
+  const bytes = Buffer.from([239, 187, 191, 97])
+  const result = await runProcess({ command: [process.execPath, "-e", "process.stdout.write(Buffer.from([239,187,191,97]))"],
+    input: "", env: environment("/nonexistent"), timeoutMs: 2000, maxBytes: 100 })
+  expect(result.kind).toBe("exited")
+  expect(diagnosticCommitment(result.stdout)).toEqual({ bytes: bytes.length, sha256: sha(bytes) })
+})
 
 test("universal success requires a drained nonempty search with exact cardinality and oracle agreement", () => {
   const primary = { status: "success", distinctStates: 78, queuedStates: 0, initialStates: { distinct: 1 } }

@@ -1,0 +1,154 @@
+{
+  "drop-01": {
+    "norn-cell::exact_values": [
+      "a_decimal_beyond_the_engine_range_is_refused_never_rounded",
+      "a_store_of_the_previous_format_is_refused_with_a_clear_error",
+      "decimals_and_payloads_round_trip_exactly",
+      "old_pending_link_layout_is_refused_before_open_or_definition_reads",
+      "val_round_store_defaults_sets_and_record_members_use_the_declared_site",
+      "val_roundtrip_transport_codec_commit_and_reopen"
+    ],
+    "norn-checker": [
+      "property_codec::tests::core_values_inexact_preserves_the_numeric_refusal",
+      "property_codec::tests::decimal_grammar",
+      "property_codec::tests::val_exact_decimal_codec_is_idempotent",
+      "quantity_ledger::decimal::tests::canonical_decimal_is_exact_and_idempotent",
+      "quantity_ledger::decimal::tests::decimal_multiplier_refuses_exactly_on_overflow",
+      "quantity_ledger::decimal::tests::val_exact_scale_boundaries"
+    ],
+    "norn-checker::core_units": [
+      "core_units_is_the_exact_generated_admitted_catalog",
+      "val_unit_action_info_cannot_refuse_or_hide_an_error",
+      "val_unit_action_literal_thresholds_keep_the_inferred_unit",
+      "val_unit_admission_preserves_case_and_system",
+      "val_unit_closed_membership_refuses_unknown_units_and_money",
+      "val_unit_descriptor_refuses_another_unit_code",
+      "val_unit_factor_and_dimension_cannot_be_substituted",
+      "val_unit_link_properties_refuse_unknown_units",
+      "val_unit_literal_note_is_retained_without_refusing_a_valid_artifact",
+      "val_unit_pin_admits_known_codes_and_refuses_unresolved_or_wrong_pins",
+      "val_unit_unrelated_deep_payload_does_not_report_a_unit_mismatch"
+    ],
+    "norn-expr::profile_conformance": [
+      "ambient_clock_and_timezone_forms_are_refused",
+      "bounded_string_controls_are_checked_at_typed_and_syntax_only_sites",
+      "bounded_string_precharge_exhaustion_is_typed",
+      "bounded_string_zero_caps_return_empty_results",
+      "bounded_strings_follow_nfc_and_unicode_scalar_boundaries",
+      "builtins_admitted_and_refused",
+      "evaluation_source_validation_reuses_exact_literal_and_structural_bounds",
+      "map_iteration_order_is_never_observable",
+      "nullable_division_requires_handling",
+      "numbers_are_exact_or_a_typed_error",
+      "profile_engine_pin_matches_the_qualified_fork",
+      "profile_id_is_published_and_pinned_to_profile_md",
+      "regex_is_refused_and_strings_are_bounded",
+      "runtime_errors_are_typed_never_silent",
+      "scientific_literals_are_refused_before_evaluation",
+      "temporal_arithmetic_is_checked_and_projects_canonical_strings",
+      "temporal_kinds_separate_wire_strings_from_parsed_temporals",
+      "temporal_ordering_handles_season_windows_leap_days_and_offsets",
+      "types_have_no_residual_any_or_dynamic_reads",
+      "unicode_scalar_count_preserves_byte_length_semantics",
+      "val_round_explicit_midpoint_away_and_zero_divisor_admission",
+      "val_roundtrip_runtime_tokens_reach_the_real_evaluator_exactly"
+    ]
+  },
+  "drop-02": {
+    "norn-checker::example/jewelry_demo": [
+      "authored_laws_admit_refuse_and_render_en_ar"
+    ]
+  },
+  "drop-03": {
+    "norn-cell::example/catalog_demo": [
+      "authored_catalog_reads_and_refusals_use_kernel_pdp"
+    ]
+  },
+  "drop-04": {
+    "norn-decisions::evaluate": [
+      "cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations",
+      "declared_average_cp1_and_delivery_to_transfer_identity_collision",
+      "declared_average_matches_every_retained_prefix_with_original_cost_returns",
+      "declared_fifo_matches_all_retained_reference_histories_and_cp1",
+      "fold_boundaries_refuse_without_a_partial_decision",
+      "fold_capacity_complete_allocate_matches_the_core_spec",
+      "fold_order_is_numeric_with_identity_ties_and_independent_of_enumeration"
+    ]
+  },
+  "drop-05": {
+    "norn-cell::definitions_install": [
+      "data_quarantine_redelivery_persists_one_finding_and_correction_recovers",
+      "law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2",
+      "legacy_law_snapshot_refuses_without_effects",
+      "legacy_version_zero_finding_refuses_without_effects",
+      "obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses",
+      "obs_evidence_historical_governing_laws_do_not_follow_current_definitions",
+      "obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff",
+      "obs_evidence_install_refuses_missing_or_substituted_governing_laws",
+      "obs_evidence_legacy_candidates_do_not_block_a_verified_producer",
+      "obs_evidence_redelivery_persists_one_law_finding_after_restart",
+      "obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity",
+      "obs_recovery_upgrade_uses_each_findings_retained_model"
+    ]
+  },
+  "drop-06": {
+    "norn-cell::jewelry_pricing": [
+      "jewel_price_milligram_denominator_refuses_before_execution",
+      "jewel_price_sell_and_scrap_commit_exactly_once_and_reopen"
+    ]
+  },
+  "drop-07": {
+    "norn-cell::incremental_question": [
+      "data_delta_incremental_equals_recompute_with_redelivery_and_restart",
+      "empty_generation_refuses_a_new_foreign_scope_binding",
+      "skipped_receipt_or_changed_population_refuses_without_partial_publication"
+    ]
+  },
+  "drop-08": {
+    "norn-cell::restatement_activation": [
+      "activated_deltas_equal_full_recompute_through_redelivery_and_restart",
+      "approved_candidate_refuses_an_alternate_kernel_writer_before_activation",
+      "candidate_budget_includes_the_complete_staged_slot",
+      "clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart",
+      "declared_restatement_law_and_reviewer_actions_are_admitted_together",
+      "generated_clock_leads_preserve_pinned_restatement_and_recovery",
+      "governed_activation_switches_all_slices_and_preserves_old_answers",
+      "missing_incomplete_and_stale_candidates_never_replace_the_complete_output",
+      "prepared_candidates_stay_bound_to_their_native_host",
+      "resumed_slice_declarations_keep_the_same_admission_bound"
+    ]
+  },
+  "drop-09": {
+    "norn-checker::three_systems": [
+      "mvp_item_holding_catalog_and_owner_location_partitions",
+      "mvp_map_gap_shopify_price_is_never_stock_cost_or_gl",
+      "mvp_map_three_aliases_roles_and_one_economic_identity",
+      "mvp_map_three_ambiguous_identity_refuses_without_sku_guessing",
+      "mvp_map_three_artifact_set_is_admitted",
+      "mvp_map_three_generated_aliases_never_guess_catalog_identity",
+      "mvp_map_three_odoo_snapshot_incremental_and_replay_are_synthetic",
+      "mvp_map_three_unresolved_units_and_draft_postings_refuse"
+    ]
+  },
+  "drop-11": {
+    "norn-kernel::invariant_commit": [
+      "law_interface_mixed_scopes_and_misowned_invariants_refuse",
+      "law_interface_runtime_matches_the_shared_evaluator_for_implementors",
+      "law_interface_transitive_and_diamond_implementors_govern_once_with_the_interface_pin",
+      "law_invariant_runtime_decision_and_action_refusals_journal_and_consume",
+      "law_invariant_runtime_exhausted_budget_refuses",
+      "law_invariant_runtime_matches_the_existing_evaluator",
+      "law_invariant_runtime_misbound_missing_and_negated_references_refuse",
+      "law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin",
+      "law_invariant_runtime_other_responses_still_refuse_before_activation",
+      "law_invariant_runtime_resolves_the_retained_subjects_interface_member",
+      "law_invariant_runtime_valid_response_admits",
+      "law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin"
+    ]
+  },
+  "drop-constitution": {
+    "norn-cell::example/constitution": [
+      "constitution_loss_mutation_refusal_and_restoration"
+    ]
+  }
+}

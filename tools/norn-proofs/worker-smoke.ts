@@ -16,10 +16,10 @@ for (const raw of plan.jobs) {
   if (!object(recorded) || !object(recorded.oracleRun) || typeof recorded.oracleRun.exitCode !== "number" ||
       typeof recorded.oracleRaw !== "string" || recorded.modelSha !== job.modelSha || recorded.status === "unknown") throw new Error("missing qualified reference")
   const reference: unknown = JSON.parse(recorded.oracleRaw)
-  if (!object(reference) || typeof reference.stdout !== "string" || typeof reference.stderr !== "string" ||
+  if (!object(reference) || typeof reference.verdictText !== "string" ||
       (reference.traceRaw !== null && typeof reference.traceRaw !== "string")) throw new Error("malformed recorded reference")
   const oracle = oracleVerdict({ kind: "exited", code: recorded.oracleRun.exitCode,
-    stdout: reference.stdout, stderr: reference.stderr }, reference.traceRaw === null ? null : JSON.parse(reference.traceRaw))
+    stdout: reference.verdictText, stderr: "" }, reference.traceRaw === null ? null : JSON.parse(reference.traceRaw))
   const expectedStates = job.step === "idle" ? 1 : job.expectedStates
   const began = performance.now()
   const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" },

@@ -9,6 +9,14 @@ description = "shared cell store with native SQLite adapters (ring 1; see AGENTS
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "catalog_demo"
+test = true
+
+[[example]]
+name = "constitution"
+test = true
+
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]

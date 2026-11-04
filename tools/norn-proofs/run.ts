@@ -1,7 +1,7 @@
-import { join } from "node:path"
-import { sha, readFile, writeFile, mkdir, mkdtemp, rm, readdir, runProcess, environment } from "./host"
+import { join, relative } from "node:path"
+import { sha, readFile, writeFile, mkdir, mkdtemp, rm, readdir, runProcess, environment, assetPins, diagnosticCommitment } from "./host"
 import { object, array, parseJob, type Job } from "./protocol"
-import { oracleVerdict, parity } from "./oracle"
+import { oracleVerdict, parity, verdictText } from "./oracle"
 
 const [binary, original, mutant, base, bounds, work, tools] = process.argv.slice(2)
 if (process.argv.length !== 9 || !binary || !original || !mutant || !base || !bounds || !work || !tools) {
@@ -11,7 +11,7 @@ const workDirectory = work
 const env = environment(tools)
 const execute = (command: readonly [string, ...string[]], input = "") =>
   runProcess({ command, input, env, timeoutMs: 120000, maxBytes: 16777216 })
-const decode = (bytes: Uint8Array) => new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+const decode = (bytes: Uint8Array) => new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
 const json = async (path: string): Promise<unknown> => JSON.parse(decode(await readFile(path)))
 const checked = async (command: readonly [string, ...string[]], input = "") => {
   const result = await execute(command, input)
@@ -35,13 +35,21 @@ async function javascript(directory: string): Promise<string[]> {
   }
   return files.sort()
 }
-const assets = [process.execPath, join(tools, "bin/java"), jar, join(apalache, "bin/apalache-mc"),
-  ...["run.ts", "check.ts", "core.ts", "host.ts", "oracle.ts", "protocol.ts", "bun.lock", "node_modules/tla-ts/package.json", "node_modules/fflate/package.json"]
-    .map(name => join(packagePath, name)),
-  ...await javascript(join(packagePath, "node_modules/tla-ts/dist")),
-  ...await javascript(join(packagePath, "node_modules/fflate"))]
-const toolchain: Record<string, string> = {}
-for (const path of assets) toolchain[path.startsWith(packagePath) ? path : path === process.execPath ? "bun" : path.endsWith("/java") ? "java" : path.endsWith(".jar") ? "apalache.jar" : "apalache.launcher"] = sha(await readFile(path))
+const assets: [string, string][] = [["bun/1.3.14/bun", process.execPath],
+  ["temurin/21.0.12.1_1/bin/java", join(tools, "bin/java")],
+  ["apalache/0.56.1/lib/apalache.jar", jar], ["apalache/0.56.1/bin/apalache-mc", join(apalache, "bin/apalache-mc")]]
+for (const name of ["run.ts", "check.ts", "core.ts", "host.ts", "oracle.ts", "protocol.ts", "bun.lock"]) {
+  assets.push([`norn-proof-runner/1/${name}`, join(packagePath, name)])
+}
+for (const [name, version] of [["tla-ts", "0.0.7"], ["fflate", "0.8.3"]] as const) {
+  const root = join(packagePath, "node_modules", name)
+  const metadata = await json(join(root, "package.json"))
+  if (!object(metadata) || metadata.version !== version) throw new Error(`${name} version mismatch`)
+  for (const path of [join(root, "package.json"), ...await javascript(root)]) {
+    assets.push([`${name}/${version}/${relative(root, path).split("\\").join("/")}`, path])
+  }
+}
+const toolchain = await assetPins(assets)
 const results: Record<string, { resultSha: string; modelSha: string; challenge: string }> = {}
 const control = { toolchain, results }
 const plan: unknown = JSON.parse(await checked([binary, "prepare", original, mutant, base, bounds, work, tools], JSON.stringify(control)))
@@ -71,7 +79,8 @@ async function run(job: Job) {
     const verdict = parity(envelope.outcome, oracle, expected)
     return { status: verdict.status, modelSha: job.modelSha, errors: [],
       reason: verdict.status === "unknown" ? verdict.reason : "backend parity", primaryRaw,
-      oracleRaw: JSON.stringify({ stdout: reference.stdout, stderr: reference.stderr, traceRaw }),
+      oracleRaw: JSON.stringify({ verdictText: verdictText(reference.stdout), traceRaw,
+        diagnostics: { stdout: diagnosticCommitment(reference.stdout), stderr: diagnosticCommitment(reference.stderr) } }),
       oracleRun: { exitCode: reference.kind === "exited" ? reference.code : null,
         timedOut: reference.kind === "unknown" && reference.timedOut },
       tlaSha256: job.modelSha, traceBackend: "apalache", trace: verdict.status === "violation" ? verdict.trace : null }

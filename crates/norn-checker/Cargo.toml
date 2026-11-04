@@ -17,6 +17,10 @@ name = "norn-proof-quint"
 path = "src/bin/norn-proof-quint.rs"
 required-features = ["native-proof-driver"]
 
+[[example]]
+name = "jewelry_demo"
+test = true
+
 [[test]]
 name = "canonical_values_kani"
 path = "../../verification/canonical-values-v1/diagnostic_kani.rs"

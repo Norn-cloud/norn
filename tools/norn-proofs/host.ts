@@ -1,8 +1,21 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 export { readFile, writeFile, mkdir, mkdtemp, rm, readdir } from "node:fs/promises"
 
 export const sha = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
+export const diagnosticCommitment = (text: string) => ({ bytes: Buffer.byteLength(text, "utf8"), sha256: sha(text) })
+
+export async function assetPins(assets: readonly (readonly [string, string])[]): Promise<Record<string, string>> {
+  const pins = new Map<string, string>()
+  for (const [name, path] of assets) {
+    if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").includes("..") || pins.has(name)) {
+      throw new Error("invalid or duplicate logical tool asset")
+    }
+    pins.set(name, sha(await readFile(path)))
+  }
+  return Object.fromEntries(pins)
+}
 export type ProcessResult = { stdout: string; stderr: string } &
   ({ kind: "exited"; code: number } | { kind: "unknown"; reason: string; timedOut: boolean })
 
@@ -35,7 +48,7 @@ export function runProcess(options: { command: readonly [string, ...string[]]; i
       finished = true; clearTimeout(stop); clearTimeout(deadline); kill()
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); child.unref()
       try {
-        const decoder = new TextDecoder("utf-8", { fatal: true })
+        const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
         const data = { stdout: decoder.decode(Buffer.concat(stdout)), stderr: decoder.decode(Buffer.concat(stderr)) }
         resolve(failure || code === null ? { ...data, kind: "unknown", reason: failure ?? "child terminated", timedOut }
           : { ...data, kind: "exited", code })
