@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         sources(&root, &root.join(path), &mut output)?;
     }
-    output.push_str("];\n");
+    output.push_str("]\n");
     fs::write(
         PathBuf::from(std::env::var("OUT_DIR")?).join("fuel_sources.rs"),
         output,
