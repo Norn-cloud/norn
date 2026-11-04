@@ -14,15 +14,14 @@
 mod query_support;
 
 use chrono::NaiveDate;
-use differential_dataflow::{input::InputSession, operators::Reduce};
-use timely::dataflow::operators::Probe;
-use std::{cell::RefCell, rc::Rc, sync::mpsc, thread};
+use differential_dataflow::input::InputSession;
 use norn_cell::compute::{Engine, QueryResult, ivm::IncrementalQuestion};
 use norn_cell::{CellStore, CommitBatch, CommitOutcome, FactWriteRow};
 use norn_checker::metric::compute::certificate::{self, Algebraic};
 use norn_ir::Decimal;
 use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
 use std::collections::{BTreeMap, BTreeSet};
+use std::{cell::RefCell, rc::Rc, sync::mpsc, thread};
 
 /// Source row: (id, effective epoch day, gold, input mg, recovered mg).
 type Row = (u64, i32, bool, i64, i64);
@@ -52,40 +51,53 @@ impl Oracle {
         let (start, end) = (epoch_day("2026-07-06"), epoch_day("2026-10-26"));
         let (send, updates) = mpsc::channel::<Vec<(Row, isize)>>();
         let (results, receive) = mpsc::channel();
-        let worker = thread::spawn(move || timely::execute_directly(move |worker| {
-            let mut input = InputSession::<u64, Row, isize>::new();
-            let output = Rc::new(RefCell::new(BTreeMap::new()));
-            let sink = output.clone();
-            let probe = worker.dataflow::<u64, _, _>(|scope| {
-                input.to_collection(scope)
-                    .filter(move |r| r.2 && r.1 >= start && r.1 < end)
-                    // 1970-01-01 is Thursday: subtract days since Monday.
-                    .map(|r| (r.1 - (r.1 + 3).rem_euclid(7), (r.3, r.4)))
-                    .reduce(|_, rows, out| {
-                        let input = rows.iter().map(|(v, w)| v.0 * *w as i64).sum::<i64>();
-                        let recovered = rows.iter().map(|(v, w)| v.1 * *w as i64).sum::<i64>();
-                        out.push(((recovered, input), 1_isize));
-                    })
-                    .inspect(move |((week, totals), _, diff)| {
-                        let mut output = sink.borrow_mut();
-                        let weight = output.entry((*week, *totals)).or_insert(0_isize);
-                        *weight += diff;
-                        if *weight == 0 { output.remove(&(*week, *totals)); }
-                    })
-                    .probe()
-            });
-            while let Ok(changes) = updates.recv() {
-                for (row, weight) in changes { input.update(row, weight); }
-                input.advance_to(input.time() + 1);
-                input.flush();
-                worker.step_while(|| probe.less_than(input.time()));
-                let snapshot = output.borrow().iter().map(|((week, totals), weight)| {
-                    assert_eq!(*weight, 1);
-                    (*week, *totals)
-                }).collect();
-                if results.send(snapshot).is_err() { break; }
-            }
-        }));
+        let worker = thread::spawn(move || {
+            timely::execute_directly(move |worker| {
+                let mut input = InputSession::<u64, Row, isize>::new();
+                let output = Rc::new(RefCell::new(BTreeMap::new()));
+                let sink = output.clone();
+                let probe = worker.dataflow::<u64, _, _>(|scope| {
+                    input
+                        .to_collection(scope)
+                        .filter(move |r| r.2 && r.1 >= start && r.1 < end)
+                        // 1970-01-01 is Thursday: subtract days since Monday.
+                        .map(|r| (r.1 - (r.1 + 3).rem_euclid(7), (r.3, r.4)))
+                        .reduce(|_, rows, out| {
+                            let input = rows.iter().map(|(v, w)| v.0 * *w as i64).sum::<i64>();
+                            let recovered = rows.iter().map(|(v, w)| v.1 * *w as i64).sum::<i64>();
+                            out.push(((recovered, input), 1_isize));
+                        })
+                        .inspect(move |((week, totals), _, diff)| {
+                            let mut output = sink.borrow_mut();
+                            let weight = output.entry((*week, *totals)).or_insert(0_isize);
+                            *weight += diff;
+                            if *weight == 0 {
+                                output.remove(&(*week, *totals));
+                            }
+                        })
+                        .probe().0
+                });
+                while let Ok(changes) = updates.recv() {
+                    for (row, weight) in changes {
+                        input.update(row, weight);
+                    }
+                    input.advance_to(input.time() + 1);
+                    input.flush();
+                    worker.step_while(|| probe.less_than(input.time()));
+                    let snapshot = output
+                        .borrow()
+                        .iter()
+                        .map(|((week, totals), weight)| {
+                            assert_eq!(*weight, 1);
+                            (*week, *totals)
+                        })
+                        .collect();
+                    if results.send(snapshot).is_err() {
+                        break;
+                    }
+                }
+            })
+        });
         Self {
             pending: Vec::new(),
             send: Some(send),
@@ -124,16 +136,24 @@ impl Oracle {
     }
 
     fn view(&mut self) -> View {
-        self.send.as_ref().expect("worker").send(std::mem::take(&mut self.pending)).expect("updates");
+        self.send
+            .as_ref()
+            .expect("worker")
+            .send(std::mem::take(&mut self.pending))
+            .expect("updates");
         let totals = self.receive.recv().expect("dataflow results");
         let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
         let milli = |n: Option<&i64>| {
             Decimal::parse(&format!("{}e-3", n.copied().unwrap_or(0))).expect("mass")
         };
-        totals.into_iter()
+        totals
+            .into_iter()
             .map(|(week, (recovered, mass))| {
                 let monday = epoch + chrono::Days::new(u64::try_from(week).expect("post-epoch"));
-                (monday.format("%Y-%m-%d").to_string(), (milli(Some(&recovered)), milli(Some(&mass))))
+                (
+                    monday.format("%Y-%m-%d").to_string(),
+                    (milli(Some(&recovered)), milli(Some(&mass))),
+                )
             })
             .collect()
     }
@@ -142,7 +162,11 @@ impl Oracle {
 impl Drop for Oracle {
     fn drop(&mut self) {
         drop(self.send.take());
-        self.worker.take().expect("worker").join().expect("dataflow worker");
+        self.worker
+            .take()
+            .expect("worker")
+            .join()
+            .expect("dataflow worker");
     }
 }
 
@@ -259,7 +283,9 @@ fn oracle_detects_a_missing_retraction() {
     oracle.put("a", epoch_day("2026-10-13"), true, 1_000, 900);
     let before = oracle.view();
     // Update without retracting the old row: the Z-set double counts.
-    oracle.pending.push(((0, epoch_day("2026-10-13"), true, 1_000, 950), 1));
+    oracle
+        .pending
+        .push(((0, epoch_day("2026-10-13"), true, 1_000, 950), 1));
     assert_ne!(oracle.view(), before);
     let expected = Decimal::parse("1.85").expect("double count");
     assert_eq!(oracle.view()["2026-10-12"].0, expected);
