@@ -245,6 +245,10 @@
             "$ref": "#/$defs/MarkingId"
           }
         },
+        "protected": {
+          "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field.",
+          "type": "boolean"
+        },
         "type": {
           "description": "The value kind: inline, or a shared property type through `ref`.",
           "$ref": "#/$defs/PropertyType"
