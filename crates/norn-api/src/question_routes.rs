@@ -15,7 +15,7 @@ use norn_cell::{
 };
 use norn_checker::metric::compute::QuestionPlan;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
+use utoipa::IntoParams;
 
 /// Trusted per-request source frontier and authenticated history selection.
 pub struct QuestionSnapshot {
@@ -55,16 +55,13 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
 }
 
 /// Existing engine envelopes, serialized directly to preserve raw exact number tokens.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum QuestionAnswer {
     /// Current analytical answer, including its actual freshness label.
-    Live(#[schema(value_type = crate::answers::NornQueryResult)] QueryResult),
+    Live(QueryResult),
     /// Answer at the authenticated knowledge cutoff.
-    Historical(
-        #[schema(value_type = crate::answers::NornHistoricalQuestionResult)]
-        HistoricalQuestionResult,
-    ),
+    Historical(HistoricalQuestionResult),
 }
 
 /// Explicit scope and result coordinates; these select evidence and grant no access.
@@ -89,7 +86,7 @@ pub struct TraceQuery {
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
 /// # Errors
 /// Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
-#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, body = QuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
+#[utoipa::path(get, path = "/v1/questions/{question}/answer", params(ScopeQuery, ("question" = String, Path)), responses((status = 200, body = crate::answers::NornQuestionAnswer), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 404, body = Refusal), (status = 413, body = Refusal), (status = 422, body = Refusal), (status = 500, body = Refusal)))]
 pub fn get_answer<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -122,7 +119,7 @@ pub fn get_answer<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
-    let permits = |row, grant| allowed(host, runtime, actor, question, row, grant);
+    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let visible = |row: &ObjectRecord| permits(row, ReadCapability::Population);
     match snapshot.cutoff {
         Some(cutoff) => cell
@@ -190,7 +187,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
             "core.compute.unsupported_engine",
         )));
     }
-    let permits = |row, grant| allowed(host, runtime, actor, question, row, grant);
+    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     cell.store()
         .trace_question(
             &plan,
