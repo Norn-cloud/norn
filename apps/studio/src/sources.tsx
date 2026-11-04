@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { ArrowRight, Database, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { Panel, Well } from "@/components/panel"
@@ -11,7 +12,7 @@ import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from
 import { recordedTransport } from "./lib/transport.ts"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
-function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table className="text-[13px] tabular-nums">
@@ -22,7 +23,7 @@ function DenseTable({ head, children }: { readonly head: ReactNode; readonly chi
   )
 }
 
-const RECORDED_HINT = "Definitions the engine admitted and installed, replayed exactly. Not a live connection."
+export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
 function Systems({ catalog }: { readonly catalog: Catalog }) {
   const concepts = catalog.concepts.filter(({ kind }) => kind === "concept")
@@ -127,6 +128,7 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
           <SheetHeader>
             <SheetTitle className="text-xl">{concept.title}</SheetTitle>
             <SheetDescription>{concept.description ?? concept.name}</SheetDescription>
+            {concept.kind === "concept" && <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-sm font-medium underline-offset-4 hover:underline">See the {concept.title.toLowerCase()} records →</Link>}
             {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
           </SheetHeader>
           <div className="space-y-6 px-4 pb-6">
@@ -171,9 +173,15 @@ function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; re
   )
 }
 
-export function SourcesPage() {
+/** The admitted catalog, indexed once per read. */
+export function useCatalog() {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
+  return { read, catalog }
+}
+
+export function SourcesPage() {
+  const { read, catalog } = useCatalog()
   const [open, setOpen] = useState<string>()
   const [search, setSearch] = useState("")
   const matches = (concept: Concept) => `${concept.title} ${concept.description ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -208,7 +216,6 @@ export function SourcesPage() {
             ))}
           </Well>
         </Panel>
-        <p className="text-meta text-muted-foreground">The records inside each concept are not available yet.</p>
         <ConceptSheet catalog={catalog} name={open} onOpen={setOpen} />
       </>}
     </section>
