@@ -114,6 +114,8 @@ fn path_findings(
     work: &crate::consistency::chase::AdmissionWork,
 ) -> Vec<Diagnostic> {
     use crate::consistency::{ChaseBudget, PATH_MAPPING_INVALID, path_mapping::admit_with_work};
+    if mapping.path_mappings.is_empty() { return Vec::new(); }
+    let mapping_pin = path_pin(artifact);
     let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
         ids.iter()
             .map(|id| {
@@ -164,19 +166,8 @@ fn path_findings(
             )?;
             // The mapping envelope commits the declaration; catalog envelope
             // hashes commit the exact equations and link contracts checked.
-            let pins: Vec<_> = source
-                .iter()
-                .chain(&target)
-                .chain([artifact])
-                .map(ArtifactRef::of)
-                .collect::<Result<_, _>>()
-                .map_err(|_error| {
-                    vec![error(
-                        PATH_MAPPING_INVALID,
-                        "cannot hash path inputs".into(),
-                        Span::pointer("/pathMappings"),
-                    )]
-                })?;
+            let mut pins: Vec<_> = source.iter().chain(&target).map(path_pin).collect::<Result<_, _>>()?;
+            pins.push(mapping_pin.clone()?);
             Ok::<_, Vec<Diagnostic>>(crate::consistency::finding(
                 "consistency.path_mapping.preserved",
                 crate::DiagnosticSeverity::Info,
@@ -209,6 +200,14 @@ fn path_findings(
             in_payload(d, artifact)
         })
         .collect()
+}
+
+fn path_pin(artifact: &ArtifactEnvelope) -> Result<ArtifactRef, Vec<Diagnostic>> {
+    ArtifactRef::of(artifact).map_err(|_error| vec![error(
+        crate::consistency::PATH_MAPPING_INVALID,
+        "cannot hash path inputs".into(),
+        Span::pointer("/pathMappings"),
+    )])
 }
 
 /// Compile the candidate `mapping` artifact `mapping` against the set: its
