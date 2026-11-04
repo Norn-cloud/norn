@@ -151,7 +151,7 @@ fn read_gate_checks_policy_and_scope_before_reading() {
     for allowed in [false, true] {
         let calls = Arc::new(AtomicUsize::new(0));
         let host = host(physical.clone()).with_authorizer(Policy {
-            calls: calls.clone(),
+            calls: Arc::clone(&calls),
             physical: key(&physical),
             allowed,
         });
@@ -192,7 +192,7 @@ fn physical_scope_is_the_only_policy_scope() {
     let physical = scope();
     let calls = Arc::new(AtomicUsize::new(0));
     let host = host(physical.clone()).with_authorizer(Policy {
-        calls: calls.clone(),
+        calls: Arc::clone(&calls),
         physical: key(&physical),
         allowed: true,
     });
