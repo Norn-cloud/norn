@@ -500,12 +500,13 @@ fn admission_order(
     }
     let lowered = lower_declared_order(&rules, &schema.ok_or("missing closed subject domain")?)
         .map_err(|e| format!("{e:?}"))?;
+    let audited_protection = installed_protection(&protected, &lowered.edges);
     diagnose_declared_order(
         &lowered.norms,
         &lowered.origins,
         &layers,
         &lowered.edges,
-        &protected,
+        &audited_protection,
         lowered.contexts,
         ADMISSION_CALLS,
     )
@@ -594,4 +595,16 @@ fn valid_norm_identity(rule: &DeonticRule) -> bool {
             .into_iter()
             .chain(&law.scope.object_types)
             .all(|id| !id.trim().is_empty())
+}
+
+/// Existing base-to-base resolutions were already admitted. Preserve them;
+/// only newly introduced incoming edges participate in the protection audit.
+pub(crate) fn installed_protection(
+    inherited: &std::collections::BTreeSet<usize>,
+    edges: &[(usize, usize)],
+) -> std::collections::BTreeSet<usize> {
+    inherited.iter().copied().filter(|low| {
+        let incoming: Vec<_> = edges.iter().filter(|(_, target)| target == low).collect();
+        incoming.is_empty() || incoming.iter().any(|(high, _)| !inherited.contains(high))
+    }).collect()
 }
