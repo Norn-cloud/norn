@@ -26,7 +26,7 @@ pub struct QuestionSnapshot {
 }
 
 /// Server-owned admission/identity mapping. No client context, roles or SQL enters here.
-pub trait QuestionRuntime<E: SqlEngine> {
+pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// Resolve an already admitted question after access is granted.
     /// # Errors
     /// Unknown or no-longer-admitted declarations refuse.
@@ -95,7 +95,7 @@ pub fn get_answer<E: SqlEngine>(
     scope: &ScopeQuery,
     actor: Option<&str>,
     question: &str,
-    runtime: &impl QuestionRuntime<E>,
+    runtime: &dyn QuestionRuntime<E>,
 ) -> Result<QuestionAnswer, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let access = mapped(
@@ -146,7 +146,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
     query: &TraceQuery,
     actor: Option<&str>,
     question: &str,
-    runtime: &impl QuestionRuntime<E>,
+    runtime: &dyn QuestionRuntime<E>,
 ) -> Result<NumericTrace, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let access = mapped(
@@ -208,7 +208,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
 
 fn mapped<E: SqlEngine>(
     host: &DevHost<E>,
-    runtime: &impl QuestionRuntime<E>,
+    runtime: &dyn QuestionRuntime<E>,
     actor: &str,
     question: &str,
     capability: ReadCapability,
@@ -230,7 +230,7 @@ fn mapped<E: SqlEngine>(
 }
 fn allowed<E: SqlEngine>(
     host: &DevHost<E>,
-    runtime: &impl QuestionRuntime<E>,
+    runtime: &dyn QuestionRuntime<E>,
     actor: &str,
     question: &str,
     row: &ObjectRecord,
