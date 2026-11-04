@@ -254,6 +254,12 @@ pub(crate) fn admit_with_work(
     let lowered = lower_mapping(&source_catalog, &target_catalog, mapping)?;
     let sources = reachable(&source_catalog, mapping.objects.values().cloned());
     let targets = reachable(&target_catalog, mapping.objects.keys().cloned());
+    if let Some(concept) = sources.intersection(&targets).next() {
+        return Err(refuse(
+            &mapping.id,
+            &format!("{concept}: catalogs must be disjoint"),
+        ));
+    }
     source_theory
         .dependencies
         .extend(link_contracts(&source_catalog, &sources, "source", true).dependencies);
@@ -356,6 +362,9 @@ pub fn compose_path_mappings(
             else {
                 return Err(refuse(&id, &format!("{current}.{step} has no image")));
             };
+            if !then.objects.contains_key(&next) {
+                return Err(refuse(&id, &format!("{next} is not mapped")));
+            }
             path.extend_from_slice(sub);
             current = next;
         }

@@ -406,6 +406,62 @@ fn inherited_equation_ids_do_not_collide_with_declarations() {
     .unwrap();
 }
 
+#[test]
+fn source_link_target_cannot_reuse_a_target_concept() {
+    let mut source = serde_json::to_value(catalog("s")).unwrap();
+    source[0]["payload"]["objectType"]["links"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "overlap", "target": "t.Delivery", "cardinality": {"to": "one", "from": "many"}
+        }));
+    let source = serde_json::from_value::<Vec<ArtifactEnvelope>>(source).unwrap();
+    let mapping = mapping("overlap", "t", "s", &[]);
+    let findings = admit_path_mapping(
+        &source,
+        &catalog("t"),
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    )
+    .unwrap_err();
+    assert_eq!(findings[0].code.as_str(), PATH_MAPPING_INVALID);
+    assert!(
+        findings[0]
+            .message
+            .contains("t.Delivery: catalogs must be disjoint")
+    );
+}
+
+#[test]
+fn composition_substitutes_each_step_and_refuses_unmapped_intermediates() {
+    let first = mapping("first", "t", "s", &[("provider", &["fulfils", "provider"])]);
+    let mut then = mapping("then", "s", "s", &[]);
+    for image in &mut then.links {
+        if image.concept == "s.Delivery" && image.link == "fulfils" {
+            image.path = vec!["unjoined".into()];
+        }
+        if image.concept == "s.OrderLine" && image.link == "provider" {
+            image.path = vec!["receiver".into()];
+        }
+    }
+    let composed = compose_path_mappings(&first, &then, &catalog("s"), &BTreeSet::new()).unwrap();
+    let provider = composed
+        .links
+        .iter()
+        .find(|image| image.concept == "t.Delivery" && image.link == "provider")
+        .unwrap();
+    assert_eq!(provider.path, vec!["unjoined", "receiver"]);
+    let mut first = first;
+    first.objects.remove("t.OrderLine");
+    first.links.retain(|image| image.concept != "t.OrderLine");
+    then.objects.remove("s.OrderLine");
+    let findings =
+        compose_path_mappings(&first, &then, &catalog("s"), &BTreeSet::new()).unwrap_err();
+    assert_eq!(findings[0].code.as_str(), PATH_MAPPING_INVALID);
+    assert!(findings[0].message.contains("s.OrderLine is not mapped"));
+}
+
 // Exercise the runtime's admission entry point with an otherwise valid import.
 fn runtime_set(paths: &[PathMapping]) -> Vec<ArtifactEnvelope> {
     let envelope = |id: &str, kind: &str, payload: Value| -> ArtifactEnvelope {

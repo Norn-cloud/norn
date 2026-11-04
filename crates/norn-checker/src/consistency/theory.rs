@@ -355,7 +355,7 @@ pub fn lower_path_equations(
     findings.is_empty().then_some(theory).ok_or(findings)
 }
 
-fn declared_equation_rule_ids(artifact: &str, value: &impl serde::Serialize) -> Vec<String> {
+fn declared_equation_rule_ids(artifact: &str, value: &norn_ir::JsonValue) -> Vec<String> {
     serde_json::to_value(value)
         .and_then(serde_json::from_value::<Vec<norn_ir::entity::PathEquation>>)
         .unwrap_or_default()
