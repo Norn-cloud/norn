@@ -40,9 +40,18 @@ pub struct Batch {
     pub graph: Result<Graph, String>,
 }
 
-fn compile(source: &str, work: &mut u64) -> Result<Expression, String> {
+fn compile(source: &str, work: &mut u64, fields: &BTreeMap<String, norn_ir::PropertyType>) -> Result<Expression, String> {
     let cost = u64::try_from(source.len()).map_err(|_| "expression source limit")?;
     *work = work.checked_sub(cost.saturating_add(1)).ok_or("graph work budget exhausted")?;
+    let reads = norn_expr::expression_read_paths(source, "self").map_err(|error| error.to_string())?;
+    if reads.iter().any(|path| path.len() != 1 || !path.first().is_some_and(|name| fields.contains_key(name))) {
+        return Err("lifecycle expression reads outside the frozen scalar subject".into());
+    }
+    for root in ["input", "actor", "event"] {
+        if !norn_expr::expression_read_paths(source, root).map_err(|error| error.to_string())?.is_empty() {
+            return Err(format!("lifecycle expression reads unbound {root} context"));
+        }
+    }
     Expression::compile(source).map_err(|error| error.to_string())
 }
 fn boolean(expression: &Expression, context: &Value, work: &mut u64) -> Result<bool, String> {
@@ -73,12 +82,12 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         {
             return Err(format!("unsupported lifecycle law {identity}: timing, scope, modality or advisory severity"));
         }
-        laws.push((identity, law.condition.as_ref().map(|condition| compile(condition.as_str(), &mut work)).transpose()?,
-            compile(expression.as_str(), &mut work)?, matches!(law.modality, LawModality::Always {})));
+        laws.push((identity, law.condition.as_ref().map(|condition| compile(condition.as_str(), &mut work, &inputs.fields)).transpose()?,
+            compile(expression.as_str(), &mut work, &inputs.fields)?, matches!(law.modality, LawModality::Always {})));
     }
     let chart = &inputs.machine.lifecycle;
     let transitions = chart.transitions.iter().map(|transition| {
-        let guards = transition.guards.iter().map(|guard| compile(guard.as_str(), &mut work)).collect::<Result<Vec<_>, _>>()?;
+        let guards = transition.guards.iter().map(|guard| compile(guard.as_str(), &mut work, &inputs.fields)).collect::<Result<Vec<_>, _>>()?;
         Ok((transition, guards))
     }).collect::<Result<Vec<_>, String>>()?;
     let mut rows = BTreeMap::new();
@@ -125,6 +134,21 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         }
     }
     Ok(Graph { inputs, initial, edges })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn nonlocal_reads_are_unknown_even_in_an_inactive_branch() {
+        let fields = BTreeMap::from([("status".into(), norn_ir::PropertyType::Boolean {})]);
+        let mut work = WORK;
+        assert!(compile("self.status == true", &mut work, &fields).is_ok());
+        for expression in ["false && actor.role == 'operator'", "self.supplier.balance > 0", "self"] {
+            assert!(Expression::compile(expression).is_ok());
+            assert!(compile(expression, &mut work, &fields).is_err());
+        }
+    }
 }
 
 impl ApprovedContract {
