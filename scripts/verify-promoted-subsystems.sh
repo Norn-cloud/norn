@@ -249,6 +249,36 @@ run_gate() {
     return "$pipeline_status"
   fi
 
+  # A selector can match no compiled harness even when its source appears to
+  # declare one (for example inside an unexpanded macro). Require the executed
+  # inventory and verdict, and retain both in the manifest-owned gate log.
+  if [[ " ${base_command[*]} " == *" kani "* && " ${base_command[*]} " == *" --harness "* ]]; then
+    if ! python3 - "$log_path" "${base_command[@]}" <<'PYKANI'
+import pathlib
+import re
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+arguments = sys.argv[2:]
+selectors = [arguments[i + 1] for i, arg in enumerate(arguments[:-1]) if arg == "--harness"]
+output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log_path.read_text())
+checked = re.findall(r"^Checking harness (.+)\.\.\.$", output, re.MULTILINE)
+verdicts = re.findall(r"^VERIFICATION:- (.+)$", output, re.MULTILINE)
+summaries = re.findall(r"^Complete - (.+)$", output, re.MULTILINE)
+if (len(selectors) != 1 or checked != selectors
+        or verdicts != ["SUCCESSFUL"]
+        or summaries != ["1 successfully verified harnesses, 0 failures, 1 total."]):
+    raise SystemExit(
+        f"Kani execution evidence mismatch: selected={selectors}, checked={checked}, "
+        f"verdicts={verdicts}, summaries={summaries}"
+    )
+PYKANI
+    then
+      printf '[fail] %s did not verify exactly the selected Kani harness\n' "$gate_id" | tee -a "$log_path" >&2
+      return 1
+    fi
+  fi
+
   # A successful producer process is not evidence unless it created every
   # artifact the canonical gate manifest assigns to that exact gate. Check at
   # the producer boundary so a missing/suppressed `--out` fails immediately,

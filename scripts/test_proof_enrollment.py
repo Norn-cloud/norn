@@ -167,6 +167,39 @@ class EnrollmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
                     module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
 
+    def test_indirect_implementation_harness_is_rejected(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
+        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        proof = "#[kani::proof] fn integer_negation_correspondence() {}"
+        for prefix, suffix in (
+            ("macro_rules! unused { () => { ", " }; }"),
+            ('include!("other.rs"); ', ""),
+            ('#[path = "other.rs"] mod other; ', ""),
+            ('#[path = "other.rs"] ', ""),
+        ):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                entry = original["evidence"]["proof"][0]
+                harness = module.ROOT / entry["artifact"]
+                harness.parent.mkdir(parents=True)
+                production = module.ROOT / original["correspondenceSource"]
+                production.parent.mkdir(parents=True)
+                production.write_text("pub struct Rational;\n")
+                harness.write_text(prefix + proof + suffix)
+                with self.assertRaises(module.InvalidCoverage):
+                    module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
+                # Normalized imports bind to claim evidence, without a validator allowlist.
+                harness.write_text('#[path = "../../crates/norn-checker/src/../src/exact_rational.rs"] mod production;\n' + proof)
+                module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
+                for target in (None, "crates/other.rs"):
+                    candidate = copy.deepcopy(original)
+                    candidate["correspondenceSource"] = target
+                    with self.assertRaises(module.InvalidCoverage):
+                        module.validate_claim_evidence_shape(subsystem["id"], original["id"], candidate)
+
     def test_plan_workflow_contract_is_exact(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)

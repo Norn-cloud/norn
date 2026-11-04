@@ -821,6 +821,39 @@ def validate_claim_evidence_shape(
                         f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
                     )
                     require(
+                        re.search(r"\b(?:r#)?(?:macro_rules|include)\s*!", harness_source) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness cannot contain macro_rules! or include!",
+                    )
+                    # Imports may only reach the production source named by this
+                    # claim and independently cited by its predicate evidence.
+                    production = claim.get("correspondenceSource")
+                    require(
+                        isinstance(production, str)
+                        and production.startswith("crates/")
+                        and production.endswith(".rs")
+                        and ".." not in Path(production).parts
+                        and (ROOT / production).is_file()
+                        and any(item["artifact"] == production and any(
+                            selector.startswith("predicate:") for selector in item["selectors"]
+                        ) for item in entries),
+                        f"{subsystem_id}.{claim_id}: Kani correspondenceSource must name its production predicate source",
+                    )
+                    raw_source = harness.read_text()
+                    for attribute in re.finditer(r"#\s*!?\s*\[\s*(?:r#)?path\b[^\]]*\]", harness_source):
+                        # The stripping helper preserves offsets. Accept only an
+                        # ordinary module item with a literal path, never a
+                        # redirected proof function or a conditional attribute.
+                        imported = re.fullmatch(
+                            r'#\s*\[\s*path\s*=\s*"([^"\\]+)"\s*\]',
+                            raw_source[attribute.start():attribute.end()],
+                        )
+                        require(
+                            imported is not None
+                            and re.match(r"\s*(?:pub\s+)?mod\s+\w+\s*;", harness_source[attribute.end():]) is not None
+                            and (harness.parent / imported.group(1)).resolve() == (ROOT / production).resolve(),
+                            f"{subsystem_id}.{claim_id}: #[path] must import the declared correspondenceSource as a module",
+                        )
+                    require(
                         not prefix or (prefix[0] == "env" and all(
                             re.fullmatch(r"(?:RUSTFLAGS|RUSTUP_HOME|KANI_HOME)=[^\s]+", arg)
                             for arg in prefix[1:]
