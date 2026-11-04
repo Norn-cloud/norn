@@ -7,59 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::UnitRef;
 
-/// A normalized exact rational with bounded representation; never rounded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rational {
-    numerator: i64,
-    denominator: i64,
-}
-
-impl Rational {
-    /// Construct an exact rational. Zero denominators and representation overflow
-    /// return None, including results too large after cancellation.
-    #[must_use]
-    pub fn new(numerator: i64, denominator: i64) -> Option<Self> {
-        Self::normalize(i128::from(numerator), i128::from(denominator))
-    }
-
-    fn normalize(mut numerator: i128, mut denominator: i128) -> Option<Self> {
-        if denominator == 0 {
-            return None;
-        }
-        if denominator < 0 {
-            numerator = numerator.checked_neg()?;
-            denominator = denominator.checked_neg()?;
-        }
-        let mut a = numerator.checked_abs()?;
-        let mut b = denominator;
-        while b != 0 {
-            let remainder = a.checked_rem(b)?;
-            a = b;
-            b = remainder;
-        }
-        Some(Self {
-            numerator: i64::try_from(numerator.checked_div(a)?).ok()?,
-            denominator: i64::try_from(denominator.checked_div(a)?).ok()?,
-        })
-    }
-
-    fn add(self, rhs: Self) -> Option<Self> {
-        let n = i128::from(self.numerator)
-            .checked_mul(i128::from(rhs.denominator))?
-            .checked_add(i128::from(rhs.numerator).checked_mul(i128::from(self.denominator))?)?;
-        Self::normalize(
-            n,
-            i128::from(self.denominator).checked_mul(i128::from(rhs.denominator))?,
-        )
-    }
-
-    fn mul(self, rhs: Self) -> Option<Self> {
-        Self::normalize(
-            i128::from(self.numerator).checked_mul(i128::from(rhs.numerator))?,
-            i128::from(self.denominator).checked_mul(i128::from(rhs.denominator))?,
-        )
-    }
-}
+pub use crate::exact_rational::Rational;
 
 /// One coordinate of the declared conserved functional.
 #[derive(Debug, Clone, PartialEq, Eq)]
