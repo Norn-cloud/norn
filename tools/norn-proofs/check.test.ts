@@ -42,3 +42,10 @@ test("tla_ts_apalache_parity", async () => {
   }
 }, 600_000)
 
+
+test("generated_solver_timeout_and_exit_status", async () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url))
+  const child = Bun.spawn([process.execPath, "test", "tools/norn-proofs/policy.test.ts"],
+    { cwd: root, stdout: "inherit", stderr: "inherit" })
+  expect(await child.exited).toBe(0)
+})
