@@ -1530,7 +1530,6 @@ dependencies = [
  "norn-checker",
  "norn-ir",
  "norn-kernel",
- "norn-projections",
  "proptest",
  "serde",
  "serde_json",
