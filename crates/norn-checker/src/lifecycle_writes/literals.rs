@@ -139,9 +139,15 @@ pub(super) enum Value {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Record {
     members: Vec<(String, Value)>,
+    closed: bool,
 }
 
 impl Record {
+    /// Every member key was read from a closed, duplicate-free object literal.
+    pub(super) const fn has_closed_keys(&self) -> bool {
+        self.closed
+    }
+
     /// Add a member while assembling the scalar columns of one table fact.
     pub(super) fn insert(&mut self, name: &str, value: Value) {
         if let Some((_, previous)) = self.members.iter_mut().find(|(member, _)| member == name) {
@@ -224,6 +230,7 @@ struct Parser<'t, 's> {
     tokens: &'t [Token<'s>],
     pos: usize,
     records: Vec<Record>,
+    complete: bool,
 }
 
 impl Parser<'_, '_> {
@@ -250,10 +257,16 @@ impl Parser<'_, '_> {
     /// The object literal at `{`; consumes through its `}`.
     fn object(&mut self, depth: usize) -> Record {
         self.advance();
-        let mut record = Record::default();
+        let mut record = Record {
+            members: Vec::new(),
+            closed: true,
+        };
         loop {
             match self.peek(0) {
-                None => return record,
+                None => {
+                    record.closed = false;
+                    return record;
+                }
                 Some(Token::Punct('}')) => {
                     self.advance();
                     return record;
@@ -270,9 +283,15 @@ impl Parser<'_, '_> {
                     self.advance();
                     self.advance();
                     let value = self.value(depth);
+                    if record.get(&key).is_some() {
+                        record.closed = false;
+                    }
                     record.members.push((key, value));
                 }
-                Some(_) => self.skip_value(depth),
+                Some(_) => {
+                    record.closed = false;
+                    self.skip_value(depth);
+                }
             }
         }
     }
@@ -338,6 +357,7 @@ impl Parser<'_, '_> {
                     self.records.push(record);
                     continue;
                 }
+                Token::Punct('{') => self.complete = false,
                 Token::Punct('(' | '[') => nesting = nesting.saturating_add(1),
                 Token::Punct(')' | ']') => nesting = nesting.saturating_sub(1),
                 Token::Ident(_)
@@ -359,8 +379,14 @@ pub(super) fn records(source: &str) -> Vec<Record> {
         tokens: &tokens,
         pos: 0,
         records: Vec::new(),
+        complete: true,
     };
     parser.scan();
+    if !parser.complete || norn_expr::Expression::compile(source).is_err() {
+        for record in &mut parser.records {
+            record.closed = false;
+        }
+    }
     parser.records
 }
 
@@ -371,6 +397,7 @@ pub(super) fn whole_value(source: &str) -> Value {
         tokens: &tokens,
         pos: 0,
         records: Vec::new(),
+        complete: true,
     };
     let value = parser.value(0);
     if parser.pos == tokens.len() {
@@ -391,6 +418,39 @@ pub(super) fn whole_literal(source: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{Record, Value, records, whole_literal};
+
+    #[test]
+    fn closed_key_evidence_requires_complete_unique_literal_members() {
+        for source in ["{mode: event.kind}", "{mode: 'open', count: 1}"] {
+            let found = records(source);
+            assert!(found.last().expect("record").has_closed_keys(), "{source}");
+        }
+        for source in [
+            "{mode: 'open', mode: event.kind}",
+            "{mode: 'open'",
+            "{[event.kind]: 'open'}",
+            "{...event}",
+            "{mode:}",
+            "{mode: 'open' other: 1}",
+            "{,mode: 'open'}",
+            "{mode: 'open',,other: 1}",
+        ] {
+            let found = records(source);
+            assert!(!found.last().expect("record").has_closed_keys(), "{source}");
+        }
+    }
+
+    #[test]
+    fn depth_limited_scans_cannot_certify_closed_keys() {
+        let source = format!(
+            "{}0{}",
+            "{nested:".repeat(super::MAX_DEPTH.saturating_add(2)),
+            "}".repeat(super::MAX_DEPTH.saturating_add(2))
+        );
+        let found = records(&source);
+        assert!(!found.is_empty());
+        assert!(found.iter().all(|record| !record.has_closed_keys()));
+    }
 
     #[test]
     fn table_columns_preserve_nested_patch_members() {

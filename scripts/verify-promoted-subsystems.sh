@@ -376,6 +376,10 @@ run_gate fast assurance-ivm-composition-lean \
   "lean -DwarningAsError=true verification/query-compute-v1/Composition.lean" \
   command \
   lean -DwarningAsError=true verification/query-compute-v1/Composition.lean
+run_gate fast assurance-specialisation-lean \
+  "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean" \
+  command \
+  lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \

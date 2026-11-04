@@ -408,6 +408,24 @@
             "kind",
             "id"
           ]
+        },
+        {
+          "description": "Exact retained composition-pack boundary.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pack"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ]
         }
       ]
     },
@@ -671,6 +689,14 @@
         },
         "obligation": {
           "type": "string",
+          "pattern": "\\S"
+        },
+        "pack": {
+          "description": "Required to render a pack-rooted law; other roots never read it.",
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "\\S"
         },
         "permission": {

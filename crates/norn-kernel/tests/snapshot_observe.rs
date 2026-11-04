@@ -991,6 +991,14 @@ fn observe_delete(
     .unwrap();
     let events = prepared.events.clone();
     let (commit, authorization) = prepared.into_parts();
+    if commit
+        .writes
+        .iter()
+        .any(|write| write.key == tombstone_key(key) && write.expected != FactVersion::ABSENT)
+    {
+        let refusal = cell.commit(commit.clone()).unwrap_err();
+        assert_eq!(refusal, CommitError::IdentityReuse);
+    }
     cell.commit_observed(commit, authorization).unwrap();
     events
 }
@@ -1027,6 +1035,94 @@ fn an_observed_delete_reaches_its_on_delete_state_when_a_path_is_declared() {
         JsonValue::String("cancelled".to_owned())
     );
     assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+}
+
+#[test]
+fn an_observed_delete_cannot_transition_a_protected_lifecycle() {
+    for protected_lifecycle in [false, true] {
+        let (mut object_type, target) = lifecycle_chain(1);
+        let protected_property = if protected_lifecycle {
+            object_type.properties[0].protected = true;
+            "status"
+        } else {
+            object_type.properties.push(
+                serde_json::from_value(json!({
+                    "id":"system_marker", "type":{"kind":"text"},
+                    "protected":true, "default":"initial"
+                }))
+                .unwrap(),
+            );
+            "system_marker"
+        };
+        let catalog = TypeCatalog::new([&object_type]);
+        let key = FactKey::new(object_type.name.as_str(), "protected-delete");
+        let provenance = provenance("protected.delete");
+        let mut cell = cell();
+        seed_observed_snapshot(
+            &mut cell,
+            &catalog,
+            &key,
+            &JsonObject::new(),
+            &provenance,
+            "seed",
+        );
+        let before = cell.load(&key).unwrap();
+        let ledger = cell.ledger().to_vec();
+        let slice = load_slice(&cell, [key.clone(), tombstone_key(&key)]).unwrap();
+        for target in [None, Some("state_0"), Some(target.as_str())] {
+            let lifecycles: Vec<_> = target
+                .map(|state| ObservedLifecycleSnapshot {
+                    property: PropertyId("status".into()),
+                    state: state.to_owned(),
+                    provenance: provenance.clone(),
+                })
+                .into_iter()
+                .collect();
+            let refusal = prepare_observed_delete(
+                &catalog,
+                &slice,
+                &unconsumed_turn("protected-delete"),
+                ObservedDelete {
+                    key: &key,
+                    lifecycles: &lifecycles,
+                    provenance: &provenance,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                matches!(refusal, norn_kernel::snapshot_observe::ObservationRefusal::Properties(error)
+                if matches!(error.as_ref(), norn_kernel::DecisionRefusal::InvalidOutput { reason }
+                    if reason.contains(protected_property) && reason.contains("protected")))
+            );
+            assert_eq!(cell.load(&key).unwrap(), before);
+            assert_eq!(cell.ledger(), ledger.as_slice());
+            assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+        }
+    }
+}
+
+#[test]
+fn an_observed_create_keeps_unique_initialization_without_a_property_default() {
+    for protected in [false, true] {
+        let (mut object_type, _) = lifecycle_chain(1);
+        object_type.properties[0].default = None;
+        object_type.properties[0].protected = protected;
+        let catalog = TypeCatalog::new([&object_type]);
+        let key = FactKey::new(object_type.name.as_str(), "unique-initial");
+        let mut cell = cell();
+        seed_observed_snapshot(
+            &mut cell,
+            &catalog,
+            &key,
+            &JsonObject::new(),
+            &provenance("initial"),
+            "seed",
+        );
+        assert_eq!(
+            state(&cell, &key, "status"),
+            JsonValue::String("state_0".into())
+        );
+    }
 }
 
 #[test]
@@ -1122,6 +1218,11 @@ fn an_observed_delete_without_a_declared_path_tombstones_and_a_recreate_lifts_it
     let (commit, authorization) = prepared.into_parts();
     cell.commit_observed(commit, authorization).unwrap();
     assert!(!cell.load(&tombstone_key(&key)).unwrap().exists());
+    let before = cell.load(&tombstone_key(&key)).unwrap().version;
+    observe_delete(&mut cell, &object_type, &key, None);
+    let deleted_again = cell.load(&tombstone_key(&key)).unwrap();
+    assert!(deleted_again.exists());
+    assert!(deleted_again.version > before);
 }
 
 #[test]

@@ -103,7 +103,9 @@ use norn_ir::{
 };
 
 use crate::action_set::check_action_set;
-use crate::entity_artifacts::{EntityArtifactSetContext, check_entity_artifacts, dedupe_findings};
+use crate::entity_artifacts::{
+    EntityArtifactSetContext, check_entity_artifacts_using, dedupe_findings,
+};
 use crate::graph::{cycle_groups, topological_order};
 use crate::jdm_profile::check_sub_decision_closures;
 use crate::lifecycle_writes::check_lifecycle_write_set;
@@ -291,7 +293,7 @@ pub fn resolve_artifact_set<'a>(
 /// Resolve `artifacts` against `context.base` and run the per-kind set
 /// checks over the resolved set: the recommended T3 entry point.
 ///
-/// When resolution succeeds this is [`check_entity_artifacts`] over the set
+/// When resolution succeeds this is [`crate::check_entity_artifacts`] over the set
 /// (the per-artifact check of every artifact plus the `EntityIR` v2
 /// whole-model check), the scope compatibility of every resolved reference,
 /// the `RuleIR` v2 sub-decision closure check
@@ -309,6 +311,14 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    check_artifact_set_using(artifacts, context, &mut crate::check_artifact)
+}
+
+pub(crate) fn check_artifact_set_using(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
     let normalized_base = normalize_artifacts(context.base, &mut layout_findings);
@@ -318,54 +328,56 @@ pub fn check_artifact_set(
     };
 
     let findings = match resolve_artifact_set(&normalized_artifacts, &normalized_base) {
-        Ok(_resolved) => check_entity_artifacts(&normalized_artifacts, &normalized_context)
-            .into_iter()
-            .chain(scope_findings(&normalized_artifacts, &normalized_base))
-            .chain(check_pack_instances(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(check_sub_decision_closures(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(check_action_set(&normalized_artifacts, &normalized_context))
-            .chain(check_lifecycle_write_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::rule_bindings::check_rule_binding_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::source_commands::check_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::mapping::check_mapping_artifacts(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            // Typed Widget UX references and expression contracts resolve
-            // only after the candidate and installed-base artifact pool
-            // is available.
-            .chain(crate::widget_ux::check_widget_ux_set(
-                &normalized_artifacts,
-                &normalized_context,
-            ))
-            .chain(crate::markings::check_references(
-                &normalized_artifacts,
-                &normalized_base,
-            ))
-            .chain(crate::verification::check_law_set(
-                &normalized_artifacts,
-                &normalized_base,
-                normalized_context.registry,
-            ))
-            .collect::<Vec<_>>(),
+        Ok(_resolved) => {
+            check_entity_artifacts_using(&normalized_artifacts, &normalized_context, local)
+                .into_iter()
+                .chain(scope_findings(&normalized_artifacts, &normalized_base))
+                .chain(check_pack_instances(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(check_sub_decision_closures(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(check_action_set(&normalized_artifacts, &normalized_context))
+                .chain(check_lifecycle_write_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::rule_bindings::check_rule_binding_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::source_commands::check_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::mapping::check_mapping_artifacts(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                // Typed Widget UX references and expression contracts resolve
+                // only after the candidate and installed-base artifact pool
+                // is available.
+                .chain(crate::widget_ux::check_widget_ux_set(
+                    &normalized_artifacts,
+                    &normalized_context,
+                ))
+                .chain(crate::markings::check_references(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(crate::verification::check_law_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                    normalized_context.registry,
+                ))
+                .collect::<Vec<_>>()
+        }
         Err(resolution) => normalized_artifacts
             .iter()
-            .flat_map(crate::check_artifact)
+            .flat_map(local)
             .chain(crate::markings::check_references(
                 &normalized_artifacts,
                 &normalized_base,
@@ -642,7 +654,7 @@ fn pack_members(artifact: &ArtifactEnvelope) -> Vec<PackArtifactRef> {
         .unwrap_or_default()
 }
 
-const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
+pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
     match kind {
         PackArtifactKind::Entity => ArtifactKind::Entity,
         PackArtifactKind::Relation => ArtifactKind::Relation,
