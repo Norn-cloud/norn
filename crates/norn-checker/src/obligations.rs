@@ -17,6 +17,8 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
+#[cfg(test)]
+mod lifecycle_tests;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
