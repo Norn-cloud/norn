@@ -1,4 +1,7 @@
 //! PROOF-LIFECYCLE-1: append source-bound conditional chart goals; never solver evidence.
+/// Finite, law-filtered transition-only relation; no solver authority.
+pub mod finite;
+
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, LawRoot};

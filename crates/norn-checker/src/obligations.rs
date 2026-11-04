@@ -17,9 +17,12 @@ pub mod evidence;
 /// Bounded declaration-to-Quint lowering, without solver execution.
 pub mod finite;
 mod induction;
-mod lifecycle;
+/// Conditional lifecycle inventory and finite relations.
+pub mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod lifecycle_finite_tests;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
