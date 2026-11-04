@@ -879,7 +879,7 @@ fn project_value_type(
             }
             Some(CedarAttribute::String)
         }
-        PropertyType::Integer {} => Some(CedarAttribute::Long),
+        PropertyType::Integer { .. } => Some(CedarAttribute::Long),
         PropertyType::Decimal { unit, .. } => {
             add_loss(
                 losses,

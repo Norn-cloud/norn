@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean"
+}

@@ -385,6 +385,7 @@ test("acyclic authoring compiles and extracts canonical IR with false omitted", 
   expect(ir[0].payload.objectType.links[1]).not.toHaveProperty("acyclic")
   const built = E.lowerEntity(E.objectType({
     name: "tree.Node", title: "Node", version: "0.1.0",
+    pathEquations: [{ id: "same_parent", left: ["parent"], right: ["parent"] }],
     properties: [E.property("name", E.text())],
     links: [
       { id: "parent", target: "tree.Node", cardinality: { to: "one", from: "many" }, acyclic: true },
@@ -411,3 +412,13 @@ test("acceptReceipt syntax lowers reference and result bindings", () => {
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.artifacts[1]).toMatchObject({ payload: { effectProgram: { acceptReceipt: { referenceField: "receipt", digestProperty: "digest", resultBindings: { score: "score" } } } } })
 })
+
+
+test("path equations compile from concept declarations to typed EntityIR extension data", () => {
+  const file = join(TOOL_ROOT, "fixtures/definitions/acyclic.source.ts")
+  const compiled = compileDefinitions(file, { scope, sourcePath: file })
+  if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
+  expect(compiled.artifacts[0]).toMatchObject({ payload: { extensions: {
+    "norn.path-equations/1.0.0": [{ id: "same_parent", left: ["parent"], right: ["parent"] }],
+  } } })
+}, 30_000)
