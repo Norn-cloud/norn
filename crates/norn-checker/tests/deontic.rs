@@ -1110,7 +1110,24 @@ fn live_repairs_account_for_removed_transitive_priorities() {
     c.source.pointer = "/payload/extensions/norn.normative~11.0.0/2".into();
     entity["payload"]["extensions"] = json!({norn_checker::deontic::NORMATIVE_SLOT:[a,b,c]});
     let artifact = serde_json::from_value(entity).expect("candidate");
-    let findings = check_artifact_set(&[artifact], &EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None });
-    assert!(!findings.iter().any(|d| d.code.as_str() == "consistency.diagnosis.unknown"), "{findings:?}");
-    assert!(findings.iter().any(|d| d.message.contains(r#"[["A", "B"], ["B", "C"]]"#)), "{findings:?}");
+    let findings = check_artifact_set(
+        &[artifact],
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        !findings
+            .iter()
+            .any(|d| d.code.as_str() == "consistency.diagnosis.unknown"),
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.message.contains(r#"[["A", "B"], ["B", "C"]]"#)),
+        "{findings:?}"
+    );
 }
