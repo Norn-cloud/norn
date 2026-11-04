@@ -341,7 +341,8 @@ pub fn lower_path_equations(
                         } else {
                             RuleOrigin {
                                 artifact_id: artifacts.iter().find_map(|artifact| {
-                                    catalog.object_type(&artifact.artifact_id)
+                                    catalog
+                                        .object_type(&artifact.artifact_id)
                                         .and_then(Result::ok)
                                         .filter(|object| object.name.as_str() == instance)
                                         .map(|_| artifact.artifact_id.clone())
