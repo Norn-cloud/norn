@@ -211,6 +211,11 @@ impl LocalizedRequirement {
         ]
         .iter()
         .any(|s| s.trim().is_empty())
+            || self
+                .terms
+                .pack
+                .as_ref()
+                .is_some_and(|s| s.trim().is_empty())
         {
             return Err("law.wording.incomplete_locale");
         }
@@ -304,6 +309,10 @@ pub struct RequirementTerms {
     pub every_committed_state: String,
     #[schemars(pattern(r"\S"))]
     pub grounding: String,
+    /// Required to render a pack-rooted law; other roots never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(pattern(r"\S"))]
+    pub pack: Option<String>,
 }
 
 /// Public structured-requirement schema, including complete locale vocabulary.
