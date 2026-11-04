@@ -761,13 +761,10 @@ mod tests {
                 "{}\n",
                 serde_json::to_string_pretty(document).expect("exact binder serialization")
             );
-            if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-                std::fs::write(&path, &text).expect("bless retained presentation");
-            }
             assert_eq!(
                 std::fs::read_to_string(path).expect("recorded bytes"),
                 text,
-                "review and bless the retained presentation; this is not a fresh solver run"
+                "regenerate with NORN_BLESS=1 only after a fully passing backend run"
             );
         }
     }
