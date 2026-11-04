@@ -12428,6 +12428,10 @@
             },
             "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty."
           },
+          "protected": {
+            "type": "boolean",
+            "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field."
+          },
           "type": {
             "$ref": "#/components/schemas/NornIrPropertyType",
             "description": "The value kind: inline, or a shared property type through `ref`."

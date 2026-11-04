@@ -43,9 +43,10 @@ pub fn project_host_access_schema(object_types: &[ObjectTypeDef]) -> String {
     };
     let resources: Vec<String> = resources.into_iter().collect();
     format!(
-        "namespace norn {{\n  entity Ledger = {{\n    scope: Norn::Scope\n  }};\n  entity Definitions = {{\n    scope: Norn::Scope\n  }};\n  entity Marking = {{\n    scope: Norn::Scope,\n    id: String\n  }};\n  entity Source = {{\n    scope: Norn::Scope\n  }};\n}}\nnamespace Norn {{\n  action \"norn.read\" appliesTo {{\n    principal: [Actor],\n    resource: [{}],\n    context: {{\n      scope: Scope\n    }}\n  }};\n{}  action \"norn.observe\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Source],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.reveal\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.declassify\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n}}\n",
+        "namespace norn {{\n  entity Ledger = {{\n    scope: Norn::Scope\n  }};\n  entity Definitions = {{\n    scope: Norn::Scope\n  }};\n  entity Marking = {{\n    scope: Norn::Scope,\n    id: String\n  }};\n  entity Source = {{\n    scope: Norn::Scope\n  }};\n  entity RefusalDetail = {{\n    scope: Norn::Scope\n  }};\n}}\nnamespace Norn {{\n  action \"norn.read\" appliesTo {{\n    principal: [Actor],\n    resource: [{}],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"{disclose}\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::RefusalDetail],\n    context: {{\n      scope: Scope,\n      governedAction: String\n    }}\n  }};\n{}  action \"norn.observe\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Source],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.reveal\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n  action \"norn.declassify\" appliesTo {{\n    principal: [Actor],\n    resource: [norn::Marking],\n    context: {{\n      scope: Scope\n    }}\n  }};\n}}\n",
         resources.join(", "),
-        admin_action
+        admin_action,
+        disclose = norn_ir::access::DISCLOSE_REFUSAL_DETAIL_ACTION
     )
 }
 
