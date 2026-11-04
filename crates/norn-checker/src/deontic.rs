@@ -252,7 +252,10 @@ pub fn lower_declared_order(
         return Err(Unknown::Limit);
     }
     let first = rules.first().ok_or_else(invalid)?;
-    let LawResponse::Predicate { expression: response } = &first.law.response else {
+    let LawResponse::Predicate {
+        expression: response,
+    } = &first.law.response
+    else {
         return Err(invalid());
     };
     let mut ids = BTreeMap::new();
@@ -264,11 +267,16 @@ pub fn lower_declared_order(
             || rule.authority_version.trim().is_empty()
             || !valid_source(&rule.source)
             || ids.insert(rule.law.id.as_str(), index).is_some()
+            || !rule.law.scope.lifecycle_states.is_empty()
+            || !rule.law.scope.commitments.is_empty()
             || rule.law.scope != first.law.scope
             || rule.law.subject != first.law.subject
             || rule.law.response != first.law.response
             || rule.law.timing.is_some()
-            || !matches!(rule.law.modality, LawModality::Always {} | LawModality::Never {})
+            || !matches!(
+                rule.law.modality,
+                LawModality::Always {} | LawModality::Never {}
+            )
             || (matches!(rule.modality, DeonticModality::Prohibition)
                 != matches!(rule.law.modality, LawModality::Never {}))
         {
@@ -293,33 +301,36 @@ pub fn lower_declared_order(
     for (loser, rule) in rules.iter().enumerate() {
         for winner in &rule.defeated_by {
             let high = *ids.get(winner.as_str()).ok_or_else(invalid)?;
-            if !edges.insert((high, loser)) {
+            if edges.len() >= 4096 || !edges.insert((high, loser)) {
                 return Err(invalid());
             }
         }
     }
     let domain = crate::finite::domain(schema)?;
     let predicates = rules.iter().try_fold(1usize, |count, rule| {
-        count.checked_add(usize::from(rule.law.condition.is_some()))
+        count
+            .checked_add(usize::from(rule.law.condition.is_some()))
             .and_then(|n| n.checked_add(rule.exceptions.len()))
             .ok_or(Unknown::Limit)
     })?;
     if domain.values.is_empty()
-        || domain.values.len().saturating_mul(predicates)
-            > crate::table_analysis::MAX_EVALUATIONS
+        || domain.values.len().saturating_mul(predicates) > crate::table_analysis::MAX_EVALUATIONS
     {
         return Err(Unknown::Limit);
     }
     let contexts = domain.values.len();
-    let mut norms: Vec<_> = rules.iter().map(|rule| crate::norm_precedence::GroundedNorm {
-        id: rule.law.id.clone(),
-        modality: rule.modality,
-        authority: (rule.authority_id.clone(), rule.authority_version.clone()),
-        authority_level: None,
-        enacted: 0,
-        applicable: BTreeSet::new(),
-        excepted: BTreeSet::new(),
-    }).collect();
+    let mut norms: Vec<_> = rules
+        .iter()
+        .map(|rule| crate::norm_precedence::GroundedNorm {
+            id: rule.law.id.clone(),
+            modality: rule.modality,
+            authority: (rule.authority_id.clone(), rule.authority_version.clone()),
+            authority_level: None,
+            enacted: 0,
+            applicable: BTreeSet::new(),
+            excepted: BTreeSet::new(),
+        })
+        .collect();
     for (context, input) in domain.values.into_iter().enumerate() {
         let runtime: norn_ir::RuntimeValue = serde_json::from_value(input)
             .map_err(|error| Unknown::Expression(error.to_string()))?;
@@ -329,8 +340,9 @@ pub fn lower_declared_order(
         // non-Boolean and unsupported expressions must never acquire meaning.
         normative_boolean(&response.0, &value)?;
         for (rule, norm) in rules.iter().zip(&mut norms) {
-            let applicable = rule.law.condition.as_ref()
-                .map_or(Ok(true), |condition| normative_boolean(&condition.0, &value))?;
+            let applicable = rule.law.condition.as_ref().map_or(Ok(true), |condition| {
+                normative_boolean(&condition.0, &value)
+            })?;
             let mut excepted = false;
             for exception in &rule.exceptions {
                 excepted |= normative_boolean(&exception.condition.0, &value)?;
@@ -343,7 +355,12 @@ pub fn lower_declared_order(
             }
         }
     }
-    Ok(LoweredNormOrder { norms, origins, edges: edges.into_iter().collect(), contexts })
+    Ok(LoweredNormOrder {
+        norms,
+        origins,
+        edges: edges.into_iter().collect(),
+        contexts,
+    })
 }
 
 fn normative_boolean(
@@ -352,6 +369,8 @@ fn normative_boolean(
 ) -> Result<bool, crate::table_analysis::Unknown> {
     match crate::finite::expression(expression, context)? {
         norn_expr::Value::Bool(value) => Ok(value),
-        _ => Err(crate::table_analysis::Unknown::Expression("normative predicate is not Boolean".into())),
+        _ => Err(crate::table_analysis::Unknown::Expression(
+            "normative predicate is not Boolean".into(),
+        )),
     }
 }

@@ -654,15 +654,39 @@ fn native_order_preserves_explicit_defeat_and_own_exception() {
         .expect("native declarations lower");
     assert_eq!(grounded.edges, vec![(1, 0)]);
     let layers = [ConstitutionLayer::Company; 2];
-    assert!(check_norm_precedence(&grounded.norms, &grounded.origins, &layers,
-        &grounded.edges, &BTreeSet::new(), grounded.contexts, 1000).is_ok());
+    assert!(
+        check_norm_precedence(
+            &grounded.norms,
+            &grounded.origins,
+            &layers,
+            &grounded.edges,
+            &BTreeSet::new(),
+            grounded.contexts,
+            1000
+        )
+        .is_ok()
+    );
     low.defeated_by.clear();
-    let tied = lower_declared_order(&[low.clone(), high.clone()], &norn_expr::schema::Schema::Boolean)
-        .expect("ties lower without resolution");
-    assert!(check_norm_precedence(&tied.norms, &tied.origins, &layers,
-        &tied.edges, &BTreeSet::new(), tied.contexts, 1000).is_err());
+    let tied = lower_declared_order(
+        &[low.clone(), high.clone()],
+        &norn_expr::schema::Schema::Boolean,
+    )
+    .expect("ties lower without resolution");
+    assert!(
+        check_norm_precedence(
+            &tied.norms,
+            &tied.origins,
+            &layers,
+            &tied.edges,
+            &BTreeSet::new(),
+            tied.contexts,
+            1000
+        )
+        .is_err()
+    );
     low.exceptions.push(norn_ir::deontic::RuleException {
-        id: "explicit".into(), condition: norn_ir::ZenExpression("true".into()),
+        id: "explicit".into(),
+        condition: norn_ir::ZenExpression("true".into()),
         source: low.source.clone(),
     });
     let excepted = lower_declared_order(&[low.clone(), high], &norn_expr::schema::Schema::Boolean)
