@@ -515,7 +515,7 @@ fn obs_link_retarget_and_redelivery_replace_only_the_latest_contribution() {
 fn obs_link_withdrawal_preserves_unbacked_authored_edges() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup_with(&directory.path().join("authored.sqlite"), |artifacts| {
-        many_holding(artifacts)
+        many_holding(artifacts);
     });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");
