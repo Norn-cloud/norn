@@ -716,6 +716,14 @@ impl<'a> Checker<'a, '_> {
             let position = position.to_string();
             let at = [at, &["properties", position.as_str()]].concat();
             check_property_shape(&at, property, catalog, registry, &mut self.out);
+            if property.protected {
+                self.out.push(error(
+                    codes::LINK_PROPERTY_PROTECTION_UNSUPPORTED,
+                    "protected link properties require sealed link authority, which is not supported"
+                        .to_owned(),
+                    span_at(&at, &["protected"]),
+                ));
+            }
             if !ids.insert(&property.id) {
                 self.out.push(error(
                     codes::DUPLICATE_PROPERTY_ID,
