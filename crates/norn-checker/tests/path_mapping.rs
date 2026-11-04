@@ -644,13 +644,22 @@ fn runtime_requires_bindings_for_actual_mapped_targets() {
         }]);
     });
     let covered = runtime_check(&set);
-    assert!(!covered.iter().any(norn_checker::Diagnostic::is_error), "{covered:?}");
+    assert!(
+        !covered.iter().any(norn_checker::Diagnostic::is_error),
+        "{covered:?}"
+    );
     constrain(&mut set, "commerce.SalesOrder.entity");
     let partial = runtime_check(&set);
-    let missing: Vec<_> = partial.iter().filter(|d| d.code == "consistency.path_mapping.missing_binding").collect();
+    let missing: Vec<_> = partial
+        .iter()
+        .filter(|d| d.code == "consistency.path_mapping.missing_binding")
+        .collect();
     assert_eq!(missing.len(), 1, "{partial:?}");
-    assert!(missing[0].message.contains("commerce.SalesOrder.entity (equation identity)"));
-
+    assert!(
+        missing[0]
+            .message
+            .contains("commerce.SalesOrder.entity (equation identity)")
+    );
 }
 
 #[test]
