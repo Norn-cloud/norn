@@ -1,5 +1,5 @@
 {
-  "sha256": "51db61501df37b32467fb745845555d9c3a8871544c0a0c371873811e900e8c4",
+  "sha256": "48b35670e9ade812e12dbc8a35f55d7a11a649f7efef21b2ccc67cb47820c010",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -42,10 +42,6 @@
     "registry/packs/erpnext/artifacts/erpnext.three.source.json",
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
     "registry/packs/erpnext/artifacts/norn.ontology-pack.erpnext.json",
-    "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
-    "registry/packs/odoo/artifacts/norn.ontology-pack.odoo.json",
-    "registry/packs/odoo/artifacts/odoo.three.mapping.json",
-    "registry/packs/odoo/artifacts/odoo.three.source.json",
     "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
     "registry/packs/shopify/artifacts/norn.ontology-pack.shopify.json",
     "registry/packs/shopify/artifacts/shopify.three.mapping.json",

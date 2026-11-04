@@ -1,5 +1,5 @@
 {
-  "sha256": "4cb3818ddbfeea860c3ca3e4ef0e92c4e10ceeccd1cb9c7d25554fb529f93e95",
+  "sha256": "8cc1bac027bfccdb0a20bb929e37e723b23f057e702544ea4f676e814b8950bd",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -10,8 +10,7 @@
     "crates/norn-api/src/objects.rs",
     "fixtures/demo/explorer/three-systems.definitions.json",
     "registry/packs/erpnext/synthetic.json",
-    "registry/packs/shopify/synthetic.json",
-    "registry/packs/odoo/synthetic.json"
+    "registry/packs/shopify/synthetic.json"
   ],
   "rights_evidence": [
     {
