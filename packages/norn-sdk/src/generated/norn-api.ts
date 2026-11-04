@@ -3894,7 +3894,7 @@ export interface components {
             /** @description Relative property path. To-many filters are existential predicates. */
             path: components["schemas"]["NornIrDimensionPath"];
             /** @description Exact runtime literal checked against the effective property contract. */
-            value: components["schemas"]["NornIrJsonValue"];
+            value: unknown;
         };
         /** @description Norn policy extension. Units are derived from typed properties, never asserted here. */
         NornIrMetricNorn: {

@@ -9930,7 +9930,6 @@
             "description": "Relative property path. To-many filters are existential predicates."
           },
           "value": {
-            "$ref": "#/components/schemas/NornIrJsonValue",
             "description": "Exact runtime literal checked against the effective property contract."
           }
         },
