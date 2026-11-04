@@ -23,6 +23,37 @@ class EnrollmentTests(unittest.TestCase):
         self.coverage = coverage_manifest.load()
         self.gates = json.loads((ROOT / "verification/coverage-v1/promoted-gates.json").read_text())
 
+    def test_implementation_mutation_gate_is_required(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        claim = copy.deepcopy(next(c for s in self.coverage["subsystems"]
+                                   for c in s["obligationClaims"] if c["proof"] == "implementation_proved"))
+        for field in ("correspondenceMutationGate", "correspondenceMutations"):
+            candidate = copy.deepcopy(claim)
+            del candidate[field]
+            with self.subTest(field=field), self.assertRaises(module.InvalidCoverage):
+                module.validate_claim_evidence_shape("assurance-certificates", claim["id"], candidate)
+
+    def test_mutation_inventory_requires_selected_harness_and_failed_verdict(self):
+        spec = importlib.util.spec_from_file_location("mutation_gate", ROOT / "verification/implementation-v1/check_mutations.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        name = "integer_negation_correspondence"
+        output = (f"Checking harness {name}...\nVERIFICATION:- FAILED\n"
+                  "Complete - 0 successfully verified harnesses, 1 failures, 1 total.\n")
+        result = subprocess.CompletedProcess([], 1, output, "")
+        module.check_inventory(result, name, False)
+        for candidate in (output.replace(name, "other"), output + output,
+                          output.replace("FAILED", "SUCCESSFUL"), "", output.replace("Complete -", "Absent -")):
+            with self.subTest(output=candidate), self.assertRaises(RuntimeError):
+                module.check_inventory(subprocess.CompletedProcess([], 1, candidate, ""), name, False)
+        # Covers both disconnected proof canaries: a successful mutant is never evidence.
+        success = (f"Checking harness {name}...\nVERIFICATION:- SUCCESSFUL\n"
+                   "Complete - 1 successfully verified harnesses, 0 failures, 1 total.\n")
+        with self.assertRaises(RuntimeError):
+            module.check_inventory(subprocess.CompletedProcess([], 0, success, ""), name, False)
+
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
 

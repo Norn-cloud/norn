@@ -4,7 +4,7 @@
     "artifact": "crates/norn-checker/src/exact_rational.rs",
     "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse --harness integer_negation_correspondence verification/implementation-v1/rational_neg_kani.rs",
     "selectors": {
-      "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.proof.entry0664871c146ddadc1cde04d918634e68eaba95f8a18945472826b448ab29e4df.selectors"
+      "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.proof.entry67a1ed1c709d515e8c94aa837a2effa1488b3239c0107647168fefe9487f7ab0.selectors"
     }
   }
 }

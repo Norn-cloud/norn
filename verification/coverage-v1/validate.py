@@ -742,6 +742,17 @@ def validate_claim_evidence_shape(
         isinstance(evidence, dict) and set(evidence) == set(LAYERS),
         f"{subsystem_id}.{claim_id}: evidence must define exactly runtime, model, and proof",
     )
+    if "implementation_proved" in (claim.get(layer) for layer in LAYERS):
+        require(isinstance(claim.get("correspondenceMutationGate"), str)
+                and bool(claim["correspondenceMutationGate"]),
+                f"{subsystem_id}.{claim_id}: implementation proof needs correspondenceMutationGate")
+        mutations = claim.get("correspondenceMutations")
+        require(isinstance(mutations, list) and bool(mutations)
+                and all(isinstance(m, dict) and set(m) == {"name", "before", "after"}
+                        and all(isinstance(v, str) and v for v in m.values())
+                        and m["before"] != m["after"] for m in mutations)
+                and len({m["name"] for m in mutations}) == len(mutations),
+                f"{subsystem_id}.{claim_id}: nonempty unique production mutations required")
     for layer_name in LAYERS:
         entries = evidence[layer_name]
         require(
@@ -1262,6 +1273,18 @@ def validate(
 
     gates = gate_manifest.get("gates")
     require(isinstance(gates, list) and gates, "promoted gate manifest gates must be non-empty")
+    for subsystem in subsystems:
+        for claim in subsystem["obligationClaims"]:
+            if "implementation_proved" not in (claim[layer] for layer in LAYERS):
+                continue
+            mutation_gate = [g for g in gates if g.get("id") == claim["correspondenceMutationGate"]]
+            require(len(mutation_gate) == 1
+                    and mutation_gate[0]["profile"] == "full"
+                    and mutation_gate[0]["evidenceKind"] == "command"
+                    and mutation_gate[0]["command"] == (
+                        "python3 verification/implementation-v1/check_mutations.py --claim " + claim["id"])
+                    and {"subsystem": subsystem["id"], "layer": "proof"} in mutation_gate[0]["classifications"],
+                    f"{subsystem['id']}.{claim['id']}: required correspondence-mutation gate missing or invalid")
     gate_ids: set[str] = set()
     classified_commands: Counter[tuple[str, str, str]] = Counter()
     classified_results: Counter[tuple[str, str, str]] = Counter()

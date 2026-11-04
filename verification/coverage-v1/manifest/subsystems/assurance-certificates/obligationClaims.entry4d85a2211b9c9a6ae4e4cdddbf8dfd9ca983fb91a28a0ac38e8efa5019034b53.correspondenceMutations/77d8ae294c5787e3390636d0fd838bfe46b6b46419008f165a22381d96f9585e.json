@@ -1,0 +1,8 @@
+{
+  "order": 0,
+  "value": {
+    "name": "overflow-clamp",
+    "before": "i64::try_from(numerator.checked_div(a)?).ok()?",
+    "after": "i64::try_from(numerator.checked_div(a)?).unwrap_or(i64::MAX)"
+  }
+}
