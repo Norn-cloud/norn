@@ -124,9 +124,12 @@ fn inherited_target_equation_refuses_unconstrained_subtype_image() {
     )
     .unwrap_err();
     assert!(
-        findings
-            .iter()
-            .any(|finding| finding.code.as_str() == "consistency.schema.unpreserved_constraint")
+        findings.iter().any(|finding| {
+            finding.code.as_str() == "consistency.schema.unpreserved_constraint"
+                && finding.message.contains("t.Parent.entity:path-equation:fg")
+                && finding.message.contains("t.Child")
+        }),
+        "{findings:?}"
     );
 }
 
@@ -143,4 +146,33 @@ fn inherited_target_equation_admits_preserving_subtype_image() {
         )
         .unwrap();
     }
+}
+
+#[test]
+fn inherited_equation_ids_do_not_collide_with_declarations() {
+    let (source, mut target, mapping) = inherited_equation_mapping(true, false);
+    let mut value = serde_json::to_value(&target[0]).unwrap();
+    value["payload"]["extensions"]["norn.path-equations/1.0.0"] = json!([
+        {"id": "e", "left": ["g"], "right": ["f"]},
+        {"id": "e:t.Child", "left": ["g"], "right": ["f"]},
+        {"id": "e:t.Child:inherited", "left": ["g"], "right": ["f"]}
+    ]);
+    target[0] = serde_json::from_value(value).unwrap();
+    let theory =
+        norn_checker::consistency::lower_path_equations(&target, &BTreeSet::new()).unwrap();
+    theory.validate().unwrap();
+    assert!(
+        theory
+            .dependencies
+            .iter()
+            .any(|rule| rule.id() == "t.Parent.entity:path-equation:e:t.Child")
+    );
+    admit_path_mapping(
+        &source,
+        &target,
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    )
+    .unwrap();
 }
