@@ -1,4 +1,4 @@
-//! STRESS-PURCHASE: real SQLite commits retain workflow and inspection laws.
+//! STRESS-PURCHASE: real `SQLite` commits retain workflow and inspection laws.
 #![cfg(feature = "native")]
 #![allow(
     clippy::expect_used,
@@ -40,10 +40,9 @@ impl ActionAuthorizer for Allow {
 }
 
 // The host's existing action idempotency record is infrastructure, not a business writer.
-fn audit_type(mut object: ObjectTypeDef) -> ObjectTypeDef {
-    object.name = norn_ir::ObjectTypeName(ACTION_CALL_TYPE.into());
-    object.identity.clear();
-    object.implements.clear();
+fn audit_type() -> ObjectTypeDef {
+    let mut object: ObjectTypeDef =
+        serde_json::from_value(json!({"name": ACTION_CALL_TYPE})).expect("audit type");
     object.properties = [
         "actionId",
         "actionArtifactId",
@@ -153,10 +152,10 @@ pub(crate) fn setup(
             }
         })
         .collect();
-    definitions.push(audit_type(definitions.first().expect("purchase").clone()));
+    definitions.push(audit_type());
     let model = Model::from_definitions_with_interfaces(&definitions, &[], &interfaces)
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("laws");
     let cell = Cell::new(
         CellStore::open_in_memory(model).expect("SQLite"),
