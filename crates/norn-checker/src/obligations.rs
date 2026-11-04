@@ -16,9 +16,9 @@ use crate::{EntityArtifactSetContext, check_artifact_set_with_receipt};
 pub mod conservation;
 /// Exact result identity for generated goals; not proof checking.
 pub mod evidence;
+mod induction;
 /// Conjunction-only specialisation evidence provenance.
 pub mod specialisation;
-mod induction;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
