@@ -31,34 +31,15 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         scope: Option<&BTreeSet<String>>,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
-        let select = "SELECT consumed_commit_seq, observation_id, octet_length(observed)";
-        let order = "ORDER BY consumed_commit_seq, observation_id";
-        let journal = format!(
-            "FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' AND consumed_commit_seq IS NOT NULL"
-        );
-        let cap = limit + 1;
-        let mut rows = Vec::new();
-        if let Some(scope) = scope {
-            for key in scope {
-                // Select actual claim endpoints, never arbitrary raw/property text.
-                rows.extend(self.conn.query(
-                    &format!("{select} {journal} AND EXISTS (SELECT 1 FROM json_each(observed, '$.input.records') AS record WHERE (json_extract(record.value, '$.key') = ?1 AND json_array_length(json_extract(record.value, '$.clearedLinks')) > 0) OR EXISTS (SELECT 1 FROM json_each(record.value, '$.links') AS link WHERE json_extract(link.value, '$.key') = ?1 OR json_extract(link.value, '$.targetKey') = ?1)) {order} LIMIT {cap}"),
-                    params![key],
-                )?);
+        let selected = self.with_source_dispute_index(|index| {
+            let mut selected = BTreeMap::new();
+            for (key, entries) in &index.claim_endpoints {
+                if scope.is_none_or(|scope| scope.contains(key)) {
+                    selected.extend(entries.iter().map(|(identity, bytes)| (identity.clone(), *bytes)));
+                }
             }
-        } else {
-            rows = self.conn.query(
-                &format!("{select} {journal} {order} LIMIT {cap}"),
-                params![],
-            )?;
-        }
-        let mut selected = BTreeMap::new();
-        for row in rows {
-            let row = crate::engine::SqlRow(row);
-            let order = crate::read::to_u64(row.get(0)?, "claim commit sequence")?;
-            let length = crate::read::to_u64(row.get(2)?, "claim evidence bytes")?;
-            selected.insert((order, row.get::<String>(1)?), length);
-        }
+            selected
+        })?;
         if selected.len() > limit {
             return Err(CellError::OutOfRange("link claim bundles"));
         }
