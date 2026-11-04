@@ -1,6 +1,6 @@
 //! `norn source pull`: read one source and print sealed raw observations.
 //!
-//! `SRC-READ-1`: a pull only sends GET requests to its declared ERPNext connector.
+//! `SRC-READ-1`: a pull only sends GET requests to its declared `ERPNext` connector.
 //! `SRC-IDENT-1`: canonical references come only from the reviewed crosswalk.
 //! SKUs, labels and arrival order never establish identity, and a row outside
 //! the crosswalk carries no reference, so mapping holds it back as a finding.
@@ -12,7 +12,7 @@ use norn_ir::{RuntimeObject, RuntimeValue};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 #[derive(Debug, Args)]
 pub(super) struct SourceArgs {
@@ -27,9 +27,12 @@ enum SourceCommand {
         /// Environment variable holding the reviewed identity crosswalk JSON.
         #[arg(long)]
         crosswalk_env: String,
-        /// Frappe connector artifact declaring the ERPNext resources.
+        /// Frappe connector artifact declaring the `ERPNext` resources.
         #[arg(long)]
         connector: PathBuf,
+        /// Capture time in epoch milliseconds, supplied by the caller's clock.
+        #[arg(long)]
+        extracted_at_ms: u64,
     },
 }
 
@@ -93,7 +96,7 @@ fn string(value: &str) -> RuntimeValue {
     RuntimeValue::String(value.to_owned())
 }
 
-/// Shape one declared ERPNext Item row.
+/// Shape one declared `ERPNext` Item row.
 fn erpnext_row(
     dataset: &'static str,
     row: &RuntimeValue,
@@ -101,7 +104,7 @@ fn erpnext_row(
 ) -> Result<SourceRow, String> {
     let name = text(row, "/name")?;
     let code = text(row, "/item_code")?;
-    let item = crosswalk.items.get(code);
+    let item = crosswalk.items.get(name);
     let mut record = RuntimeObject::from([
         ("name".to_owned(), string(name)),
         ("uom".to_owned(), string(text(row, "/stock_uom")?)),
@@ -173,23 +176,27 @@ fn keyset_read<'a>(
     connector
         .resources
         .iter()
-        .find_map(|candidate| match candidate {
-            ConnectorResource::Delta {
+        .find_map(|candidate| {
+            let ConnectorResource::Delta {
                 resource_id,
                 endpoint,
                 items_path,
                 keyset: Some(keyset),
                 additional,
                 ..
-            } if resource_id == resource => {
-                let doctype = additional.get("doctype")?.as_string()?;
-                Some((
-                    endpoint.replace("{doctype}", doctype),
-                    keyset.as_ref(),
-                    items_path.clone(),
-                ))
+            } = candidate
+            else {
+                return None;
+            };
+            if resource_id != resource {
+                return None;
             }
-            _ => None,
+            let doctype = additional.get("doctype")?.as_string()?;
+            Some((
+                endpoint.replace("{doctype}", doctype),
+                keyset.as_ref(),
+                items_path.clone(),
+            ))
         })
         .ok_or_else(|| format!("connector declares no keyset resource {resource}"))
 }
@@ -210,10 +217,11 @@ fn pull_frappe(
         keyset.watermark_field, keyset.tie_breaker_field
     );
     let size = keyset.page_size.to_string();
+    let page_size = usize::try_from(keyset.page_size).map_err(|e| e.to_string())?;
     let mut offset = 0_usize;
-    let mut pages = 0;
+    let mut pages = 0_usize;
     loop {
-        pages += 1;
+        pages = pages.checked_add(1).ok_or("source page counter overflow")?;
         if pages > MAX_PAGES {
             return Err("source exceeded the page bound".into());
         }
@@ -231,10 +239,12 @@ fn pull_frappe(
         for item in items {
             rows.push(erpnext_row(dataset, item, crosswalk)?);
         }
-        if items.len() < keyset.page_size as usize {
+        if items.len() < page_size {
             break;
         }
-        offset += items.len();
+        offset = offset
+            .checked_add(items.len())
+            .ok_or("source offset overflow")?;
     }
     Ok(rows)
 }
@@ -246,7 +256,7 @@ fn env(name: &str) -> Result<String, String> {
 /// Credentials travel only over TLS, except to this machine.
 fn checked_base(base: &str) -> Result<String, String> {
     let base = base.trim_end_matches('/');
-    let uri: ureq::http::Uri = base.parse().map_err(|_| "invalid source URL")?;
+    let uri: ureq::http::Uri = base.parse().map_err(|_error| "invalid source URL")?;
     let authority = uri.authority().ok_or("source URL lacks an authority")?;
     if authority.as_str().contains('@') || uri.query().is_some() {
         return Err("source URL must not contain credentials or a query".into());
@@ -270,6 +280,7 @@ pub(super) fn execute(args: &SourceArgs) -> Result<(String, bool), String> {
     let SourceCommand::Pull {
         crosswalk_env,
         connector,
+        extracted_at_ms,
     } = &args.command;
     let crosswalk_text = env(crosswalk_env)?;
     let crosswalk = Crosswalk::parse(&crosswalk_text)?;
@@ -286,11 +297,7 @@ pub(super) fn execute(args: &SourceArgs) -> Result<(String, bool), String> {
         .hash_json(serde_json::to_string(&crosswalk_text).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let pipeline = format!("norn-source/1+crosswalk.{digest}");
-    let extracted_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis();
-    let extracted_at = u64::try_from(extracted_at).map_err(|e| e.to_string())?;
+    let extracted_at = *extracted_at_ms;
     let mut output = String::new();
     for row in rows {
         let line = observation(&pipeline, row, extracted_at)?;
@@ -307,10 +314,10 @@ mod tests {
 
     #[test]
     fn src_ident_1_only_reviewed_items_carry_canonical_identity() {
-        let row = RuntimeValue::from_json_text(r#"{"name":"ITEM-1","item_code":"ITEM-1","item_name":"Sample","stock_uom":"Nos","modified":"2026-11-04 00:00:00"}"#).expect("row");
+        let row = RuntimeValue::from_json_text(r#"{"name":"ROW-1","item_code":"ITEM-1","item_name":"Sample","stock_uom":"Nos","modified":"2026-11-04 00:00:00"}"#).expect("row");
         let unknown = erpnext_row("Item", &row, &Crosswalk::default()).expect("unreviewed");
-        assert!(unknown.record.get("norn_ref").is_none());
-        let crosswalk = Crosswalk::parse(r#"{"erpnext":{"items":{"ITEM-1":"demo/item/1"}}}"#)
+        assert!(!unknown.record.contains_key("norn_ref"));
+        let crosswalk = Crosswalk::parse(r#"{"erpnext":{"items":{"ROW-1":"demo/item/1"}}}"#)
             .expect("reviewed");
         let known = erpnext_row("Item", &row, &crosswalk).expect("mapped");
         assert_eq!(known.record.get("norn_ref"), Some(&string("demo/item/1")));
