@@ -40,6 +40,7 @@ impl SqlEngine for CountedEngine {
 // QUERY-ENGINE-1: eager advance only; seed, commit and canonical oracle are untimed.
 // In-memory, single-threaded, at most 80 members (plan cap 100), no source disputes.
 // Member cloning/lineage and rechecking the source index remain unoptimized costs.
+#[allow(clippy::print_stdout, reason = "explicit bounded benchmark output")]
 fn measure_advance(members: usize, changed: bool) -> usize {
     let (base, plan, context) = fixture();
     let counts = Rc::new(Cell::new((0, 0)));
@@ -133,7 +134,7 @@ fn unchanged_receipt_preserves_quarantine_without_rechecking_members() {
     assert_eq!(view.result().exclusions.len(), 1);
     host.commit(CellCommit::empty()).expect("unrelated receipt");
     view.advance(host.store(), context.clone(), |_| {
-        panic!("unchanged member evaluated")
+        Err(CellError::ComputeRefused("test.unchanged_member_evaluated"))
     })
     .expect("unchanged generation");
     let mut exact = host
