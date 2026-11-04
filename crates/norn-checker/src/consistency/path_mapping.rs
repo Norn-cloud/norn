@@ -310,12 +310,13 @@ pub fn compose_path_mappings(
             .objects
             .get(&image.concept)
             .cloned()
-            .unwrap_or_default();
+            .ok_or_else(|| refuse(&id, &format!("{} has no object image", image.concept)))?;
         let mut path = Vec::new();
         for step in &image.path {
             let next = catalog
                 .links_for_object_type(&current)
                 .and_then(|links| links.iter().find(|l| l.id.as_str() == step))
+                .filter(|link| link.cardinality.to == Multiplicity::One)
                 .map(|l| l.target.as_str().to_owned());
             let (Some(next), Some(sub)) = (next, images.get(&(current.as_str(), step.as_str())))
             else {

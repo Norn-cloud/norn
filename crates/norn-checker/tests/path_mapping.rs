@@ -1,7 +1,3 @@
-//! PATH-MAP-1 (#712): #574's four schema-level catches and its valid controls,
-//! reproduced from declarations alone. Both catalogs are `EntityIR` with
-//! PATH-EQ-1 equations; mappings are typed `PathMapping` declarations.
-
 #![allow(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -23,8 +19,6 @@ fn link(id: &str, target: &str) -> Value {
     json!({"id": id, "target": target, "cardinality": {"to": "one", "from": "many", "required": true}})
 }
 
-/// The #574 completed-sale profile in namespace `ns`; the source adds the
-/// unconstrained `unjoined` reference used by the dropped-join mutation.
 fn catalog(ns: &str) -> Vec<ArtifactEnvelope> {
     let t = |name: &str| format!("{ns}.{name}");
     let mut delivery = vec![
@@ -79,8 +73,6 @@ const LINKS: [(&str, &[&str]); 3] = [
     ("Holding", &["owner"]),
 ];
 
-/// The identity-shaped mapping `from -> to`, with `edit` applied to the
-/// Delivery images (`(link, path)`; a repeated link adds a second image).
 fn mapping(id: &str, from: &str, to: &str, edit: &[(&str, &[&str])]) -> PathMapping {
     let mut links = Vec::new();
     for (concept, ids) in LINKS {
@@ -142,7 +134,6 @@ const SWAPPED: &[(&str, &[&str])] = &[("provider", &["receiver"]), ("receiver", 
 
 #[test]
 fn identity_and_equivalent_path_controls_are_admitted() {
-    // 4 path equations and 8 functional target links.
     assert_eq!(admit(&mapping("identity", "t", "s", &[])), Ok(12));
     let equivalent = mapping(
         "equivalent",
@@ -159,8 +150,6 @@ fn equations(ids: &[&str]) -> BTreeSet<String> {
         .collect()
 }
 
-// The exchange attributes each witness to the first EGD its mapped image
-// conflicts on, so equations sharing a witness are reported once.
 #[test]
 fn swapped_roles_break_the_role_equations() {
     let broken = unpreserved(&mapping("swapped", "t", "s", SWAPPED));
@@ -203,6 +192,30 @@ fn a_bad_component_breaks_its_composite_and_identity_composes() {
         &BTreeSet::new(),
     );
     assert_eq!(refused.unwrap_err()[0].code.as_str(), PATH_MAPPING_INVALID);
+    let mut missing = identity.clone();
+    missing.objects.remove("t.Delivery");
+    missing.links[0].path.clear();
+    assert!(
+        compose_path_mappings(
+            &missing,
+            &mapping("endo", "s", "s", &[]),
+            &middle,
+            &BTreeSet::new()
+        )
+        .is_err()
+    );
+    let mut many = serde_json::to_value(&middle).unwrap();
+    many[0]["payload"]["objectType"]["links"][0]["cardinality"]["to"] = json!("many");
+    let many = serde_json::from_value(many).unwrap();
+    assert!(
+        compose_path_mappings(
+            &identity,
+            &mapping("endo", "s", "s", &[]),
+            &many,
+            &BTreeSet::new()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -233,7 +246,6 @@ fn ill_typed_mappings_refuse_before_search() {
     );
 }
 
-/// Cost report (`--nocapture`): mean admission time over 50 runs per case.
 #[test]
 fn preservation_cost_on_the_574_fixtures() {
     let middle = catalog("s");
