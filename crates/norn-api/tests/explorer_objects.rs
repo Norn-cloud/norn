@@ -1,5 +1,5 @@
 //! Studio's Data Explorer object documents are the cell's exact reads of the
-//! synthetic three-systems world (Drop 9), projected by `norn_api::objects`,
+//! synthetic ERPNext and Shopify demo world, projected by `norn_api::objects`,
 //! retained as bytes and checked against the generated contract.
 //! `NORN_BLESS=1` rewrites them; review the diff.
 #![allow(
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-const SYSTEMS: [&str; 3] = ["erpnext", "shopify", "odoo"];
+const SYSTEMS: [&str; 2] = ["erpnext", "shopify"];
 const RECORDED_AT: &str = "2026-11-02T12:00:00Z";
 
 fn root() -> PathBuf {

@@ -10,8 +10,7 @@
     "crates/norn-api/src/objects.rs",
     "fixtures/demo/explorer/three-systems.definitions.json",
     "registry/packs/erpnext/synthetic.json",
-    "registry/packs/shopify/synthetic.json",
-    "registry/packs/odoo/synthetic.json"
+    "registry/packs/shopify/synthetic.json"
   ],
   "rights_evidence": [
     {
