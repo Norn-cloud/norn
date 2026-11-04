@@ -635,6 +635,41 @@ fn path_equation_unknown_link_many_and_duplicate_id_refuse() {
     }
 }
 
+#[test]
+fn path_equation_findings_name_each_failing_equation() {
+    let findings = norn_checker::consistency::lower_path_equations(
+        &[path_concept(
+            &serde_json::json!([
+                {"id":"ok","left":["next"],"right":["next"]},
+                {"id":"first","left":["missing"],"right":[]},
+                {"id":"second","left":["absent"],"right":[]}
+            ]),
+            false,
+        )
+        .unwrap()],
+        &std::collections::BTreeSet::new(),
+    )
+    .unwrap_err();
+    let named: Vec<_> = findings
+        .iter()
+        .map(|d| {
+            (
+                d.message.split(':').next().unwrap_or_default(),
+                d.span.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(named.len(), 2, "{findings:?}");
+    assert_eq!(named[0].0, "equation \"first\"");
+    assert_eq!(named[1].0, "equation \"second\"");
+    assert_eq!(
+        named[1].1,
+        Some(norn_checker::Span::pointer(
+            "/payload/extensions/norn.path-equations~11.0.0/2".to_owned()
+        ))
+    );
+}
+
 proptest::proptest! {
     #[test]
     fn path_equation_functional_cycles_keep_the_shared_root(length in 0usize..32) {

@@ -261,24 +261,45 @@ pub fn lower_path_equations(
         crate::entity_instance::EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
     let mut findings = Vec::new();
     for (artifact, owner, value) in declarations {
-        let origin = RuleOrigin {
+        let slot = "/payload/extensions/norn.path-equations~11.0.0";
+        let at = |pointer: String| RuleOrigin {
             artifact_id: Some(artifact.artifact_id.clone()),
-            pointer: "/payload/extensions/norn.path-equations~11.0.0".into(),
+            pointer,
         };
-        let result = (|| -> Result<(), String> {
-            if !matches!(catalog.object_type_named(owner.as_str()), Some(Ok(_))) {
-                return Err("equation owner is not an available concrete type".into());
-            }
-            let equations: Vec<PathEquation> = serde_json::to_value(&value)
-                .and_then(serde_json::from_value)
-                .map_err(|e| e.to_string())?;
-            if equations.len() > 128 {
-                return Err("at most 128 equations per concept".into());
-            }
-            let mut ids = BTreeSet::new();
-            for equation in equations {
+        let mut refuse = |origin: &RuleOrigin, message: String| {
+            findings.push(super::finding(
+                "consistency.path_equation.invalid",
+                crate::DiagnosticSeverity::Error,
+                message,
+                Some(origin),
+            ));
+        };
+        let whole = at(slot.into());
+        if !matches!(catalog.object_type_named(owner.as_str()), Some(Ok(_))) {
+            refuse(
+                &whole,
+                "equation owner is not an available concrete type".into(),
+            );
+            continue;
+        }
+        let equations: Vec<PathEquation> =
+            match serde_json::to_value(&value).and_then(serde_json::from_value) {
+                Ok(equations) => equations,
+                Err(error) => {
+                    refuse(&whole, error.to_string());
+                    continue;
+                }
+            };
+        if equations.len() > 128 {
+            refuse(&whole, "at most 128 equations per concept".into());
+            continue;
+        }
+        let mut ids = BTreeSet::new();
+        for (index, equation) in equations.into_iter().enumerate() {
+            let origin = at(format!("{slot}/{index}"));
+            let lowered = (|| -> Result<Egd, String> {
                 if equation.id.is_empty() || !ids.insert(equation.id.clone()) {
-                    return Err("equation IDs must be nonempty and unique".into());
+                    return Err("ID must be nonempty and unique".into());
                 }
                 let mut body = vec![Atom {
                     relation: format!("concept:{}", owner.as_str()),
@@ -289,25 +310,22 @@ pub fn lower_path_equations(
                 let (right_type, right) =
                     equation_path(&catalog, owner.as_str(), &equation.right, "r", &mut body)?;
                 if left_type != right_type {
-                    return Err("equation endpoint types differ".into());
+                    return Err(format!(
+                        "endpoint types differ ({left_type} vs {right_type})"
+                    ));
                 }
-                theory.dependencies.push(Dependency::Egd(Egd {
+                Ok(Egd {
                     id: format!("{}:path-equation:{}", artifact.artifact_id, equation.id),
                     origin: origin.clone(),
                     body,
                     left,
                     right,
-                }));
+                })
+            })();
+            match lowered {
+                Ok(egd) => theory.dependencies.push(Dependency::Egd(egd)),
+                Err(message) => refuse(&origin, format!("equation {:?}: {message}", equation.id)),
             }
-            Ok(())
-        })();
-        if let Err(message) = result {
-            findings.push(super::finding(
-                "consistency.path_equation.invalid",
-                crate::DiagnosticSeverity::Error,
-                message,
-                Some(&origin),
-            ));
         }
     }
     if findings.is_empty() {
