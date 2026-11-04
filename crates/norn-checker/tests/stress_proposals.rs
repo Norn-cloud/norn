@@ -16,12 +16,14 @@ struct Proposal {
     text: String,
 }
 #[derive(Deserialize)]
-struct Corpus { cases: Vec<Proposal> }
+struct Corpus { format: String, source: String, cases: Vec<Proposal> }
 #[test]
 fn invalid_agent_proposals_have_specific_readable_refusals() {
     let corpus: Corpus = serde_json::from_str(include_str!("../../../fixtures/stress/invalid-proposals.json")).expect("proposal corpus");
+    assert_eq!(corpus.format, "norn-stress/proposals@1");
     assert_eq!(corpus.cases.len(), 20);
-    let original: Vec<Value> = serde_json::from_str(include_str!("../../../fixtures/stress/purchase.json")).expect("generated definitions");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).expect("repository");
+    let original: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(root.join(corpus.source)).expect("generated source")).expect("generated definitions");
     let base: Vec<ArtifactEnvelope> = [include_str!("../../../registry/core/artifacts/core.Process.interface.json"), include_str!("../../../registry/core/artifacts/core.units.json")].iter().map(|s| serde_json::from_str(s).expect("base")).collect();
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext { registry: &registry, base: &base, tenant: None };
