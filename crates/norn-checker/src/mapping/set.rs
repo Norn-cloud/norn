@@ -193,7 +193,10 @@ fn path_findings(
             }
         }
     }
-    out.into_iter().map(|d| in_payload(d, artifact)).collect()
+    out.into_iter().map(|mut d| {
+        d.span = Some(Span::pointer("/pathMappings"));
+        in_payload(d, artifact)
+    }).collect()
 }
 
 /// Compile the candidate `mapping` artifact `mapping` against the set: its
