@@ -183,7 +183,11 @@ fn oversized_and_unsupported_declarations_refuse() {
         LENS_SLOT.into(),
         serde_json::from_value(json!("x".repeat(65_537))).expect("JSON"),
     );
-    assert!(admit(&mapping, &source_schema("other")).is_err());
+    assert!(
+        admit(&mapping, &source_schema("other"))
+            .err()
+            .is_some_and(|error| error.contains("exceeds byte bound"))
+    );
 }
 
 fn assert_schema_refusal(schema: norn_ir::source_schema::SourceSchemaIr, expected: &str) {
