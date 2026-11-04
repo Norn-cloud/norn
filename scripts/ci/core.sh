@@ -83,6 +83,7 @@ run_phase() {
       python3 scripts/ci/frontier.py self-test
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/test_demo_scenarios.py
       cargo xtask ci policy
       cargo xtask ci provenance
       ;;
@@ -165,6 +166,8 @@ PY
       use_jsonschema
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      ensure_nextest
+      python3 scripts/check_demo_scenarios.py
       cargo install --locked cargo-deny --version 0.19.0
       cargo deny --locked check
       cargo xtask ci policy

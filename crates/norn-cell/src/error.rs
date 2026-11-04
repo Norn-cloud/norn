@@ -20,6 +20,9 @@ pub type SqliteError = std::convert::Infallible;
 /// Why a store operation failed. A failed commit leaves the store unchanged.
 #[derive(Debug, thiserror::Error)]
 pub enum CellError {
+    /// ID-STABLE-1: canonical authored creation cannot reuse a retained identity.
+    #[error("{code}: {message}", code = norn_checker::IDENTITY_REUSE, message = norn_checker::IDENTITY_REUSE_MESSAGE)]
+    IdentityReuse,
     /// ID-UNIQUE-1: two live objects share a normalized key in one scope/world.
     #[error("{code}: normalized key {owner}/{key} collides", code = norn_checker::IDENTITY_COLLISION)]
     IdentityCollision {

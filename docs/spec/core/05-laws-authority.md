@@ -138,8 +138,9 @@ a pre-change checker receipt verifies against its original hash.
 a selected create-only writer, ordered derivations, preconditions, stored defaults
 and a pointwise predicate law. One empty store, singleton object identity and
 explicit finite decimal input intervals bound the claim. Unsupported constructs
-leave each affected goal unknown with a reason. Exact scales and units come from
-effective declarations; unlike interpretations and inexact literals refuse.
+leave each affected goal unknown with a reason. Supported numeric fields share one effective fixed scale/unit interpretation.
+Currency sources, rates, rounding, mixed interpretations and inexact literals
+remain unsupported.
 
 Initialization is vacuous over the empty store. Writer preservation checks the
 proposal before law enforcement; non-vacuity needs a reachable law-satisfying
@@ -148,4 +149,81 @@ goal: only an independently pinned backend result supplies bounded evidence.
 Named scenarios: original/mutant/restored lowering, unknown input bounds, exact
 decimal correspondence and unsupported expression/inexact literal refusal.
 
+**PROOF-TRANSITION-1:** declaration lowering first constructs the native
+`norn-ir::verification::finite::CreateRelation`. This shared relation carries
+source law/writer/object/property identities, effective scale/unit contracts,
+finite input intervals, substituted native guards, simultaneous updates and
+the guarded law predicate. Its empty-to-singleton semantics and stuttering frame
+are independent of backend syntax. Expressions remain in the same closed Norn
+Boolean/additive fragment; unsupported constructs keep their existing reasons.
+Quint emission consumes this relation without reading declarations again.
+
+Named scenario: `finite_relation_is_backend_neutral` compares the complete
+neutral and Quint goal inventory, bounds and Challenge identities, then checks
+the original/omitted-derivation update correspondence. Original/mutant model
+bytes must also match the pre-refactor generator's check-time golden outputs.
+Constructing or inspecting the relation supplies no solver verdict or authority.
+
+**PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
+producer/binder reconstructs every Challenge, checks controller-retained model
+and result digests, and binds exact result bytes through EvidencePins. Current
+identity supplies no verdict. The primary tla-ts 0.0.7 result must agree with the
+pinned Apalache oracle. Every unsupported, failed or disagreeing result is unknown.
+
+Compiler transport must not determine discharge. Flattened Quint JSON uses the
+pinned compiler's CLI parser, avoiding the intermittent pre-parser RPC stall.
+The initializer conversion accepts only a complete constant assignment to each
+state variable, with no initializer reuse; it changes assignment to equality
+only in that initializer, matching Quint's TLA+ conversion. Other shapes refuse
+as Unknown. Both compilation stages share the existing 120-second budget and
+own their process groups. The independent Apalache CLI checks the same emitted
+TLA+ bytes, with a separate unchanged 120-second check limit. Success requires
+exit 0 plus NoError; refutation requires exit 12, an invariant-violation outcome,
+an exact typed ITF trace and agreement with the primary trace shape. Other exits,
+missing traces and timeouts remain Unknown. Named scenario: `constant_initializer_predicate`;
+real generated output must match the prior RPC compiler bytes.
+
+Qualification is restricted to integer/Boolean states and one worker. Raw
+successful universal searches require nonempty initialization, a drained queue
+and declared state cardinality. Counterexamples and non-vacuity witnesses stop
+early and require agreeing backend verdicts and traces. A
+conservative arithmetic bound must fit signed 32-bit integers; this is not a
+claim about unbounded TLA+ arithmetic. Exact Apalache/Variants module sources
+come from the pinned compiler JAR. The constitution profile excludes caller loss
+and zero output. Named acceptance: original pass, omitted derivation refutation,
+restored model/Challenge/pass, stale evidence Unknown; the seven other generated
+obligations remain individually unknown. Source inspection and parity qualify
+this bounded fragment only, not general translator or model-checker soundness.
+
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
+
+**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+law artifact/version, bounded verdict and evidence level as closed enums,
+Challenge identity, exact bounds JSON, actual tool/result pins and the complete
+generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+An ineligible goal must have Unknown verdict and level; encoding, decoding and
+the emitted schema reject every other combination. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
+Rust also enforces document count relations at both wire boundaries:
+`total == goals.len()`, `eligible == count(goals where eligible)`, and
+`discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Rust also rejects duplicate goal indices at both boundaries. Indices refer to
+the retained Challenge, so a per-law document may contain non-contiguous indices.
+Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
+`document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
+`document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
+Named index scenario: `document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries`.
+Exact trace quantities serialize as canonical integer text with declared scale
+and units; counterexamples and non-vacuity witnesses have distinct kinds.
+Runtime enforcement and application parity links are either independently
+supplied references or explicit `not-yet` values. A typed document is a
+presentation of the checked driver's result, never proof or activation authority.
+Its OpenAPI projection adds new components without modifying existing schemas.
+Named scenarios: exact coefficient roundtrip; unknown requires a reason;
+unknown enum/field, fractional coefficient and invented `proved` level refuse;
+`guarantee_projection_matches_typed_eligibility_and_exact_scalars` checks wire/schema
+correspondence, including integer endpoints and trailing line terminators.
+
+### HOST-AUTH-1: explicit server policy before host access
+
+The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.
