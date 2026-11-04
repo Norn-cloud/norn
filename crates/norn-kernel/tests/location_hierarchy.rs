@@ -1158,6 +1158,65 @@ fn obs_link_supersession_requires_prepared_successor_and_retains_old_evidence() 
 }
 
 #[test]
+fn obs_link_clear_requires_old_claim_backing_and_preserves_authored_edges() {
+    for backed in [false, true] {
+        let (types, mut cell, old) = claim_fixture();
+        let catalog = norn_kernel::TypeCatalog::new(&types);
+        let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+        let key = LinkKey::new(
+            source.clone(),
+            old.role.as_str(),
+            FactKey::new("test.Target", "two"),
+        );
+        if backed {
+            let (commit, authority) = claimed_commit(&catalog, &cell, &old);
+            cell.commit_observed(commit, authority).expect("old claim");
+        } else {
+            cell.commit(CellCommit {
+                links: vec![LinkWrite {
+                    key: key.clone(),
+                    expected: norn_kernel::FactVersion::ZERO,
+                    mutation: LinkMutation::Add { values: JsonObject::new() },
+                }],
+                ..CellCommit::empty()
+            }).expect("authored edge");
+        }
+        let mut clear = old.clone();
+        clear.observation_id = "bundle:clear".into();
+        clear.target = None;
+        let read = norn_kernel::FactExpectation {
+            key: source.clone(),
+            expected: cell.load(&source).expect("source").version,
+        };
+        let mut commit = CellCommit {
+            reads: vec![read.clone()],
+            links: vec![LinkWrite {
+                key: key.clone(),
+                expected: cell.load_link(&key).expect("link").version,
+                mutation: LinkMutation::Remove,
+            }],
+            ..CellCommit::empty()
+        };
+        let mut authority = norn_kernel::ObservationAuthorization::empty();
+        append_retained_claim(&catalog, &cell, &clear, &mut commit, &mut authority);
+        if backed {
+            append_retained_claim(&catalog, &cell, &old, &mut commit, &mut authority);
+            authority.seal_observed_link_claim(&catalog, &old, read.clone(), &commit)
+                .expect("old and successor evidence");
+        }
+        authority.seal_observed_link_claim(&catalog, &clear, read, &commit)
+            .expect("clear evidence");
+        let result = cell.commit_observed(commit, authority);
+        if backed {
+            result.expect("backed clear");
+        } else {
+            assert!(matches!(result, Err(norn_kernel::CommitError::ObservationAuthorization)));
+        }
+        assert_eq!(cell.load_link(&key).expect("edge").values.is_none(), backed);
+    }
+}
+
+#[test]
 fn obs_link_foreign_capture_namespace_cannot_authorize_a_withdrawal() {
     let (types, mut cell, old) = claim_fixture();
     let catalog = norn_kernel::TypeCatalog::new(&types);

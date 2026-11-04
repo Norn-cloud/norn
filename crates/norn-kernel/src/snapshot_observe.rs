@@ -734,7 +734,7 @@ impl ObservationAuthorization {
                 "claim source has no CAS evidence".into(),
             ));
         }
-        let declaration = model
+        model
             .link(&key.object_type, claim.role.as_str())
             .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
         if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
@@ -766,13 +766,10 @@ impl ObservationAuthorization {
                 LinkMutation::Add { .. } => target
                     .as_ref()
                     .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
-                LinkMutation::Remove => {
-                    (target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One)
-                        || (superseded
-                            && target.as_ref().is_some_and(|t| {
-                                model.canonical(t) == model.canonical(&write.key.target)
-                            }))
-                }
+                LinkMutation::Remove => superseded
+                    && target.as_ref().is_some_and(|t| {
+                        model.canonical(t) == model.canonical(&write.key.target)
+                    }),
             };
             if !permitted {
                 continue;
