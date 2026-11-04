@@ -1,7 +1,7 @@
 {
   "vendor": {
     "path": "apps/studio/src/components/ui",
-    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source; later `add sidebar command dropdown-menu` with the same CLI and style",
+    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source; later `add sidebar command dropdown-menu` with the same CLI and style; button-group and scroll-area came in with the AI Elements registry components (same CLI and style)",
     "license": {
       "spdx": "MIT",
       "file": "LICENSE",
@@ -9,6 +9,7 @@
     },
     "files": [
       "apps/studio/src/components/ui/badge.tsx",
+      "apps/studio/src/components/ui/button-group.tsx",
       "apps/studio/src/components/ui/button.tsx",
       "apps/studio/src/components/ui/card.tsx",
       "apps/studio/src/components/ui/chart.tsx",
@@ -17,6 +18,7 @@
       "apps/studio/src/components/ui/dropdown-menu.tsx",
       "apps/studio/src/components/ui/input-group.tsx",
       "apps/studio/src/components/ui/input.tsx",
+      "apps/studio/src/components/ui/scroll-area.tsx",
       "apps/studio/src/components/ui/separator.tsx",
       "apps/studio/src/components/ui/shadcn.css",
       "apps/studio/src/components/ui/sheet.tsx",

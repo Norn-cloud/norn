@@ -1,3 +1,4 @@
+import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
 import { ChartLine, Database, ShieldCheck, Workflow } from "lucide-react"
@@ -31,7 +32,7 @@ function NotYet({ label, summary, icon }: Section) {
   )
 }
 
-const root = createRootRoute({ component: () => <Shell sections={SECTIONS} /> })
+const root = createRootRoute({ component: () => <Shell sections={SECTIONS} tools={<AgentButton />} /> })
 const router = createRouter({
   routeTree: root.addChildren([
     createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ to: "/questions" }) } }),
