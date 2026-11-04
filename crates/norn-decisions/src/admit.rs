@@ -995,6 +995,7 @@ fn fold_policies(
         }
     }
     Ok(Arc::new(crate::step::StepContracts {
+        assignment_fuel: Vec::new(),
         schemas: contracts.schemas.clone(),
         expressions: contracts.expressions.clone(),
         folds,
