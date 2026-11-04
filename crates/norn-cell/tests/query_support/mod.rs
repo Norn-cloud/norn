@@ -229,9 +229,10 @@ pub(crate) fn asof_plan(
     at: &str,
 ) -> norn_checker::metric::compute::QuestionPlan {
     use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2};
-    let mut artifacts: Vec<ArtifactEnvelope> =
-        serde_json::from_str(include_str!("../../../../fixtures/ir/metrics/ontology.json"))
-            .expect("template");
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
+        "../../../../fixtures/ir/metrics/ontology.json"
+    ))
+    .expect("template");
     let object = store.model().object_types().next().expect("type").clone();
     artifacts[0].artifact_id = "demo.Conversion.entity.v2".into();
     artifacts[0].name = TYPE.into();
@@ -258,4 +259,3 @@ pub(crate) fn asof_plan(
     norn_checker::metric::compute::admit(base.definitions(), &question, &catalog, 100)
         .expect("admitted AsOf")
 }
-

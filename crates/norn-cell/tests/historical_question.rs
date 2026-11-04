@@ -79,7 +79,6 @@ fn late_scrap_correction_preserves_the_original_bitemporal_answer() {
     assert_eq!(store.verified_head().expect("read-only"), head);
 }
 
-
 #[test]
 fn asof_requires_matching_authenticated_cutoff_and_preserves_historical_pins() {
     use norn_cell::{
