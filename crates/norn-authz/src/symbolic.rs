@@ -1,4 +1,4 @@
-//! Runtime admission analysis using upstream SymCC queries, never a proof
+//! Runtime admission analysis using upstream `SymCC` queries, never a proof
 //! certificate. The embedding host must run the *entire* analysis in a
 //! terminable, memory-limited worker (compilation and replay included).
 //! No cvc5 binary or library is linked or distributed by this crate.
