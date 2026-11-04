@@ -108,6 +108,9 @@ fn freeze(
                     | PropertyType::Decimal { .. }
                     | PropertyType::Boolean {}
                     | PropertyType::Enum { .. }
+                    | PropertyType::Date { .. }
+                    | PropertyType::Timestamp { .. }
+                    | PropertyType::Duration { .. }
             ),
             "unsupported frozen scalar kind",
         )?;
