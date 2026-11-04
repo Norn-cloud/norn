@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { readDocument } from "../src/lib/exact.ts"
-import { bucketLabel, headline, period, scope } from "../src/lib/format.ts"
+import { bucketLabel, headline, percent, period, scope } from "../src/lib/format.ts"
 import { measured, operandUnits } from "../src/lib/units.ts"
 import type { Answer, Metric, ObjectType, Question } from "../src/lib/transport.ts"
 
@@ -57,4 +57,14 @@ test("a count is a number of records, never an amount in its property's unit", (
     ? { ...metric, type_params: { ...metric.type_params, metric_aggregation_params: { ...metric.type_params.metric_aggregation_params, agg: "count" as const } } }
     : metric)
   expect(operandUnits(question, counted, objectType)).toEqual([undefined, undefined])
+})
+
+test("a ratio reads as a percentage rounded on its decimal text, never a float", () => {
+  expect(percent("0.979685")).toBe("97.97%")
+  expect(percent("0.98")).toBe("98.00%")
+  expect(percent("0.975")).toBe("97.50%")
+  expect(percent("0.979995")).toBe("98.00%")
+  expect(percent("1")).toBe("100.00%")
+  expect(percent("-0.000049")).toBe("0.00%")
+  expect(percent("unavailable")).toBe("unavailable")
 })
