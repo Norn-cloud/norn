@@ -1796,11 +1796,11 @@ mod tests {
     #[test]
     fn generated_commitments_sort_keys_without_changing_exact_text_or_numbers() {
         let left: &serde_json::value::RawValue = serde_json::from_str(
-            r#"{"z":[{"b":1.2300e+2,"a":900719925474099312345}],"é":"é","é":"é"}"#,
+            r#"{"z":[{"b":1.2300e+2,"a":900719925474099312345}],"e\u0301":"e\u0301","é":"é"}"#,
         )
         .expect("raw");
         let right: &serde_json::value::RawValue = serde_json::from_str(
-            r#"{"é":"é","é":"é","z":[{"a":900719925474099312345,"b":1.2300e+2}]}"#,
+            r#"{"é":"é","e\u0301":"e\u0301","z":[{"a":900719925474099312345,"b":1.2300e+2}]}"#,
         )
         .expect("raw");
         let bytes = canonical_json_exact_of(left).expect("canonical");
@@ -1820,7 +1820,7 @@ mod tests {
             bytes,
             canonical_json_exact_of(roundtrip).expect("idempotent")
         );
-        assert_ne!(canonical_json_exact_of("é"), canonical_json_exact_of("é"));
+        assert_ne!(canonical_json_exact_of("é"), canonical_json_exact_of("e\u{301}"));
         let duplicate: &serde_json::value::RawValue =
             serde_json::from_str(r#"{"a":1,"a":2}"#).expect("raw");
         assert!(canonical_json_exact_of(duplicate).is_err());
