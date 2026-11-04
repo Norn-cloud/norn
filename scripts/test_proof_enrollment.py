@@ -200,6 +200,35 @@ class EnrollmentTests(unittest.TestCase):
                     with self.assertRaises(module.InvalidCoverage):
                         module.validate_claim_evidence_shape(subsystem["id"], original["id"], candidate)
 
+    def test_implementation_harness_requires_top_level_production_import(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
+        claim = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        proof = "#[kani::proof] fn integer_negation_correspondence() {}\n"
+        imported = '#[path = "../../crates/norn-checker/src/exact_rational.rs"] mod production;\n'
+        local_copy = "struct Rational; impl Rational { fn checked_neg(self) -> Option<Self> { Some(self) } }\n"
+        for source, message in (
+            ("mod nested {\n" + imported + "}\n" + proof, "imports must be at harness top level"),
+            (local_copy + proof, "harness must import the declared correspondenceSource"),
+            (imported.replace("exact_rational.rs", "other.rs") + proof, "must import the declared correspondenceSource as a module"),
+        ):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                module.ROOT = Path(directory)
+                harness = module.ROOT / claim["evidence"]["proof"][0]["artifact"]
+                harness.parent.mkdir(parents=True)
+                production = module.ROOT / claim["correspondenceSource"]
+                production.parent.mkdir(parents=True)
+                production.write_text(local_copy)
+                production.with_name("other.rs").write_text(local_copy)
+                harness.write_text(source)
+                with self.assertRaisesRegex(module.InvalidCoverage, message):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+                # Braces in comments and strings do not put the import in a module.
+                harness.write_text('/* { */ const TEXT: &str = "{";\n' + imported + proof)
+                module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+
     def test_plan_workflow_contract_is_exact(self):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)

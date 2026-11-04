@@ -839,7 +839,17 @@ def validate_claim_evidence_shape(
                         f"{subsystem_id}.{claim_id}: Kani correspondenceSource must name its production predicate source",
                     )
                     raw_source = harness.read_text()
+                    imported_production = False
+                    brace_depth = 0
+                    previous_end = 0
                     for attribute in re.finditer(r"#\s*!?\s*\[\s*(?:r#)?path\b[^\]]*\]", harness_source):
+                        preceding = harness_source[previous_end:attribute.start()]
+                        brace_depth += preceding.count("{") - preceding.count("}")
+                        previous_end = attribute.end()
+                        require(
+                            brace_depth == 0,
+                            f"{subsystem_id}.{claim_id}: #[path] imports must be at harness top level",
+                        )
                         # The stripping helper preserves offsets. Accept only an
                         # ordinary module item with a literal path, never a
                         # redirected proof function or a conditional attribute.
@@ -850,9 +860,15 @@ def validate_claim_evidence_shape(
                         require(
                             imported is not None
                             and re.match(r"\s*(?:pub\s+)?mod\s+\w+\s*;", harness_source[attribute.end():]) is not None
+                            and (harness.parent / imported.group(1)).resolve().is_relative_to(ROOT.resolve())
                             and (harness.parent / imported.group(1)).resolve() == (ROOT / production).resolve(),
                             f"{subsystem_id}.{claim_id}: #[path] must import the declared correspondenceSource as a module",
                         )
+                        imported_production = True
+                    require(
+                        imported_production,
+                        f"{subsystem_id}.{claim_id}: harness must import the declared correspondenceSource with top-level #[path]",
+                    )
                     require(
                         not prefix or (prefix[0] == "env" and all(
                             re.fullmatch(r"(?:RUSTFLAGS|RUSTUP_HOME|KANI_HOME)=[^\s]+", arg)
