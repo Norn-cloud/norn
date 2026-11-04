@@ -83,6 +83,13 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const [hover, setHover] = useState<string>()
   const [expanded, setExpanded] = useState(false)
   const active = hover ?? pinned
+  // Pinning remounts the canvas; keep keyboard focus on it when the pin came from inside.
+  const frame = useRef<HTMLDivElement>(null)
+  const pin: Pick = (id) => {
+    const inside = frame.current?.contains(document.activeElement) ?? false
+    onPin(id)
+    if (inside) requestAnimationFrame(() => frame.current?.focus())
+  }
   // A step back is a chip on its source state: light the path to that state.
   const back = backOf(tree, active)
   const route = active === undefined ? undefined : pathTo(tree, back?.from ?? active)
@@ -110,13 +117,6 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     id: `${source}>${target}`, source, target, type: "default",
     style: { stroke: lit?.has(source) && lit.has(target) ? "var(--primary)" : "var(--muted-foreground)", strokeWidth: 1.25, opacity: lit && !(lit.has(source) && lit.has(target)) ? 0.3 : 1, transition: "opacity 200ms" },
   }))
-  // Pinning remounts the canvas; keep keyboard focus on it when the pin came from inside.
-  const frame = useRef<HTMLDivElement>(null)
-  const pin: Pick = (id) => {
-    const inside = frame.current?.contains(document.activeElement) ?? false
-    onPin(id)
-    if (inside) requestAnimationFrame(() => frame.current?.focus())
-  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { pin(undefined); setHover(undefined); return }
     // A focused card or chip handles its own Enter and Space as a click.
