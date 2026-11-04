@@ -22,7 +22,12 @@ fn sources(
             .file_name()
             .is_some_and(|name| name == "Cargo.toml" || name == "Cargo.lock")
     {
-        let name = path.strip_prefix(root)?.to_string_lossy();
+        let name = path
+            .strip_prefix(root)?
+            .iter()
+            .map(|component| component.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let contents = fs::read_to_string(path)?;
         writeln!(output, "({name:?}, {contents:?}),")?;
     }

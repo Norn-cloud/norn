@@ -391,7 +391,8 @@ mod fuel_identity_tests {
 
     #[test]
     fn dependency_changes_invalidate_old_evidence() {
-        let env = ZenTypeEnv::input_only(BTreeMap::new(), EnvOptions::default()).expect("environment");
+        let env =
+            ZenTypeEnv::input_only(BTreeMap::new(), EnvOptions::default()).expect("environment");
         let expression = Expression::compile("1").expect("compile");
         let limits = ResourceLimitProfile::norn_limits_v1();
         let (_, certificate) =
