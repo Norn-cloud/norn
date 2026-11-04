@@ -732,6 +732,18 @@ def validate_selector_gate_order(
                 )
 
 
+def kani_implementation_claim(claim: dict[str, Any]) -> bool:
+    """Mutation correspondence applies to Kani harnesses, not extracted theorems.
+
+    The existing hax/F* implementation proof retains its extraction gates.
+    """
+    return claim.get("proof") == "implementation_proved" and any(
+        isinstance(selector, str) and selector.startswith("harness:")
+        for entry in claim.get("evidence", {}).get("proof", [])
+        for selector in entry.get("selectors", [])
+    )
+
+
 def validate_claim_evidence_shape(
     subsystem_id: str,
     claim_id: str,
@@ -742,7 +754,7 @@ def validate_claim_evidence_shape(
         isinstance(evidence, dict) and set(evidence) == set(LAYERS),
         f"{subsystem_id}.{claim_id}: evidence must define exactly runtime, model, and proof",
     )
-    if "implementation_proved" in (claim.get(layer) for layer in LAYERS):
+    if kani_implementation_claim(claim):
         require(isinstance(claim.get("correspondenceMutationGate"), str)
                 and bool(claim["correspondenceMutationGate"]),
                 f"{subsystem_id}.{claim_id}: implementation proof needs correspondenceMutationGate")
@@ -1275,7 +1287,7 @@ def validate(
     require(isinstance(gates, list) and gates, "promoted gate manifest gates must be non-empty")
     for subsystem in subsystems:
         for claim in subsystem["obligationClaims"]:
-            if "implementation_proved" not in (claim[layer] for layer in LAYERS):
+            if not kani_implementation_claim(claim):
                 continue
             mutation_gate = [g for g in gates if g.get("id") == claim["correspondenceMutationGate"]]
             require(len(mutation_gate) == 1

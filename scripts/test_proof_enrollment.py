@@ -28,12 +28,21 @@ class EnrollmentTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         claim = copy.deepcopy(next(c for s in self.coverage["subsystems"]
-                                   for c in s["obligationClaims"] if c["proof"] == "implementation_proved"))
+                                   for c in s["obligationClaims"] if module.kani_implementation_claim(c)))
         for field in ("correspondenceMutationGate", "correspondenceMutations"):
             candidate = copy.deepcopy(claim)
             del candidate[field]
             with self.subTest(field=field), self.assertRaises(module.InvalidCoverage):
                 module.validate_claim_evidence_shape("assurance-certificates", claim["id"], candidate)
+
+    def test_extracted_implementation_theorem_keeps_its_existing_gates(self):
+        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        claim = next(c for s in self.coverage["subsystems"] for c in s["obligationClaims"]
+                     if c["id"] == "INV-ART-DIRECT-WRITE-PREDICATE")
+        self.assertFalse(module.kani_implementation_claim(claim))
+        module.validate_claim_evidence_shape("artifact-governance", claim["id"], claim)
 
     def test_mutation_inventory_requires_selected_harness_and_failed_verdict(self):
         spec = importlib.util.spec_from_file_location("mutation_gate", ROOT / "verification/implementation-v1/check_mutations.py")
