@@ -1,0 +1,7 @@
+{
+  "code": "consistency.path_mapping.preserved",
+  "message": "Required path mapping has bounded-no-counterexample evidence bound to its exact inputs",
+  "severity": "info",
+  "since": "0.2.0",
+  "tier": "T3"
+}

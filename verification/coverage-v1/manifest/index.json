@@ -61,6 +61,7 @@
     "scripts/proof_enrollment.py",
     "scripts/test_proof_enrollment.py",
     ".github/workflows/ci-policy.yml",
-    "scripts/ci/core.sh"
+    "scripts/ci/core.sh",
+    "verification/coverage-v1/assurance-certificate-obligations.json"
   ]
 }

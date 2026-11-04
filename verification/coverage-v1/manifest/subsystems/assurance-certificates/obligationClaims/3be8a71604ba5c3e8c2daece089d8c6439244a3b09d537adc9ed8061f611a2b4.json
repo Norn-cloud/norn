@@ -1,0 +1,21 @@
+{
+  "order": 1,
+  "value": {
+    "id": "INV-CERT-SPECIALISATION",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "reference_proved",
+    "residual": "Abstract conjunction/projected-step safety only. Liveness, non-vacuity, closure completeness, declaration lowering, evidence scheduling and Rust correspondence are not covered.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry3be8a71604ba5c3e8c2daece089d8c6439244a3b09d537adc9ed8061f611a2b4.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry3be8a71604ba5c3e8c2daece089d8c6439244a3b09d537adc9ed8061f611a2b4.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry3be8a71604ba5c3e8c2daece089d8c6439244a3b09d537adc9ed8061f611a2b4.evidence.proof"
+      }
+    }
+  }
+}
