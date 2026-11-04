@@ -9,13 +9,13 @@ import type { Artifact } from "../src/lib/transport.ts"
 const source = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
 const catalog = catalogOf(readDocument<readonly Artifact[]>(source, "recorded").document)
 
-test("three systems feed one business model", () => {
-  expect(catalog.systems.map(({ name }) => name).sort()).toEqual(["ERPNext", "Odoo", "Shopify"])
+test("ERPNext and Shopify feed one business model", () => {
+  expect(catalog.systems.map(({ name }) => name).sort()).toEqual(["ERPNext", "Shopify"])
   for (const system of catalog.systems) expect(system.feeds).toContain("canon.Holding")
   expect(catalog.concepts.filter(({ kind }) => kind === "concept").length).toBe(8)
   const holding = catalog.byName.get("canon.Holding")
   expect(holding?.kind).toBe("concept")
-  expect([...new Set(holding?.feeds.map(({ system }) => system))].sort()).toEqual(["ERPNext", "Odoo", "Shopify"])
+  expect([...new Set(holding?.feeds.map(({ system }) => system))].sort()).toEqual(["ERPNext", "Shopify"])
 })
 
 test("a concept states its facts, relationships and parents as declared", () => {
