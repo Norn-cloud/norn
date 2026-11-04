@@ -40,7 +40,8 @@ function Submenu({ label, useMenu }: { label: string; useMenu: () => readonly Me
  */
 export function Shell({ sections }: { sections: readonly Section[] }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const current = sections.find(({ path }) => path === pathname)
+  const within = (path: string) => pathname === path || pathname.startsWith(`${path}/`)
+  const current = sections.find(({ path }) => within(path))
   return (
     <div className="flex min-h-svh gap-2 bg-canvas p-2 text-foreground max-md:pb-20">
       <nav aria-label="Sections" className="sticky top-2 flex w-48 shrink-0 self-start flex-col gap-0.5 px-1 py-3 max-md:hidden">
@@ -49,7 +50,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
           <span className="text-panel font-medium">Norn Studio</span>
         </Link>
         {sections.map(({ path, label, icon: Icon }) => (
-          <Link key={path} to={path} aria-current={path === pathname ? "page" : undefined} className={cn(ROW, path === pathname && ACTIVE)}>
+          <Link key={path} to={path} aria-current={within(path) ? "page" : undefined} className={cn(ROW, within(path) && ACTIVE)}>
             <Icon className="size-4 shrink-0" /><span>{label}</span>
           </Link>
         ))}
@@ -60,8 +61,8 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
       </div>
       <nav aria-label="Sections" className="fixed inset-x-0 bottom-4 mx-auto flex w-fit gap-1 rounded-full bg-foreground p-1.5 text-background md:hidden">
         {sections.map(({ path, label, icon: Icon }) => (
-          <Link key={path} to={path} aria-label={label} aria-current={path === pathname ? "page" : undefined}
-            className={cn("flex size-10 items-center justify-center rounded-full transition-colors duration-150 ease-spring", path === pathname ? "bg-background/20" : "opacity-70 hover:opacity-100")}>
+          <Link key={path} to={path} aria-label={label} aria-current={within(path) ? "page" : undefined}
+            className={cn("flex size-10 items-center justify-center rounded-full transition-colors duration-150 ease-spring", within(path) ? "bg-background/20" : "opacity-70 hover:opacity-100")}>
             <Icon className="size-4" />
           </Link>
         ))}
