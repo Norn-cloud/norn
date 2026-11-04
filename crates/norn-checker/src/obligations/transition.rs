@@ -23,22 +23,9 @@ pub struct Affine {
 
 impl Affine {
     fn combine(mut self, rhs: Self, sign: i128) -> Result<Self, String> {
-        self.constant = rhs
-            .constant
-            .checked_mul(sign)
-            .and_then(|value| self.constant.checked_add(value))
-            .ok_or("affine overflow")?;
+        self.constant = accumulate(self.constant, rhs.constant, sign)?;
         for (symbol, value) in rhs.coefficients {
-            let value = value
-                .checked_mul(sign)
-                .and_then(|value| {
-                    self.coefficients
-                        .get(&symbol)
-                        .copied()
-                        .unwrap_or(0)
-                        .checked_add(value)
-                })
-                .ok_or("affine overflow")?;
+            let value = accumulate(self.coefficients.get(&symbol).copied().unwrap_or(0), value, sign)?;
             if value == 0 {
                 self.coefficients.remove(&symbol);
             } else {
@@ -47,6 +34,11 @@ impl Affine {
         }
         Ok(self)
     }
+}
+
+fn accumulate(left: i128, right: i128, sign: i128) -> Result<i128, String> {
+    left.checked_add(right.checked_mul(sign).ok_or("affine overflow")?)
+        .ok_or_else(|| "affine overflow".into())
 }
 
 /// Arithmetic views only; each unsupported part has its own Unknown reason.
@@ -103,7 +95,7 @@ pub fn affine(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, String
 pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, String> {
     let tokens = tokens(source)?;
     let mut expression = tokens.as_slice();
-    while expression.first() == Some(&"(") && expression.last() == Some(&")") {
+    while let ["(", inner @ .., ")"] = expression {
         let mut depth = 0_i32;
         let encloses = expression.iter().enumerate().all(|(index, token)| {
             if *token == "(" {
@@ -117,9 +109,7 @@ pub fn equality(source: &str, symbols: &BTreeSet<String>) -> Result<Affine, Stri
         if !encloses {
             break;
         }
-        expression = expression
-            .get(1..expression.len() - 1)
-            .ok_or("invalid equality")?;
+        expression = inner;
     }
     let positions: Vec<_> = expression
         .iter()
