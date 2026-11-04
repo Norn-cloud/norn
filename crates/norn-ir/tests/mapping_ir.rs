@@ -263,3 +263,21 @@ fn obs_link_claim_missing_target_does_not_imply_a_clear() {
             .is_none()
     );
 }
+
+proptest::proptest! {
+    #[test]
+    fn obs_link_contribution_identity_survives_retarget_clear_and_version_changes(
+        version in 1u16..1000, target in "[a-z]{1,12}", clear in proptest::bool::ANY,
+    ) {
+        let mut old = link_record().link_claims("old occurrence").remove(0);
+        old.provenance.mapping_version.0 = format!("test.mapping@{version}");
+        let mut new = old.clone();
+        new.observation_id = "new occurrence".into();
+        new.provenance.mapping_version.0 = format!("test.mapping@{}", version.checked_add(1).expect("version"));
+        new.target = (!clear).then(|| norn_ir::mapping::ObservedLinkTarget { object_type: norn_ir::ObjectTypeName("test.Target".into()), key: target });
+        proptest::prop_assert_eq!(old.contribution_id().expect("old"), new.contribution_id().expect("new"));
+        proptest::prop_assert_ne!(old.id().expect("old"), new.id().expect("new"));
+        new.provenance.source.system.push_str("_different");
+        proptest::prop_assert_ne!(old.contribution_id().expect("old"), new.contribution_id().expect("other source"));
+    }
+}

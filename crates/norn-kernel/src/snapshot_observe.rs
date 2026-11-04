@@ -235,7 +235,7 @@ pub struct ObservationAuthorization {
     source_scopes: Vec<(FactExpectation, ObservedSourceOwner)>,
     links: Vec<LinkWrite>,
     convergent_links: Vec<LinkWrite>,
-    claims: BTreeMap<FactKey, JsonObject>,
+    claims: BTreeMap<FactKey, (norn_ir::mapping::ObservedLinkClaim, JsonObject)>,
     owner_recreations: Vec<(FactKey, ObservedSourceOwner, FactWrite)>,
     pending_writes: Vec<FactWrite>,
     pending_sources: BTreeSet<FactKey>,
@@ -713,7 +713,12 @@ impl ObservationAuthorization {
             .any(|read| read.key == claim_key && read.values == values);
         let written = self.writes.iter().any(|write| write.write.key == claim_key
             && matches!(&write.write.mutation, FactMutation::Put { values: prepared } if prepared == &values));
-        if self.claims.get(&claim_key) != Some(&values) || (!retained && !written) {
+        if !self
+            .claims
+            .get(&claim_key)
+            .is_some_and(|(_, bound)| bound == &values)
+            || (!retained && !written)
+        {
             return Err(ObservationRefusal::Encoding(
                 "claim has no prepared immutable evidence".into(),
             ));
@@ -750,6 +755,9 @@ impl ObservationAuthorization {
             self.reference_targets.insert(target.clone());
             self.reference_targets.insert(model.canonical(target));
         }
+        let superseded = self
+            .has_prepared_successor(claim)
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
         for write in commit.links.iter().filter(|w| {
             model.canonical(&w.key.source) == model.canonical(&key)
                 && w.key.link == claim.role.as_str()
@@ -759,7 +767,11 @@ impl ObservationAuthorization {
                     .as_ref()
                     .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
                 LinkMutation::Remove => {
-                    target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One
+                    (target.is_none() && declaration.cardinality.to == norn_ir::Multiplicity::One)
+                        || (superseded
+                            && target.as_ref().is_some_and(|t| {
+                                model.canonical(t) == model.canonical(&write.key.target)
+                            }))
                 }
             };
             if !permitted {
@@ -781,13 +793,23 @@ impl ObservationAuthorization {
         Ok(())
     }
 
+    fn has_prepared_successor(
+        &self,
+        claim: &norn_ir::mapping::ObservedLinkClaim,
+    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        let contribution = claim.contribution_id()?;
+        self.claims.values().try_fold(false, |found, (other, _)| {
+            Ok(found || (other.target != claim.target && other.contribution_id()? == contribution))
+        })
+    }
+
     pub(crate) fn authorizes_convergent_link(&self, write: &LinkWrite) -> bool {
         self.convergent_links.contains(write)
     }
 
     pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
         write.expected == FactVersion(0)
-            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key) == Some(values))
+            && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|(_, bound)| bound == values))
             && self.authorizes_write(write)
     }
 
@@ -1572,7 +1594,10 @@ pub fn prepare_observed_link_claim_snapshot(
             provenance: &claim.provenance,
         },
     )?;
-    prepared.authorization.claims.insert(key, values);
+    prepared
+        .authorization
+        .claims
+        .insert(key, (claim.clone(), values));
     Ok(prepared)
 }
 

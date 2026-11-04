@@ -204,6 +204,12 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   all source claims remain individually addressable provenance. Observation
   authority is confined to recomputed declared claims. The existing authored
   relation-ownership check remains in force for authored mutations.
+- **OBS-LINK-CONTRIBUTION-1:** the latest consumed claim for a source row,
+  canonical source/role and mapping artifact contributes current membership.
+  Replacing its target withdraws an earlier observed edge only if no active
+  claim still supports that edge. Prepared old and successor evidence is
+  required for a withdrawal; authored edges without claim backing stay intact.
+  Every superseded claim remains immutable evidence.
 - **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
   canonical identity, including targets in the same capture. Target arrival
   resolves it without source redelivery or an arrival-order assumption. Capture,
