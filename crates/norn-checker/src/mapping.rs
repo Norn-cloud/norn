@@ -56,6 +56,7 @@
 
 mod compile;
 pub mod evidence;
+pub mod lens;
 mod set;
 mod snapshot_lint;
 pub mod vendor;
@@ -210,6 +211,9 @@ pub fn decode_mapping(value: &serde_json::Value) -> Result<MappingIr, Vec<Diagno
 )]
 pub fn check_mapping_local(mapping: &MappingIr) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    if let Err(reason) = lens::admit(mapping) {
+        out.push(error(codes::INVALID_DOCUMENT, reason, Span::pointer("/extensions")));
+    }
     for (empty, member) in [
         (mapping.interfaces.is_empty(), "interfaces"),
         (mapping.maps.is_empty(), "maps"),
