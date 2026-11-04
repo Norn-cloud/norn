@@ -108,8 +108,11 @@ impl<E: SqlEngine> CellStore<E> {
         if old_size == 0 || old_size > log.len() {
             return Ok(None);
         }
-        let additions = usize::try_from(log.len() - old_size)
-            .map_err(|_| CellError::OutOfRange("transparency size"))?;
+        let additions = log
+            .len()
+            .checked_sub(old_size)
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or(CellError::OutOfRange("transparency size"))?;
         Ok(Some(log.prove_consistency(additions)))
     }
 }
