@@ -10,10 +10,10 @@ import { SourcesPage, useSourcesMenu } from "./sources.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step." },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "Every rule the system keeps, and how strongly each one is checked." },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", primary: "Connect a system", useMenu: useSourcesMenu },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", primary: "Ask a question", useMenu: useQuestionsMenu },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", primary: "New workflow" },
+  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "Every rule the system keeps, and how strongly each one is checked.", primary: "New law" },
 ]
 
 function NotYet({ label, summary, icon }: Section) {
