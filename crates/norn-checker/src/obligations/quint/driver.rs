@@ -183,10 +183,17 @@ impl CaseReport {
             "acceptancePassed": self.acceptance_passed, "documents": documents}))
     }
 }
+fn shared_bounds(profile: &Value, bounds: &Value, toolchain: &Value) -> Result<Value> {
+    Ok(
+        json!({"declaredBoundsProfile":profile,"profile":bounds,"toolchain":toolchain,
+        "expectedStates":profile.get("expectedStates").ok_or("expected states")?,"workers":1,
+        "exclusions":profile.get("exclusions").ok_or("explicit exclusions required")?}),
+    )
+}
 fn documents(
     source: &DefinitionSource,
     batch: &super::Batch,
-    profile: &Value,
+    shared: &Value,
     goals: &[GoalGuarantee],
 ) -> Result<Vec<GuaranteesDocument>> {
     let mut documents = Vec::new();
@@ -256,7 +263,7 @@ fn documents(
             format: GuaranteesFormat::V1, law_artifact_id: artifact_id.into(), law_id: law.id,
             law_version: artifact.version.clone(), verdict, level,
             challenge_sha256: selected.iter().find_map(|g|g.evidence.as_ref()).map_or_else(||batch.challenge.sha256().to_owned(), |record|record.pins.challenge_sha256.clone()),
-            bounds_json: selected.iter().find_map(|g|g.evidence.as_ref()).map(|record|record.pins.bounds_json.clone()).map_or_else(||serde_json::to_string(&json!({"declaredBoundsProfile":profile,"profile":batch.bounds,"exclusions":profile.get("exclusions")})), Ok)?,
+            bounds_json: serde_json::to_string(shared)?,
             tools, total: u32::try_from(selected.len())?, eligible: u32::try_from(eligible)?, discharged: u32::try_from(discharged)?, goals: selected,
             runtime_enforcement: GuaranteeReference::NotYet { reason: "no separate runtime enforcement evidence supplied by the server".into() },
             parity: GuaranteeReference::NotYet { reason: "matching raw backend verdicts are retained per goal; no separate server parity reference supplied".into() },
@@ -324,6 +331,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
         ("restored", &restored),
     ] {
         let batch = authority.quint(source, &registry, &bounds)?;
+        let shared = shared_bounds(&profile, &batch.bounds, &implementation)?;
         if label == "original" {
             original_models = Some(batch.goals.clone());
         }
@@ -431,7 +439,7 @@ pub fn run(request: &DriverRequest<'_>) -> Result<()> {
                 && batch.goals.len() == 10
                 && discharged == expected
                 && counterexample,
-            documents: documents(source, &batch, &profile, &goals)?,
+            documents: documents(source, &batch, &shared, &goals)?,
         });
     }
     if mode == DriverMode::Prepare {
@@ -555,6 +563,51 @@ mod tests {
         );
     }
     #[test]
+    fn all_unknown_documents_retain_complete_shared_bounds_without_goal_evidence() {
+        use super::{ApprovedContract, documents, shared_bounds, unsupported_goal};
+        use crate::obligations::quint_tests::{bounds, fixture, source};
+        let artifacts = fixture();
+        let source = source(&artifacts);
+        let registry = std::collections::BTreeSet::new();
+        let authority =
+            ApprovedContract::approve(&source, &registry, json!({}), json!({}), json!({}))
+                .expect("admitted fixture");
+        let batch = authority
+            .quint(&source, &registry, &bounds(&artifacts))
+            .expect("batch");
+        let profile = json!({"expectedStates":78,"exclusions":{"optional":"outside profile"}});
+        let toolchain =
+            json!({"driver":"a".repeat(64),"toolchain":{"tool/1/binary":"b".repeat(64)}});
+        let shared = shared_bounds(&profile, &batch.bounds, &toolchain).expect("shared bounds");
+        let goals = batch.challenge.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .iter()
+            .enumerate()
+            .map(|(index, statement)| {
+                unsupported_goal(
+                    u32::try_from(index).expect("index"),
+                    statement["goal"]["kind"].as_str().expect("kind"),
+                    "outside fragment",
+                )
+            })
+            .collect::<Vec<_>>();
+        let result = documents(&source, &batch, &shared, &goals).expect("documents");
+        assert!(!result.is_empty());
+        for document in result {
+            let actual: serde_json::Value =
+                serde_json::from_str(&document.bounds_json).expect("bounds");
+            assert_eq!(actual, shared);
+            assert_eq!(actual["toolchain"], toolchain);
+            assert_eq!(actual["expectedStates"], 78);
+            assert_eq!(actual["workers"], 1);
+            for field in ["modelSha256", "invariant", "step"] {
+                assert!(actual.get(field).is_none());
+            }
+            assert!(document.goals.iter().all(|goal| goal.evidence.is_none()));
+        }
+    }
+    #[test]
     #[allow(
         clippy::too_many_lines,
         reason = "one retained end-to-end correspondence fixture"
@@ -562,7 +615,7 @@ mod tests {
     fn recorded_guarantees_match_bound_results() {
         use super::{
             ApprovedContract, Bounds, DefinitionSource, GuaranteesDocument, documents,
-            supported_goal, unsupported_goal,
+            shared_bounds, supported_goal, unsupported_goal,
         };
         use serde::Deserialize;
         use serde_json::value::RawValue;
@@ -666,6 +719,21 @@ mod tests {
             }
             let recorded: GuaranteesDocument =
                 serde_json::from_str(&bytes).expect("typed document");
+            let retained_shared: serde_json::Value =
+                serde_json::from_str(&recorded.bounds_json).expect("shared recorded bounds");
+            let shared = shared_bounds(&profile, &batch.bounds, &retained_shared["toolchain"])
+                .expect("complete shared profile");
+            assert_eq!(retained_shared, shared);
+            assert!(
+                shared["toolchain"]["driver"]
+                    .as_str()
+                    .is_some_and(|value| value.len() == 64)
+            );
+            assert!(
+                shared["toolchain"]["toolchain"]
+                    .as_object()
+                    .is_some_and(|value| !value.is_empty())
+            );
             let mut goals = Vec::new();
             for (index, model) in batch.goals.iter().enumerate() {
                 let index32 = u32::try_from(index).expect("index");
@@ -713,6 +781,27 @@ mod tests {
                 );
                 let pinned: serde_json::Value =
                     serde_json::from_str(&record.pins.bounds_json).expect("bound profile");
+                assert_eq!(
+                    pinned["invariant"],
+                    if kind == "non_vacuity" {
+                        "unreachable"
+                    } else {
+                        "law"
+                    }
+                );
+                assert_eq!(
+                    pinned["step"],
+                    if kind == "initialization" {
+                        "idle"
+                    } else {
+                        "step"
+                    }
+                );
+                let mut common = pinned.clone();
+                for field in ["modelSha256", "invariant", "step"] {
+                    common.as_object_mut().expect("bound object").remove(field);
+                }
+                assert_eq!(common, shared);
                 assert_eq!(pinned["profile"], batch.bounds);
                 assert_eq!(pinned["declaredBoundsProfile"], profile);
                 assert_eq!(
@@ -728,7 +817,7 @@ mod tests {
                 );
             }
             let rendered =
-                documents(&source, &batch, &profile, &goals).expect("per-law presentation");
+                documents(&source, &batch, &shared, &goals).expect("per-law presentation");
             assert_eq!(rendered.len(), 1);
             let document = &rendered[0];
             assert_eq!(

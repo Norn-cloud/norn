@@ -196,6 +196,9 @@ Tool assets use logical name/version identities and exact content digests, witho
 installation paths. Compiler/oracle diagnostics carry byte-length/SHA256 commitments;
 the structured primary result and exact ITF trace bytes remain in the bound result.
 The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
+Law-level bounds retain the complete shared profile, toolchain, expected state
+count, worker count and exclusions. Model digests, invariant selectors and step
+selectors stay in each goal's unchanged evidence pins, never in law-level bounds.
 
 **PROOF-GUARANTEE-1 contract:** the typed `norn/guarantees@1` per-law presentation retains
 law artifact/version, bounded verdict and evidence level as closed enums,
