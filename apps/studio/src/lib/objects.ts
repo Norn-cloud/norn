@@ -1,4 +1,5 @@
 import type { Lifecycle } from "./catalog.ts"
+import { member } from "./exact.ts"
 import type { ObjectRecord } from "./transport.ts"
 
 /** The record's own name when it declares one, else its identity. */
@@ -28,4 +29,18 @@ export function lifecycleOf(lifecycle: Lifecycle, record: ObjectRecord) {
     terminal: state !== undefined && (lifecycle.terminal ?? []).includes(state),
     next: state === undefined ? [] : (lifecycle.transitions ?? []).filter(({ from }) => from.includes(state)),
   }
+}
+
+/**
+ * A parsed JSON value as text, with every number at or below `pointer` written
+ * as the exact token the server sent (`numbers`, keyed by RFC 6901 pointer)
+ * rather than as JavaScript re-serializes it.
+ */
+export function exactJson(value: unknown, numbers: ReadonlyMap<string, string>, pointer: string): string {
+  if (Array.isArray(value)) return `[${value.map((item, index) => exactJson(item, numbers, `${pointer}/${index}`)).join(",")}]`
+  if (typeof value === "number") return numbers.get(pointer) ?? String(value)
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value).map(([key, item]) => `${JSON.stringify(key)}:${exactJson(item, numbers, `${pointer}/${member(key)}`)}`).join(",")}}`
+  }
+  return JSON.stringify(value)
 }

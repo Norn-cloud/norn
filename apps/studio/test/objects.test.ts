@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { catalogOf } from "../src/lib/catalog.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { lifecycleOf, lifecycleStates, recordTitle } from "../src/lib/objects.ts"
+import { exactJson, lifecycleOf, lifecycleStates, recordTitle } from "../src/lib/objects.ts"
 import type { Artifact, ObjectRecord } from "../src/lib/transport.ts"
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8")
@@ -29,4 +29,10 @@ test("a lifecycle's states follow its declared transitions from the initial stat
 
 test("object types without a lifecycle declare none", () => {
   expect(catalog.byName.get("canon.Item")?.lifecycles).toEqual([])
+})
+
+test("composite facts keep every nested number's exact text", () => {
+  const read = readDocument<ObjectRecord>('{"objectType":"t","id":"x","scope":"s","version":1,"values":{"lots":[{"qty":100.000,"unit":"g"}],"range":{"low":1.50,"high":2}}}', "recorded")
+  expect(exactJson(read.document.values.lots, read.numbers, "/values/lots")).toBe('[{"qty":100.000,"unit":"g"}]')
+  expect(exactJson(read.document.values.range, read.numbers, "/values/range")).toBe('{"low":1.50,"high":2}')
 })

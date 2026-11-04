@@ -10,19 +10,17 @@ import { cn } from "@/lib/utils"
 import { catalogOf, conceptTitle, type Lifecycle } from "./lib/catalog.ts"
 import { member, type Read } from "./lib/exact.ts"
 import { day } from "./lib/format.ts"
-import { lifecycleOf, recordTitle } from "./lib/objects.ts"
+import { exactJson, lifecycleOf, recordTitle } from "./lib/objects.ts"
 import { recordedTransport, type ObjectRecord, type ObjectRead } from "./lib/transport.ts"
 import { ObjectTypePage } from "./sources.tsx"
 
 const RECORDED_HINT = "An object the cell stored, replayed exactly. Not a live connection."
 
-/** One stored value as the server wrote it: decimals keep their exact text. */
+/** One stored value as the server wrote it: decimals, nested ones included, keep their exact text. */
 function valueText(read: Read<ObjectRecord>, property: string): string {
   const value = read.document.values[property]
-  const exact = read.numbers.get(`/values/${member(property)}`)
-  if (exact !== undefined) return exact
   if (value === null || value === undefined) return "empty"
-  return typeof value === "string" ? value : JSON.stringify(value)
+  return typeof value === "string" ? value : exactJson(value, read.numbers, `/values/${member(property)}`)
 }
 
 const recordLink = (objectType: string, id: string) => ({ to: "/sources/$type/$", params: { type: objectType, _splat: id } }) as const
@@ -55,17 +53,19 @@ export function RecordsPanel({ objectType }: { readonly objectType: string }) {
   )
 }
 
-/** Where the record sits in a declared lifecycle, and the steps the definition declares from there. */
-function LifecycleStepper({ lifecycle, record }: { readonly lifecycle: Lifecycle; readonly record: ObjectRecord }) {
+/**
+ * Where the record sits in a declared lifecycle, and the steps the definition declares from there.
+ * Only the current state is marked: declaration order is not history, and no server document says which steps were taken.
+ */
+export function LifecycleStepper({ lifecycle, record }: { readonly lifecycle: Lifecycle; readonly record: ObjectRecord }) {
   const { states, state, terminal, next } = lifecycleOf(lifecycle, record)
-  const at = state === undefined ? -1 : states.indexOf(state)
   return (
     <div className="space-y-3">
       <ol aria-label={`${conceptTitle(record.objectType)} ${lifecycle.property.replaceAll("_", " ")}`} className="flex flex-wrap items-center gap-2">
         {states.map((step, index) => (
           <li key={step} aria-current={step === state ? "step" : undefined} className="flex items-center gap-2">
             {index > 0 && <span aria-hidden className="h-px w-6 bg-border" />}
-            <span className={cn("rounded-full border px-3 py-1 text-sm", step === state ? "border-primary bg-primary text-primary-foreground" : index < at ? "bg-accent" : "text-muted-foreground")}>
+            <span className={cn("rounded-full border px-3 py-1 text-sm", step === state ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground")}>
               {step.replaceAll("_", " ")}
             </span>
           </li>
