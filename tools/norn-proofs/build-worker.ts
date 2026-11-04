@@ -2,9 +2,12 @@ import { fileURLToPath } from "node:url"
 import { basename, dirname } from "node:path"
 import { sha, readFile } from "./host"
 import type { BunPlugin } from "bun"
+import { object } from "./protocol"
 
 const destination = process.argv[2]
 if (!destination) throw new Error("usage: build-worker.ts OUTPUT_FILE")
+const metadata: unknown = JSON.parse(await readFile(fileURLToPath(new URL("./node_modules/tla-ts/package.json", import.meta.url)), "utf8"))
+if (!object(metadata) || metadata.version !== "0.0.7") throw new Error("tla-ts version mismatch")
 const source = fileURLToPath(new URL("./node_modules/tla-ts/src/index.ts", import.meta.url))
 const codegen = fileURLToPath(new URL("./node_modules/tla-ts/src/codegen.ts", import.meta.url))
 if (sha(await readFile(source)) !== "f6cd7f8d8d89a20e4b96893e75c7de65477977b13ac15c06ecd427cb8f7cf265" ||
