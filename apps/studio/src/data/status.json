@@ -28,8 +28,8 @@
     },
     {
       "area": "Studio UI",
-      "percent": 45,
-      "detail": "Live at studio.norn.cloud on recorded data; live mode waits on the read host."
+      "percent": 55,
+      "detail": "Live: two-island shell, object types → records, questions, corrections, workflows as decision trees, guarantees; recorded data"
     },
     {
       "area": "Connectors & live data",
@@ -43,8 +43,8 @@
     },
     {
       "area": "Agent + canvas",
-      "percent": 5,
-      "detail": "Stack chosen (AI Elements, AI SDK, AG-UI, json-render, xyflow); smallest slice in build."
+      "percent": 20,
+      "detail": "Live: propose a definition change → the server-side checker admits it or refuses it with the law and reason → you decide. Canvas editing and NornQL answers not built yet."
     }
   ],
   "footnote": "Estimates of alpha scope from merged PRs vs open issues, 2026-11-04."
