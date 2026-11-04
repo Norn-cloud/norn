@@ -168,8 +168,10 @@ def compile_process(command, environment, work, deadline):
         process.wait(timeout=max(0, deadline - time.monotonic()))
 
 
-def diagnostic_commitment(output):
-    return {"bytes": len(output), "sha256": hashlib.sha256(output).hexdigest()}
+def oracle_record(status, trace_raw):
+    """Commit exact scalar states; tool metadata and diagnostic logs are run-local."""
+    trace = oracle_trace(json.loads(trace_raw)) if trace_raw else None
+    return json.dumps({"status": status, "trace": trace}, sort_keys=True, separators=(",", ":"))
 
 
 def compile_tla(args, root, environment, work):
@@ -180,11 +182,9 @@ def compile_tla(args, root, environment, work):
         str(root / "bin/quint"), "compile", str(args.model.resolve()), "--main", "generated",
         "--target", "json", "--flatten", "--step", args.step, "--invariant", args.invariant,
     ], environment, work, deadline)
-    stages.append({"stage": "quint-json", "exitCode": compiled.returncode,
-                   "stdoutBytes": len(compiled.stdout),
-                   "stdoutSha256": hashlib.sha256(compiled.stdout).hexdigest(), "stderr": diagnostic_commitment(compiled.stderr)})
+    stages.append({"stage": "quint-json", "exitCode": compiled.returncode})
     if compiled.returncode != 0:
-        raise ValueError("Quint JSON compilation failed: " + compiled.stderr.decode())
+        raise ValueError("Quint JSON compilation failed")
     source = work / "generated.qnt.json"
     source.write_text(json.dumps(initializer_predicate(json.loads(compiled.stdout))))
     tla = work / "generated.tla"
@@ -192,10 +192,9 @@ def compile_tla(args, root, environment, work):
         str(root / "quint-home/apalache-dist-0.56.1/apalache/bin/apalache-mc"),
         "--out-dir=" + str(work / "parser-output"), "parse", "--output=" + str(tla), str(source),
     ], environment, work, deadline)
-    stages.append({"stage": "apalache-cli", "exitCode": parsed.returncode,
-                   "stdout": diagnostic_commitment(parsed.stdout), "stderr": diagnostic_commitment(parsed.stderr)})
+    stages.append({"stage": "apalache-cli", "exitCode": parsed.returncode})
     if parsed.returncode != 0 or not tla.is_file():
-        raise ValueError("Apalache CLI compilation failed: " + parsed.stdout.decode() + parsed.stderr.decode())
+        raise ValueError("Apalache CLI compilation failed")
     return tla.read_bytes(), stages
 
 
@@ -231,7 +230,7 @@ def run(args):
         status = oracle_verdict(checked.returncode, checked.stdout.decode())
         trace_raw = (oracle_directory / "violation.itf.json").read_text() if status == "violation" else None
         oracle = {"status": status, "errors": [], "trace": oracle_trace(json.loads(trace_raw)) if trace_raw else None}
-        oracle_raw = json.dumps({"stdout": diagnostic_commitment(checked.stdout), "stderr": diagnostic_commitment(checked.stderr), "traceRaw": trace_raw}, separators=(",", ":"))
+        oracle_raw = oracle_record(status, trace_raw)
         expected = 1 if args.step == "idle" else args.expected_states
         status = verdict(primary, oracle, checked.returncode, False, expected)
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",

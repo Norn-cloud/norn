@@ -36,12 +36,18 @@ class VerdictPolicy(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     outer.asset_pins(assets)
 
-    def test_diagnostic_commitment_pins_exact_bytes_without_host_paths(self):
-        raw = b"Parsing file /home/example/.cache/private/generated.tla\n"
-        self.assertEqual(runner.diagnostic_commitment(raw),
-                         {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
-        self.assertNotIn("/home/", json.dumps(runner.diagnostic_commitment(raw)))
-        self.assertNotEqual(runner.diagnostic_commitment(raw), runner.diagnostic_commitment(raw + b"\n"))
+    def test_oracle_record_ignores_run_metadata_and_retains_exact_values(self):
+        trace = {"#meta": {"description": "Created on 12:00 PID 41 /home/a"},
+                 "vars": ["present", "mass"],
+                 "states": [{"#meta": {"index": 0}, "present": True, "mass": {"#bigint": "2"}}]}
+        first = runner.oracle_record("violation", json.dumps(trace))
+        trace["#meta"]["description"] = "Created on 13:00 PID 99 /home/b"
+        self.assertEqual(first, runner.oracle_record("violation", json.dumps(trace)))
+        self.assertEqual(json.loads(first), {"status": "violation", "trace": [{"state": {"present": True, "mass": 2}}]})
+        trace["states"][0]["mass"]["#bigint"] = "999"
+        self.assertNotEqual(first, runner.oracle_record("violation", json.dumps(trace)))
+        for private in ["Created", "12:00", "PID", "/home/"]:
+            self.assertNotIn(private, first)
 
     def test_success_requires_complete_agreeing_results(self):
         primary = {"status": "success", "distinctStates": 78}

@@ -193,8 +193,9 @@ Named scenarios: `counterexample_reconstruction_uses_declared_exact_units_and_em
 and `recorded_guarantees_match_bound_results`. Captured original/mutant documents
 are bless-gated fixtures from actual backend output, not fresh solver verdicts.
 Tool assets use logical name/version identities and exact content digests, without
-installation paths. Compiler/oracle diagnostics carry byte-length/SHA256 commitments;
-the structured primary result and exact ITF trace bytes remain in the bound result.
+installation paths. Compiler stages retain exit codes; oracle records retain verdicts and exact scalar
+trace values in state order. Run-specific diagnostics and ITF creation metadata
+stay outside recorded evidence. Structured primary results remain bound.
 The binder and replay use `norn_canonical::serialize_json_verbatim` for recording bytes.
 Law-level bounds use Norn1 canonical JSON text and retain the complete shared profile, toolchain, expected state
 count, worker count and exclusions. Model digests, invariant selectors and step
