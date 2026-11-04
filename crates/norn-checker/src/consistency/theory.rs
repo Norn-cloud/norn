@@ -320,7 +320,11 @@ pub fn lower_path_equations(
                     ));
                 }
                 Ok(Egd {
-                    id: format!("{id}:{instance}"),
+                    id: if instance == owner.as_str() {
+                        id.clone()
+                    } else {
+                        format!("{id}:{instance}")
+                    },
                     origin: origin.clone(),
                     body,
                     left,
@@ -335,11 +339,7 @@ pub fn lower_path_equations(
             }
         }
     }
-    if findings.is_empty() {
-        Ok(theory)
-    } else {
-        Err(findings)
-    }
+    findings.is_empty().then_some(theory).ok_or(findings)
 }
 
 pub(crate) fn equation_path(
