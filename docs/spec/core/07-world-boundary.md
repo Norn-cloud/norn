@@ -251,8 +251,10 @@ Named acceptance scenarios:
   cannot roll the relation back.
 - **OBS-LINK-CLEAR-UNION:** a to-many clear withdraws only its own contribution;
   another source's asserted endpoint stays present through repeated captures.
-- **OBS-LINK-CONCRETE-DEFAULT:** a pending base-typed claim resolves with the
-  stored subtype's effective link defaults, exactly as commit normalization does.
+- **OBS-LINK-CONCRETE-DEFAULT:** a pending claim from an admitted mapped subtype
+  resolves with its inherited effective link defaults, exactly as commit
+  normalization does. Redeclared subtype defaults and native type promotion
+  remain catalog/admission refusals.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
