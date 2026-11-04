@@ -248,7 +248,10 @@ This is conditional transition-only reachability from an admitted initialized
 object. Scalar context and external references stay frozen. All supported
 applicable pointwise laws filter initialization and post-states. Unsupported
 guards, laws, timing, cross-lifecycle reads and extra effects yield Unknown with
-a reason. A generated goal alone is Unknown; it never authorizes discharge.
+a reason. Inventory reasons name an applicable unsupported governing-law root
+and its law identity (the native `UnsupportedUntilB2` boundary); otherwise they
+state that qualification or checked results are missing. A generated goal alone
+is Unknown; it never authorizes discharge.
 The full action/writer closure is a separate qualification profile (#951).
 
 Named scenarios: `generated_lifecycle_reachability` retains a disabled transition

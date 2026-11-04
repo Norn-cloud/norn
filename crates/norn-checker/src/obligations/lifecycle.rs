@@ -1,18 +1,27 @@
 //! PROOF-LIFECYCLE-1: append source-bound conditional chart goals; never solver evidence.
 use super::ChallengeError;
-use crate::EffectiveCatalog;
+use crate::{EffectiveCatalog, EffectiveObjectType};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, LawRoot};
 use serde_json::{Value, json};
 
 pub(super) fn append(
     catalog: &EffectiveCatalog,
+    pool: &[ArtifactEnvelope],
     goals: &mut Vec<Value>,
 ) -> Result<(), ChallengeError> {
+    let laws = pool.iter().filter(|a| a.kind() == ArtifactKind::Law).map(|artifact| {
+        let law: LawIR = artifact.payload.to_json_value().decode().map_err(|_error| ChallengeError::Closure)?;
+        Ok((artifact, law))
+    }).collect::<Result<Vec<_>, ChallengeError>>()?;
     let mut bytes = 0_usize;
     for name in catalog.object_type_names() {
         let object = catalog
             .object_type_named(name)
             .and_then(Result::ok)
             .ok_or(ChallengeError::Closure)?;
+        if object.lifecycles.is_empty() { continue; }
+        let reason = unsupported_binding(object, &laws).unwrap_or_else(||
+            "conditional finite lifecycle goal requires a qualified bounds profile and checked result".into());
         for machine in &object.lifecycles {
             let chart = &machine.lifecycle;
             let count = chart
@@ -47,6 +56,7 @@ pub(super) fn append(
                     &mut bytes,
                     &json!({"kind":"lifecycle_terminal_reachability","terminal":terminal}),
                     &statement,
+                    &reason,
                 )?;
             }
             push(
@@ -54,6 +64,7 @@ pub(super) fn append(
                 &mut bytes,
                 &json!({"kind":"lifecycle_no_stuck_non_terminal"}),
                 &statement,
+                &reason,
             )?;
             for transition in &chart.transitions {
                 push(
@@ -61,6 +72,7 @@ pub(super) fn append(
                     &mut bytes,
                     &json!({"kind":"lifecycle_transition_non_vacuity","transition":transition.id}),
                     &statement,
+                    &reason,
                 )?;
             }
         }
@@ -73,9 +85,10 @@ fn push(
     bytes: &mut usize,
     goal: &Value,
     statement: &Value,
+    reason: &str,
 ) -> Result<(), ChallengeError> {
     let value = json!({"goal":goal,"statement":statement,"assessment":"unknown",
-        "reason":"conditional finite lifecycle goal requires a qualified bounds profile and checked result"});
+        "reason":reason});
     let encoded = norn_canonical::serialize_json_verbatim(&value)
         .map_err(|_error| ChallengeError::Closure)?;
     *bytes = bytes.saturating_add(encoded.len());
@@ -84,4 +97,20 @@ fn push(
     }
     goals.push(value);
     Ok(())
+}
+
+// Match the native governing-law resolver's applicability and B2 scope boundary.
+fn unsupported_binding(object: &EffectiveObjectType, laws: &[(&ArtifactEnvelope, LawIR)]) -> Option<String> {
+    let is_a = |name: &str| object.lineage.iter().any(|ty| ty.as_str() == name)
+        || object.interfaces.iter().any(|ty| ty.as_str() == name);
+    for (artifact, law) in laws {
+        if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) { continue; }
+        if !is_a(&law.subject)
+            || !matches!(&law.scope.root, LawRoot::Entity(name) if name == &law.subject)
+            || law.scope.object_types != [law.subject.as_str()]
+        {
+            return Some(format!("UnsupportedUntilB2: governing law {} ({}) has unsupported root/binding {:?}", artifact.artifact_id, law.id, law.scope.root));
+        }
+    }
+    None
 }

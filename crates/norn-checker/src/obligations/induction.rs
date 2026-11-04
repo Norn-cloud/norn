@@ -108,7 +108,7 @@ pub(super) fn build(
                 "statement":{"rule":"open_boundary","law":law_index,"boundary":boundary_index},"assessment":"unknown"}));
         }
     }
-    super::lifecycle::append(&catalog, &mut result.goals)?;
+    super::lifecycle::append(&catalog, pool, &mut result.goals)?;
     Ok(result)
 }
 

@@ -132,6 +132,12 @@ fn jewelry_app_law_keeps_all_lifecycle_goals_unknown() {
         .collect();
     assert_eq!(lifecycle.len(), 7); // two terminals + no stuck + four transitions
     assert!(lifecycle.iter().all(|g| g["assessment"] == "unknown"));
+    for goal in &lifecycle {
+        let reason = goal["reason"].as_str().expect("specific blocker");
+        assert!(reason.contains("UnsupportedUntilB2"));
+        assert!(reason.contains("demo.fine_mass_conservation.law"));
+        assert!(reason.contains("App(\"demo.jewelry\")"));
+    }
     assert_eq!(artifacts[1]["payload"]["scope"]["root"]["kind"], "app");
     let first = goals.len() - lifecycle.len();
     assert!(goals[..first].iter().all(|goal| goal.get("law").is_some()));
@@ -140,10 +146,11 @@ fn jewelry_app_law_keeps_all_lifecycle_goals_unknown() {
 #[test]
 fn lifecycle_goal_cap_is_checked_before_append() {
     let artifact: ArtifactEnvelope = serde_json::from_value(chart("true")).expect("entity");
-    let catalog = crate::EffectiveCatalog::from_artifacts(&[artifact]);
+    let pool = [artifact];
+    let catalog = crate::EffectiveCatalog::from_artifacts(&pool);
     let mut goals = vec![Value::Null; 8_192];
     assert_eq!(
-        super::lifecycle::append(&catalog, &mut goals),
+        super::lifecycle::append(&catalog, &pool, &mut goals),
         Err(ChallengeError::Limit)
     );
     assert_eq!(goals.len(), 8_192);
