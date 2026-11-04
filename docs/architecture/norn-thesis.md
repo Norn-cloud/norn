@@ -36,6 +36,12 @@ Status: target architecture, 2026-11-01. Labels identify authority: **[Owner]** 
 
 [Default] Evidence is a vector: structural, runtime-enforced, sampled correspondence, exhaustive-finite/bounded model checking, reference proof, implementation proof, or unknown/refuted. Bind statements, writers, dependencies, assumptions, limits and tool digests. A receipt proves admission identity, not a business theorem. Missing/stale/timeout evidence stays unknown.
 
+## The guarantee
+
+[Owner] Norn proves your application does exactly what your rules say, and shows you, in your own language, every surprising consequence of those rules before your business runs on them.
+
+[Astra] Verification establishes that the running application corresponds to its declared specification: for the pinned release, its declared assumptions and identified properties, every execution covered by the verified semantics satisfies those properties at the displayed assurance level (proved, exhaustive-finite, bounded-no-counterexample within a stated bound, witnessed, refuted or unknown). Validation, whether the specification represents reality, remains the domain expert's responsibility. Norn supports it with non-vacuity checks, counterexample scenarios, generated examples, mutation testing, reconciliation against observed data and faithful English/Arabic renderings, but none of these certifies business truth. Customers see what is proved, enforced, bounded (no counterexample within the stated bound), assumed or unknown. Unknowns are reported over all generated obligations. The assurance stack and its roadmap are tracked in [#718](https://github.com/Norn-cloud/norn/issues/718).
+
 ## Runtime, world and configuration
 
 [Default] Multi-object synchronous transactions are atomic within a cell; cross-cell coordination uses explicit commitments and compensation. Placement must not silently turn an atomic contract into a saga. Complete read validation includes absent keys and collection membership. Retry pure contention only; stale approved intent returns a typed conflict.
@@ -43,6 +49,8 @@ Status: target architecture, 2026-11-01. Labels identify authority: **[Owner]** 
 [Owner] Typed, scoped, effective-dated parameters let apps configure installed packs. [Default] Type/unit parameters are compile-time bindings, separate from governed runtime settings. In-flight happenings remain pinned to their admitted version until validated migration. Historical interpretation and recorded setting versions never change silently.
 
 [Owner] Functions are the sole code boundary, behind `perform`: typed WASM components or external workers, bounded and capability-scoped, returning recorded receipts. [Default] FunctionManifest is canonical; WIT and Effect contracts are checked projections. Start with qualified Rust/Python components, with workers for unsupported dependencies. Determinism, sandboxing and business correctness are separate claims.
+
+[Owner] The sole host exception is Norn-owned, versioned built-in Functions distributed in the engine: they are never installable through authored or pack definition admission, and host execution carries no sandbox or isolation claim.
 
 [Default] Commit and outbox are atomic; dispatch is at least once. An external consequence is unique only under its provider's deduplication/reconciliation contract. Unknown outcomes and failed compensation are durable states. Compensation appends new effects and never erases the original event.
 

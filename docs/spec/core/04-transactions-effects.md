@@ -216,3 +216,40 @@ SQLite dumps unchanged before and after reopening. No provider executes.
 This is runtime-enforced correspondence plus sampled generated identities and
 writer footprints, not a proof of application conservation or approval policy.
 
+`txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen`
+composes the same catalog in typed Rust with the existing `ActionQuantityEffect`.
+Full artifact-set admission precedes execution. A final link-cardinality refusal
+leaves every SQLite table unchanged, including quantity heads, postings, outbox
+and the reservation timer, before and after reopen. Success commits the facts,
+both links, quantity posting, command intent and reservation-timer cancellation;
+an exact retry after reopen preserves the action record and original retained
+receipt, while changing the posting identity refuses. This is runtime-enforced
+correspondence for that local effect composition, not universal writer closure
+or application laws.
+
+
+### Literal patch target correspondence
+
+**RULE-PATCH-SHAPE-1:** a closed, complete, duplicate-free literal patch is
+checked against the object type that its record actually targets. Optional
+shared-schema members owned by other declared targets do not become writes on
+that record. Actual members still obey that target's effective stored-property
+contract; a schema member declared by no target still refuses. Computed,
+non-literal, incomplete or duplicate-key shapes retain the full-schema check.
+The scanner must prove closure before applying this precision.
+
+Named correspondence scenarios cover the Exchange `eligible` patch alongside
+Ledger `account_code` and Conversion `output_gross`, invalid members/values on
+the actual target, and computed/incomplete fallbacks. Generated patch sets over
+two or three targets check that each record's errors depend on its own target.
+This is sampled checker correspondence; runtime stored-property checks remain
+mandatory. The allocating scanner and effective catalogs are outside the
+bounded Kani harness profile.
+
+### FA-PROTECT-1: caller writes and kernel initialization
+
+A protected property is inherited conjunctively: a subtype or extension cannot remove an ancestor's rule-only write requirement. Unsealed actions, decisions and observations cannot supply protected fields, transition a protected lifecycle or delete an existing object with protected properties. Owned-row admission validates the caller's patch first, then may initialize declared defaults under its private kernel origin; callers cannot claim that origin. Until sealed-rule evaluation is connected, these writes fail closed. Named scenarios: `protected_delete_then_recreate_is_refused`, `owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused`, and the generated-chain `protected_fields_cannot_be_weakened_anywhere_in_a_subtype_chain`. Admission-time action-target and kernel row-field diagnostics follow separately; runtime enforcement does not depend on that earlier rejection.
+
+Observed deletes cannot transition or tombstone objects with protected properties. Owned-row caller-selected identity and order never count as kernel default initialization. Observation creation retains unique initial-state initialization after caller input is checked. Named regressions: `an_observed_delete_cannot_transition_a_protected_lifecycle`, `owned_row_actions_refuse_protected_framework_identity_and_order`, and `an_observed_create_keeps_unique_initialization_without_a_property_default`.
+
+The current protected-property profile applies to object properties. Link values have no sealed writer-authority path, so `protected: true` on a link property refuses definition admission with `object_type.validation.link_property_protection_unsupported`, including extension declarations. `link_protection_is_refused_for_definitions_and_extensions_until_authority_exists` covers both the refusal and unchanged unprotected link admission.

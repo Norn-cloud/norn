@@ -27,21 +27,16 @@ proptest::proptest! {
         proptest::prop_assert!(view.was_rebuilt());
         for (step, (kind, id, amount, day, restart)) in changes.into_iter().enumerate() {
             let key = format!("SYN-MELT-15-{id}");
-            match kind {
-                0..=3 => {
-                    let write = if kind == 3 {
-                        FactWriteRow::Delete { object_type: TYPE.into(), key }
-                    } else {
-                        put(&key, 75_000, amount, &format!("2026-10-{day:02}T12:00:00Z"), if kind == 2 { "silver" } else { "gold" })
-                    };
-                    let batch = CommitBatch { world: WORLD.into(), scope: "synthetic".into(), logical_time: CLOCK,
-                        idempotency_key: Some(format!("generated-{step}")), writes: vec![write], ..CommitBatch::default() };
-                    store.commit(&batch).expect("change");
-                    proptest::prop_assert!(matches!(store.commit(&batch).expect("redelivery"), CommitOutcome::Replayed(_)));
-                }
-                4 => { context.exclusions.insert(key, "core07-finding".into()); }
-                5 => { context.exclusions.remove(&key); }
-                _ => {}
+            if kind <= 3 {
+                let write = if kind == 3 {
+                    FactWriteRow::Delete { object_type: TYPE.into(), key }
+                } else {
+                    put(&key, 75_000, amount, &format!("2026-10-{day:02}T12:00:00Z"), if kind == 2 { "silver" } else { "gold" })
+                };
+                let batch = CommitBatch { world: WORLD.into(), scope: "synthetic".into(), logical_time: CLOCK,
+                    idempotency_key: Some(format!("generated-{step}")), writes: vec![write], ..CommitBatch::default() };
+                store.commit(&batch).expect("change");
+                proptest::prop_assert!(matches!(store.commit(&batch).expect("redelivery"), CommitOutcome::Replayed(_)));
             }
             let cursor = format!("fixture/{}", store.verified_head().expect("head").commits);
             context.source_cursors.get_mut("erp").expect("source").insert("measurements".into(), cursor.clone());
