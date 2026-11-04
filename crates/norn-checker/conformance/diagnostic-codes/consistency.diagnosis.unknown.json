@@ -1,0 +1,7 @@
+{
+  "code": "consistency.diagnosis.unknown",
+  "message": "Diagnosis is unknown because a fragment or resource limit prevents a complete check",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

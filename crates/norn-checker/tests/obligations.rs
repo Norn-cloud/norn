@@ -1116,3 +1116,130 @@ fn transition_frames_only_assess_conditional_preservation() {
     }
     assert!(preservation);
 }
+
+#[test]
+fn conjunctive_layer_reuses_only_current_safety_records() {
+    use norn_checker::obligations::evidence::EvidenceTool;
+    use norn_checker::obligations::specialisation::PriorEvidence;
+    let documents = pool();
+    let base_source = source(&documents);
+    let base_contract = approve(&base_source);
+    let base = base_contract
+        .challenge(&base_source, &BTreeSet::new())
+        .expect("base");
+    let pins = base
+        .evidence_pins(
+            0,
+            EvidenceTool {
+                id: "test-driver".into(),
+                version: "1".into(),
+                implementation_sha256: "a".repeat(64),
+            },
+            "{\"steps\":1}",
+            0,
+        )
+        .expect("pins");
+    let record = base
+        .record_evidence(&pins, "{\"status\":\"unknown\"}")
+        .expect("record");
+    let mut extra = documents[3].clone();
+    extra["artifactId"] = json!("jewelry.extra.law");
+    extra["payload"]["id"] = json!("jewelry.extra");
+    let make = |extensions: &[Value]| {
+        DefinitionSource::parse(
+            &serde_json::to_string(extensions).expect("extensions"),
+            &serde_json::to_string(&documents).expect("base"),
+        )
+        .expect("source")
+    };
+    let extension = make(&[extra.clone()]);
+    let contract = approve(&extension);
+    let prior = [PriorEvidence {
+        pins: &pins,
+        result_sha256: &record.result_sha256,
+        record: &record,
+    }];
+    let run = |extension: &DefinitionSource, prior: &[PriorEvidence<'_>]| {
+        approve(extension)
+            .challenge_under_specialisation(
+                extension,
+                &BTreeSet::new(),
+                &base_contract,
+                &base_source,
+                prior,
+            )
+            .expect("admitted")
+    };
+    let reused = contract
+        .challenge_under_specialisation(
+            &extension,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("reuse");
+    assert_eq!(reused.reused.len(), 1);
+    assert_eq!(
+        reused.recheck.len() + 1,
+        reused.challenge.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .len()
+    );
+    assert_eq!(run(&extension, &[]).reused.len(), 0);
+    let stale = [PriorEvidence {
+        pins: &pins,
+        result_sha256: &"b".repeat(64),
+        record: &record,
+    }];
+    assert!(run(&extension, &stale).reused.is_empty());
+    // A new writer declaration, including opaque writers, never qualifies.
+    let mut writer = documents[2].clone();
+    writer["artifactId"] = json!("jewelry.writer.entity");
+    writer["payload"]["objectType"]["name"] = json!("jewelry.Writer");
+    let changed = make(&[extra.clone(), writer]);
+    if let Ok(contract) = ApprovedContract::approve(
+        &changed,
+        &BTreeSet::new(),
+        base.body()["semantics"].clone(),
+        base.body()["assumptions"].clone(),
+        base.body()["assurance"].clone(),
+    ) {
+        assert!(
+            contract
+                .challenge_under_specialisation(
+                    &changed,
+                    &BTreeSet::new(),
+                    &base_contract,
+                    &base_source,
+                    &prior
+                )
+                .expect("fallback")
+                .reused
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
+    let documents = pool();
+    let mut law = documents[3].clone();
+    law["payload"]["response"]["expression"] = json!("true");
+    let source = DefinitionSource::parse(
+        &serde_json::to_string(&[law]).expect("extension"),
+        &serde_json::to_string(&documents).expect("base"),
+    )
+    .expect("source");
+    assert!(
+        ApprovedContract::approve(
+            &source,
+            &BTreeSet::new(),
+            json!({"zen":"6"}),
+            json!({"axioms":[]}),
+            json!({"proof":"checked"})
+        )
+        .is_err()
+    );
+}

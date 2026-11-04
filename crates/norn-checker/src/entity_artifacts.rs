@@ -165,12 +165,29 @@ pub fn check_entity_artifacts(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    check_entity_artifacts_using(artifacts, context, &mut crate::check_artifact)
+}
+
+pub(crate) fn check_entity_artifacts_using(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
+    let complete: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
+    let path_findings = crate::consistency::lower_path_equations(&complete, context.registry)
+        .err()
+        .unwrap_or_default();
     dedupe_findings(
         artifacts
             .iter()
-            .flat_map(crate::check_artifact)
+            .flat_map(local)
             .chain(check_artifact_set_entity_model(artifacts, context))
-            .chain(crate::markings::check_references(artifacts, context.base)),
+            .chain(crate::markings::check_references(artifacts, context.base))
+            .chain(path_findings.into_iter().filter(|finding| {
+                artifacts.iter().any(|artifact| {
+                    finding.artifact_id.as_deref() == Some(artifact.artifact_id.as_str())
+                })
+            })),
     )
 }
 
@@ -191,9 +208,10 @@ pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) ->
                     .as_ref()
                     .map(|span| span.pointer.clone())
                     .unwrap_or_default(),
-                (diagnostic.code.as_str() == "widget.validation.invalid_payload"
+                ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
                     && diagnostic.message.starts_with("UI law:"))
-                .then(|| diagnostic.message.clone()),
+                    || diagnostic.code.as_str() == "consistency.normative.conflict")
+                    .then(|| diagnostic.message.clone()),
             ))
         })
         .collect()
