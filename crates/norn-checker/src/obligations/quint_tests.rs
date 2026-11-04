@@ -324,8 +324,9 @@ fn check_affine_origins(
     let mut coefficients = BTreeMap::<String, i128>::new();
     for (symbol, delta) in &symbolic.deltas {
         for (input, value) in &delta.as_ref().expect("affine delta").coefficients {
-            *coefficients.entry(input.clone()).or_default() +=
-                residual.coefficients[symbol] * value;
+            let contribution = residual.coefficients[symbol].checked_mul(*value).expect("bounded coefficient");
+            let coefficient = coefficients.entry(input.clone()).or_default();
+            *coefficient = coefficient.checked_add(contribution).expect("bounded sum");
         }
     }
     assert!(coefficients.values().all(|value| *value == 0));
@@ -417,8 +418,9 @@ proptest! {
     fn affine_projection_agrees_with_native_expression(x in -1000..1000_i64, y in -1000..1000_i64, c in 0..1000_i64) {
         let source = format!("-(x - y) + x - (y + {c}) + x");
         let affine = super::transition::affine(&source, &BTreeSet::from(["x".into(), "y".into()])).expect("affine");
-        let result = affine.constant + affine.coefficients.get("x").copied().unwrap_or(0) * i128::from(x)
-            + affine.coefficients.get("y").copied().unwrap_or(0) * i128::from(y);
+        let result = [("x", x), ("y", y)].into_iter().try_fold(affine.constant, |sum, (symbol, value)| {
+            sum.checked_add(affine.coefficients.get(symbol).copied().unwrap_or(0).checked_mul(i128::from(value))?)
+        }).expect("bounded evaluation");
         let native = norn_expr::Expression::compile(&source).expect("native").evaluate(
             &norn_expr::Value::object([("x", x.into()), ("y", y.into())]),
             norn_expr::EvaluationBudget::new(100)).expect("native evaluation");
