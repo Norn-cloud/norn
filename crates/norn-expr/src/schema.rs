@@ -693,6 +693,27 @@ pub fn action_environment(
     catalog: Option<&crate::ZenTypeEnv>,
     completed: usize,
 ) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, catalog, completed, false)
+}
+
+/// ACTION-ACTOR-1: the environment of one derivation, with the same `actor`
+/// binding checker admission uses. Values come only from the authenticated call.
+///
+/// # Errors
+/// Returns the reason the action input or a completed derivation cannot be typed.
+pub fn action_derivation_environment(
+    action: &norn_ir::ActionRoot,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, None, completed, true)
+}
+
+fn action_environment_with(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+    principal: bool,
+) -> Result<crate::ZenTypeEnv, String> {
     use crate::{EnvOptions, FieldSource, RecordKind, Type, ZenTypeEnv};
     let schema = Schema::parse_action(&JsonValue::Object(action.input_schema.clone()), "input")
         .map_err(|e| e.reason)?;
@@ -751,9 +772,13 @@ pub fn action_environment(
     }
     let slice_record = "exact.action.slice".to_owned();
     records.insert(slice_record.clone(), slice);
+    let build = if principal {
+        ZenTypeEnv::action_derivation_with_records
+    } else {
+        ZenTypeEnv::input_only_with_records
+    };
     let mut env =
-        ZenTypeEnv::input_only_with_records(records, fields.clone(), EnvOptions::default())
-            .map_err(|e| e.to_string())?;
+        build(records, fields.clone(), EnvOptions::default()).map_err(|e| e.to_string())?;
     env = env
         .bind_operand("slice", Type::Record(slice_record))
         .map_err(|e| e.to_string())?;
