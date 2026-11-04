@@ -143,7 +143,15 @@ class EnrollmentTests(unittest.TestCase):
         spec.loader.exec_module(module)
         subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
         original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
-        for attributes in ("#[cfg(any())]\n#[kani::proof]", "#[kani::proof]\n#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]\n#[kani::proof]"):
+        for attributes in (
+            "#[cfg(any())]\n#[kani::proof]",
+            "#[kani::proof]\n#[cfg(any())]",
+            "#[cfg_attr(all(), cfg(any()))]\n#[kani::proof]",
+            "#[ cfg(any())]\n#[kani::proof]",
+            "#[\tcfg_attr(all(), cfg(any()))]\n#[kani::proof]",
+            "#![cfg(any())]\n#[kani::proof]",
+            "#! [ cfg(any()) ]\n#[kani::proof]",
+        ):
             with self.subTest(attributes=attributes), tempfile.TemporaryDirectory() as directory:
                 module.ROOT = Path(directory)
                 claim = copy.deepcopy(original)

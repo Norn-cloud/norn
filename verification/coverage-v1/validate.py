@@ -808,9 +808,15 @@ def validate_claim_evidence_shape(
                         strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
                         if harness.is_file() else "",
                     )
+                    harness_source = (
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else ""
+                    )
                     require(
                         declaration is not None
-                        and re.search(r"#\[cfg(?:_attr)?\b", declaration.group(1)) is None,
+                        and re.search(r"#\s*\[\s*cfg(?:_attr)?\b", declaration.group(1)) is None
+                        # Inner attributes (`#![cfg(..)]`) can disable the whole file or module.
+                        and re.search(r"#\s*!\s*\[\s*cfg(?:_attr)?\b", harness_source) is None,
                         f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
                     )
                     require(
