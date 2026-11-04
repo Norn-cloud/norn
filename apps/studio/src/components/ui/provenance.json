@@ -1,0 +1,35 @@
+{
+  "vendor": {
+    "path": "apps/studio/src/components/ui",
+    "method": "shadcn CLI 4.23.0 `add` (style new-york, base color neutral), copied as source",
+    "license": {
+      "spdx": "MIT",
+      "file": "LICENSE",
+      "copyright": "Copyright (c) 2023 shadcn"
+    },
+    "files": [
+      "apps/studio/src/components/ui/badge.tsx",
+      "apps/studio/src/components/ui/button.tsx",
+      "apps/studio/src/components/ui/card.tsx",
+      "apps/studio/src/components/ui/chart.tsx",
+      "apps/studio/src/components/ui/input.tsx",
+      "apps/studio/src/components/ui/separator.tsx",
+      "apps/studio/src/components/ui/sheet.tsx",
+      "apps/studio/src/components/ui/sidebar.tsx",
+      "apps/studio/src/components/ui/skeleton.tsx",
+      "apps/studio/src/components/ui/table.tsx",
+      "apps/studio/src/components/ui/tooltip.tsx",
+      "apps/studio/src/hooks/use-mobile.ts",
+      "apps/studio/src/index.css",
+      "apps/studio/src/lib/utils.ts"
+    ],
+    "changes": [
+      "`cn` is imported from `@/lib/utils`",
+      "index.css carries the neutral theme tokens plus the app's base layer"
+    ]
+  },
+  "upstream": {
+    "repository": "shadcn-ui/ui",
+    "commit": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610"
+  }
+}

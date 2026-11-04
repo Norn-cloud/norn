@@ -1,0 +1,24 @@
+{
+  "sha256": "835d1094515c18cc790edde03af981138a15a4875b2bdbbd915d4335f28691dd",
+  "origin": "derived",
+  "category": "synthetic-golden",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/norn-ts/fixtures/decisions/custody-transfer.source.ts",
+    "tools/norn-ts/src/builder/action.ts",
+    "tools/norn-ts/src/builder/entity.ts",
+    "tools/norn-ts/src/builder/rule.ts",
+    "tools/norn-ts/src/compiler/definitions.ts",
+    "tools/norn-ts/src/compiler/index.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
