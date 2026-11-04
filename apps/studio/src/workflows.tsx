@@ -22,12 +22,21 @@ type MoreData = { count: number; onExpand: () => void }
 const tile = (faded: boolean, lit: boolean) => cn("rounded-xl border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-30", lit && "border-primary ring-2 ring-primary/20")
 const hidden = "!opacity-0 !border-0 !bg-transparent"
 
+/**
+ * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
+ * and on click for the keyboard (Enter and Space make a click with no pointer detail), never twice.
+ */
+const activate = (run: () => void) => ({
+  onPointerDown: (event: React.PointerEvent) => { if (event.button === 0) { event.stopPropagation(); run() } },
+  onClick: (event: React.MouseEvent) => { event.stopPropagation(); if (event.detail === 0) run() },
+})
+
 function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
   return (
     <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), data.start ? "w-60 p-3" : "w-48 px-3 py-2")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
-      <button type="button" onClick={() => data.onPick(id)} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+      <button type="button" {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
         <div className={cn("font-medium", data.start && "text-base")}>{data.label}</div>
         {data.start && data.description && <div className="line-clamp-1 text-meta text-muted-foreground">{data.description}</div>}
       </button>
@@ -38,8 +47,8 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         {/* A step back: the chip opens the step itself; the arrow goes to the state it returns to. */}
         {data.backs.map((back) => (
           <span key={back.id} className="inline-flex items-center rounded-full border text-meta text-muted-foreground">
-            <button type="button" onClick={(event) => { event.stopPropagation(); data.onPick(back.id) }} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">↺ {back.label}</button>
-            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} onClick={(event) => { event.stopPropagation(); data.onPick(back.to) }} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">→</button>
+            <button type="button" {...activate(() => data.onPick(back.id))} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">↺ {back.label}</button>
+            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} {...activate(() => data.onPick(back.to))} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">→</button>
           </span>
         ))}
       </div>
@@ -49,7 +58,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" onClick={() => data.onPick(data.id)} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
+    <button type="button" {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} className={cn(tile(data.faded, data.lit), "block w-44 px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
       <Handle type="target" position={Position.Left} className={hidden} />
       <Handle type="source" position={Position.Right} className={hidden} />
       <div className="flex items-center gap-2 font-medium"><span className="flex size-5 items-center justify-center rounded-full bg-muted text-[11px] tabular-nums">{data.order}</span>{data.label}</div>
