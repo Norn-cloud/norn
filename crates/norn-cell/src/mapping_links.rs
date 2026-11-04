@@ -35,7 +35,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let mut selected = BTreeMap::new();
             for (key, entries) in &index.claim_endpoints {
                 if scope.is_none_or(|scope| scope.contains(key)) {
-                    selected.extend(entries.iter().map(|(identity, bytes)| (identity.clone(), *bytes)));
+                    selected.extend(
+                        entries
+                            .iter()
+                            .map(|(identity, bytes)| (identity.clone(), *bytes)),
+                    );
                 }
             }
             selected
