@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/specialisation-v1/Specialisation.lean",
+    "command": "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean",
+    "selectors": {
+      "$entries": "obligationClaims.entry3be8a71604ba5c3e8c2daece089d8c6439244a3b09d537adc9ed8061f611a2b4.evidence.proof.entryf69e7fd873254026eb065ea68b49452621114f11bd2b66849f3b2db3b6cb05c1.selectors"
+    }
+  }
+}

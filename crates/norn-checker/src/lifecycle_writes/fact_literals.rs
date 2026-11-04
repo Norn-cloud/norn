@@ -594,7 +594,7 @@ fn check_schema_values(
             EffectiveKind::Base(PropertyType::Text { .. } | PropertyType::Enum { .. }) => {
                 schema_type == "string"
             }
-            EffectiveKind::Base(PropertyType::Integer {} | PropertyType::Decimal { .. }) => {
+            EffectiveKind::Base(PropertyType::Integer { .. } | PropertyType::Decimal { .. }) => {
                 matches!(schema_type, "integer" | "number")
             }
             EffectiveKind::Base(PropertyType::Boolean {}) => schema_type == "boolean",

@@ -985,3 +985,101 @@ fn bounded_string_normalization_example_is_composable() {
     assert_eq!(evaluation.value(), &Value::from("FANCY-Y-DRESS-SS24"));
     assert!(evaluation.units_used() <= checked.cost().units());
 }
+
+#[test]
+fn fuel_certificate_replay_refuses_mutated_evidence_and_authority() {
+    use norn_expr::check::certify_expression;
+    let env = independent_roots_environment();
+    let expression = Expression::compile("len(input.body)").expect("compile");
+    let profile = limits();
+    let (_, certificate) =
+        certify_expression(&expression, &env, &Type::Number, &profile).expect("bounded assignment");
+    certificate
+        .verify(&expression, &env, &Type::Number, &profile)
+        .expect("replay");
+    let mut forged = certificate.clone();
+    forged.units -= 1;
+    assert!(
+        forged
+            .verify(&expression, &env, &Type::Number, &profile)
+            .is_err()
+    );
+    let mut stale = certificate.clone();
+    stale.semantics = "0".repeat(64);
+    assert!(
+        stale
+            .verify(&expression, &env, &Type::Number, &profile)
+            .is_err()
+    );
+    let changed = Expression::compile("len(input.body) + 0").expect("compile");
+    assert!(
+        certificate
+            .verify(&changed, &env, &Type::Number, &profile)
+            .is_err()
+    );
+    let mut changed = profile.clone();
+    changed.slice.max_canonical_bytes -= 1;
+    assert!(
+        certificate
+            .verify(&expression, &env, &Type::Number, &changed)
+            .is_err()
+    );
+    let mut too_small = profile;
+    too_small.decide.fuel_units = certificate.units - 1;
+    assert!(certify_expression(&expression, &env, &Type::Number, &too_small).is_err());
+    let unknown = Expression::compile("input[ input.body ]").expect("compile");
+    assert!(certify_expression(&unknown, &env, &Type::Json, &limits()).is_err());
+}
+
+#[test]
+fn certified_fuel_bounds_exhaustive_small_inputs_and_detects_quadratic_mutant() {
+    use norn_expr::check::certify_expression;
+    let env = independent_roots_environment();
+    let mut profile = limits();
+    profile.slice.max_canonical_bytes = 256;
+    profile.slice.max_records = 4;
+    let linear = Expression::compile("count(input.items, #.ok)").expect("compile");
+    let quadratic =
+        Expression::compile("count(input.items, count(input.items, #.ok) > 0)").expect("compile");
+    let (_, evidence) = certify_expression(&linear, &env, &Type::Number, &profile).expect("linear");
+    let (_, mutant) =
+        certify_expression(&quadratic, &env, &Type::Number, &profile).expect("mutant");
+    assert!(mutant.units > evidence.units);
+    let mut restricted = profile;
+    restricted.decide.fuel_units = evidence.units;
+    assert!(certify_expression(&linear, &env, &Type::Number, &restricted).is_ok());
+    assert!(certify_expression(&quadratic, &env, &Type::Number, &restricted).is_err());
+    for count in 0..=4 {
+        for bits in 0..(1_u32 << count) {
+            let items = (0..count)
+                .map(|i| Value::object([("ok", Value::Bool(bits & (1 << i) != 0))]))
+                .collect();
+            let input = Value::object([
+                ("body", Value::String(String::new())),
+                ("items", Value::Array(items)),
+            ]);
+            for (expression, bound) in [(&linear, evidence.units), (&quadratic, mutant.units)] {
+                let evaluation = expression
+                    .evaluate(
+                        &Value::object([("input", input.clone())]),
+                        EvaluationBudget::new(bound),
+                    )
+                    .expect("bound covers every small input");
+                assert!(evaluation.units_used() <= bound);
+            }
+        }
+    }
+}
+
+#[test]
+fn fuel_certificate_replay_preserves_certified_bound() {
+    use norn_expr::check::certify_expression;
+    let env = independent_roots_environment();
+    let expression = Expression::compile("count(input.items, #.ok)").expect("compile");
+    let (_, certificate) =
+        certify_expression(&expression, &env, &Type::Number, &limits()).expect("certify");
+    certificate
+        .verify(&expression, &env, &Type::Number, &limits())
+        .expect("replay");
+    assert!(certificate.units > 0);
+}
