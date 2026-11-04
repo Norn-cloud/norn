@@ -25,6 +25,7 @@ pub mod diagnosis;
 mod divergence;
 mod exchange;
 pub mod finite;
+mod path_mapping;
 pub mod report;
 mod theory;
 
@@ -33,6 +34,9 @@ pub use chase::{
 };
 pub use divergence::{CanonKey, Divergence, MappedObservation, WitnessIdentity, find_divergences};
 pub use exchange::{Exchange, check_instance, check_mapping_totality, check_schema_compatibility};
+pub use path_mapping::{
+    PATH_MAPPING_INVALID, PreservationEvidence, admit_path_mapping, compose_path_mappings,
+};
 pub use theory::{
     Atom, Dependency, Egd, RuleOrigin, Term, Tgd, Theory, TheoryError, lower_path_equations,
 };

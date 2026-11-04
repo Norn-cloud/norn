@@ -2,3 +2,7 @@
 reviews:
   path_filters:
     - "!.github/ci/provenance/artifacts/**"
+  # Integration branches (for example next/assurance, #718) are reviewed like main.
+  auto_review:
+    base_branches:
+      - "next/.*"
