@@ -224,3 +224,25 @@ Named scenarios: undeclared superior/posterior/specialis ties refuse; explicit
 transitive edges resolve; removing an edge refuses; cross-layer wins and protected
 defeats refuse; numeric-rank removal leaves declared results unchanged; exhaustive
 three-rule groundings and generated catalog permutations preserve exact survivors.
+
+### Observed conservation suggestions (MINE-CONS-1, #736)
+
+The runtime `norn_cell::mining::suggest_conservation` question discovers one
+anchored exact rational functional from an explicit training prefix, then checks
+all supplied observed deltas with CONS-LINEAR-1. Its source-window identity,
+scope/unit coordinates, training count, supporting record/version identities and
+exact residual counterexamples remain visible. The adapter owns authorization,
+immutable window retention and faithful lowering; the function fetches no data.
+
+Results are always `SuggestedNotAdmitted`, including an entirely balanced
+window. Finite observed arithmetic supports validation but never certifies
+business truth, future behavior or writer coverage. No admission, law edit or
+commit follows from a result. Saving or accepting a proposal requires ordinary
+data actions and definition admission, outside this first cut. Empty/all-zero
+training, infeasible anchors, malformed input and exhausted exact/resource bounds
+yield no proposal. Scope/unit partitions cannot cancel each other. Limits: 256
+records, 64 coordinates, 64 scope bindings per coordinate, 4096 identity bytes,
+and the existing discovery coefficient/work ceilings. Named scenarios: true
+fractional candidate with full evidence, holdout near-miss with exact residual,
+no-signal control, duplicate record, unit separation, oversize window and measured
+256-record fixture. Law drift, misfit rules and statistical guards remain open.
