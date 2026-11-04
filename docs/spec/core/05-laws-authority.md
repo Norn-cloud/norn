@@ -197,6 +197,33 @@ this bounded fragment only, not general translator or model-checker soundness.
 
 **LAW-COMPLETE-1:** Unresolved declared interface ancestry refuses law resolution before filtering applicability; a missing ancestor can never silently remove a retained law.
 
+**PROOF-GUARANTEE-1:** the typed `norn/guarantees@1` per-law presentation retains
+law artifact/version, bounded verdict and evidence level as closed enums,
+Challenge identity, exact bounds JSON, actual tool/result pins and the complete
+generated goal inventory. Unsupported goals keep explicit Unknown reasons.
+An ineligible goal must have Unknown verdict and level; encoding, decoding and
+the emitted schema reject every other combination. Named refusal scenario:
+`ineligible_goals_require_unknown_on_both_wire_boundaries`.
+Rust also enforces document count relations at both wire boundaries:
+`total == goals.len()`, `eligible == count(goals where eligible)`, and
+`discharged <= eligible`. JSON Schema cannot express these cross-field relations.
+Rust also rejects duplicate goal indices at both boundaries. Indices refer to
+the retained Challenge, so a per-law document may contain non-contiguous indices.
+Named scenarios: `document_total_matches_complete_goal_inventory_at_both_wire_boundaries`,
+`document_eligible_matches_goal_flags_at_both_wire_boundaries`, and
+`document_discharged_cannot_exceed_eligible_at_both_wire_boundaries`.
+Named index scenario: `document_goal_indices_are_distinct_challenge_indices_at_both_wire_boundaries`.
+Exact trace quantities serialize as canonical integer text with declared scale
+and units; counterexamples and non-vacuity witnesses have distinct kinds.
+Runtime enforcement and application parity links are either independently
+supplied references or explicit `not-yet` values. A typed document is a
+presentation of the checked driver's result, never proof or activation authority.
+Its OpenAPI projection adds new components without modifying existing schemas.
+Named scenarios: exact coefficient roundtrip; unknown requires a reason;
+unknown enum/field, fractional coefficient and invented `proved` level refuse;
+`guarantee_projection_matches_typed_eligibility_and_exact_scalars` checks wire/schema
+correspondence, including integer endpoints and trailing line terminators.
+
 ### HOST-AUTH-1: explicit server policy before host access
 
 The host authorizer denies every operation unless a trusted server policy admits it. Supplying an actor or granting a definition read does not grant action mutation, object disclosure or collection disclosure; those kernel authorization callbacks deny independently by default. The server supplies scope and authenticated actor; the client never grants authority. Named scenarios: `absent_host_policy_denies_authenticated_and_anonymous_operations` and `host_read_grant_does_not_supply_kernel_action_or_disclosure_grants`. This is the shared authorization boundary; host admission and route callers follow in separate units.

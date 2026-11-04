@@ -2937,6 +2937,7 @@ type BeforeTransaction = Box<dyn FnOnce() -> Result<(), CellError>>;
 #[derive(Clone, Default)]
 struct WriteCounter {
     before_transaction: std::rc::Rc<std::cell::RefCell<Option<BeforeTransaction>>>,
+    after_active_read: std::rc::Rc<std::cell::RefCell<Option<BeforeTransaction>>>,
     attempts: std::rc::Rc<std::cell::Cell<usize>>,
     forbid: std::rc::Rc<std::cell::Cell<bool>>,
     outgoing_reads: std::rc::Rc<std::cell::Cell<usize>>,
@@ -3012,7 +3013,14 @@ impl SqlEngine for CountedEngine {
             );
             return Ok(rows);
         }
-        self.inner.query(sql, params)
+        let rows = self.inner.query(sql, params)?;
+        if sql.contains("\"_norn_definition_active\"") {
+            let hook = self.counter.after_active_read.borrow_mut().take();
+            if let Some(install) = hook {
+                install()?;
+            }
+        }
+        Ok(rows)
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
@@ -7384,4 +7392,57 @@ fn additivity_change_with_value_narrowing_still_scans_live_rows() {
         store.read().verify_ledger().expect("atomic refusal"),
         before
     );
+}
+
+#[test]
+fn active_definition_pointer_and_latest_version_share_one_snapshot_during_install() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let initial = model(false);
+    let counter = WriteCounter::default();
+    let engine = CountedEngine {
+        inner: NativeEngine::open(&path, StoreOptions::default()).expect("reader engine"),
+        counter: counter.clone(),
+    };
+    let mut reader = CellStore::from_engine(engine, initial.clone()).expect("reader store");
+    reader
+        .install_definitions(
+            initial.clone(),
+            install_input("v1", 1, &initial),
+            Some(0),
+            "org_demo/dev",
+        )
+        .expect("initial install");
+    let mut writer = CellStore::from_engine(
+        NativeEngine::open(&path, StoreOptions::default()).expect("writer engine"),
+        initial.clone(),
+    )
+    .expect("second store");
+    *counter.after_active_read.borrow_mut() = Some(Box::new(move || {
+        writer.install_definitions(
+            initial.clone(),
+            install_input("v2", 2, &initial),
+            Some(1),
+            "org_demo/dev",
+        )?;
+        Ok(())
+    }));
+    let before = reader
+        .read()
+        .installed_definitions(None)
+        .expect("coherent read across install")
+        .expect("v1");
+    assert!(
+        counter.after_active_read.borrow().is_none(),
+        "install was interleaved"
+    );
+    assert_eq!(before.version, 1);
+    assert_eq!(before.receipt_sha256, "receipt-v1");
+    let after = reader
+        .read()
+        .installed_definitions(None)
+        .expect("next snapshot")
+        .expect("v2");
+    assert_eq!(after.version, 2);
+    assert_eq!(after.receipt_sha256, "receipt-v2");
 }
