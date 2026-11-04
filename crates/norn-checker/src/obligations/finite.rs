@@ -41,7 +41,13 @@ impl ApprovedContract {
         bounds: &Bounds,
     ) -> Result<Batch, ChallengeError> {
         let challenge = self.challenge(source, registry)?;
-        let model = lower(source, registry, bounds);
+        let models: BTreeMap<_, _> = at(challenge.body(), "lawStatements")
+            .as_array()
+            .ok_or(ChallengeError::Closure)?
+            .iter()
+            .filter_map(|law| at(law, "artifactId").as_str())
+            .map(|id| (id.to_owned(), lower(source, registry, bounds, id)))
+            .collect();
         let goals = at(challenge.body(), "obligations")
             .as_array()
             .ok_or(ChallengeError::Closure)?
@@ -56,8 +62,11 @@ impl ApprovedContract {
                     .as_u64()
                     .and_then(|i| usize::try_from(i).ok())
                     .and_then(|i| at(challenge.body(), "writerStatements").get(i));
-                match &model {
-                    Ok(model)
+                let model = law
+                    .and_then(|law| at(law, "artifactId").as_str())
+                    .and_then(|id| models.get(id));
+                match model {
+                    Some(Ok(model))
                         if law.is_some_and(|l| {
                             at(l, "artifactId").as_str() == Some(model.law_artifact.as_str())
                         }) && (kind == "initialization"
@@ -70,26 +79,30 @@ impl ApprovedContract {
                     {
                         Ok(model.clone())
                     }
-                    Ok(_) => Err(format!(
+                    Some(Ok(_)) => Err(format!(
                         "unsupported goal {kind}: outside selected one-create pointwise relation"
                     )),
-                    Err(reason) => Err(reason.clone()),
+                    Some(Err(reason)) => Err(reason.clone()),
+                    None => Err("generated goal has no governing law identity".into()),
                 }
             })
             .collect();
-        let interpretation = model.as_ref().map_or(Value::Null, |model| {
-            let types: BTreeMap<_, _> = model
-                .state
-                .iter()
-                .map(|field| {
-                    (
-                        &field.symbol,
-                        json!({"property":field.property,"type":field.property_type}),
-                    )
-                })
-                .collect();
-            json!(types)
-        });
+        let interpretation = models
+            .values()
+            .find_map(|model| model.as_ref().ok())
+            .map_or(Value::Null, |model| {
+                let types: BTreeMap<_, _> = model
+                    .state
+                    .iter()
+                    .map(|field| {
+                        (
+                            &field.symbol,
+                            json!({"property":field.property,"type":field.property_type}),
+                        )
+                    })
+                    .collect();
+                json!(types)
+            });
         Ok(Batch {
             challenge,
             bounds: json!({"profile":"norn.quint.one-create/1","action":bounds.action,"inputs":bounds.inputs,"identity":bounds.identity,"seed":bounds.seed,"initialStore":"empty","maxObjects":1,"maxSteps":1,"authorization":"pre-authorized; permission policy outside profile","absentInputs":"all non-identity fields not in inputs","interpretation":interpretation}),
@@ -179,6 +192,7 @@ fn lower(
     source: &DefinitionSource,
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
     bounds: &Bounds,
+    law_id: &str,
 ) -> Result<CreateRelation, String> {
     let pool: Vec<_> = source
         .base
@@ -385,18 +399,18 @@ fn lower(
             );
         }
     }
-    let laws: Vec<_> = pool
+    let artifact = pool
         .iter()
-        .filter(|a| a.kind() == ArtifactKind::Law)
-        .filter_map(|a| {
-            serde_json::from_value::<LawIR>(serde_json::to_value(a.payload.to_json_value()).ok()?)
-                .ok()
-                .map(|law| (a, law))
-        })
-        .filter(|(_, law)| law.subject == subject)
-        .collect();
-    demand(laws.len() == 1, "exactly one pointwise law required")?;
-    let (artifact, law) = laws.first().ok_or("law")?;
+        .find(|artifact| artifact.kind() == ArtifactKind::Law && artifact.artifact_id == law_id)
+        .ok_or("governing law artifact absent")?;
+    let law: LawIR = serde_json::from_value(
+        serde_json::to_value(artifact.payload.to_json_value()).map_err(|_error| "law payload")?,
+    )
+    .map_err(|_error| "law payload")?;
+    demand(
+        law.subject == subject,
+        "law outside selected writer subject",
+    )?;
     demand(
         law.timing.is_none()
             && law.scope.object_types == [subject]
