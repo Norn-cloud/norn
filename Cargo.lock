@@ -1524,6 +1524,7 @@ dependencies = [
 name = "norn-api"
 version = "0.1.0"
 dependencies = [
+ "form_urlencoded",
  "http",
  "jsonschema",
  "norn-cell",
@@ -1531,6 +1532,7 @@ dependencies = [
  "norn-ir",
  "norn-kernel",
  "norn-projections",
+ "percent-encoding",
  "proptest",
  "serde",
  "serde_json",

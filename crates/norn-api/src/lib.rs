@@ -23,3 +23,6 @@ pub mod question_routes;
 pub mod routes;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
+
+/// Byte-preserving read-only HTTP dispatch shared by native and Workers transports.
+pub mod http_read;

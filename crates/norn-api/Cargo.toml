@@ -7,6 +7,8 @@ publish.workspace = true
 description = "Generated core IR and checker API contracts"
 
 [dependencies]
+form_urlencoded = "1.2.2"
+percent-encoding = "2.3.2"
 norn-cell = { path = "../norn-cell", default-features = false }
 norn-checker = { path = "../norn-checker" }
 norn-kernel = { path = "../norn-kernel" }
