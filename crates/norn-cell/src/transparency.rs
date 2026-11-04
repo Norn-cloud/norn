@@ -10,7 +10,7 @@ use ct_merkle::mem_backed_tree::MemoryBackedTree;
 use serde::Serialize;
 use transparency_sha2::Sha256;
 
-use crate::{CellError, CellStore, engine::SqlEngine};
+use crate::{CellError, CellStore, engine::{SqlEngine, params}};
 
 /// RFC 6962 inclusion path (concatenated SHA-256 hashes).
 pub type InclusionProof = ct_merkle::InclusionProof<Sha256>;
@@ -22,7 +22,10 @@ pub(crate) type ReceiptLog = MemoryBackedTree<Sha256, String>;
 
 pub(crate) fn load<E: SqlEngine>(conn: &E) -> Result<ReceiptLog, CellError> {
     let mut log = ReceiptLog::new();
-    for row in conn.query("SELECT receipt_hash FROM _norn_receipt ORDER BY commit_seq", &[])? {
+    for row in conn.query(
+        "SELECT receipt_hash FROM _norn_receipt ORDER BY commit_seq",
+        &[],
+    )? {
         log.push(crate::engine::SqlRow(row).get::<String>(0)?);
     }
     Ok(log)
@@ -48,29 +51,54 @@ pub fn checkpoint_json(checkpoint: &Checkpoint) -> Result<String, serde_json::Er
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    pub(crate) fn refresh_transparency(&self) -> Result<(), CellError> {
+        let mut log = self.transparency.borrow_mut();
+        let from = crate::read::to_i64(log.len(), "transparency size")?;
+        for row in self.conn.query(
+            "SELECT receipt_hash FROM _norn_receipt WHERE commit_seq > ?1 ORDER BY commit_seq",
+            params![from],
+        )? {
+            log.push(crate::engine::SqlRow(row).get::<String>(0)?);
+        }
+        Ok(())
+    }
+
     /// Current receipt-stream commitment. Ordinary commits append in O(log n)
     /// hash work after SQL success. Opening rebuilds the O(n) memory cache
     /// from durable receipts; no network is involved.
-    pub fn transparency_checkpoint(&self) -> Checkpoint {
-        self.transparency.root()
+    ///
+    /// # Errors
+    /// SQL failures while catching up receipts from another store handle.
+    pub fn transparency_checkpoint(&self) -> Result<Checkpoint, CellError> {
+        self.refresh_transparency()?;
+        Ok(self.transparency.borrow().root())
     }
 
     /// Inclusion at a zero-based receipt index in the current checkpoint.
     /// Returns None for an absent index, including the empty tree.
-    pub fn transparency_inclusion(&self, index: usize) -> Option<InclusionProof> {
-        self.transparency.get(index)?;
-        Some(self.transparency.prove_inclusion(index))
+    ///
+    /// # Errors
+    /// SQL failures while catching up receipts from another store handle.
+    pub fn transparency_inclusion(&self, index: usize) -> Result<Option<InclusionProof>, CellError> {
+        self.refresh_transparency()?;
+        let log = self.transparency.borrow();
+        Ok(log.get(index).map(|_| log.prove_inclusion(index)))
     }
 
     /// Consistency from a previously retained nonempty tree size to the
     /// current tree. Verify against both retained roots using the library's
     /// `Checkpoint::verify_consistency`. Empty prefixes carry no commitment
     /// and are refused. Equal-size proofs detect conflicting roots too.
-    pub fn transparency_consistency(&self, old_size: u64) -> Option<ConsistencyProof> {
-        if old_size == 0 || old_size > self.transparency.len() {
-            return None;
+    ///
+    /// # Errors
+    /// SQL failures or a tree too large for this platform.
+    pub fn transparency_consistency(&self, old_size: u64) -> Result<Option<ConsistencyProof>, CellError> {
+        self.refresh_transparency()?;
+        let log = self.transparency.borrow();
+        if old_size == 0 || old_size > log.len() {
+            return Ok(None);
         }
-        let additions = usize::try_from(self.transparency.len() - old_size).ok()?;
-        Some(self.transparency.prove_consistency(additions))
+        let additions = usize::try_from(log.len() - old_size).map_err(|_| CellError::OutOfRange("transparency size"))?;
+        Ok(Some(log.prove_consistency(additions)))
     }
 }

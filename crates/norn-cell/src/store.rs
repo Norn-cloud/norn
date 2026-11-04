@@ -1731,7 +1731,7 @@ type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Resu
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
-    pub(crate) transparency: crate::transparency::ReceiptLog,
+    pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
@@ -1985,7 +1985,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(|record| record.definition_install)
                 .ok_or_else(|| CellError::Engine("missing active definition model".to_owned()))?;
             store.model = Model::from_snapshot(&installation.model)?;
-            store.transparency = crate::transparency::load(&store.conn)?;
+            store.transparency.replace(crate::transparency::load(&store.conn)?);
         }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
@@ -2080,7 +2080,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn unverified(conn: E, model: Model) -> Self {
         Self {
             conn,
-            transparency: crate::transparency::ReceiptLog::new(),
+            transparency: RefCell::new(crate::transparency::ReceiptLog::new()),
             instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
@@ -2166,7 +2166,7 @@ impl<E: SqlEngine> CellStore<E> {
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
-        store.transparency = crate::transparency::load(&store.conn)?;
+        store.transparency.replace(crate::transparency::load(&store.conn)?);
         Ok(store)
     }
 
@@ -2841,7 +2841,11 @@ impl<E: SqlEngine> CellStore<E> {
                 Ok((admitted, CommitOutcome::Replayed(receipt)))
             }
             (admitted, CommitOutcome::Committed(receipt)) => {
-                self.transparency.push(receipt.hash.clone());
+                if self.transparency.borrow().len().checked_add(1) == Some(receipt.body.commit_seq) {
+                    self.transparency.borrow_mut().push(receipt.hash.clone());
+                } else {
+                    self.refresh_transparency().map_err(GuardedError::Store)?;
+                }
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
