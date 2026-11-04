@@ -211,10 +211,12 @@ impl Refusal {
     /// Preserve stable compute refusals without exposing storage diagnostics.
     #[must_use]
     pub fn from_compute(error: norn_cell::CellError) -> Self {
-        let code = match error {
-            norn_cell::CellError::ComputeRefused(code) => code,
-            norn_cell::CellError::TemporalLeakage => "core.compute.stale_input",
-            other => return Self::host(other),
+        let code = if let norn_cell::CellError::ComputeRefused(code) = error {
+            code
+        } else if matches!(error, norn_cell::CellError::TemporalLeakage) {
+            "core.compute.stale_input"
+        } else {
+            return Self::host(error);
         };
         if code == "core.compute.bound_exceeded" {
             return Self::new(

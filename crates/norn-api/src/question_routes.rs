@@ -213,7 +213,7 @@ fn mapped<E: SqlEngine>(
 ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
     let access = runtime
         .access(host.scope(), actor, question, capability, row)
-        .map_err(|_| read_denied())?;
+        .map_err(|_denial| read_denied())?;
     let id = row.map_or(question, |row| row.id.as_str());
     if access.principal.subject_id != actor
         || access.resource.id != id
@@ -234,7 +234,7 @@ fn allowed<E: SqlEngine>(
     capability: ReadCapability,
 ) -> Result<bool, CellError> {
     let access = mapped(host, runtime, actor, question, capability, Some(row))
-        .map_err(|_| CellError::ComputeRefused("core.compute.stale_input"))?;
+        .map_err(|_mapping| CellError::ComputeRefused("core.compute.stale_input"))?;
     Ok(host.read_permitted(&ReadRequest {
         capability,
         access: &access,

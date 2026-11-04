@@ -53,7 +53,7 @@ pub enum NornContributionSource {
     /// Authenticated source bundle was resolved.
     Resolved {
         /// Original semantic source edges.
-        provenance: NornInstanceSourceProvenance,
+        provenance: Box<NornInstanceSourceProvenance>,
     },
     /// Source disclosure was denied.
     Restricted,
