@@ -36,6 +36,7 @@ use norn_kernel::{
 use query_support::*;
 use std::{
     collections::BTreeMap,
+    fmt::Write as _,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -200,8 +201,8 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                 })
                 .expect("K2");
         }
-        Mode::Fresh => context.now_ms += 1000,
-        Mode::Stale => context.now_ms += 6000,
+        Mode::Fresh => context.now_ms = context.now_ms.checked_add(1000).expect("fresh clock"),
+        Mode::Stale => context.now_ms = context.now_ms.checked_add(6000).expect("stale clock"),
         Mode::Incomplete => {
             context
                 .exclusions
@@ -510,6 +511,53 @@ fn live_route_documents_conform_to_the_generated_sdk() {
             serde_json::to_value(trace).expect("trace JSON"),
         ));
     }
+    documents.push(resolved_trace_document());
+    let (host, runtime) = configured(Mode::Stale);
+    let QuestionAnswer::Live(answer) =
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("stale answer")
+    else {
+        panic!("live")
+    };
+    let refused = get_numeric_trace(
+        &host,
+        &trace_query(&answer.lineage_ref),
+        Some("reader"),
+        QUESTION,
+        &runtime,
+    )
+    .expect_err("nonexact trace refusal");
+    documents.push((
+        "nonexact_trace",
+        "Refusal",
+        serde_json::to_value(refused).expect("typed refusal"),
+    ));
+    let (host, runtime) = configured(Mode::Live);
+    documents.push((
+        "denial",
+        "Refusal",
+        serde_json::to_value(
+            get_answer(&host, &scope(), None, QUESTION, &runtime).expect_err("denied"),
+        )
+        .expect("refusal JSON"),
+    ));
+    let typescript = sdk_fixture(&contract, documents);
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../packages/norn-sdk/test/fixtures/host-answers.ts"
+    );
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        std::fs::write(path, &typescript).expect("bless native documents");
+    }
+    assert_eq!(
+        std::fs::read_to_string(path).expect("SDK fixture"),
+        typescript,
+        "regenerate from live routes with NORN_BLESS=1 and typecheck @norn/sdk"
+    );
+}
+
+type SdkDocument = (&'static str, &'static str, serde_json::Value);
+
+fn resolved_trace_document() -> SdkDocument {
     let (mapped, plan, context, _, directory) = lineage_support::loaded();
     let model = mapped.store().model().clone();
     drop(mapped);
@@ -547,39 +595,14 @@ fn live_route_documents_conform_to_the_generated_sdk() {
         c.source,
         norn_cell::compute::lineage::ContributionSource::Resolved { .. }
     )));
-    documents.push((
+    (
         "resolved_trace",
         "NornNumericTrace",
         serde_json::to_value(trace).expect("engine source trace"),
-    ));
-    let (host, runtime) = configured(Mode::Stale);
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("stale answer")
-    else {
-        panic!("live")
-    };
-    let refused = get_numeric_trace(
-        &host,
-        &trace_query(&answer.lineage_ref),
-        Some("reader"),
-        QUESTION,
-        &runtime,
     )
-    .expect_err("nonexact trace refusal");
-    documents.push((
-        "nonexact_trace",
-        "Refusal",
-        serde_json::to_value(refused).expect("typed refusal"),
-    ));
-    let (host, runtime) = configured(Mode::Live);
-    documents.push((
-        "denial",
-        "Refusal",
-        serde_json::to_value(
-            get_answer(&host, &scope(), None, QUESTION, &runtime).expect_err("denied"),
-        )
-        .expect("refusal JSON"),
-    ));
+}
+
+fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> String {
     let mut typescript = "// Generated from live question-route conformance (NORN_BLESS=1).\nimport type { Schemas } from \"../../src/index.ts\";\n".to_owned();
     for (name, root, document) in documents {
         let schema = serde_json::json!({"$schema":"https://json-schema.org/draft/2020-12/schema","$ref":format!("#/components/schemas/{root}"),"components":contract["components"]});
@@ -589,21 +612,12 @@ fn live_route_documents_conform_to_the_generated_sdk() {
             .map(|e| e.to_string())
             .collect();
         assert!(errors.is_empty(), "{name}: {errors:?}");
-        typescript.push_str(&format!(
-            "export const {name} = {} satisfies Schemas[\"{root}\"];\n",
+        writeln!(
+            &mut typescript,
+            "export const {name} = {} satisfies Schemas[\"{root}\"];",
             serde_json::to_string_pretty(&document).expect("exact fixture")
-        ));
+        )
+        .expect("format fixture");
     }
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../packages/norn-sdk/test/fixtures/host-answers.ts"
-    );
-    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-        std::fs::write(path, &typescript).expect("bless native documents");
-    }
-    assert_eq!(
-        std::fs::read_to_string(path).expect("SDK fixture"),
-        typescript,
-        "regenerate from live routes with NORN_BLESS=1 and typecheck @norn/sdk"
-    );
+    typescript
 }

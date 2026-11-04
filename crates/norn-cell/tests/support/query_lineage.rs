@@ -7,13 +7,11 @@
     missing_docs,
     reason = "source lineage conformance"
 )]
-#[path = "../query_support/mod.rs"]
-mod query_support;
+use super::query_support::*;
 use norn_cell::compute::QueryContext;
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell};
 use norn_ir::{ArtifactEnvelope, RuntimeValue as V};
 use norn_kernel::{LogicalTime, ObservationId, Observed, Provenance};
-use query_support::*;
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const SCOPE: &str = "org_demo/dev";
 pub(crate) const WEEK: &str = "\"2026-10-19\"";
