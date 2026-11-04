@@ -63,7 +63,6 @@ fn audit_type() -> ObjectTypeDef {
     .into_iter()
     .map(|id| Property {
         id: PropertyId(id.into()),
-        protected: false,
         description: None,
         property_type: PropertyType::JsonExt { schema: None },
         constraints: PropertyConstraints {
@@ -73,6 +72,7 @@ fn audit_type() -> ObjectTypeDef {
         default: None,
         markings: Vec::new(),
         computed: None,
+        protected: false,
     })
     .collect();
     object
@@ -344,10 +344,49 @@ fn complete_contract_keeps_workflow_unknowns_and_generates_receipt_goals() {
             },
         )
         .expect("workflow inventory");
-    assert!(workflow.goals.iter().all(|g| {
-        g.as_ref()
-            .is_err_and(|e| e == "only create-only input writers supported")
-    }));
+    let inventory = workflow
+        .challenge
+        .body()
+        .get("obligations")
+        .and_then(Value::as_array)
+        .expect("workflow obligations");
+    assert_eq!(workflow.goals.len(), inventory.len());
+    assert_eq!(workflow.goals.iter().filter(|goal| goal.is_ok()).count(), 0);
+    let mut lifecycle_goals = 0;
+    for (goal, result) in inventory.iter().zip(&workflow.goals) {
+        let kind = goal
+            .get("goal")
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            .expect("goal kind");
+        let expected = match kind {
+            "lifecycle_terminal_reachability"
+            | "lifecycle_no_stuck_non_terminal"
+            | "lifecycle_transition_non_vacuity" => {
+                lifecycle_goals += 1;
+                assert_eq!(
+                    goal.get("assessment").and_then(Value::as_str),
+                    Some("unknown")
+                );
+                assert_eq!(
+                    goal.get("reason").and_then(Value::as_str),
+                    Some(
+                        "conditional finite lifecycle goal requires a qualified bounds profile and checked result"
+                    )
+                );
+                "generated goal has no governing law identity"
+            }
+            "initialization" | "non_vacuity" | "law_semantics" | "preservation"
+            | "open_boundary" => "only create-only input writers supported",
+            other => panic!("unclassified workflow goal {other}"),
+        };
+        assert_eq!(
+            result.as_ref().err().map(String::as_str),
+            Some(expected),
+            "{goal}"
+        );
+    }
+    assert_eq!(lifecycle_goals, 6);
 }
 
 #[test]
