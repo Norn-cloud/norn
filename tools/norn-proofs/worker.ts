@@ -1,4 +1,3 @@
-import type { ExportedHandler } from "@cloudflare/workers-types"
 import { checkFinite, encodeResult } from "./core"
 import { integer, object } from "./protocol"
 
