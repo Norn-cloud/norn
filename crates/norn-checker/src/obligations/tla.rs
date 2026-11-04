@@ -110,7 +110,7 @@ fn expression(source: &str, variables: &BTreeSet<&str>, kind: Kind) -> Result<St
         return Err("TLA expression budget".into());
     }
     let lexer = regex_lite::Regex::new(r"^\s*([A-Za-z_][A-Za-z_0-9]*|[0-9]+|==|!=|<=|>=|[()+<>-])")
-        .map_err(|_| "TLA expression lexer")?;
+        .map_err(|_error| "TLA expression lexer")?;
     let mut rest = source;
     let mut operators = Vec::new();
     let mut values = Vec::new();
@@ -153,7 +153,7 @@ fn expression(source: &str, variables: &BTreeSet<&str>, kind: Kind) -> Result<St
                 _ => Term {
                     text: word
                         .parse::<i64>()
-                        .map_err(|_| "unsupported TLA operand")?
+                        .map_err(|_error| "unsupported TLA operand")?
                         .to_string(),
                     kind: Kind::Number,
                 },
@@ -223,10 +223,12 @@ fn emit(model: &CreateRelation, kind: &str) -> Result<String, String> {
         .map(|name| format!("{name} = 0"))
         .collect::<Vec<_>>()
         .join(" /\\ ");
-    let declarations = state
-        .iter()
-        .map(|name| format!("VARIABLE\n  \\* @type: Int;\n  {name}\n"))
-        .collect::<String>();
+    let mut declarations = String::new();
+    for name in &state {
+        declarations.push_str("VARIABLE\n  \\* @type: Int;\n  ");
+        declarations.push_str(name);
+        declarations.push('\n');
+    }
     let updates = model
         .updates
         .iter()

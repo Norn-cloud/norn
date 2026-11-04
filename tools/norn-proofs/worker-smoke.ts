@@ -1,8 +1,9 @@
 import { readFile, sha } from "./host"
 import { array, object, parseJob } from "./protocol"
+import { verifyCorrespondence } from "./correspondence"
 import { oracleVerdict, parity } from "./oracle"
 
-const [planPath, endpoint] = process.argv.slice(2)
+const [planPath, endpoint, corpus] = process.argv.slice(2)
 if (!planPath || !endpoint || new URL(endpoint).hostname !== "127.0.0.1") throw new Error("usage: worker-smoke.ts PLAN LOOPBACK_URL")
 const plan: unknown = JSON.parse(await readFile(planPath, "utf8"))
 if (!object(plan) || !array(plan.jobs) || plan.jobs.length !== 9) throw new Error("complete acceptance plan required")
@@ -32,3 +33,14 @@ for (const raw of plan.jobs) {
     elapsedMs: result.elapsedMs, wallMs: performance.now() - began })
 }
 process.stdout.write(`${JSON.stringify({ workerParityPassed: true, jobs: measurements })}\n`)
+
+if (corpus) {
+  const result = await verifyCorrespondence(corpus, async (source, expectedStates) => {
+    const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source, expectedStates, seed: "1" }), signal: AbortSignal.timeout(120000) })
+    const result: unknown = await response.json()
+    if (!response.ok || !object(result) || result.modelSha256 !== sha(source)) throw new Error("Worker corpus response mismatch")
+    return result.outcome
+  })
+  process.stdout.write(`${JSON.stringify({ workerCorrespondence: result })}\n`)
+}
