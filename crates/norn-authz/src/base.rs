@@ -63,6 +63,8 @@ pub const NORN_BASE_SCHEMA: &str = "namespace Norn {
 #[derive(Debug, Clone)]
 pub struct AuthzSchema {
     schema: Schema,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) symbolic_identity: Vec<String>,
 }
 
 impl AuthzSchema {
@@ -143,11 +145,21 @@ impl AuthzSchema {
 
     fn compose_all(projected: Vec<SchemaFragment>) -> Result<Self, AuthzError> {
         let base = parse_cedarschema("Norn base schema", NORN_BASE_SCHEMA)?;
-        let schema = Schema::from_schema_fragments(std::iter::once(base).chain(projected))
-            .map_err(|error| {
-                AuthzError::one(AuthzCode::SchemaInvalid, format!("schema: {error}"))
-            })?;
-        Ok(Self { schema })
+        let fragments: Vec<_> = std::iter::once(base).chain(projected).collect();
+        #[cfg(not(target_arch = "wasm32"))]
+        let symbolic_identity = fragments
+            .iter()
+            .map(SchemaFragment::to_json_string)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AuthzError::one(AuthzCode::SchemaInvalid, error.to_string()))?;
+        let schema = Schema::from_schema_fragments(fragments).map_err(|error| {
+            AuthzError::one(AuthzCode::SchemaInvalid, format!("schema: {error}"))
+        })?;
+        Ok(Self {
+            schema,
+            #[cfg(not(target_arch = "wasm32"))]
+            symbolic_identity,
+        })
     }
 
     pub(crate) fn cedar(&self) -> &Schema {
