@@ -765,6 +765,10 @@ fn ordinary_admission_runs_native_declared_order() {
             .any(|d| d.message.contains("sales.approve") && d.message.contains("sales.block")),
         "{tie:?}"
     );
+    assert!(tie.iter().filter(|d| d.is_error()).all(|d|
+        d.message.contains("Canonical attempted/base SHA256:")
+        && d.message.contains("candidate-only relaxation proposals")
+        && d.message.contains("Query budget:")));
     low.defeated_by.push(high.law.id.clone());
     assert!(run(&[low.clone(), high.clone()]).is_empty());
     high.defeated_by.push(low.law.id.clone());
