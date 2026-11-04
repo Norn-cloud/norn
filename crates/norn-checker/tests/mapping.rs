@@ -2096,18 +2096,21 @@ fn temporal_enum_mapping_runtime_rejects_invalid_values_and_preserves_nulls() {
 }
 
 #[test]
-fn malformed_write_back_lens_refuses_the_artifact_set() {
+fn out_of_range_write_back_lens_put_index_refuses_the_artifact_set() {
     let mut payload = read_json(&ir_fixtures().join("mapping/erpnext.mapping.json"));
+    payload["maps"][0]["properties"][1]["value"] = json!("input.visible");
     payload["extensions"] = json!({
         (norn_checker::mapping::lens::LENS_SLOT): {
             "map": "customer", "property": "display_name",
-            "sources": [{"visible": false}], "put": [[0, 99]]
+            "sources": [{"visible": false}], "put": [["0", "99"]]
         }
     });
     let findings = check(mapping_artifact(payload, false));
     assert!(
-        findings
-            .iter()
-            .any(|finding| finding.code == "mapping.validation.invalid_document")
+        findings.iter().any(|finding| {
+            finding.code == "mapping.validation.invalid_document"
+                && finding.message == "unknown put-back"
+        }),
+        "{findings:#?}"
     );
 }
