@@ -1422,7 +1422,8 @@ define_payload_root!(
             target_layer => "targetLayer" as mapping::InterpretationEndpoint,
             members => "members" as Vec<mapping::MemberInterpretation>,
             entitlements => "entitlements" as Vec<mapping::EntitlementMap>,
-            identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>
+            identity_bindings => "identityBindings" as Vec<mapping::IdentityBinding>,
+            path_mappings => "pathMappings" as Vec<mapping::PathMappingBinding>
         }
     }
 );
