@@ -151,6 +151,8 @@ class EnrollmentTests(unittest.TestCase):
             "#[\tcfg_attr(all(), cfg(any()))]\n#[kani::proof]",
             "#![cfg(any())]\n#[kani::proof]",
             "#! [ cfg(any()) ]\n#[kani::proof]",
+            "#[r#cfg(any())]\n#[kani::proof]",
+            "#[ r#cfg_attr(all(), cfg(any()))]\n#[kani::proof]",
         ):
             with self.subTest(attributes=attributes), tempfile.TemporaryDirectory() as directory:
                 module.ROOT = Path(directory)
@@ -159,6 +161,9 @@ class EnrollmentTests(unittest.TestCase):
                 harness = module.ROOT / entry["artifact"]
                 harness.parent.mkdir(parents=True)
                 harness.write_text(attributes + "\nfn integer_negation_correspondence() {}\n#[kani::proof]\nfn other() {}\n")
+                with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
+                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+                harness.write_text("#[cfg(any())]\nmod disabled {\n    #[kani::proof]\n    fn integer_negation_correspondence() {}\n}\n")
                 with self.assertRaisesRegex(module.InvalidCoverage, "harness must be unconditional"):
                     module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
 

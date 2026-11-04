@@ -814,9 +814,10 @@ def validate_claim_evidence_shape(
                     )
                     require(
                         declaration is not None
-                        and re.search(r"#\s*\[\s*cfg(?:_attr)?\b", declaration.group(1)) is None
-                        # Inner attributes (`#![cfg(..)]`) can disable the whole file or module.
-                        and re.search(r"#\s*!\s*\[\s*cfg(?:_attr)?\b", harness_source) is None,
+                        # No conditional compilation anywhere in a proved harness file: an
+                        # outer, inner or enclosing-module `cfg`/`cfg_attr` (any spacing,
+                        # raw identifiers included) can remove the selected harness.
+                        and re.search(r"#\s*!?\s*\[\s*(?:r#)?cfg(?:_attr)?\b", harness_source) is None,
                         f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
                     )
                     require(
