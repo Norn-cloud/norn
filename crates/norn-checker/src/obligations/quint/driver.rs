@@ -135,18 +135,24 @@ fn supported_goal(
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("backend supplied no qualified verdict");
-    let (verdict, level) = assessment(kind, status, reason);
+    let reconstructed = output
+        .get("trace")
+        .filter(|trace| !trace.is_null())
+        .map(|trace| scenario(trace, bounds, kind))
+        .transpose()?
+        .filter(|scenario| !scenario.states.is_empty());
+    let (verdict, level) = if status == "violation" && reconstructed.is_none() {
+        assessment(kind, "unknown", "backend violation omitted required trace")
+    } else {
+        assessment(kind, status, reason)
+    };
     Ok(GoalGuarantee {
         index,
         goal_kind: kind.into(),
         eligible: true,
         verdict,
         level,
-        scenario: output
-            .get("trace")
-            .filter(|trace| !trace.is_null())
-            .map(|t| scenario(t, bounds, kind))
-            .transpose()?,
+        scenario: reconstructed,
         evidence: Some(record),
     })
 }
@@ -561,6 +567,43 @@ mod tests {
                 GuaranteeLevel::ExhaustiveFiniteBounded {}
             )
         );
+    }
+    #[test]
+    fn qualifying_violations_require_a_nonempty_reconstructed_scenario() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let document: super::GuaranteesDocument = serde_json::from_str(
+            &std::fs::read_to_string(
+                root.join("fixtures/demo/guarantees/constitution.original.guarantees.json"),
+            )
+            .expect("real recording"),
+        )
+        .expect("typed document");
+        let record = document.goals[0].evidence.clone().expect("bound record");
+        let bounds: serde_json::Value =
+            serde_json::from_str(&record.pins.bounds_json).expect("bounds");
+        for kind in ["initialization", "non_vacuity", "preservation"] {
+            for trace in [None, Some(json!(null)), Some(json!([]))] {
+                let mut result = json!({"status":"violation","reason":"backend parity"});
+                if let Some(trace) = trace {
+                    result["trace"] = trace;
+                }
+                let mut changed = record.clone();
+                changed.result_json = serde_json::to_string(&result).expect("result");
+                let goal = super::supported_goal(0, kind, changed, &bounds["profile"])
+                    .expect("visible Unknown");
+                assert!(matches!(goal.verdict, GuaranteeVerdict::Unknown { .. }));
+                assert!(matches!(goal.level, GuaranteeLevel::Unknown { .. }));
+                assert!(goal.scenario.is_none());
+            }
+        }
+        for kind in ["initialization", "preservation"] {
+            let mut changed = record.clone();
+            changed.result_json = r#"{"status":"ok","reason":"backend parity"}"#.into();
+            let goal = super::supported_goal(0, kind, changed, &bounds["profile"])
+                .expect("trace-free success");
+            assert!(matches!(goal.verdict, GuaranteeVerdict::BoundedPass {}));
+            assert!(goal.scenario.is_none());
+        }
     }
     #[test]
     fn all_unknown_documents_retain_complete_shared_bounds_without_goal_evidence() {

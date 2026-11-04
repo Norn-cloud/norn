@@ -184,6 +184,7 @@ def compile_tla(args, root, environment, work):
     ], environment, work, deadline)
     stages.append({"stage": "quint-json", "exitCode": compiled.returncode})
     if compiled.returncode != 0:
+        os.write(2, compiled.stderr)
         raise ValueError("Quint JSON compilation failed")
     source = work / "generated.qnt.json"
     source.write_text(json.dumps(initializer_predicate(json.loads(compiled.stdout))))
@@ -194,6 +195,7 @@ def compile_tla(args, root, environment, work):
     ], environment, work, deadline)
     stages.append({"stage": "apalache-cli", "exitCode": parsed.returncode})
     if parsed.returncode != 0 or not tla.is_file():
+        os.write(2, parsed.stdout + parsed.stderr)
         raise ValueError("Apalache CLI compilation failed")
     return tla.read_bytes(), stages
 
