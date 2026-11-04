@@ -39,7 +39,7 @@ fn atom(relation: String, terms: Vec<Term>) -> Atom {
     Atom { relation, terms }
 }
 
-fn refuse(mapping: &str, message: String) -> Vec<Diagnostic> {
+fn refuse(mapping: &str, message: &str) -> Vec<Diagnostic> {
     vec![super::finding(
         PATH_MAPPING_INVALID,
         DiagnosticSeverity::Error,
@@ -125,13 +125,13 @@ fn lower_mapping(
         if !concrete(target_catalog, to) || !concrete(source_catalog, from) {
             return Err(refuse(
                 &mapping.id,
-                format!("{to} -> {from} is not between concrete types"),
+                &format!("{to} -> {from} is not between concrete types"),
             ));
         }
         if concrete(source_catalog, to) || concrete(target_catalog, from) {
             return Err(refuse(
                 &mapping.id,
-                format!("{to} -> {from}: catalogs must be disjoint"),
+                &format!("{to} -> {from}: catalogs must be disjoint"),
             ));
         }
         lowered.dependencies.push(Dependency::Tgd(Tgd {
@@ -150,7 +150,7 @@ fn lower_mapping(
         },
     ) in mapping.links.iter().enumerate()
     {
-        let image = |message: String| refuse(&mapping.id, format!("{concept}.{link}: {message}"));
+        let image = |message: String| refuse(&mapping.id, &format!("{concept}.{link}: {message}"));
         let declared = target_catalog
             .links_for_object_type(concept)
             .and_then(|links| links.iter().find(|l| l.id.as_str() == link))
@@ -264,7 +264,7 @@ pub fn compose_path_mappings(
             if !seen.insert((&image.concept, &image.link)) {
                 return Err(refuse(
                     &id,
-                    format!(
+                    &format!(
                         "{} maps {}.{} twice",
                         component.id, image.concept, image.link
                     ),
@@ -283,7 +283,7 @@ pub fn compose_path_mappings(
         let from = then
             .objects
             .get(via)
-            .ok_or_else(|| refuse(&id, format!("{via} is not mapped")))?;
+            .ok_or_else(|| refuse(&id, &format!("{via} is not mapped")))?;
         objects.insert(to.clone(), from.clone());
     }
     let mut links = Vec::new();
@@ -301,7 +301,7 @@ pub fn compose_path_mappings(
                 .map(|l| l.target.as_str().to_owned());
             let (Some(next), Some(sub)) = (next, images.get(&(current.as_str(), step.as_str())))
             else {
-                return Err(refuse(&id, format!("{current}.{step} has no image")));
+                return Err(refuse(&id, &format!("{current}.{step} has no image")));
             };
             path.extend_from_slice(sub);
             current = next;
