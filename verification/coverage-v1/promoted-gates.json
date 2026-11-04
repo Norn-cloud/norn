@@ -849,6 +849,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "integer-negation-kani",
+      "profile": "full",
+      "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "quantity-kani",
       "profile": "full",
       "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs",
@@ -1230,21 +1245,6 @@
         {
           "subsystem": "verification-integrity",
           "layer": "runtime"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": []
-    },
-    {
-      "id": "integer-negation-kani",
-      "profile": "full",
-      "command": "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs",
-      "evidenceKind": "command",
-      "role": "claim-evidence",
-      "classifications": [
-        {
-          "subsystem": "assurance-certificates",
-          "layer": "proof"
         }
       ],
       "resultArtifacts": [],
