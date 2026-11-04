@@ -115,6 +115,9 @@ pub fn diagnose<O: Oracle>(
         }
         let mut active: BTreeSet<_> = all.difference(&removed).copied().collect();
         if unsat(&active)? {
+            if active.len() > max_calls.saturating_sub(calls.get()) {
+                return Err(Unknown::Budget);
+            }
             for member in active.clone() {
                 active.remove(&member);
                 if !unsat(&active)? {
@@ -128,6 +131,9 @@ pub fn diagnose<O: Oracle>(
                 queue.push_back(next);
             }
         } else {
+            if removed.len() > max_calls.saturating_sub(calls.get()) {
+                return Err(Unknown::Budget);
+            }
             let mut repair = removed.clone();
             for member in removed {
                 active.insert(member);
