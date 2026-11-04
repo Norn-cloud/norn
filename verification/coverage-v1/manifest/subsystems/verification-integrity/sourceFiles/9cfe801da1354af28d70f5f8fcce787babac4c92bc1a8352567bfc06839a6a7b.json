@@ -1,4 +1,4 @@
 {
-  "order": 90,
+  "order": 93,
   "value": "crates/norn-checker/tests/check_receipt.rs"
 }

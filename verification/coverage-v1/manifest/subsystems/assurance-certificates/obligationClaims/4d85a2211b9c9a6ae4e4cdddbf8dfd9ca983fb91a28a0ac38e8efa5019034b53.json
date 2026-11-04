@@ -1,0 +1,21 @@
+{
+  "order": 3,
+  "value": {
+    "id": "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE",
+    "runtime": "missing",
+    "model": "missing",
+    "proof": "implementation_proved",
+    "residual": "Only integer rationals (denominator 1), all i64 numerators. Non-integer rationals, other arithmetic, evaluator lowering, callers and conservation/feasibility end-to-end remain unproved. No heap, IO, dynamic dispatch or concurrency support is claimed. Kani/compiler/CBMC are trusted.",
+    "evidence": {
+      "runtime": {
+        "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.runtime"
+      },
+      "model": {
+        "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.model"
+      },
+      "proof": {
+        "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.proof"
+      }
+    }
+  }
+}

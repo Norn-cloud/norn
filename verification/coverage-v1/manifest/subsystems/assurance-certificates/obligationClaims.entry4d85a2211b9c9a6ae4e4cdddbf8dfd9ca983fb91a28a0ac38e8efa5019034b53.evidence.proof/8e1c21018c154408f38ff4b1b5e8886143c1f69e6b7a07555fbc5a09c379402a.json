@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "verification/implementation-v1/rational_neg_kani.rs",
+    "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs",
+    "selectors": {
+      "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.evidence.proof.entry8e1c21018c154408f38ff4b1b5e8886143c1f69e6b7a07555fbc5a09c379402a.selectors"
+    }
+  }
+}

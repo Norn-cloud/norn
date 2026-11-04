@@ -119,7 +119,7 @@ SELECTOR_KINDS_BY_STATUS = {
     ("model", "executable_reference"): {"fixture", "test"},
     ("model", "exhaustive_bounded"): {"test"},
     ("model", "partial"): {"invariant", "fixture", "checker"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"theorem", "predicate", "harness"},
     ("proof", "reference_proved"): {"theorem", "harness"},
     ("proof", "partial"): {"theorem", "predicate", "harness"},
 }
@@ -131,7 +131,7 @@ REQUIRED_SELECTOR_KINDS_BY_STATUS = {
     ("model", "bounded_model_checked"): {"invariant"},
     ("model", "exhaustive_bounded"): {"test"},
     ("proof", "reference_proved"): {"theorem"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"predicate"},
 }
 
 
@@ -775,6 +775,11 @@ def validate_claim_evidence_shape(
                 f"{subsystem_id}.{claim_id}.evidence.{layer_name}: duplicate evidence entry",
             )
             identities.add(identity)
+        if (layer_name, status) == ("proof", "implementation_proved"):
+            require(
+                bool(observed_selector_kinds & {"theorem", "harness"}),
+                f"{subsystem_id}.{claim_id}: implementation proof needs a theorem or Kani harness",
+            )
         required_kinds = REQUIRED_SELECTOR_KINDS_BY_STATUS.get((layer_name, status), set())
         require(
             required_kinds.issubset(observed_selector_kinds),

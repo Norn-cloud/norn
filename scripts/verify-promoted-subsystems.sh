@@ -810,3 +810,10 @@ else
     'Fast verification profile completed: every fast manifest gate ran and its registration was checked against the passed-command log.' \
     'It does not write a formal-results record or attest full-only gates, generated evidence, complete evidence hashes, or a merge-blocking GitHub status.'
 fi
+
+run_gate full integer-negation-kani \
+  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/implementation-v1/rational_neg_kani.rs" \
+  command env RUSTUP_HOME=target/verification-tools/rustup \
+    KANI_HOME=target/verification-tools/kani-home \
+    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    verification/implementation-v1/rational_neg_kani.rs

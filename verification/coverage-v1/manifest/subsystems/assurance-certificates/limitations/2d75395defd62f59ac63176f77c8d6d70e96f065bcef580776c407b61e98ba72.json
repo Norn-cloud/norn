@@ -1,0 +1,4 @@
+{
+  "order": 1,
+  "value": "Exp 8 proves production integer-rational negation only; existing Lean certificate results remain reference_proved. Kani covers every i64 numerator and checks the Euclidean loop unwinding assertion at 3, not a sampled or truncated input space."
+}
