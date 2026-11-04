@@ -10,6 +10,7 @@ import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 export interface Section {
   readonly path: string
@@ -22,6 +23,8 @@ export interface Section {
   readonly useBadge?: () => number | undefined
   /** The rail group the section belongs to; a thin divider separates groups. */
   readonly group?: string
+  /** Listed at the foot of the rail, above the avatar, instead of with the sections. */
+  readonly foot?: boolean
 }
 
 export interface MenuEntry {
@@ -32,9 +35,17 @@ export interface MenuEntry {
   readonly group?: string
   /** The entry's leading icon; the section's icon when absent. */
   readonly icon?: LucideIcon
+  /** The chart colour (1–5) that tints the icon, one per family of entries. */
+  readonly tint?: 1 | 2 | 3 | 4 | 5
 }
 
 const none = () => undefined
+
+/** Entries listed per group before "Show more". */
+const SHOWN = 6
+
+/** Icon tints, one chart colour per family of entries; untinted icons are muted. */
+const TINT = ["[&>svg]:text-muted-foreground", "[&>svg]:text-chart-1", "[&>svg]:text-chart-2", "[&>svg]:text-chart-3", "[&>svg]:text-chart-4", "[&>svg]:text-chart-5"] as const
 
 function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
   const badge = (section.useBadge ?? none)()
@@ -42,10 +53,11 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }}
-        className="relative mx-auto size-10! justify-center rounded-lg p-0! text-muted-foreground hover:bg-sidebar-accent data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm [&>svg]:size-5!">
+        className="relative mx-auto size-10! justify-center rounded-[11px]! p-0! text-muted-foreground hover:bg-sidebar-accent data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm [&>svg]:size-5!">
         <Link to={section.path}>
           <Icon />
           <span className="sr-only">{section.label}</span>
+          {active && <span aria-hidden className="absolute top-1 right-1 size-2 rounded-full bg-ring ring-2 ring-background" />}
           {badge !== undefined && badge > 0 && <span className="absolute -top-1.5 -right-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-medium text-white tabular-nums">{badge}</span>}
         </Link>
       </SidebarMenuButton>
@@ -64,6 +76,9 @@ export function Submenu({ section }: { readonly section: Section }) {
   const entries = all.filter(({ label }) => typeof label !== "string" || label.toLowerCase().includes(query))
   const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const toggle = (set: ReadonlySet<string>, group: string) => { const next = new Set(set); if (!next.delete(group)) next.add(group); return next }
   return (
     <Sidebar collapsible="none" className="min-w-0 flex-1 rounded-2xl bg-background shadow-sm">
       <SidebarHeader className="gap-2 px-5 pt-6 pb-3">
@@ -90,22 +105,36 @@ export function Submenu({ section }: { readonly section: Section }) {
         {all.length > 0 && entries.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>}
         {groups.map((group) => (
           <SidebarGroup key={group}>
-            <SidebarGroupLabel className="text-xs font-normal text-muted-foreground">{group}</SidebarGroupLabel>
-            <SidebarGroupContent>
+            <SidebarGroupLabel asChild className="text-xs font-normal text-muted-foreground">
+              <button type="button" aria-expanded={!closed.has(group)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
+                {group}<ChevronDown className={cn("size-3.5! transition-transform", closed.has(group) && "-rotate-90")} />
+              </button>
+            </SidebarGroupLabel>
+            {!closed.has(group) && <SidebarGroupContent>
               <SidebarMenu>
-                {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => {
+                {entries.filter((entry) => (entry.group ?? section.label) === group).filter((entry, index, list) => {
+                  const active = entry.href === pathname || pathname.startsWith(`${entry.href}/`)
+                  return query !== "" || expanded.has(group) || index < SHOWN || active || list.length <= SHOWN + 1
+                }).map((entry) => {
                   const Icon = entry.icon ?? section.icon
                   return (
                     <SidebarMenuItem key={entry.href}>
                       <SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}
-                        className="h-10 gap-3 rounded-lg px-3 text-[0.9375rem] hover:bg-muted data-[active=true]:bg-muted data-[active=true]:font-medium [&>svg]:size-[18px] [&>svg]:text-muted-foreground">
+                        className={cn("h-10 gap-3 rounded-lg px-3 text-[0.9375rem] hover:bg-muted data-[active=true]:bg-muted data-[active=true]:font-medium [&>svg]:size-[18px]", TINT[entry.tint ?? 0])}>
                         <Link {...target(section, entry.href)}><Icon /><span className="truncate">{entry.label}</span></Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   )
                 })}
+                {query === "" && entries.filter((entry) => (entry.group ?? section.label) === group).length > SHOWN + 1 && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => setExpanded((set) => toggle(set, group))} className="h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted">
+                      {expanded.has(group) ? "Show less" : "Show more"}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
-            </SidebarGroupContent>
+            </SidebarGroupContent>}
           </SidebarGroup>
         ))}
       </SidebarContent>
@@ -188,27 +217,30 @@ function BarButtons() {
 export function Shell({ sections }: { sections: readonly Section[] }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
+  const main = sections.filter(({ foot }) => foot !== true)
+  const foot = sections.filter(({ foot }) => foot === true)
   return (
     <TooltipProvider>
       <SidebarProvider style={{ "--sidebar-width": "23rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
         <Sidebar variant="inset" collapsible="icon" className="overflow-hidden ps-0 *:data-[sidebar=sidebar]:flex-row">
-          <Sidebar collapsible="none" className="w-(--sidebar-width-icon)! shrink-0 bg-transparent">
+          <Sidebar collapsible="none" className="w-16! shrink-0 bg-transparent">
             <SidebarHeader className="items-center px-0 pt-1">
-              <Link to="/questions" className="flex size-10 items-center justify-center rounded-lg bg-primary text-base font-semibold text-primary-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+              <Link to="/questions" className="flex size-10 items-center justify-center rounded-[11px] bg-primary text-base font-semibold text-primary-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
                 N<span className="sr-only">Norn Studio</span>
               </Link>
             </SidebarHeader>
             <SidebarContent className="px-0 pt-3">
               <SidebarMenu className="items-center gap-2">
-                {sections.map((section, index) => (
+                {main.map((section, index) => (
                   <Fragment key={section.path}>
-                    {index > 0 && section.group !== sections[index - 1]?.group && <Separator className="my-1 w-6!" />}
+                    {index > 0 && section.group !== main[index - 1]?.group && <Separator className="my-1 w-6!" />}
                     <RailItem section={section} active={section === current} />
                   </Fragment>
                 ))}
               </SidebarMenu>
             </SidebarContent>
             <SidebarFooter className="items-center px-0 pb-1">
+              {foot.length > 0 && <SidebarMenu className="items-center gap-2">{foot.map((section) => <RailItem key={section.path} section={section} active={section === current} />)}</SidebarMenu>}
               <SidebarMenu><SidebarMenuItem className="flex justify-center">
                 <SidebarMenuButton tooltip={{ children: "Not signed in: recorded demo", hidden: false }} className="size-10! justify-center rounded-full p-0!">
                   <span className="flex size-9 items-center justify-center rounded-full bg-muted ring-1 ring-border"><UserRound className="size-5 text-muted-foreground" /></span>

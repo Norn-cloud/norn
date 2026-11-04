@@ -191,7 +191,7 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
   return catalog && (["concept", "core idea"] as const).flatMap((kind) => catalog.concepts.filter((concept) => concept.kind === kind)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces", icon: kind === "concept" ? Box : Layers })))
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces", icon: kind === "concept" ? Box : Layers, tint: kind === "concept" ? (1 as const) : (3 as const) })))
 }
 
 export function SourcesPage() {

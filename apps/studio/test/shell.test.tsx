@@ -53,3 +53,12 @@ test("the rail divides its groups once, and the page bar holds search, shortcuts
   expect(html).toContain("Notifications")
   expect(html).not.toContain(">RD<")
 })
+
+test("a long group shows six entries and offers the rest, keeping the open one in view", async () => {
+  const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
+  const html = await at("/sources/t8", () => <SidebarProvider><Submenu section={many} /></SidebarProvider>)
+  expect(html).toContain("Type 5")
+  expect(html).not.toContain("Type 6")
+  expect(html).toContain("Type 8")
+  expect(html).toContain("Show more")
+})
