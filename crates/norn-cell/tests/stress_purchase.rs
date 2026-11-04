@@ -167,37 +167,27 @@ fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
         |c| c.payload.clone(),
     )
     .expect("cell");
-    for (name, ordered, received, law) in [
-        ("zero", 0, 0, "stress.purchase_positive"),
-        ("over", 4, 5, "stress.purchase_receipt_limit"),
-        ("negative", 4, -1, "stress.purchase_receipt_limit"),
-    ] {
-        let before = cell.store().read().dump().expect("before");
-        let error = run(
-            "stress.purchase.create.action",
-            json!({"id":name,"ordered":ordered,"received":received}),
-            &mut cell,
-            &catalog,
-            &artifacts,
-            name,
-        )
-        .expect_err("law refusal");
-        assert_eq!(error.code(), "core.laws.violated", "{error:?}");
-        let rationale = if law == "stress.purchase_positive" {
-            "A purchase promises a positive quantity."
-        } else {
-            "Received quantity cannot be negative or exceed the approved order."
-        };
-        assert!(
-            error.to_string().contains(&format!("{law}: {rationale}")),
-            "{error}"
-        );
-        assert_eq!(before, cell.store().read().dump().expect("after"));
-    }
+    let before = cell.store().read().dump().expect("before zero order");
+    let error = run(
+        "stress.purchase.create.action",
+        json!({"id":"zero","ordered":0}),
+        &mut cell,
+        &catalog,
+        &artifacts,
+        "zero",
+    )
+    .expect_err("positive order law");
+    assert_eq!(error.code(), "core.laws.violated");
+    assert!(
+        error
+            .to_string()
+            .contains("stress.purchase_positive: A purchase promises a positive quantity.")
+    );
+    assert_eq!(before, cell.store().read().dump().expect("atomic refusal"));
     for (action, input, key) in [
         (
             "stress.purchase.create.action",
-            json!({"id":"p1","ordered":4,"received":0}),
+            json!({"id":"p1","ordered":4}),
             "create",
         ),
         (
@@ -226,6 +216,23 @@ fn purchase_workflow_and_inspection_refuse_without_partial_commits() {
                 .unwrap_or_else(|e| panic!("{action}: {e:?}")),
             ActionOutcome::Committed { .. }
         ));
+        if key == "approve" {
+            for received in [-1, 5] {
+                let before = cell.store().read().dump().expect("before invalid receipt");
+                let error = run(
+                    "stress.purchase.record_received.action",
+                    json!({"id":"p1","received":received}),
+                    &mut cell,
+                    &catalog,
+                    &artifacts,
+                    &format!("invalid-{received}"),
+                )
+                .expect_err("receipt limit law");
+                assert_eq!(error.code(), "core.laws.violated");
+                assert!(error.to_string().contains("stress.purchase_receipt_limit: Received quantity cannot be negative or exceed the approved order."));
+                assert_eq!(before, cell.store().read().dump().expect("atomic refusal"));
+            }
+        }
         if key == "create" {
             let before = cell.store().read().dump().expect("before transition");
             let refusal = run(
