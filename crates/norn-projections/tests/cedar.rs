@@ -473,3 +473,13 @@ fn synchronous_writer_authorization_projects_exact_declared_resource_types() {
         }
     }
 }
+
+#[test]
+fn refusal_detail_pdp_fixture_matches_the_generated_host_schema() {
+    let entities = project_cedar_schema(&[], &[], &[]);
+    let host = norn_projections::project_host_access_schema(&[]);
+    assert_eq!(
+        format!("{}\n{}", entities.schema, host),
+        include_str!("../../norn-api/tests/fixtures/refusal-access.cedarschema")
+    );
+}
