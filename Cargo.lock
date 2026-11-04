@@ -1660,6 +1660,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "norn-ir",
+ "proptest",
  "serde",
  "serde_json",
  "zen-expression",
