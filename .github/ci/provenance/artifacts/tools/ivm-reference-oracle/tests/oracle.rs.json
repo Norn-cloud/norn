@@ -1,14 +1,11 @@
 {
-  "sha256": "be8cbca26e48d72025194a92266f744904445255a1e8e67dd6a5e16dbc33a98b",
-  "origin": "derived",
-  "category": "generated",
+  "sha256": "2a24e04d35d907055bfad5ce14fc1347ac0f6c1328420a6da0622a4095e36f04",
+  "origin": "authored",
+  "category": "code",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [
-    "Cargo.lock",
-    "tools/ivm-dbsp-oracle/Cargo.toml"
-  ],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",
