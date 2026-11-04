@@ -212,8 +212,12 @@ mod tests {
         assert!(suggest_conservation("r", &c, &o, 2, &[None, Some(q(1, 1))]).is_err());
         o[0].delta.fill(q(0, 1));
         assert!(suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]).is_err());
+        let (c, mut o) = fixture(2);
         o[1].record = o[0].record.clone();
-        assert!(suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]).is_err());
+        assert!(matches!(
+            suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]),
+            Err(Failure::Malformed)
+        ));
         let (c, o) = fixture(257);
         assert!(suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]).is_err());
         let (mut c, o) = fixture(2);
@@ -221,6 +225,7 @@ mod tests {
         assert!(suggest_conservation("r", &c, &o, 1, &[None, Some(q(1, 1))]).is_err());
     }
     #[test]
+    #[expect(clippy::print_stderr, reason = "bounded fixture cost measurement")]
     fn fixture_cost() {
         let (c, o) = fixture(256);
         let start = std::time::Instant::now();
