@@ -445,12 +445,12 @@ pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
 ) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serialize_json_verbatim(value)?;
     parse_json_verbatim(&bytes)?;
-    let sorted = sort_exact_json(serde_json::from_slice(&bytes).map_err(json_encoding_error)?)
-        .map_err(json_encoding_error)?;
+    let sorted = sort_exact_json(serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?)
+        .map_err(|error| json_encoding_error(&error))?;
     Ok(sorted.get().as_bytes().to_vec())
 }
 
-fn json_encoding_error(error: serde_json::Error) -> CanonicalJsonError {
+fn json_encoding_error(error: &serde_json::Error) -> CanonicalJsonError {
     CanonicalJsonError::Serialize {
         message: error.to_string(),
     }
