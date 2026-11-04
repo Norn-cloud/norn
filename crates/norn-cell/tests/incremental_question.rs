@@ -81,7 +81,7 @@ fn measure_advance(members: usize, changed: bool) -> usize {
             logical_time: CLOCK,
             writes,
             // An unrelated unpinned finding must remain only an invalidation hint.
-            events: if changed { vec![] } else { vec![norn_ir::runtime::decode(&serde_json::json!({"op":"data_quality_finding","fact":{"subjects":[{"objectType":TYPE,"key":"unrelated"}]}})).expect("unrelated event")] },
+            events: if changed { vec![] } else { vec![norn_ir::runtime::encode(&serde_json::json!({"op":"data_quality_finding","fact":{"subjects":[{"objectType":TYPE,"key":"unrelated"}]}})).expect("unrelated event")] },
             ..CommitBatch::default()
         })
         .expect("receipt");
