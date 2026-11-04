@@ -236,6 +236,15 @@ fn ill_typed_mappings_refuse_before_search() {
 /// Cost report (`--nocapture`): mean admission time over 50 runs per case.
 #[test]
 fn preservation_cost_on_the_574_fixtures() {
+    let middle = catalog("s");
+    let identity = mapping("identity", "t", "s", &[]);
+    let composite = compose_path_mappings(
+        &identity,
+        &mapping("swap", "s", "s", SWAPPED),
+        &middle,
+        &BTreeSet::new(),
+    )
+    .unwrap();
     let cases = [
         mapping("identity", "t", "s", &[]),
         mapping(
@@ -246,11 +255,23 @@ fn preservation_cost_on_the_574_fixtures() {
         ),
         mapping("swapped", "t", "s", SWAPPED),
         mapping("dropped", "t", "s", &[("fulfils", &["unjoined"])]),
+        mapping(
+            "both",
+            "t",
+            "s",
+            &[("provider", &["provider"]), ("provider", &["receiver"])],
+        ),
+        composite,
     ];
+    let source = catalog("s");
+    let target = catalog("t");
+    let registry = BTreeSet::new();
     for case in &cases {
         let start = std::time::Instant::now();
         for _ in 0..50 {
-            let admitted = admit(case).is_ok();
+            let admitted =
+                admit_path_mapping(&source, &target, case, &registry, ChaseBudget::default())
+                    .is_ok();
             assert_eq!(
                 admitted,
                 ["identity", "equivalent"].contains(&case.id.as_str())
