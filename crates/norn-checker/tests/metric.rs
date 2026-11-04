@@ -1194,7 +1194,8 @@ proptest::proptest! {
         proptest::prop_assert_ne!(en.direction,ar.direction);
         proptest::prop_assert!(en.slots[1].text.contains("kg"));
         proptest::prop_assert!(en.slots[4].text.contains(&question.time_window.start.0));
-        proptest::prop_assert!(en.slots[5].text.contains(if pinned { "as_of" } else { "live" }));
+        let policy = if pinned { "as_of" } else { "live" };
+        proptest::prop_assert!(en.slots[5].text.contains(policy));
     }
 }
 
