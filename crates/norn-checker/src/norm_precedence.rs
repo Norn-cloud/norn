@@ -601,13 +601,6 @@ fn diagnose_subsets(
     crate::consistency::diagnosis::Unknown<std::convert::Infallible>,
 > {
     use crate::consistency::diagnosis::{Diagnosis, Unknown, Verdict};
-    // Non-monotone diagnosis must visit every subset, including inherited rules.
-    let subsets = u32::try_from(declarations)
-        .ok()
-        .and_then(|n| 1_usize.checked_shl(n));
-    if subsets.is_none_or(|count| count > max_calls) {
-        return Err(Unknown::Budget);
-    }
     let all: BTreeSet<_> = (0..declarations).collect();
     let calls = std::cell::Cell::new(0_usize);
     let mut unsat = |active: &BTreeSet<usize>| {
@@ -620,6 +613,16 @@ fn diagnose_subsets(
     let mut cores = BTreeSet::new();
     let mut corrections = BTreeSet::new();
     if unsat(&all)? {
+        // Non-monotone diagnosis visits every subset, including inherited rules.
+        // The full-set query is included in that count. At least one minimal
+        // core must also be independently revalidated after enumeration.
+        let minimum_calls = u32::try_from(declarations)
+            .ok()
+            .and_then(|n| 1_usize.checked_shl(n))
+            .and_then(|count| count.checked_add(1));
+        if minimum_calls.is_none_or(|count| count > max_calls) {
+            return Err(Unknown::Budget);
+        }
         let mut pending = vec![all.clone()];
         let mut checked = BTreeMap::from([(all.clone(), true)]);
         while let Some(active) = pending.pop() {
@@ -721,15 +724,58 @@ mod admission_tests {
     }
 
     #[test]
-    fn impossible_subset_search_makes_no_oracle_calls() {
+    fn impossible_subset_search_stops_after_full_set_query() {
         use crate::consistency::diagnosis::Unknown;
-        for declarations in [13, 32, 64, usize::MAX] {
+        for declarations in [12, 13, 32, 64, 65] {
             let mut oracle = CountingOracle { calls: 0 };
             assert_eq!(
                 diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096),
                 Err(Unknown::Budget)
             );
-            assert_eq!(oracle.calls, 0);
+            assert_eq!(oracle.calls, 1);
+        }
+    }
+
+    struct SatCountingOracle {
+        calls: usize,
+    }
+
+    impl crate::consistency::diagnosis::Oracle for SatCountingOracle {
+        type Unknown = std::convert::Infallible;
+
+        fn check(
+            &mut self,
+            _active: &BTreeSet<usize>,
+        ) -> crate::consistency::diagnosis::Verdict<Self::Unknown> {
+            self.calls += 1;
+            crate::consistency::diagnosis::Verdict::Sat
+        }
+    }
+
+    #[test]
+    fn satisfiable_sets_keep_two_call_fast_path_regardless_of_subset_count() {
+        use crate::consistency::diagnosis::Unknown;
+        for declarations in [13, 64, 65] {
+            let mut oracle = SatCountingOracle { calls: 0 };
+            let result = diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 4096)
+                .expect("SAT needs no subset enumeration");
+            assert!(result.cores.is_empty());
+            assert_eq!(result.corrections, BTreeSet::from([BTreeSet::new()]));
+            assert_eq!(result.calls, 2);
+            assert_eq!(oracle.calls, 2);
+            let mut oracle = SatCountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 2)
+                    .expect("exact SAT budget").calls,
+                2
+            );
+            assert_eq!(oracle.calls, 2);
+            let mut oracle = SatCountingOracle { calls: 0 };
+            assert_eq!(
+                diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 1),
+                Err(Unknown::Budget)
+            );
+            assert_eq!(oracle.calls, 1);
         }
     }
 
