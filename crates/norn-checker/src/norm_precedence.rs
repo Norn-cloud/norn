@@ -766,7 +766,8 @@ mod admission_tests {
             let mut oracle = SatCountingOracle { calls: 0 };
             assert_eq!(
                 diagnose_subsets(&mut oracle, declarations, &BTreeSet::new(), 2)
-                    .expect("exact SAT budget").calls,
+                    .expect("exact SAT budget")
+                    .calls,
                 2
             );
             assert_eq!(oracle.calls, 2);
