@@ -138,11 +138,13 @@ fn path_findings(
                         )]
                     })?;
                 // Reserve bytes before cloning, including repeated catalog IDs.
-                serde_json::to_writer(work, entity).map_err(|cause| vec![error(
-                    crate::consistency::codes::CHASE_REFUSED,
-                    format!("path catalog metering refused: {cause}; consistency is unknown"),
-                    Span::pointer("/pathMappings"),
-                )])?;
+                serde_json::to_writer(work, entity).map_err(|cause| {
+                    vec![error(
+                        crate::consistency::codes::CHASE_REFUSED,
+                        format!("path catalog metering refused: {cause}; consistency is unknown"),
+                        Span::pointer("/pathMappings"),
+                    )]
+                })?;
                 Ok(entity.clone())
             })
             .collect()
