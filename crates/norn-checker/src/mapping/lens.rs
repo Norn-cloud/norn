@@ -83,14 +83,13 @@ pub fn admit(mapping: &MappingIr) -> Result<Option<AdmittedLens>, String> {
     };
     // The enclosing artifact admission bounds serialized input memory. Bound
     // this extension before decoding a second owned representation.
-    let mut bytes = vec![0_u8; 65_536];
-    let mut remaining = bytes.as_mut_slice();
-    serde_json::to_writer(&mut remaining, raw)
-        .map_err(|_error| "unknown: lens declaration exceeds byte bound")?;
-    let used = 65_536_usize.saturating_sub(remaining.len());
+    let bytes = norn_canonical::canonical_json_of(raw)
+        .map_err(|_error| "unknown: lens declaration is not canonical JSON")?;
+    (bytes.len() <= 65_536)
+        .then_some(())
+        .ok_or("unknown: lens declaration exceeds byte bound")?;
     let declaration: FiniteWriteBackLens =
-        serde_json::from_slice(bytes.get(..used).ok_or("unknown: byte bound")?)
-            .map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     let FiniteWriteBackLens {
         map,
         property,
