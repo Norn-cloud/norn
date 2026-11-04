@@ -621,6 +621,8 @@ fn valid_norm_identity(rule: &DeonticRule) -> bool {
     let law = &rule.law;
     let root = match &law.scope.root {
         LawRoot::Company(id) | LawRoot::App(id) | LawRoot::Cell(id) | LawRoot::Entity(id) => id,
+        // Pack-rooted normative scopes are unsupported here, as in binding.
+        LawRoot::Pack(_) => return false,
     };
     !law.scope.object_types.is_empty()
         && [&law.id, &law.owner, &law.subject, root]
