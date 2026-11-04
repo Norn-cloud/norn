@@ -15,8 +15,6 @@ export interface Section {
   readonly label: string
   readonly icon: LucideIcon
   readonly summary: string
-  /** The section's main verb; disabled with the server's reason while Studio replays recordings. */
-  readonly primary?: string
   /** The section's own items (each object type, question or workflow), listed in its submenu. */
   readonly useMenu?: () => readonly MenuEntry[] | undefined
   /** A count that needs attention, shown on the rail. */
@@ -30,7 +28,6 @@ export interface MenuEntry {
   readonly group?: string
 }
 
-const RECORDED = "Recorded: the server does not accept changes here yet."
 const none = () => undefined
 
 function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
@@ -49,12 +46,15 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
   )
 }
 
-/** The section's submenu: its title and data context, its main verb, then its grouped entries. */
-function Submenu({ section }: { readonly section: Section }) {
+/**
+ * The section's submenu: its title and data context, then its grouped entries.
+ * No server document declares a section action yet, so none is shown.
+ */
+export function Submenu({ section }: { readonly section: Section }) {
   const entries = (section.useMenu ?? none)() ?? []
   const groups = [...new Set(entries.map(({ group }) => group ?? section.label))]
   return (
-    <Sidebar collapsible="none" className="hidden flex-1 md:flex">
+    <Sidebar collapsible="none" className="flex-1">
       <SidebarHeader className="gap-3 px-4 pt-5 pb-3">
         <div className="text-title font-medium">{section.label}</div>
         <DropdownMenu>
@@ -67,7 +67,6 @@ function Submenu({ section }: { readonly section: Section }) {
             <DropdownMenuItem disabled>Live, once the read host is up</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {section.primary && <Button className="w-full" disabled title={RECORDED}>{section.primary}</Button>}
       </SidebarHeader>
       <SidebarContent>
         {groups.map((group) => (
