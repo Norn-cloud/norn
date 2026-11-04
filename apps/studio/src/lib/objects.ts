@@ -1,6 +1,6 @@
 import type { Field } from "./catalog.ts"
-import { member } from "./exact.ts"
-import type { ObjectRecord } from "./transport.ts"
+import { member, type Read } from "./exact.ts"
+import type { LinkPage, ObjectPage, ObjectRecord } from "./transport.ts"
 
 /** A fact's value as the server sent it: decimals keep their exact text, with their declared currency. */
 export function factText(field: Field, record: ObjectRecord, numbers: ReadonlyMap<string, string>, at: string): string {
@@ -13,7 +13,8 @@ export function factText(field: Field, record: ObjectRecord, numbers: ReadonlyMa
     const per = field.decimal.perUnit ? ` per ${field.decimal.perUnit}` : ""
     return unit ? `${text} ${unit}${per}` : `${text}${per}`
   }
-  return typeof value === "string" ? value.replaceAll("_", " ") : JSON.stringify(value)
+  // Server values are shown as sent: codes and identifiers are never reworded.
+  return typeof value === "string" ? value : JSON.stringify(value)
 }
 
 /** The record's own name when its concept declares one, else its identity. */
@@ -49,3 +50,39 @@ export function compareDecimals(a: string | undefined, b: string | undefined): n
         : x.fraction.padEnd(y.fraction.length, "0") < y.fraction.padEnd(x.fraction.length, "0") ? -1 : 1
   return xNegative ? -magnitude : magnitude
 }
+
+/** One record from one page the server returned, with that page's exact number texts. */
+export interface PageRow {
+  readonly record: ObjectRecord
+  readonly at: string
+  readonly numbers: ReadonlyMap<string, string>
+}
+
+/** Every page read so far, and whether the server said the scan is complete (a null cursor). */
+export interface Collected {
+  readonly rows: readonly PageRow[]
+  readonly held: number
+  readonly complete: boolean
+}
+
+/** The cursor for the next server page; `undefined` once the server returns none. */
+export const nextAfter = (page: Read<ObjectPage> | null): string | undefined => page?.document.scannedThrough ?? undefined
+
+export function collect(pages: readonly (Read<ObjectPage> | null)[]): Collected {
+  const read = pages.filter((page): page is Read<ObjectPage> => page !== null)
+  const last = pages.at(-1)
+  return {
+    rows: read.flatMap((page) => page.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.numbers }))),
+    held: read.reduce((total, page) => total + page.document.quarantineCount, 0),
+    complete: last !== undefined && last !== null && last.document.scannedThrough === null,
+  }
+}
+
+/** The first failed read's message, exactly as the server or transport gave it; nothing reads as "loading" forever. */
+export function readProblem(...reads: readonly { readonly error: Error | null }[]): string | undefined {
+  return reads.find(({ error }) => error !== null)?.error?.message
+}
+
+/** Whether an object read and its link read are both about the object that was asked for. */
+export const readsOf = (objectType: string, id: string, object: ObjectRecord, links: LinkPage): boolean =>
+  object.objectType === objectType && object.id === id && links.objectType === objectType && links.id === id

@@ -1,25 +1,26 @@
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import {
   type ColumnDef, type SortingState, flexRender, getCoreRowModel, getFilteredRowModel,
   getPaginationRowModel, getSortedRowModel, useReactTable,
 } from "@tanstack/react-table"
 import { ArrowDown, ArrowUp, ArrowUpDown, Database, Link2, Rows3 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Input } from "@/components/ui/input"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
-import { member, type Read } from "./lib/exact.ts"
-import { compareDecimals, factText, recordName } from "./lib/objects.ts"
-import { recordedTransport, type ObjectRecord } from "./lib/transport.ts"
+import { member } from "./lib/exact.ts"
+import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, type PageRow } from "./lib/objects.ts"
+import { recordedTransport } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
 
-interface Row {
-  readonly record: ObjectRecord
-  readonly at: string
+/** Pages read per concept before the list is shown as incomplete. */
+const MAX_PAGES = 50
+
+interface Row extends PageRow {
   readonly from: string
 }
 
@@ -29,11 +30,11 @@ function SortIcon({ sorted }: { readonly sorted: false | "asc" | "desc" }) {
   return <ArrowUpDown className="size-3 opacity-40" />
 }
 
-function ObjectTable({ concept, page }: { readonly concept: Concept; readonly page: Read<{ readonly records: readonly ObjectRecord[] }> }) {
+function ObjectTable({ concept, collected }: { readonly concept: Concept; readonly collected: readonly PageRow[] }) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [filter, setFilter] = useState("")
   const sources = useQueries({
-    queries: page.document.records.map((record) => ({
+    queries: collected.map(({ record }) => ({
       queryKey: ["object", record.objectType, record.id],
       queryFn: () => recordedTransport.object(record.objectType, record.id),
     })),
@@ -42,15 +43,15 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
   const systems = JSON.stringify(sources.map(({ data }) => data?.source ? systemName(data.source.document.sourceRecordRef.system) : "—"))
   const rows = useMemo(() => {
     const from = JSON.parse(systems) as string[]
-    return page.document.records.map((record, index): Row => ({ record, at: `/records/${index}`, from: from[index] ?? "—" }))
-  }, [page, systems])
+    return collected.map((row, index): Row => ({ ...row, from: from[index] ?? "—" }))
+  }, [collected, systems])
   const columns = useMemo<ColumnDef<Row>[]>(() => [
     {
       id: "record",
       header: "Record",
       accessorFn: ({ record }) => recordName(record),
       cell: ({ row }) => (
-        <Link to="/sources/$concept/$id" params={{ concept: concept.name, id: row.original.record.id }} className="font-medium underline-offset-4 hover:underline">
+        <Link to="/sources/$concept/$id" params={{ concept: row.original.record.objectType, id: row.original.record.id }} className="font-medium underline-offset-4 hover:underline">
           {recordName(row.original.record)}
         </Link>
       ),
@@ -58,19 +59,19 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
     ...concept.fields.filter(({ id }) => id !== "id" && id !== "label" && id !== "display_name").map((field): ColumnDef<Row> => ({
       id: field.id,
       header: field.id.replaceAll("_", " "),
-      accessorFn: ({ record, at }) => factText(field, record, page.numbers, at),
+      accessorFn: ({ record, at, numbers }) => factText(field, record, numbers, at),
       sortingFn: field.decimal
         ? (a, b) => {
           // Amounts in different currencies are grouped by currency, never ordered against each other.
           const currency = (row: Row) => String(field.decimal?.currencyFrom ? row.record.values[field.decimal.currencyFrom] ?? "" : "")
           return currency(a.original).localeCompare(currency(b.original))
-            || compareDecimals(page.numbers.get(`${a.original.at}/values/${member(field.id)}`), page.numbers.get(`${b.original.at}/values/${member(field.id)}`))
+            || compareDecimals(a.original.numbers.get(`${a.original.at}/values/${member(field.id)}`), b.original.numbers.get(`${b.original.at}/values/${member(field.id)}`))
         }
         : "alphanumeric",
       meta: { numeric: field.decimal !== undefined },
     })),
     { id: "from", header: "From", accessorFn: ({ from }) => from },
-  ], [concept, page])
+  ], [concept])
   const table = useReactTable({
     data: rows, columns, state: { sorting, globalFilter: filter },
     onSortingChange: setSorting, onGlobalFilterChange: setFilter,
@@ -119,44 +120,63 @@ function ObjectTable({ concept, page }: { readonly concept: Concept; readonly pa
 
 export function ObjectsPage() {
   const { concept: name = "" } = useParams({ strict: false })
-  const { catalog } = useCatalog()
+  const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  const page = useQuery({ queryKey: ["objects", name], queryFn: () => recordedTransport.objectPage(name) })
+  const pages = useInfiniteQuery({
+    queryKey: ["objects", name],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => recordedTransport.objectPage(name, pageParam),
+    getNextPageParam: nextAfter,
+  })
+  // Keep reading server pages until the server returns no cursor, within a bound.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = pages
+  const read = pages.data?.pages.length ?? 0
+  useEffect(() => { if (hasNextPage && !isFetchingNextPage && read < MAX_PAGES) void fetchNextPage() }, [hasNextPage, isFetchingNextPage, read, fetchNextPage])
+  const collected = useMemo(() => collect(pages.data?.pages ?? []), [pages.data])
+  const first = pages.data?.pages[0]
+  const reading = pages.isPending || isFetchingNextPage || (hasNextPage && read < MAX_PAGES)
+  const problem = readProblem(catalogRead, pages)
   const title = concept?.title ?? conceptTitle(name)
-  const held = page.data?.document.quarantineCount ?? 0
+  const records = (body: ReactNode) => <Panel icon={Rows3} label="Records"><Well className="p-3">{body}</Well></Panel>
   return (
     <section className="space-y-6">
       <div className="space-y-2">
         <Link to="/sources" className="text-sm text-muted-foreground underline-offset-4 hover:underline">Sources</Link>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-title font-medium">{title}</h1>
-          {page.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
+          {first?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
         {concept?.description && <p className="max-w-2xl text-muted-foreground">{concept.description}</p>}
       </div>
-      {page.data && <div className="flex flex-wrap gap-8">
-        <div><div className="text-4xl font-medium tabular-nums">{page.data.document.records.length}</div><div className="text-meta text-muted-foreground">records</div></div>
-        <div><div className="text-4xl font-medium tabular-nums">{held}</div><div className="text-meta text-muted-foreground">held back for review</div></div>
+      {first && <div className="flex flex-wrap gap-8">
+        <div><div className="text-4xl font-medium tabular-nums">{collected.complete ? "" : "at least "}{collected.rows.length}</div><div className="text-meta text-muted-foreground">records</div></div>
+        <div><div className="text-4xl font-medium tabular-nums">{collected.held}</div><div className="text-meta text-muted-foreground">held back for review</div></div>
       </div>}
-      {(page.isPending || !catalog) && <p className="text-muted-foreground">Reading records…</p>}
-      {page.isError && <p className="text-destructive">{page.error.message}</p>}
+      {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
+      {problem === undefined && (catalogRead.isPending || reading) && <p className="text-muted-foreground">Reading records…</p>}
       {catalog && !concept && <p className="text-muted-foreground">This concept is not in the business model.</p>}
-      {concept && page.isSuccess && (page.data === null
+      {concept && pages.isSuccess && !reading && (first === null
         ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>Records for this concept are not available yet.</EmptyState></Well></Panel>
-        : page.data.document.records.length === 0
-          ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>No {title.toLowerCase()} records are stored yet.</EmptyState></Well></Panel>
-          : <Panel icon={Rows3} label="Records"><Well className="p-3"><ObjectTable concept={concept} page={page.data} /></Well></Panel>)}
+        : !collected.complete
+          ? records(<>
+            <p className="pb-3 text-meta text-muted-foreground">The server has more pages than could be read here, so this list is incomplete.</p>
+            {collected.rows.length > 0 && <ObjectTable concept={concept} collected={collected.rows} />}
+          </>)
+          : collected.rows.length === 0
+            ? <Panel icon={Rows3} label="Records"><Well><EmptyState icon={Rows3}>No {title.toLowerCase()} records are stored yet.</EmptyState></Well></Panel>
+            : records(<ObjectTable concept={concept} collected={collected.rows} />))}
     </section>
   )
 }
 
 export function ObjectPage() {
   const { concept: name = "", id = "" } = useParams({ strict: false })
-  const { catalog } = useCatalog()
+  const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => recordedTransport.object(name, id) })
   const data = reads.data
   const lineage = data?.source?.document
+  const problem = readProblem(catalogRead, reads)
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -170,7 +190,8 @@ export function ObjectPage() {
         </div>
         {data && <p className="text-sm text-muted-foreground"><code>{id}</code> · version {data.object.document.version}</p>}
       </div>
-      {(reads.isPending || !catalog) && <p className="text-muted-foreground">Reading the record…</p>}
+      {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
+      {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
       {reads.isSuccess && data === null && <p className="text-muted-foreground">This record is not available yet.</p>}
       {data && concept && <>

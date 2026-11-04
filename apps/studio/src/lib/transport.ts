@@ -1,5 +1,6 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
+import { readsOf } from "./objects.ts"
 
 export type Question = Schemas["NornIrQuestion"]
 export type Answer = Schemas["NornQueryResult"]
@@ -33,8 +34,8 @@ export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
-  /** One concept's authoritative objects; `null` when the server has no such read yet. */
-  readonly objectPage: (objectType: string) => Promise<Read<ObjectPage> | null>
+  /** One page of a concept's authoritative objects after `after`; `null` when the server has no such read yet. */
+  readonly objectPage: (objectType: string, after?: string) => Promise<Read<ObjectPage> | null>
   /** One object with its links and source lineage; `null` when it is not readable. */
   readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
@@ -62,11 +63,13 @@ export const recordedTransport: Transport = {
     objectType: recorded<ObjectType>("answers/scrap-yield.object-type.json"),
   }],
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
-  objectPage: async (objectType) => optional<ObjectPage>(`explorer/objects/${objectType}.page.json`),
+  objectPage: async (objectType, after) =>
+    optional<ObjectPage>(`explorer/objects/${objectType}${after === undefined ? "" : `.after.${after.replaceAll("/", "~")}`}.page.json`),
   object: async (objectType, id) => {
     const object = optional<ObjectRecord>(objectFile(objectType, id, "object"))
     const links = optional<LinkPage>(objectFile(objectType, id, "links"))
     const source = optional<SourceLineage>(objectFile(objectType, id, "source"))
-    return object && links ? { object, links, source } : null
+    // Recorded file names fold `/` into `~`, so a read must match the identity it was asked for.
+    return object && links && readsOf(objectType, id, object.document, links.document) ? { object, links, source } : null
   },
 }
