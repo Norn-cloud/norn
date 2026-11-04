@@ -69,7 +69,9 @@ pub fn check_mapping_artifacts(
     for (artifact, mapping) in &mappings {
         if !path_refused {
             let findings = path_findings(artifact, mapping, artifacts, base, &work);
-            path_refused = findings.iter().any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
+            path_refused = findings
+                .iter()
+                .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
             out.extend(findings);
         }
         out.extend(key_findings(artifact));
@@ -117,8 +119,11 @@ fn path_findings(
                     .iter()
                     .chain(base)
                     .find(|a| {
-                        a.artifact_id == *id && matches!(a.payload, ArtifactPayload::Entity(_))
-                            && artifact.dependencies.iter()
+                        a.artifact_id == *id
+                            && matches!(a.payload, ArtifactPayload::Entity(_))
+                            && artifact
+                                .dependencies
+                                .iter()
                                 .find(|d| d.artifact_id == *id && d.kind == ArtifactKind::Entity)
                                 .and_then(|d| d.version.as_deref())
                                 .is_none_or(|version| a.version == version)

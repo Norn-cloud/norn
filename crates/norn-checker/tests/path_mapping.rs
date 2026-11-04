@@ -505,4 +505,3 @@ fn runtime_admission_cost_before_and_after() {
         );
     }
 }
-
