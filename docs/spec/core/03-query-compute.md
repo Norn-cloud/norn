@@ -87,3 +87,9 @@ Present: `crates/norn-ir/src/{rule,jdm,view,metric}.rs`, `crates/norn-checker/sr
 `EXPR-STRUCTURAL-SUM-1`: `norn-expr` recognizes a bounded AST equality of one direct `self` property to the sum of 2–64 distinct direct properties. Parentheses and literal member notation retain their AST meaning. Coefficients, subtraction, repeated terms, the total on the right, conditionals and other reads return no shape; malformed or over-budget source returns an expression error. Extraction grants no type, unit, scope, additivity or conservation authority: the consuming checker must establish those independently.
 
 Named scenarios: `structural_sum_accepts_parentheses_and_literal_members`, `structural_sum_refuses_other_operations_and_reads`, `structural_sum_bounds_and_malformed_source_fail_closed`, `structural_sum_preserves_generated_terms`. Evidence is structural and sampled, not algebraic proof.
+
+## Structural conservation evidence
+
+**METRIC-LAW-EVIDENCE-1:** the checker extracts `self.total == self.a + self.b + ...` through norn-expr's bounded ZEN AST helper only after ordinary law-set admission. Evidence requires an exact selected law root, always/error semantics, no activation condition, timing, lifecycle-state or commitment selector. It retains the complete law envelope's canonical Norn1 digest and the ordered distinct terms. Both subject and object scope must cover a consuming effective type. This structural evidence does not itself authorize aggregation or change property contracts; quantity compatibility and aggregation admission remain separate checks.
+
+Named scenarios: `admitted_conservation_retains_terms_scope_and_entire_envelope_pin`, `conditional_advisory_non_always_and_other_root_supply_no_evidence`, `nonlinear_or_repeated_terms_supply_no_evidence`, `invalid_law_refuses_before_evidence_is_returned`, and generated `law_evidence_pins_are_independent_of_artifact_order`.
