@@ -93,19 +93,21 @@ def main():
         (directory / "mutant.json").write_text(json.dumps(declarations(law, props, False)))
         numeric = [f for f in fields if props.get(f) != "text"]
         try:
-            expected = states(law["expression"], numeric, step)
-        except (NameError, TypeError):
-            expected = 0
+            expected, computed = states(law["expression"], numeric, step), True
+        except (NameError, TypeError, SyntaxError):
+            # The driver needs an integer; 0 is a placeholder, reported as "not computed".
+            expected, computed = 0, False
         profile = {"profile": "norn.bench.one-create/1", "action": "bench.create.action", "identity": "sample",
                    "inputs": {f: [str(BOUND[0]), str(BOUND[1])] for f in numeric}, "seed": 0,
                    "expectedStates": expected, "exclusions": {"authorization": "pre-authorized; outside profile"}}
+        reported = expected if computed else "not computed"
         (directory / "bounds.json").write_text(json.dumps(profile))
         try:
             run = subprocess.run([sys.executable, "scripts/run-generated-proofs.py", binary, str(directory / "original.json"),
                                   str(directory / "mutant.json"), str(work / "base.json"), str(directory / "bounds.json"),
                                   str(directory / "jobs"), tools], capture_output=True, text=True, timeout=500, check=False)
         except subprocess.TimeoutExpired:
-            print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": None, "expectedStates": expected,
+            print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": None, "expectedStates": reported,
                                                 "report": None, "stderr": "proof driver timed out"}), flush=True)
             continue
         report = None
@@ -115,7 +117,7 @@ def main():
                 break
             except json.JSONDecodeError:
                 continue
-        print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": run.returncode, "expectedStates": expected,
+        print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": run.returncode, "expectedStates": reported,
                                             "report": report, "stderr": run.stderr[-400:] if report is None else ""}), flush=True)
 
 
