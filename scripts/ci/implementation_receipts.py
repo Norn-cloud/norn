@@ -69,9 +69,9 @@ FSTAR_META = re.compile(r"%splice|#lang-|\b(?:by|splice|set_options|Tactics|Refl
 KANI_SUCCESS = "1 successfully verified harnesses, 0 failures, 1 total."
 KANI_FAILURE = "0 successfully verified harnesses, 1 failures, 1 total."
 HAX_TOOLCHAIN = "nightly-2025-11-08-x86_64-unknown-linux-gnu"
-# Library escape hatches (magic, unsafe_coerce, admitP) prove anything without
-# appearing as a local axiom.
-FSTAR_HOLE = re.compile(r"\b(?:admit|admitP|assume|axiom|val|magic|unsafe_coerce|"
+# Library escape hatches prove anything without a local axiom: the unsound
+# Prims values of the pinned F* (_assume, admit, magic, unsafe_coerce) and admitP.
+FSTAR_HOLE = re.compile(r"\b(?:admit|admitP|assume|_assume|axiom|val|magic|unsafe_coerce|"
                         r"admit_smt_query|admit_smt_queries)\b")
 EXTRACTION_FIELDS = {"package", "items", "module", "proofRoot", "models", "proofs"}
 # Candidate files that could make cargo execute candidate-chosen programs.
