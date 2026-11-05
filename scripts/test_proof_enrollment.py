@@ -23,46 +23,6 @@ class EnrollmentTests(unittest.TestCase):
         self.coverage = coverage_manifest.load()
         self.gates = json.loads((ROOT / "verification/coverage-v1/promoted-gates.json").read_text())
 
-    def test_implementation_mutation_gate_is_required(self):
-        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        claim = copy.deepcopy(next(c for s in self.coverage["subsystems"]
-                                   for c in s["obligationClaims"] if module.kani_implementation_claim(c)))
-        for field in ("correspondenceMutationGate", "correspondenceMutations"):
-            candidate = copy.deepcopy(claim)
-            del candidate[field]
-            with self.subTest(field=field), self.assertRaises(module.InvalidCoverage):
-                module.validate_claim_evidence_shape("assurance-certificates", claim["id"], candidate)
-
-    def test_extracted_implementation_theorem_keeps_its_existing_gates(self):
-        spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        claim = next(c for s in self.coverage["subsystems"] for c in s["obligationClaims"]
-                     if c["id"] == "INV-ART-DIRECT-WRITE-PREDICATE")
-        self.assertFalse(module.kani_implementation_claim(claim))
-        module.validate_claim_evidence_shape("artifact-governance", claim["id"], claim)
-
-    def test_mutation_inventory_requires_selected_harness_and_failed_verdict(self):
-        spec = importlib.util.spec_from_file_location("mutation_gate", ROOT / "verification/implementation-v1/check_mutations.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        name = "integer_negation_correspondence"
-        output = (f"Checking harness {name}...\nVERIFICATION:- FAILED\n"
-                  "Complete - 0 successfully verified harnesses, 1 failures, 1 total.\n")
-        result = subprocess.CompletedProcess([], 1, output, "")
-        module.check_inventory(result, name, False)
-        for candidate in (output.replace(name, "other"), output + output,
-                          output.replace("FAILED", "SUCCESSFUL"), "", output.replace("Complete -", "Absent -")):
-            with self.subTest(output=candidate), self.assertRaises(RuntimeError):
-                module.check_inventory(subprocess.CompletedProcess([], 1, candidate, ""), name, False)
-        # Covers both disconnected proof canaries: a successful mutant is never evidence.
-        success = (f"Checking harness {name}...\nVERIFICATION:- SUCCESSFUL\n"
-                   "Complete - 1 successfully verified harnesses, 0 failures, 1 total.\n")
-        with self.assertRaises(RuntimeError):
-            module.check_inventory(subprocess.CompletedProcess([], 0, success, ""), name, False)
-
     def _validator(self):
         """Load a fresh copy of the coverage validator module."""
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
@@ -74,141 +34,46 @@ class EnrollmentTests(unittest.TestCase):
         """Return (subsystem, claim) for an actual manifest claim."""
         return next((s, c) for s in self.coverage["subsystems"] for c in s["obligationClaims"] if c["id"] == claim_id)
 
-    def _bindings(self, module, subsystems=None, gates=None, runner=None):
-        """Run the global binding check with optional mutated inputs."""
-        module.validate_implementation_bindings(
-            self.coverage["subsystems"] if subsystems is None else subsystems,
-            self.gates["gates"] if gates is None else gates,
-            (ROOT / "scripts/verify-promoted-subsystems.sh").read_text() if runner is None else runner)
-
-    def test_regression_a_unused_production_import_with_local_copy_is_rejected_by_mutation_gate(self):
-        """(a) A harness importing production but proving a local copy passes static checks;
-        the wired mutation gate must reject it. The fake Kani verifies a harness unless its proof
-        reaches the mutated production module, which is what real Kani does on these sources."""
-        spec = importlib.util.spec_from_file_location("mutation_gate", ROOT / "verification/implementation-v1/check_mutations.py")
-        gate = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gate)
-        _, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
-        production = (ROOT / original["correspondenceSource"]).read_text()
-
-        def fake_kani(argv, cwd, **_):
-            """Simulate Kani: fail only when the proof reaches mutated production."""
-            work = Path(cwd)
-            harness = (work / argv[-1]).read_text()
-            body = harness[harness.index("#[kani::proof]"):]
-            mutated = (work / original["correspondenceSource"]).read_text() != production
-            fails = mutated and "exact_rational::Rational" in body
-            name = argv[argv.index("--harness") + 1]
-            verdict, summary = (("FAILED", "0 successfully verified harnesses, 1 failures, 1 total.") if fails
-                                else ("SUCCESSFUL", "1 successfully verified harnesses, 0 failures, 1 total."))
-            return subprocess.CompletedProcess(argv, 1 if fails else 0,
-                                               f"Checking harness {name}...\nVERIFICATION:- {verdict}\nComplete - {summary}\n", "")
-
-        with mock.patch.object(gate.subprocess, "run", side_effect=fake_kani):
-            for order in (original["correspondenceMutations"], list(reversed(original["correspondenceMutations"]))):
-                with self.subTest(first=order[0]["name"]):
-                    claim = copy.deepcopy(original)
-                    claim["correspondenceMutations"] = order
-                    gate.check_claim(claim)
-                    # Both disconnected canaries are rejected, whatever mutation is listed first.
-                    gate.regressions(claim)
-        # The canaries run only if the promoted mutation gate passes --regressions.
+    def test_lexical_implementation_classification_is_deleted(self):
+        """D43: no command or script text decides an implementation claim's kind."""
         module = self._validator()
-        gates = copy.deepcopy(self.gates["gates"])
-        mutation = next(g for g in gates if g["id"] == original["correspondenceMutationGate"])
-        mutation["command"] = mutation["command"].replace(" --regressions", "")
-        with self.assertRaisesRegex(module.InvalidCoverage, "correspondence-mutation gate missing or invalid"):
-            self._bindings(module, gates=gates)
+        for name in ("implementation_kind", "command_invokes_kani", "repository_script", "extraction_command",
+                     "validate_implementation_bindings", "require_wired", "KANI_WORD", "EXTRACTOR_WORD"):
+            self.assertFalse(hasattr(module, name), name)
 
-    def test_regression_b_kani_command_cannot_swap_harness_for_fstar_theorem(self):
-        """(b) The kind comes from the executed argv: a Kani command stays a Kani claim."""
+    def test_implementation_claims_carry_the_fields_their_wrapper_reads(self):
         module = self._validator()
-        subsystem, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
-        fstar = "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst"
-        for drop_mutations in (False, True):
-            with self.subTest(drop_mutations=drop_mutations):
-                claim = copy.deepcopy(original)
-                entry = claim["evidence"]["proof"][0]
-                entry["artifact"] = fstar
-                entry["selectors"] = ["theorem:direct_artifact_write_truth_table"]
-                if drop_mutations:
-                    for field in module.KANI_CLAIM_FIELDS:
-                        del claim[field]
-                self.assertEqual(module.implementation_kind(claim), "kani")
-                with self.assertRaises(module.InvalidCoverage):
-                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
-        # An extraction exemption is unreachable from a Kani command.
-        claim = copy.deepcopy(original)
-        claim["extractionBinding"] = {"gate": "artifact-governance-rust-extraction",
-                                      "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"}
-        with self.assertRaisesRegex(module.InvalidCoverage, "cannot use an extraction exemption"):
-            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
-        # Kani hidden behind env, cargo, a path or a shell word is still Kani.
-        for command in ("env A=b cargo kani --harness x f.rs", "/opt/kani/bin/cargo-kani f.rs",
-                        "sh -c 'kani f.rs'", "target/bin/kani f.rs"):
-            with self.subTest(command=command):
-                self.assertTrue(module.command_invokes_kani(command))
-        self.assertFalse(module.command_invokes_kani("scripts/verify-artifact-governance-extraction.sh"))
+        kani_subsystem, kani = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        extraction_subsystem, extraction = self._claim("INV-ART-DIRECT-WRITE-PREDICATE")
+        module.validate_claim_evidence_shape(kani_subsystem["id"], kani["id"], kani)
+        module.validate_claim_evidence_shape(extraction_subsystem["id"], extraction["id"], extraction)
+        no_mutations = copy.deepcopy(kani)
+        del no_mutations["correspondenceMutations"]
+        # Kani behind an extraction binding: the extraction wrapper refuses harness evidence.
+        disguised = copy.deepcopy(kani) | {"extractionBinding": extraction["extractionBinding"]}
+        # An F* theorem without a binding is a Kani claim, so it still needs a harness and mutations.
+        unbound = copy.deepcopy(extraction)
+        del unbound["extractionBinding"]
+        # Round 8: a gate script that only names the tools gains nothing; untyped bindings refuse.
+        untyped = copy.deepcopy(extraction) | {"extractionBinding": {
+            "gate": "artifact-governance-rust-extraction",
+            "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"}}
+        for label, subsystem, claim, message in (
+                ("no-mutations", kani_subsystem, no_mutations, "mutations"),
+                ("disguised", kani_subsystem, disguised, "theorem and predicate evidence only"),
+                ("unbound", extraction_subsystem, unbound, "harness and predicate evidence only"),
+                ("untyped", extraction_subsystem, untyped, "extractionBinding fields are exact")):
+            with self.subTest(case=label), self.assertRaisesRegex(module.InvalidCoverage, message):
+                module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
 
-    def test_regression_c_extraction_exemption_requires_a_real_wired_extraction_gate(self):
-        """(c) Nonexistent, non-extraction or unwired bound gates are refused."""
-        module = self._validator()
-        self._bindings(module)
-        subsystem, original = self._claim("INV-ART-DIRECT-WRITE-PREDICATE")
-        module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
-        self.assertEqual(module.implementation_kind(original), "extraction")
-        runner = (ROOT / "scripts/verify-promoted-subsystems.sh").read_text()
-        cases = {
-            "nonexistent": ({"gate": "no-such-extraction"}, None, "names no promoted gate"),
-            "non-extraction": ({"gate": "artifact-governance-lean"}, None, "not an extraction proof gate"),
-            "kani-gate": ({"gate": "integer-negation-kani"}, None, "not an extraction proof gate"),
-            "unwired": ({}, runner.replace("  command \\\n  scripts/verify-artifact-governance-extraction.sh\n",
-                                           "  command \\\n  true\n"), "not wired into the promoted runner"),
-            "not-its-result": ({"result": "target/verification-results/other.fst"}, None, "generated result"),
-        }
-        for name, (binding, mutated_runner, message) in cases.items():
-            with self.subTest(case=name):
-                subsystems = copy.deepcopy(self.coverage["subsystems"])
-                claim = next(c for s in subsystems for c in s["obligationClaims"] if c["id"] == original["id"])
-                claim["extractionBinding"].update(binding)
-                with self.assertRaisesRegex(module.InvalidCoverage, message):
-                    self._bindings(module, subsystems=subsystems, runner=mutated_runner)
-        self.assertIn("not wired", cases["unwired"][2])
-        self.assertNotEqual(cases["unwired"][1], runner)
-        # Without a typed binding, or with an untyped one, the exemption refuses.
-        for binding in (None, "artifact-governance-rust-extraction", {"gate": "artifact-governance-rust-extraction"}):
-            with self.subTest(binding=binding):
-                claim = copy.deepcopy(original)
-                if binding is None:
-                    del claim["extractionBinding"]
-                else:
-                    claim["extractionBinding"] = binding
-                with self.assertRaises(module.InvalidCoverage):
-                    module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
-        # A script that is not an extractor cannot be exempted.
-        self.assertFalse(module.extraction_command("scripts/verify-promoted-subsystems.sh"))
-        self.assertTrue(module.extraction_command("scripts/verify-artifact-governance-extraction.sh"))
-
-    def test_regression_d_kani_claim_requires_its_wired_mutation_gate(self):
-        """(d) A Kani claim without a valid, wired mutation gate is refused."""
-        module = self._validator()
-        subsystem, original = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
-        # Relabeling the harness selector no longer skips the mutation requirement.
-        claim = copy.deepcopy(original)
-        for field in module.KANI_CLAIM_FIELDS:
-            del claim[field]
-        claim["evidence"]["proof"][0]["selectors"] = ["predicate:integer_negation_correspondence"]
-        with self.assertRaises(module.InvalidCoverage):
-            module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
-        runner = (ROOT / "scripts/verify-promoted-subsystems.sh").read_text()
-        gates = [g for g in self.gates["gates"] if g["id"] != original["correspondenceMutationGate"]]
-        with self.assertRaisesRegex(module.InvalidCoverage, "correspondence-mutation gate missing or invalid"):
-            self._bindings(module, gates=gates)
-        unwired = runner.replace("  python3 verification/implementation-v1/check_mutations.py --claim "
-                                 "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE --regressions\n", "  true\n")
-        self.assertNotEqual(unwired, runner)
-        with self.assertRaisesRegex(module.InvalidCoverage, "not wired into the promoted runner"):
-            self._bindings(module, runner=unwired)
+    def test_implementation_claims_are_admitted_only_from_receipts(self):
+        """Without base-wrapper receipts, every actual implementation claim is refused."""
+        receipts = self._validator().implementation_receipts
+        with tempfile.TemporaryDirectory() as directory:
+            errors = receipts.verify(ROOT, Path(directory), {})
+        claims = sorted(receipts.implementation_claims(ROOT))
+        self.assertEqual(claims, ["INV-ART-DIRECT-WRITE-PREDICATE", "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"])
+        self.assertEqual(errors, [f"{claim}: no receipt from the base-owned wrapper" for claim in claims])
 
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
@@ -301,7 +166,7 @@ class EnrollmentTests(unittest.TestCase):
         subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
         original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
         module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
-        for mutation in ("no-proof", "no-predicate", "not-kani", "checks-disabled", "no-harness", "shell-wrapper", "not-annotated"):
+        for mutation in ("no-proof", "no-predicate", "not-annotated"):
             with self.subTest(mutation=mutation):
                 claim = copy.deepcopy(original)
                 evidence = claim["evidence"]["proof"]
@@ -309,14 +174,6 @@ class EnrollmentTests(unittest.TestCase):
                     evidence.pop(0)
                 elif mutation == "no-predicate":
                     evidence.pop(1)
-                elif mutation == "not-kani":
-                    evidence[0]["command"] = "true"
-                elif mutation == "checks-disabled":
-                    evidence[0]["command"] += " --no-unwinding-checks"
-                elif mutation == "no-harness":
-                    evidence[0]["command"] = evidence[0]["command"].replace(" --harness integer_negation_correspondence", "")
-                elif mutation == "shell-wrapper":
-                    evidence[0]["command"] = "sh -c true " + evidence[0]["command"]
                 else:
                     evidence[0]["command"] = evidence[0]["command"].replace(evidence[0]["artifact"], "crates/norn-checker/src/exact_rational.rs").replace("--harness integer_negation_correspondence", "--harness checked_neg")
                     evidence[0]["artifact"] = "crates/norn-checker/src/exact_rational.rs"

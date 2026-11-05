@@ -664,10 +664,6 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
-run_gate full integer-negation-mutations \
-  "python3 verification/implementation-v1/check_mutations.py --claim INV-CERT-INTEGER-NEGATION-CORRESPONDENCE --regressions" command \
-  python3 verification/implementation-v1/check_mutations.py --claim INV-CERT-INTEGER-NEGATION-CORRESPONDENCE --regressions
-
 run_gate full integer-negation-kani \
   "env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse --harness integer_negation_correspondence verification/implementation-v1/rational_neg_kani.rs" \
   command env RUSTFLAGS=--edition=2024 RUSTUP_HOME=target/verification-tools/rustup \

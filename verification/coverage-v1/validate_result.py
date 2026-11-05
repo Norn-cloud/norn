@@ -337,26 +337,6 @@ def main() -> int:
                                 f"{entry['artifact']} {selector}"
                             )
 
-    # Typed implementation bindings must name gates that executed in this
-    # result, and an extraction exemption must content-address its gate's output.
-    executed_by_id = {gate["id"]: gate for gate in result["executedGates"]}
-    for subsystem in coverage_document["subsystems"]:
-        for obligation in subsystem["obligationClaims"]:
-            label = f"{subsystem['id']}.{obligation['id']}"
-            binding = obligation.get("extractionBinding")
-            if binding is not None:
-                gate = executed_by_id.get(binding["gate"])
-                if (gate is None or binding["result"] not in gate["generatedArtifacts"]
-                        or binding["result"] not in evidence_paths
-                        or any(entry["command"] != gate["command"]
-                               for entry in obligation["evidence"]["proof"])):
-                    fail(f"extraction binding did not execute with its result: {label}")
-            mutation_gate = obligation.get("correspondenceMutationGate")
-            if mutation_gate is not None:
-                if mutation_gate not in executed_by_id or not all(
-                        entry["command"] in executed_commands for entry in obligation["evidence"]["proof"]):
-                    fail(f"Kani correspondence or mutation gate did not execute: {label}")
-
     correspondence_count = sum(claim["productionCorrespondence"] for claim in result["claims"])
     print(
         f"verified passing result: {len(result['executedGates'])} gates, "

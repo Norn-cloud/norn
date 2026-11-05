@@ -18,7 +18,6 @@
       }
     },
     "correspondenceSource": "crates/norn-checker/src/exact_rational.rs",
-    "correspondenceMutationGate": "integer-negation-mutations",
     "correspondenceMutations": {
       "$entries": "obligationClaims.entry4d85a2211b9c9a6ae4e4cdddbf8dfd9ca983fb91a28a0ac38e8efa5019034b53.correspondenceMutations"
     }

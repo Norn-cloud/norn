@@ -306,9 +306,6 @@
                 "correspondenceSource": {
                   "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceSource"
                 },
-                "correspondenceMutationGate": {
-                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceMutationGate"
-                },
                 "correspondenceMutations": {
                   "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceMutations"
                 },
@@ -318,22 +315,16 @@
               },
               "dependentRequired": {
                 "correspondenceSource": [
-                  "correspondenceMutationGate",
-                  "correspondenceMutations"
-                ],
-                "correspondenceMutationGate": [
-                  "correspondenceSource",
                   "correspondenceMutations"
                 ],
                 "correspondenceMutations": [
-                  "correspondenceSource",
-                  "correspondenceMutationGate"
+                  "correspondenceSource"
                 ]
               },
               "not": {
                 "required": [
                   "extractionBinding",
-                  "correspondenceMutationGate"
+                  "correspondenceSource"
                 ]
               }
             }
@@ -550,22 +541,17 @@
       }
     },
     "kaniCorrespondence": {
-      "description": "Typed Kani implementation-proof binding. Required exactly when a proof command executes Kani.",
+      "description": "Typed Kani implementation-proof fields read by the base-owned receipt wrapper (scripts/ci/implementation_receipts.py).",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "correspondenceSource",
-        "correspondenceMutationGate",
         "correspondenceMutations"
       ],
       "properties": {
         "correspondenceSource": {
           "type": "string",
           "pattern": "^crates/[^\\s]+\\.rs$"
-        },
-        "correspondenceMutationGate": {
-          "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]*$"
         },
         "correspondenceMutations": {
           "type": "array",
@@ -577,21 +563,52 @@
       }
     },
     "extractionBinding": {
-      "description": "Typed extraction exemption: the promoted extraction gate that executes the proof and the generated result it must produce.",
+      "description": "Typed hax/F* extraction read by the base-owned receipt wrapper (scripts/ci/implementation_receipts.py), which builds every argv from these fields.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "gate",
-        "result"
+        "package",
+        "items",
+        "module",
+        "proofRoot",
+        "models",
+        "proofs"
       ],
       "properties": {
-        "gate": {
+        "package": {
           "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]*$"
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
         },
-        "result": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$"
+          }
+        },
+        "module": {
           "type": "string",
-          "pattern": "^target/verification-results/[^\\s]+$"
+          "pattern": "^[A-Z][A-Za-z0-9_]*\\.fst$"
+        },
+        "proofRoot": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.]*\\.fst$"
+          }
+        },
+        "proofs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.]*\\.fst$"
+          }
         }
       }
     }

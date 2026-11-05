@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import re
 import shlex
@@ -754,216 +755,32 @@ def validate_selector_gate_order(
                 )
 
 
-# An implementation proof's kind is derived from the argv that will execute,
-# never from selector labels. Tokens follow the runner's own rule (`kani` is an
-# argv word), widened to `cargo-kani` and any path or embedded shell word that
-# names the tool, plus repository scripts that invoke it.
-KANI_WORD = re.compile(r"(?<![\w-])(?:cargo-)?kani(?![\w-])")
-# Extraction gates translate production Rust and check the translation.
-EXTRACTOR_WORD = re.compile(r"(?<![\w-])(?:cargo-hax|aeneas|charon)(?![\w-])")
-EXTRACTION_CHECKER_WORD = re.compile(r"(?<![\w-])(?:fstar\.exe|lean|lake)(?![\w-])")
-ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
-IMPLEMENTATION_KINDS = ("kani", "extraction")
-KANI_CLAIM_FIELDS = ("correspondenceSource", "correspondenceMutationGate", "correspondenceMutations")
-EXTRACTION_CLAIM_FIELDS = ("extractionBinding",)
-CLAIM_SCHEMA_DEFS = ROOT / "verification/coverage-v1/result.schema.json"
+# D43: an implementation_proved claim is admitted only from a receipt that the
+# base-owned wrapper (scripts/ci/implementation_receipts.py) writes in the
+# trusted implementation-receipts job. Its kind is the wrapper that ran it,
+# never a reading of command or script text. This validator checks only the
+# typed fields that wrapper reads, with the wrapper's own planning functions.
+_RECEIPTS_SPEC = importlib.util.spec_from_file_location(
+    "implementation_receipts", ROOT / "scripts/ci/implementation_receipts.py")
+implementation_receipts = importlib.util.module_from_spec(_RECEIPTS_SPEC)
+_RECEIPTS_SPEC.loader.exec_module(implementation_receipts)
+IMPLEMENTATION_FIELDS = ("correspondenceSource", "correspondenceMutations", "extractionBinding")
 
 
-def split_env_prefix(arguments: list[str]) -> tuple[list[str], list[str]]:
-    """Split an `env NAME=value ...` prefix from the executed argv."""
-    if not arguments or arguments[0] != "env":
-        return [], arguments
-    index = 1
-    while index < len(arguments) and ENV_ASSIGNMENT.fullmatch(arguments[index]):
-        index += 1
-    return arguments[:index], arguments[index:]
-
-
-def repository_script(executable: str) -> str | None:
-    """Return a repository script's text with shell comments removed."""
-    path = ROOT / executable
-    if Path(executable).is_absolute() or ".." in Path(executable).parts or not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8", errors="replace")
-    return re.sub(r"(?m)(^|\s)#.*$", r"\1", text)
-
-
-def command_invokes_kani(command: str) -> bool:
-    """True when the argv the gate executes runs Kani, whatever its labels say."""
-    arguments = shlex.split(command)
-    if any(KANI_WORD.search(argument) for argument in arguments):
-        return True
-    _, executed = split_env_prefix(arguments)
-    script = repository_script(executed[0]) if executed else None
-    return script is not None and KANI_WORD.search(script) is not None
-
-
-def implementation_kind(claim: dict[str, Any]) -> str | None:
-    """Derive the implementation-proof kind from the proof commands.
-
-    Any proof command that invokes Kani makes the claim a Kani claim; no
-    extraction exemption is reachable from it. Every other implementation
-    proof is an extraction claim and must carry a typed extractionBinding.
-    """
-    if claim.get("proof") != "implementation_proved":
-        return None
-    entries = claim.get("evidence", {}).get("proof", [])
-    if any(isinstance(entry, dict) and isinstance(entry.get("command"), str)
-           and command_invokes_kani(entry["command"]) for entry in entries):
-        return "kani"
-    return "extraction"
-
-
-def kani_implementation_claim(claim: dict[str, Any]) -> bool:
-    """True when the claim's executed proof command runs Kani."""
-    return implementation_kind(claim) == "kani"
-
-
-def claim_schema_validator(definition: str) -> jsonschema.Draft202012Validator:
-    """Validate one typed claim definition from the result schema's $defs."""
-    schema = load(CLAIM_SCHEMA_DEFS)
-    return jsonschema.Draft202012Validator({"$defs": schema["$defs"], "$ref": f"#/$defs/{definition}"})
-
-
-def require_schema(definition: str, value: Any, message: str) -> None:
-    """Refuse `value` unless it matches the named typed claim definition."""
-    errors = sorted(claim_schema_validator(definition).iter_errors(value), key=str)
-    require(not errors, f"{message}: {errors[0].message if errors else ''}")
-
-
-def validate_implementation_kind(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
-    """Check a claim's evidence and typed fields against its derived kind."""
-    kind = implementation_kind(claim)
+def validate_implementation_claim(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
+    """Require the typed fields the claim's receipt wrapper will read."""
     label = f"{subsystem_id}.{claim_id}"
-    if kind is None:
-        present = [field for field in (*KANI_CLAIM_FIELDS, *EXTRACTION_CLAIM_FIELDS) if field in claim]
+    if claim.get("proof") != "implementation_proved":
+        present = [field for field in IMPLEMENTATION_FIELDS if field in claim]
         require(not present, f"{label}: correspondence fields require an implementation proof: {present}")
         return
-    entries = claim["evidence"]["proof"]
-    selectors = [(entry, selector) for entry in entries for selector in entry["selectors"]]
-    kinds = {selector.split(":", 1)[0] for _, selector in selectors}
-    if kind == "kani":
-        require("extractionBinding" not in claim, f"{label}: a Kani command cannot use an extraction exemption")
-        require(all(command_invokes_kani(entry["command"]) for entry in entries)
-                and len({entry["command"] for entry in entries}) == 1,
-                f"{label}: Kani claim evidence must all name the one executed Kani command")
-        require(kinds <= {"harness", "predicate"} and {"harness", "predicate"} <= kinds,
-                f"{label}: Kani claim needs harness and predicate evidence only")
-        harnesses = [selector.split(":", 1)[1] for _, selector in selectors if selector.startswith("harness:")]
-        arguments = shlex.split(entries[0]["command"])
-        selected = [arguments[i + 1] for i, argument in enumerate(arguments[:-1]) if argument == "--harness"]
-        require(len(harnesses) == 1 and selected == harnesses,
-                f"{label}: Kani harness evidence must match the command's single --harness")
-        require(all(field in claim for field in KANI_CLAIM_FIELDS),
-                f"{label}: implementation proof needs correspondenceMutationGate")
-        require_schema("kaniCorrespondence", {field: claim[field] for field in KANI_CLAIM_FIELDS},
-                       f"{label}: nonempty unique production mutations required")
-        mutations = claim["correspondenceMutations"]
-        require(len({m["name"] for m in mutations}) == len(mutations)
-                and all(m["before"] != m["after"] for m in mutations),
-                f"{label}: nonempty unique production mutations required")
-    else:
-        require(not any(field in claim for field in KANI_CLAIM_FIELDS),
-                f"{label}: Kani correspondence fields on a non-Kani command")
-        require("extractionBinding" in claim, f"{label}: extraction exemption needs a typed extractionBinding")
-        require_schema("extractionBinding", claim["extractionBinding"], f"{label}: invalid extractionBinding")
-        require(kinds <= {"theorem", "predicate"} and {"theorem", "predicate"} <= kinds,
-                f"{label}: extraction claim needs theorem and predicate evidence only")
-
-
-def runner_invocation(runner_text: str, gate_id: str) -> tuple[str, str, list[str]] | None:
-    """Return (description, evidence kind, argv) of a run_gate registration."""
-    lines = runner_text.splitlines()
-    starts = [i for i, line in enumerate(lines) if re.fullmatch(
-        r"run_gate (?:fast|full) " + re.escape(gate_id) + r"(?: .*)?", line)]
-    if len(starts) != 1:
-        return None
-    block = []
-    for line in lines[starts[0]:]:
-        block.append(line[:-1] if line.endswith("\\") else line)
-        if not line.endswith("\\"):
-            break
-    tokens = shlex.split(" ".join(block))
-    if len(tokens) < 6:
-        return None
-    return tokens[3], tokens[4], tokens[5:]
-
-
-def require_wired(runner_text: str, gate: dict[str, Any], label: str, *, kani_target: bool = False) -> None:
-    """Require the runner to register `gate` with exactly its declared argv."""
-    invocation = runner_invocation(runner_text, gate["id"])
-    argv = None
-    if invocation is not None:
-        argv = invocation[2]
-        if kani_target and "--target-dir" in argv:
-            index = argv.index("--target-dir")
-            argv = argv[:index] + argv[index + 2:]
-    require(invocation is not None and invocation[0] == gate["command"]
-            and invocation[1] == gate["evidenceKind"] and argv == shlex.split(gate["command"]),
-            f"{label}: gate {gate['id']} is not wired into the promoted runner with its command")
-
-
-def extraction_command(command: str) -> bool:
-    """An extraction gate is one repository script that extracts and checks."""
-    arguments = shlex.split(command)
-    if len(arguments) != 1 or not arguments[0].startswith("scripts/"):
-        return False
-    script = repository_script(arguments[0])
-    return (script is not None
-            and re.search(r"(?m)^set -euo pipefail$", script) is not None
-            and EXTRACTOR_WORD.search(script) is not None
-            and EXTRACTION_CHECKER_WORD.search(script) is not None
-            and KANI_WORD.search(script) is None)
-
-
-def validate_implementation_bindings(
-    subsystems: list[dict[str, Any]], gates: list[dict[str, Any]], runner_text: str,
-) -> None:
-    """Bind every implementation claim to promoted, wired, executed gates."""
-    by_id: dict[str, list[dict[str, Any]]] = {}
-    for gate in gates:
-        by_id.setdefault(gate.get("id"), []).append(gate)
-    for subsystem in subsystems:
-        for claim in subsystem["obligationClaims"]:
-            kind = implementation_kind(claim)
-            if kind is None:
-                continue
-            label = f"{subsystem['id']}.{claim['id']}"
-            proof_classification = {"subsystem": subsystem["id"], "layer": "proof"}
-            entries = claim["evidence"]["proof"]
-            if kind == "kani":
-                mutation_gate = by_id.get(claim["correspondenceMutationGate"], [])
-                require(len(mutation_gate) == 1
-                        and mutation_gate[0]["profile"] == "full"
-                        and mutation_gate[0]["evidenceKind"] == "command"
-                        and mutation_gate[0]["command"] == (
-                            "python3 verification/implementation-v1/check_mutations.py --claim "
-                            + claim["id"] + " --regressions")
-                        and proof_classification in mutation_gate[0]["classifications"],
-                        f"{label}: required correspondence-mutation gate missing or invalid")
-                require_wired(runner_text, mutation_gate[0], label)
-                proof_gate = [g for g in gates if g["command"] == entries[0]["command"]]
-                require(len(proof_gate) == 1 and proof_gate[0]["role"] == "claim-evidence"
-                        and proof_gate[0]["profile"] == "full"
-                        and proof_classification in proof_gate[0]["classifications"],
-                        f"{label}: Kani command must be exactly one promoted claim-evidence gate")
-                require_wired(runner_text, proof_gate[0], label, kani_target=True)
-            else:
-                binding = claim["extractionBinding"]
-                gate = by_id.get(binding["gate"], [])
-                require(len(gate) == 1, f"{label}: extraction binding names no promoted gate {binding['gate']!r}")
-                gate = gate[0]
-                require(gate["role"] == "claim-evidence" and gate["profile"] == "full"
-                        and gate["evidenceKind"] == "command"
-                        and proof_classification in gate["classifications"]
-                        and extraction_command(gate["command"]),
-                        f"{label}: extraction binding gate {gate['id']} is not an extraction proof gate")
-                require(all(entry["command"] == gate["command"] for entry in entries),
-                        f"{label}: every extraction proof entry must execute the bound gate")
-                require(binding["result"] in gate["generatedArtifacts"]
-                        and any(entry["artifact"] == binding["result"] for entry in entries),
-                        f"{label}: extraction binding must cite the bound gate's generated result")
-                require_wired(runner_text, gate, label)
+    try:
+        if implementation_receipts.kind_of(claim) == "kani":
+            implementation_receipts.kani_plan(claim)
+        else:
+            implementation_receipts.extraction_plan(claim, "target/implementation-receipts")
+    except implementation_receipts.Refused as error:
+        raise InvalidCoverage(f"{label}: {error}") from error
 
 
 def validate_claim_evidence_shape(
@@ -1034,9 +851,6 @@ def validate_claim_evidence_shape(
                 if (layer_name, status, selector_kind) == ("proof", "implementation_proved", "harness"):
                     harness = ROOT / artifact
                     name = selector.split(":", 1)[1]
-                    command_args = shlex.split(command)
-                    kani_index = command_args.index("kani") if "kani" in command_args else len(command_args)
-                    prefix = command_args[:kani_index]
                     declaration = re.search(
                         r"((?:#\[[^\]]+\]\s*)+)(?:pub\s+)?fn\s+" + re.escape(name) + r"\b",
                         strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
@@ -1104,20 +918,10 @@ def validate_claim_evidence_shape(
                         f"{subsystem_id}.{claim_id}: harness must import the declared correspondenceSource with top-level #[path]",
                     )
                     require(
-                        not prefix or (prefix[0] == "env" and all(
-                            re.fullmatch(r"(?:RUSTFLAGS|RUSTUP_HOME|KANI_HOME)=[^\s]+", arg)
-                            for arg in prefix[1:]
-                        )),
-                        f"{subsystem_id}.{claim_id}: implementation command must execute Kani directly",
-                    )
-                    require(
-                        harness.suffix == ".rs" and harness.is_file()
-                        and re.search(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b", strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))) is not None
-                        and "kani" in shlex.split(command)
-                        and shlex.split(command)[shlex.split(command).index("kani"):] == [
-                            "kani", "--fail-fast", "--output-format", "terse", "--harness", name, artifact
-                        ],
-                        f"{subsystem_id}.{claim_id}: implementation harness must be an executed Kani proof with safety checks",
+                        harness.suffix == ".rs" and re.search(
+                            r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b",
+                            harness_source) is not None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be a Kani proof",
                     )
                 observed_selector_kinds.add(selector_kind)
                 allowed_kinds = SELECTOR_KINDS_BY_STATUS.get((layer_name, status))
@@ -1144,7 +948,7 @@ def validate_claim_evidence_shape(
             f"requires selector kinds {sorted(required_kinds)}, got {sorted(observed_selector_kinds)}",
         )
 
-    validate_implementation_kind(subsystem_id, claim_id, claim)
+    validate_implementation_claim(subsystem_id, claim_id, claim)
 
 
 def validate(
@@ -1498,7 +1302,6 @@ def validate(
 
     gates = gate_manifest.get("gates")
     require(isinstance(gates, list) and gates, "promoted gate manifest gates must be non-empty")
-    validate_implementation_bindings(subsystems, gates, PROMOTED_RUNNER.read_text(encoding="utf-8"))
     gate_ids: set[str] = set()
     classified_commands: Counter[tuple[str, str, str]] = Counter()
     classified_results: Counter[tuple[str, str, str]] = Counter()
