@@ -4,7 +4,9 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::print_stdout,
     clippy::too_many_lines,
+    clippy::unwrap_in_result,
     missing_docs,
     reason = "benchmark driver"
 )]
