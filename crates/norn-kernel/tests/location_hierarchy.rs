@@ -1714,11 +1714,11 @@ fn obs_link_removal_only_seal_needs_no_link_defaults() {
 
 #[test]
 fn obs_link_retained_claim_cannot_supersede_a_fresh_claim() {
-    let (mut types, cell, base) = claim_fixture();
+    let (mut types, cell, mut fresh) = claim_fixture();
     types[0].links[0].cardinality.to = norn_ir::Multiplicity::Many;
     let mut cell = cell.with_types(types.clone());
     let catalog = norn_kernel::TypeCatalog::new(&types);
-    let held = claim_edge(&base, "other");
+    let held = claim_edge(&fresh, "other");
     cell.commit(CellCommit {
         links: vec![LinkWrite {
             key: held.clone(),
@@ -1730,7 +1730,6 @@ fn obs_link_retained_claim_cannot_supersede_a_fresh_claim() {
         ..CellCommit::empty()
     })
     .expect("edge the fresh claim keeps");
-    let mut fresh = base.clone();
     fresh.observation_id = "bundle:fresh".into();
     fresh.target.as_mut().expect("target").key = "other".into();
     // Retained first, naming the identity of a claim that does not exist yet.
