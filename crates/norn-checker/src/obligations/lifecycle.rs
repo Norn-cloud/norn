@@ -1,6 +1,8 @@
 //! PROOF-LIFECYCLE-1: append source-bound conditional chart goals; never solver evidence.
 /// Exact frozen input snapshots for transition consumers; no solver authority.
 pub mod finite;
+/// Complete law-filtered transition relations, without solver authority.
+pub mod graph;
 
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType};
