@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
-import { CircleCheck, CircleHelp, CircleX, ShieldCheck } from "lucide-react"
+import { useRouterState } from "@tanstack/react-router"
+import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { field, levelWords, scalar, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, levelWords, scalar, verdictWords } from "./lib/guarantees.ts"
 import { recordedTransport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 
@@ -95,6 +96,66 @@ function Document({ name, document }: { readonly name: string; readonly document
   )
 }
 
+type Scenario = NonNullable<Guarantees["goals"][number]["scenario"]>
+
+/** A scenario as a before → after picture: the record before the step, the writer that ran, and each value it wrote, verbatim. */
+function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
+  const before = scenario.states[0]
+  const after = scenario.states.at(-1)
+  return (
+    <div className="grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)]">
+      <div className="flex min-h-24 flex-col justify-center rounded-xl border border-dashed px-4 py-3 text-center">
+        <div className="text-meta text-muted-foreground">Before</div>
+        <div className="pt-1 font-medium">{before?.exists ? Object.entries(before.values).map(([name, value]) => `${field(name)} ${scalar(value)}`).join(" · ") : `No ${scenario.identity} yet`}</div>
+      </div>
+      <ArrowRight aria-label={`then ${scenario.writerArtifactId} runs`} className="mx-auto size-5 self-center text-muted-foreground max-sm:rotate-90" />
+      <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3">
+        <div className="text-meta text-muted-foreground">After</div>
+        <dl className="divide-y divide-destructive/15 pt-1">
+          {Object.entries(after?.values ?? {}).map(([name, value]) => (
+            <div key={name} className="flex items-baseline justify-between gap-3 py-1">
+              <dt className="text-meta text-muted-foreground">{field(name)}</dt>
+              <dd className="text-xl leading-tight font-light tracking-tight tabular-nums">{scalar(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  )
+}
+
+/** The proof story at a glance: the declared law holds on every eligible check; the broken copy is caught by a concrete case. */
+function Hero({ declared, broken }: { readonly declared: Guarantees; readonly broken: Guarantees | undefined }) {
+  const counterexample = broken?.goals.find(({ scenario }) => scenario?.kind === "counterexample")?.scenario
+  return (
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <section className="enter flex flex-col rounded-2xl border bg-card p-1.5">
+        <h2 className="flex h-9 items-center gap-2 px-2.5 text-sm font-medium"><ShieldCheck aria-hidden className="size-4 text-muted-foreground" />{TITLE.original}</h2>
+        <div className="flex flex-1 flex-col justify-between gap-6 rounded-xl border bg-surface-subtle px-5 py-5">
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-3">
+              <CircleCheck aria-hidden className="size-8 shrink-0 self-center text-success" />
+              <span className="text-[3.25rem] leading-none font-light tracking-[-0.03em] tabular-nums">{declared.discharged}<span className="text-muted-foreground"> of {declared.eligible}</span></span>
+            </div>
+            <div className="text-lg font-medium">checks proven</div>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · law <code className="text-meta text-foreground">{declared.lawId}</code>
+          </p>
+        </div>
+      </section>
+      {broken && counterexample && <section style={{ animationDelay: "90ms" }} className="enter flex flex-col rounded-2xl border bg-card p-1.5">
+        <h2 className="flex h-9 items-center gap-2 px-2.5 text-sm font-medium"><CircleX aria-hidden className="size-4 text-destructive" />A deliberately broken copy is caught</h2>
+        <div className="flex flex-1 flex-col gap-4 rounded-xl border bg-surface-subtle px-5 py-5">
+          <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the law:</p>
+          <BeforeAfter scenario={counterexample} />
+          <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
+        </div>
+      </section>}
+    </div>
+  )
+}
+
 /** The recorded guarantee documents, for the submenu island. */
 export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: recordedTransport.guarantees })
@@ -103,6 +164,10 @@ export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
 
 export function GuaranteesPage() {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: recordedTransport.guarantees })
+  const document = (name: string) => read.data?.find((entry) => entry.name === name)?.read.document
+  const declared = document("original")
+  // A submenu link to one document opens the details it sits in.
+  const hash = useRouterState({ select: (state) => state.location.hash })
   return (
     <section className="space-y-8">
       <div className="space-y-2">
@@ -111,7 +176,17 @@ export function GuaranteesPage() {
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
-      {read.data?.map(({ name, read: { document } }) => <Document key={name} name={name} document={document} />)}
+      {declared && <Hero declared={declared} broken={document("mutant")} />}
+      {read.data && (
+        <details key={hash} open={hash.startsWith("guarantee-")} className="group/details">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-4 transition-transform group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
+          </summary>
+          <div className="space-y-8 pt-6">
+            {read.data.map(({ name, read: { document } }) => <Document key={name} name={name} document={document} />)}
+          </div>
+        </details>
+      )}
     </section>
   )
 }
