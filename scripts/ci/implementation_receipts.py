@@ -431,9 +431,10 @@ def fstar_inputs_safe(path: Path) -> None:
             for flag, value in zip(words[::2], words[1::2])), f"{path.name}: F* option {argument!r} is not allowed")
     require(FSTAR_META.search(code) is None, f"{path.name}: F* meta-programs are not re-checked")
     # The pinned F* proves False through an inner let rec (FStarLang/FStar#4554,
-    # fixed after 2026.08.16), so only top-level recursion is re-checked.
-    require(all(m.start() == 0 or code[m.start() - 1] == "\n" for m in re.finditer(r"\blet\s+rec\b", code)),
-            f"{path.name}: an inner let rec is unsound in the pinned F*")
+    # fixed after 2026.08.16). Column position cannot tell an inner one from a
+    # top-level one, so no let rec is re-checked until the pin moves (#969).
+    require(re.search(r"\blet\s+rec\b", code) is None,
+            f"{path.name}: let rec is not re-checked with the pinned F* (FStarLang/FStar#4554)")
     require(not fstar_holes(path), f"{path.name}: proof hole")
 
 
@@ -441,7 +442,7 @@ def defines_once(module: Path, symbol: str) -> bool:
     """Whether `module` has exactly one top-level `let symbol`, ignoring comments and strings."""
     code = proof_holes().strip_comments_and_strings(module.read_text(encoding="utf-8"), line_marker="//",
                                                     block=("(*", "*)"))
-    return len(re.findall(rf"(?m)^let {re.escape(symbol)} ", code)) == 1
+    return len(re.findall(rf"(?m)^let (?:rec )?{re.escape(symbol)} ", code)) == 1
 
 
 def plain_path(root: Path, path: str) -> Path:
