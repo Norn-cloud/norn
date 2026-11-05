@@ -32,7 +32,7 @@ def fetch(path):
     if not path.exists():
         partial = path.with_suffix(".partial")
         try:
-            with urllib.request.urlopen(URL, timeout=60) as response, partial.open("wb") as out:
+            with urllib.request.urlopen(URL, timeout=60) as response, partial.open("xb") as out:
                 size = 0
                 while chunk := response.read(1024 * 1024):
                     size += len(chunk)
@@ -83,7 +83,7 @@ def profile(path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("fetch", "profile"))
-    parser.add_argument("path", type=Path, help="existing task scratch directory; never a repo path")
+    parser.add_argument("path", type=Path, help="data file path in a task scratch directory; never a repo path")
     args = parser.parse_args()
     if args.path.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
         parser.error("raw data must remain outside the source checkout")
