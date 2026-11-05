@@ -1,9 +1,7 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs"
-import { join } from "node:path"
 import alchemy from "alchemy"
 import { Vite } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { deployTarget, leakedSecrets } from "./deploy-target.ts"
+import { deployTarget, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -18,7 +16,9 @@ import { deployTarget, leakedSecrets } from "./deploy-target.ts"
 // records it in state. Alchemy only uploads dist.
 const target = deployTarget(process.env)
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
-const app = await alchemy("norn-studio", {
+// Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
+const APP = "norn-studio"
+const app = await alchemy(APP, {
   stage: target.stage,
   stateStore: (scope) => new FileSystemStateStore(scope, { rootDir: stateDir }),
 })
@@ -36,13 +36,11 @@ export const studio = await Vite("studio", {
 
 await app.finalize()
 
-// No credential from the environment may end up in state: fail the deploy if one does, naming only the variable.
-const files = !existsSync(stateDir) ? [] : (readdirSync(stateDir, { recursive: true, withFileTypes: true }) as import("node:fs").Dirent[])
-  .filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name))
-const leaks: Record<string, number> = {}
-for (const file of files) for (const [name, count] of Object.entries(leakedSecrets(readFileSync(file, "utf8"), process.env))) leaks[name] = (leaks[name] ?? 0) + count
-if (Object.keys(leaks).length > 0) {
-  console.error(`Alchemy state holds credential values for: ${Object.keys(leaks).sort().join(", ")}`)
+// No credential from the environment may end up in this app's state: fail the deploy if one does, naming only the variable.
+// Only the app's own subtree is scanned; the folder may also hold the state password the assistant's secrets are encrypted with.
+const scan = scanState(stateDir, APP, process.env)
+if (Object.keys(scan.leaks).length > 0) {
+  console.error(`Alchemy state holds credential values for: ${Object.keys(scan.leaks).sort().join(", ")}`)
   process.exit(1)
 }
-console.log(`State scan: ${files.length} files, no credential values`)
+console.log(`State scan: ${scan.files} files, no credential values`)
