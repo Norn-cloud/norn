@@ -64,15 +64,20 @@ FSTAR_OPTIONS = {"fuel", "ifuel", "initial_fuel", "max_fuel", "initial_ifuel", "
 FSTAR_PRAGMA = re.compile(r"#(set|push|reset)-options\b")
 FSTAR_PRAGMA_ARGUMENT = re.compile(r'#(?:set|push|reset)-options\s*"([^"\\]*)"')
 # Meta-programs run inside F* at typecheck time; re-checked files may not invoke them.
+# The FStar.Attributes tactic hooks count as meta-programs too.
 FSTAR_META = re.compile(r"%splice|#lang-|\b(?:by|splice|set_options|Tactics|Reflection|plugin|"
-                        r"synth_by_tactic|assert_by_tactic|launch_process)\b")
+                        r"synth_by_tactic|assert_by_tactic|launch_process|handle_smt_goals|"
+                        r"resolve_implicits|override_resolve_implicits_handler|ite_soundness_by)\b")
 KANI_SUCCESS = "1 successfully verified harnesses, 0 failures, 1 total."
 KANI_FAILURE = "0 successfully verified harnesses, 1 failures, 1 total."
 HAX_TOOLCHAIN = "nightly-2025-11-08-x86_64-unknown-linux-gnu"
 # Library escape hatches prove anything without a local axiom: the unsound
-# Prims values of the pinned F* (_assume, admit, magic, unsafe_coerce) and admitP.
+# Prims values of the pinned F* (_assume, admit, magic, unsafe_coerce), admitP,
+# and the FStar.Attributes that admit a declaration, its termination, or accept
+# its failure (admitted, admit_termination, expect_failure, expect_lax_failure).
 FSTAR_HOLE = re.compile(r"\b(?:admit|admitP|assume|_assume|axiom|val|magic|unsafe_coerce|"
-                        r"admit_smt_query|admit_smt_queries)\b")
+                        r"admit_smt_query|admit_smt_queries|admitted|admit_termination|"
+                        r"expect_failure|expect_lax_failure)\b")
 EXTRACTION_FIELDS = {"package", "items", "module", "proofRoot", "models", "proofs"}
 # Candidate files that could make cargo execute candidate-chosen programs.
 CARGO_CONFIG = (".cargo/config", ".cargo/config.toml", "rust-toolchain", "rust-toolchain.toml")
