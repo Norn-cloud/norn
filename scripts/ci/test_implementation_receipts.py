@@ -30,6 +30,9 @@ if tool == "kani":
     print("Complete - " + ("1 successfully verified harnesses, 0 failures, 1 total." if good
                            else "0 successfully verified harnesses, 1 failures, 1 total."))
     sys.exit(0 if good else 1)
+if tool == "fstar.exe":
+    # Stands in for type checking: a module marked ill-typed fails.
+    sys.exit(1 if any("ill-typed" in pathlib.Path(a).read_text() for a in args if a.endswith(".fst")) else 0)
 if tool == "cargo-hax":
     out = pathlib.Path(args[args.index("--output-dir") + 1]); out.mkdir(parents=True, exist_ok=True)
     (out / "Lib.fst").write_text("module Lib\\nlet f (x: bool) : bool = x\\n")
@@ -73,6 +76,12 @@ class ReceiptTest(unittest.TestCase):
         receipts.implementation_claims = lambda root: self.claims
         receipts.guard_cargo = lambda root, package: None
         self.out = self.tmp / "receipts"
+        # The verifier's own F*, never the receipts runner's tool directory.
+        verifier = self.tmp / "verifier-fstar"
+        verifier.mkdir()
+        self.fstar = verifier / "fstar.exe"
+        self.fstar.write_text(STUB)
+        self.fstar.chmod(0o755)
         self.expected = {"headSha": self.head, "repository": "o/r", "runId": "7", "runAttempt": "1",
                          "job": receipts.JOB}
 
@@ -98,12 +107,20 @@ class ReceiptTest(unittest.TestCase):
         self.receipt(claim).write_text(json.dumps(document))
 
     def rejected(self, claim: str, fragment: str, expected: dict | None = None) -> None:
-        errors = receipts.verify(self.root, self.out, expected or self.expected)
+        errors, _ = receipts.verify(self.root, self.out, expected or self.expected, self.fstar)
         self.assertTrue(any(e.startswith(claim) and fragment in e for e in errors), errors)
 
-    def test_wrapper_receipts_are_admitted_and_match_the_schema(self) -> None:
+    def forge(self, claim: str, module: str) -> None:
+        """What a compromised receipts runner can do: any module, with every digest made consistent."""
+        (self.out / claim / "outputs/Lib.fst").write_text(module)
+        self.edit(claim, outputs={"Lib.fst": receipts.sha256(self.out / claim / "outputs/Lib.fst")}, exitCode=0)
+
+    def test_wrapper_receipts_are_labelled_and_match_the_schema(self) -> None:
         self.produce()
-        self.assertEqual(receipts.verify(self.root, self.out, self.expected), [])
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertEqual([e.split(":")[0] for e in errors], ["INV-KANI"])
+        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
+                         {"INV-EXTRACT": "rechecked", "INV-KANI": "candidate-reported"})
         try:
             import jsonschema
         except ImportError:
@@ -111,6 +128,91 @@ class ReceiptTest(unittest.TestCase):
         schema = json.loads((HERE / "implementation-receipt.schema.json").read_text())
         for claim in self.claims:
             jsonschema.validate(json.loads(self.receipt(claim).read_text()), schema)
+        for verdict in verdicts:
+            jsonschema.validate(verdict, schema["$defs"]["verdict"] | {"$defs": schema["$defs"]})
+
+    def test_kani_is_candidate_reported_and_never_admitted(self) -> None:
+        # A consistent, successful Kani receipt is still only what the runner reported.
+        self.produce()
+        self.assertEqual(json.loads(self.receipt("INV-KANI").read_text())["exitCode"], 0)
+        self.rejected("INV-KANI", "candidate-reported")
+        shutil.rmtree(self.out / "INV-KANI")
+        self.rejected("INV-KANI", "candidate-reported")
+
+    def test_malicious_build_script_cannot_forge_an_extraction_receipt(self) -> None:
+        # A build.rs that cargo-hax runs owns the receipts runner: it swaps the
+        # runner's F* for one that always passes and writes an ill-typed module.
+        # The receipt it leaves is consistent, so only the re-check can catch it.
+        hax = self.tmp / "tools/bin/cargo-hax"
+        hax.write_text(STUB.replace('(out / "Lib.fst").write_text(', '(out / "Lib.fst").write_text("ill-typed " + ') + (
+            f"pathlib.Path({str(self.tmp / 'tools/bin/fstar.exe')!r}).write_text('#!/bin/sh\\necho fstar.exe 0.0-stub\\n')\n"))
+        self.produce()
+        self.assertEqual(json.loads(self.receipt("INV-EXTRACT").read_text())["exitCode"], 0)
+        self.rejected("INV-EXTRACT", "independent F* re-check failed")
+
+    def test_tampered_extracted_module_is_rejected(self) -> None:
+        for module, fragment in (
+                ("module Lib\nlet f (x: bool) : bool = ill-typed\n", "independent F* re-check failed"),
+                ("module Lib\nassume val f : bool -> bool\n", "proof hole"),
+                ('module Lib\n#set-options "--load_cmxs evil"\nlet f (x: bool) : bool = x\n', "is not allowed"),
+                ('module Lib\n#push-options "--z3cliopt smt.x=1"\nlet f (x: bool) : bool = x\n', "is not allowed"),
+                ("module Lib\nlet f (x: bool) : bool = x\nlet _ = assert True by (launch_process \"sh\" [] \"\")\n",
+                 "meta-programs"),
+                ("module Lib\nopen FStar.Tactics\nlet f (x: bool) : bool = x\n", "meta-programs")):
+            shutil.rmtree(self.out, ignore_errors=True)
+            self.produce()
+            self.forge("INV-EXTRACT", module)
+            self.rejected("INV-EXTRACT", fragment)
+
+    def test_solver_budget_options_are_allowed(self) -> None:
+        self.produce()
+        self.forge("INV-EXTRACT", 'module Lib\n#set-options "--fuel 0 --ifuel 1 --z3rlimit 15"\n'
+                                  '#push-options "--z3rlimit 80"\nlet f (x: bool) : bool = x\n#pop-options\n')
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertFalse([e for e in errors if e.startswith("INV-EXTRACT")], errors)
+
+    def test_extraction_needs_an_independent_fstar(self) -> None:
+        self.produce()
+        errors, _ = receipts.verify(self.root, self.out, self.expected, None)
+        self.assertTrue(any(e.startswith("INV-EXTRACT") and "no independent F*" in e for e in errors), errors)
+
+    def test_verifier_fstar_pin_matches_the_bootstrap(self) -> None:
+        bootstrap = (receipts.TRUSTED / "scripts/bootstrap-rust-extraction-tools.sh").read_text()
+        self.assertIn(f'FSTAR_VERSION="{receipts.FSTAR_VERSION}"', bootstrap)
+        self.assertIn(f'"{receipts.FSTAR_SHA256}"', bootstrap)
+
+    def test_scope_follows_claims_and_their_inputs(self) -> None:
+        workspace = {"Cargo.toml": '[workspace]\nmembers = ["lib"]\n',
+                     "lib/Cargo.toml": '[package]\nname = "lib"\n[dependencies]\ndep = { path = "../dep" }\n'
+                                       '[dev-dependencies]\ntest-only = { path = "../test-only" }\n',
+                     "lib/src/lib.rs": "", "dep/Cargo.toml": '[package]\nname = "dep"\n', "dep/src/lib.rs": "",
+                     "test-only/Cargo.toml": '[package]\nname = "test-only"\n', "unrelated.md": ""}
+        for name, text in workspace.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(text)
+        self.commit()
+        base = self.tmp / "base"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
+        original = copy.deepcopy(self.claims)
+        receipts.implementation_claims = lambda root: original if root == base else self.claims
+        self.assertFalse(receipts.in_scope(self.root, base))
+        for path, expected in (("unrelated.md", False), ("test-only/Cargo.toml", False), ("dep/src/lib.rs", True),
+                               ("src/lib.rs", True), ("fst/Proof.fst", True), ("Cargo.lock", True)):
+            with (self.root / path).open("a") as handle:
+                handle.write("\n// changed\n")
+            self.commit()
+            self.assertEqual(receipts.in_scope(self.root, base), expected, path)
+            subprocess.run(["git", "-C", str(self.root), "reset", "-q", "--hard", "HEAD~1"], check=True)
+        self.claims["INV-EXTRACT"]["extractionBinding"] = BINDING | {"items": ["lib::g"]}
+        self.assertTrue(receipts.in_scope(self.root, base))
+        self.claims = {}
+        self.assertFalse(receipts.in_scope(self.root, base))
+
+    def test_unchanged_claims_carry_over_but_kani_never_does(self) -> None:
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, None, scoped=False)
+        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
+                         {"INV-EXTRACT": "unchanged", "INV-KANI": "candidate-reported"})
+        self.assertEqual([e.split(":")[0] for e in errors], ["INV-KANI"])
 
     def test_fake_extraction_script_without_a_receipt_is_rejected(self) -> None:
         self.produce()
@@ -151,7 +253,7 @@ class ReceiptTest(unittest.TestCase):
         self.claims = {hidden["id"]: hidden}
         with self.assertRaisesRegex(receipts.Refused, "harness and predicate evidence only"):
             receipts.run(self.root, hidden, self.head, self.out, self.tmp / "tools")
-        self.rejected(hidden["id"], "no receipt")
+        self.rejected(hidden["id"], "candidate-reported")
 
     def test_receipt_kind_must_be_the_wrapper_the_claim_needs(self) -> None:
         self.produce()
@@ -218,6 +320,41 @@ class ReceiptTest(unittest.TestCase):
                 (self.root / name).parent.mkdir(exist_ok=True)
                 shutil.copyfile(guard.TRUSTED / name, self.root / name)
         with self.assertRaisesRegex(guard.Refused, "evil: local build script or proc macro"):
+            guard.guard_cargo(self.root, "lib")
+
+    def test_extraction_guard_keys_build_time_packages_on_their_source(self) -> None:
+        guard = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(guard)
+        trusted = guard.lock_identities(guard.TRUSTED / "Cargo.lock")
+        name, version, source, checksum = next(e for e in trusted if e[0] == "serde" and e[2])
+        evil = f'git+https://example.invalid/serde#{"0" * 40}'
+        metadata = {"packages": [{"id": "a", "name": "lib", "version": "0.1.0", "source": None,
+                                  "targets": [{"kind": ["lib"]}]},
+                                 {"id": "b", "name": name, "version": version, "source": evil,
+                                  "targets": [{"kind": ["custom-build"]}]}],
+                    "resolve": {"nodes": [{"id": "a", "deps": [{"pkg": "b", "dep_kinds": [{"kind": None}]}]},
+                                          {"id": "b", "deps": []}]}}
+        fake = self.tmp / "cargo-bin/cargo"
+        fake.parent.mkdir()
+        fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(metadata)}\nEOF\n")
+        fake.chmod(0o755)
+        os.environ["PATH"] = f"{fake.parent}:{os.environ['PATH']}"
+        for config in guard.CARGO_CONFIG:
+            if (guard.TRUSTED / config).is_file():
+                (self.root / config).parent.mkdir(exist_ok=True)
+                shutil.copyfile(guard.TRUSTED / config, self.root / config)
+        lock = (guard.TRUSTED / "Cargo.lock").read_text()
+        git_entry = f'\n[[package]]\nname = "{name}"\nversion = "{version}"\nsource = "{evil}"\n'
+        # The git package beside the trusted registry entry of the same name and version.
+        (self.root / "Cargo.lock").write_text(lock + git_entry)
+        with self.assertRaisesRegex(guard.Refused, "more than one source"):
+            guard.guard_cargo(self.root, "lib")
+        # The git package alone, in place of the registry one.
+        registry = f'name = "{name}"\nversion = "{version}"\nsource = "{source}"\nchecksum = "{checksum}"\n'
+        self.assertIn(registry, lock)
+        (self.root / "Cargo.lock").write_text(lock.replace(registry, f'name = "{name}"\nversion = "{version}"\n'
+                                                                    f'source = "{evil}"\n'))
+        with self.assertRaisesRegex(guard.Refused, f"{name} {version}: build-time code not locked on the base"):
             guard.guard_cargo(self.root, "lib")
 
 
