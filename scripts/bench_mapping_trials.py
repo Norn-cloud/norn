@@ -19,6 +19,7 @@ import concurrent.futures
 import http.client
 import itertools
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -110,10 +111,14 @@ REFERENCE = {
     "olist_customers": _map(*PARTY, "input.customer_unique_id", [("display_name", "input.customer_unique_id"), ("kind", "'person'")]),
     "olist_sellers": _map(*PARTY, "input.seller_id", [("display_name", "input.seller_id"), ("kind", "'organization'")]),
     "uci_items": _map(*ITEM, "input.StockCode", [("id", "input.StockCode"), ("code", "input.StockCode"), ("label", "input.Description ?? ''")]),
-    # Lines without a customer are skipped, so no empty-key Party is created.
+    # Lines without a customer (null or empty, as in `reference`) are skipped, so no empty-key Party is created.
     "uci_customers": _map(*PARTY, "input.CustomerID ?? ''", [("display_name", "input.CustomerID ?? ''"), ("kind", "'person'")],
-                          when="input.CustomerID != null"),
+                          when="(input.CustomerID ?? '') != ''"),
 }
+
+
+def positive(value):
+    return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
 
 
 class Budget:
@@ -124,23 +129,31 @@ class Budget:
     to its reported usage. A refused HTTP request releases it. A call whose outcome is unknown
     (timeout, dropped connection, unreadable or usage-free reply) keeps the worst case. Admission
     requires spent + reserved + worst case <= cap, so estimated spend never exceeds the cap with any
-    number of workers.
+    number of workers. If a reply's reported cost ever exceeds its reservation (for example
+    reasoning tokens billed outside the completion limit), the worst case was wrong: the budget
+    records the overshoot and admits no further calls.
     """
     def __init__(self, cap, prices):
+        if not positive(cap):
+            raise ValueError(f"cap must be a finite positive number, got {cap!r}")
+        bad = sorted(model for model, pair in prices.items() if not all(positive(price) for price in pair))
+        if bad:
+            raise ValueError(f"prices must be finite positive numbers; invalid for {bad}")
         self.cap, self.prices, self.spent, self.reserved, self.lock = cap, prices, 0.0, 0.0, threading.Lock()
         self.calls = 0
         self.tokens = collections.Counter()
+        self.overshoots = []
 
     def open(self):
         with self.lock:
-            return self.spent + self.reserved < self.cap
+            return not self.overshoots and self.spent + self.reserved < self.cap
 
     def reserve(self, model, messages):
         cin, cout = self.prices[model]
         prompt = sum(len(m["content"].encode()) + 16 for m in messages)
         worst = prompt * cin + MAX_COMPLETION * cout
         with self.lock:
-            if self.spent + self.reserved + worst > self.cap:
+            if self.overshoots or self.spent + self.reserved + worst > self.cap:
                 return None
             self.reserved += worst
         return worst
@@ -166,6 +179,9 @@ class Budget:
             self.calls += 1
             self.tokens["prompt"] += prompt
             self.tokens["completion"] += completion
+            if cost > reservation:
+                self.overshoots.append({"model": model, "cost": cost, "reservation": reservation,
+                                        "prompt_tokens": prompt, "completion_tokens": completion})
         return cost
 
 
@@ -354,7 +370,11 @@ def run(url, token, models, repeats, data, check, prices, cap, log, workers=5, t
 def load_prices(path):
     """Per-token (input, output) USD prices by gateway model id."""
     catalogue = json.loads(Path(path).read_text())
-    return {model: (float(p["input"]), float(p["output"])) for model, p in catalogue["models"].items()}
+    prices = {model: (float(p["input"]), float(p["output"])) for model, p in catalogue["models"].items()}
+    bad = sorted(model for model, pair in prices.items() if not all(positive(price) for price in pair))
+    if bad:
+        raise ValueError(f"prices must be finite positive numbers; invalid for {bad}")
+    return prices
 
 
 def cargo_transport(binary, scratch):
@@ -367,7 +387,8 @@ def cargo_transport(binary, scratch):
         with lock:
             path = scratch / f"candidate-{next(counter)}.json"
         path.write_text(json.dumps(candidate))
-        env = dict(os.environ, NORN_BENCH_CANDIDATE=str(path))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("NORN_BENCH_GATEWAY_")}
+        env["NORN_BENCH_CANDIDATE"] = str(path)
         try:
             done = subprocess.run([binary, "candidate_mapping_admission_and_rows", "--exact", "--ignored", "--nocapture"],
                                   capture_output=True, text=True, env=env, timeout=600, check=False)
@@ -404,7 +425,8 @@ def main():
     print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
     outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
                            args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
-    print(json.dumps({"outcomes": outcomes, "calls": budget.calls, "tokens": budget.tokens, "spent": budget.spent}))
+    print(json.dumps({"outcomes": outcomes, "calls": budget.calls, "tokens": budget.tokens, "spent": budget.spent,
+                      "overshoots": budget.overshoots}))
 
 
 if __name__ == "__main__":
