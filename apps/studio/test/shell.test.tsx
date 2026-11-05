@@ -4,7 +4,7 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -42,4 +42,10 @@ test("an entry is a route, or an anchor on its section's page", () => {
 test("a submenu offers a search over its entries", async () => {
   const html = await at("/sources", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
   expect(html).toContain('placeholder="Find in Sources"')
+})
+
+test("the rail and submenu sit in one row that does not depend on the outer sidebar's classes", async () => {
+  const html = await at("/sources", () => <Shell sections={[section]} />)
+  expect(html).toContain("flex size-full min-h-0 flex-row")
+  expect(html).toContain("w-[calc(4rem+1px)]!")
 })

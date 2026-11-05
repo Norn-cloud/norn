@@ -6,7 +6,7 @@ import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, Comma
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -34,10 +34,11 @@ const none = () => undefined
 function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
   const badge = (section.useBadge ?? none)()
   const Icon = section.icon
+  const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }} className="relative px-2.5 md:px-2">
-        <Link to={section.path}>
+        <Link to={section.path} onClick={() => setOpenMobile(false)}>
           <Icon />
           <span className="sr-only">{section.label}</span>
           {badge !== undefined && badge > 0 && <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-medium text-white tabular-nums">{badge}</span>}
@@ -52,6 +53,8 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
  * No server document declares a section action yet, so none is shown.
  */
 export function Submenu({ section }: { readonly section: Section }) {
+  // Navigating closes the phone sheet the submenu sits in.
+  const { setOpenMobile } = useSidebar()
   const [search, setSearch] = useState("")
   const all = (section.useMenu ?? none)() ?? []
   const query = search.trim().toLowerCase()
@@ -88,7 +91,7 @@ export function Submenu({ section }: { readonly section: Section }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => (
-                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname}><Link {...target(section, entry.href)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
+                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname}><Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -152,8 +155,10 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
   return (
     <TooltipProvider>
       <SidebarProvider style={{ "--sidebar-width": "21rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}>
-        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden *:data-[sidebar=sidebar]:flex-row">
-          <Sidebar collapsible="none" className="w-[calc(var(--sidebar-width-icon)+1px)]!">
+        <Sidebar variant="inset" collapsible="icon" className="overflow-hidden">
+          {/* One row on every screen: the phone sheet does not take the outer sidebar's classes. */}
+          <div className="flex size-full min-h-0 flex-row">
+          <Sidebar collapsible="none" className="w-[calc(4rem+1px)]! shrink-0">
             <SidebarHeader>
               <SidebarMenu><SidebarMenuItem>
                 <SidebarMenuButton size="lg" asChild className="md:h-8 md:p-0">
@@ -175,6 +180,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
             </SidebarFooter>
           </Sidebar>
           {current && <Submenu key={current.path} section={current} />}
+          </div>
         </Sidebar>
         <SidebarInset>
           <header className="flex h-14 items-center gap-3 border-b px-4">
