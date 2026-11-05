@@ -428,9 +428,13 @@ conjunction. Context stays frozen; unreachable input rows remain available for
 local correspondence and never become initial states. Always/Never predicate
 laws are supported; temporal/state scopes, advisory laws and invariant responses
 remain Unknown. A work budget of 2,000,000 (expression source bytes, compilation
-and evaluation units), 128 laws and 16,384 edges are pinned. Exhaustion, duplicate
-valuations, inexact expression values and any step leaving the profile refuse
-the complete graph. No partial relation or solver discharge is returned.
+and evaluation units), 128 laws and 16,384 edges are pinned. Each guard evaluation
+gets the native decide budget of 1,000,000 units and evaluation stops at the first
+false guard; each row's law conjunction shares one such budget, with one extra
+unit per expression, as a native write does. Those units also charge the work
+budget, and both limits are pinned. Exhausting any budget, duplicate valuations,
+inexact expression values and any step leaving the profile refuse the complete
+graph. No partial relation or solver discharge is returned.
 
 `every_bounded_initialization_and_transition_matches_native_commit` compares
 all initializations and every pre-state/transition pair with the checked native

@@ -189,6 +189,7 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
     let catalog = TypeCatalog::new(definitions.iter()).with_governing_laws(artifacts);
     assert_eq!(graph.inputs.nodes.len(), 10);
     let mut compared = 0_usize;
+    let mut committed_steps = 0_usize;
     for (from, row) in graph.inputs.nodes.iter().enumerate() {
         let (committed, after) = native(&model, &catalog, None, create(row));
         assert_eq!(
@@ -216,6 +217,9 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
                 "pre-state {from}, transition {}",
                 transition.id.as_str()
             );
+            committed_steps = committed_steps
+                .checked_add(usize::from(committed))
+                .expect("bounded case count");
             assert_eq!(
                 after.as_ref(),
                 Some(edge.map_or(row, |edge| &graph.inputs.nodes[edge.to]))
@@ -223,6 +227,16 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
             compared = compared.checked_add(1).expect("bounded case count");
         }
     }
+    assert_eq!(
+        graph.edges.len(),
+        committed_steps,
+        "no extra or duplicate edges"
+    );
+    assert_eq!(
+        graph.initial.iter().collect::<BTreeSet<_>>().len(),
+        graph.initial.len(),
+        "no duplicate initial rows"
+    );
     assert_eq!(
         compared, 50,
         "10 initializations + every one of 10 × 4 transitions; no sampling"

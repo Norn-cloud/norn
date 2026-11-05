@@ -67,16 +67,42 @@ fn compile(
     }
     Expression::compile(source).map_err(|error| error.to_string())
 }
-fn boolean(expression: &Expression, context: &Value, work: &mut u64) -> Result<bool, String> {
+fn boolean(
+    expression: &Expression,
+    context: &Value,
+    work: &mut u64,
+    native: &mut u64,
+) -> Result<bool, String> {
     *work = work.checked_sub(1).ok_or("graph work budget exhausted")?;
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*work));
+    let attempt = expression.evaluate_metered(context, EvaluationBudget::new((*native).min(*work)));
     *work = work.saturating_sub(attempt.units_used);
+    *native = native.saturating_sub(attempt.units_used);
     match attempt.result.map_err(|error| error.to_string())?.value() {
         Value::Bool(value) => Ok(*value),
         Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
             Err("graph predicate is not Boolean".into())
         }
     }
+}
+/// Native gives every guard a fresh decide budget and stops at the first false guard.
+fn enabled(guards: &[Expression], context: &Value, work: &mut u64) -> Result<bool, String> {
+    for guard in guards {
+        let mut native = EvaluationBudget::default().units();
+        if !boolean(guard, context, work, &mut native)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+/// Native shares one decide budget across a write's laws, at one extra unit per expression.
+fn law_boolean(
+    expression: &Expression,
+    context: &Value,
+    work: &mut u64,
+    native: &mut u64,
+) -> Result<bool, String> {
+    *native = native.checked_sub(1).ok_or("native law budget exhausted")?;
+    boolean(expression, context, work, native)
 }
 fn key(row: &Row) -> Result<Vec<u8>, String> {
     norn_canonical::canonical_json_exact_of(row).map_err(|error| error.to_string())
@@ -125,6 +151,26 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
     }
     Ok(laws)
 }
+fn lawful(laws: &[Predicate<'_>], context: &Value, work: &mut u64) -> Result<bool, String> {
+    let mut native = EvaluationBudget::default().units();
+    let mut accepted = true;
+    for law in laws {
+        let identity = law.identity;
+        let activated = law
+            .condition
+            .as_ref()
+            .map(|expression| law_boolean(expression, context, work, &mut native))
+            .transpose()
+            .map_err(|error| format!("law {identity}: {error}"))?
+            .unwrap_or(true);
+        if activated {
+            accepted &= law_boolean(&law.response, context, work, &mut native)
+                .map_err(|error| format!("law {identity}: {error}"))?
+                == law.expected;
+        }
+    }
+    Ok(accepted)
+}
 fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     let mut work = WORK;
     let laws = compile_laws(&inputs, &mut work)?;
@@ -154,26 +200,10 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
             .map_err(|error| error.to_string())?;
         contexts.push(Value::object([("self", value)]));
     }
-    let mut legal = Vec::new();
-    for context in &contexts {
-        let mut accepted = true;
-        for law in &laws {
-            let identity = law.identity;
-            let activated = law
-                .condition
-                .as_ref()
-                .map(|expression| boolean(expression, context, &mut work))
-                .transpose()
-                .map_err(|error| format!("law {identity}: {error}"))?
-                .unwrap_or(true);
-            if activated {
-                accepted &= boolean(&law.response, context, &mut work)
-                    .map_err(|error| format!("law {identity}: {error}"))?
-                    == law.expected;
-            }
-        }
-        legal.push(accepted);
-    }
+    let legal = contexts
+        .iter()
+        .map(|context| lawful(&laws, context, &mut work))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut initial = Vec::new();
     let mut edges = Vec::new();
     for (from, ((row, context), allowed)) in
@@ -189,12 +219,9 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
             if !transition.from.contains(state) {
                 continue;
             }
-            let mut enabled = true;
-            for guard in guards {
-                enabled &= boolean(guard, context, &mut work)
-                    .map_err(|error| format!("transition {}: {error}", transition.id.as_str()))?;
-            }
-            if !enabled {
+            if !enabled(guards, context, &mut work)
+                .map_err(|error| format!("transition {}: {error}", transition.id.as_str()))?
+            {
                 continue;
             }
             let mut after = row.clone();
@@ -235,9 +262,12 @@ impl ApprovedContract {
         let batch = self.lifecycle_inputs(source, registry, bounds)?;
         let input: serde_json::Value =
             serde_json::from_str(&batch.bounds_json).map_err(|_error| ChallengeError::Closure)?;
+        let native = EvaluationBudget::default().units();
         let profile = serde_json::json!({"profile":"norn.lifecycle.graph/1","inputProfile":input,
             "maxLaws":128,"maxEdges":EDGES,"workBudget":WORK,
             "workSemantics":"expression source bytes plus compilation and metered evaluation units",
+            "maxGuardUnits":native,"maxRowLawUnits":native,
+            "evaluationSemantics":"each guard gets the native decide budget; each row's laws share one, with one extra unit per expression; every unit also charges workBudget; exhaustion is Unknown",
             "initial":"declared initial state and all supported governing laws",
             "steps":"declared transition guards and all post-state governing laws; frozen context"});
         let bytes = norn_canonical::canonical_json_exact_of(&profile)
@@ -268,5 +298,21 @@ mod tests {
             assert!(Expression::compile(expression).is_ok(), "{expression}");
             assert!(compile(expression, &mut work, &fields).is_err());
         }
+    }
+    #[test]
+    fn a_rows_laws_share_one_native_budget_below_global_work() {
+        let law = || Predicate {
+            identity: "bounded",
+            condition: None,
+            response: Expression::compile("len(map([0..69999], # * 2)) > 0").expect("compiled"),
+            expected: true,
+        };
+        let mut work = WORK;
+        assert_eq!(lawful(&[law()], &Value::Null, &mut work), Ok(true));
+        let cost = WORK.saturating_sub(work);
+        assert!((500_001..1_000_000).contains(&cost), "{cost}");
+        let mut work = WORK;
+        let reason = lawful(&[law(), law()], &Value::Null, &mut work).expect_err("native refuses");
+        assert!(reason.starts_with("law bounded:") && work > 0, "{reason}");
     }
 }
