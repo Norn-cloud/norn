@@ -249,14 +249,37 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let installed = self
             .installed_definitions(Some(definitions_version))?
             .ok_or_else(unproven_event)?;
+        let installation = self.retained_definition_install(&installed)?;
+        Self::retained_model_from(&installed, &installation)
+    }
+
+    /// The per-call half of the retained proof: the export-journal record of
+    /// `installed.commit_seq` exists and verifies, its installed row equals
+    /// `installed` field for field, and the stored receipt at that sequence
+    /// equals the journal's.
+    pub(crate) fn retained_definition_install(
+        &self,
+        installed: &crate::InstalledDefinitionSet,
+    ) -> Result<crate::store::DefinitionInstallRecord, CellError> {
         let record = crate::export_journal::read_record(self.conn, installed.commit_seq)?
             .ok_or_else(unproven_event)?;
         let installation = record.definition_install.ok_or_else(unproven_event)?;
-        let model = Model::from_retained_snapshot(&installation.model)?;
-        if installation.installed != installed
-            || model.model_hash() != installed.model_hash
+        if installation.installed != *installed
             || self.receipt_at(installed.commit_seq)?.as_ref() != Some(&record.receipt)
         {
+            return Err(unproven_event());
+        }
+        Ok(installation)
+    }
+
+    /// The pure half of the retained proof: a function of the journal's model
+    /// snapshot and the installed row only.
+    pub(crate) fn retained_model_from(
+        installed: &crate::InstalledDefinitionSet,
+        installation: &crate::store::DefinitionInstallRecord,
+    ) -> Result<Model, CellError> {
+        let model = Model::from_retained_snapshot(&installation.model)?;
+        if model.model_hash() != installed.model_hash {
             return Err(unproven_event());
         }
         model.check_governing_laws(&installed.canonical_set)?;

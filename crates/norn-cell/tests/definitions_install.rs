@@ -5964,6 +5964,88 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
     );
 }
 
+/// Warm a store's mapping plan, apply `tamper` to the database file, and return
+/// the refusal from the warm store and from a fresh store on the same file.
+fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &bundle_input())
+        .expect("capture builds the plan");
+    let row = store
+        .read()
+        .pending_observations()
+        .expect("inbox")
+        .pop()
+        .expect("pending");
+    let observed: norn_kernel::Observed<Value> =
+        norn_ir::runtime::decode(&row.observed).expect("observed");
+    let bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("bundle");
+    store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect("warm plan before tamper");
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    engine
+        .execute(
+            &tamper.replace("?V", &bundle.definitions_version.to_string()),
+            &[],
+        )
+        .expect("tamper");
+    drop(engine);
+    let warm = store
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("warm store must refuse the tampered evidence");
+    let fresh = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("fresh connection")
+        .read()
+        .recheck_mapping_bundle(&bundle)
+        .expect_err("fresh store must refuse the tampered evidence");
+    (format!("{warm:?}"), format!("{fresh:?}"))
+}
+
+/// MAPPING-PLAN-REUSE: every check the full retained proof performs refuses a
+/// warm plan exactly as it refuses a fresh store, for keyed columns, columns
+/// outside the old key, and the journal and receipt rows outside the table.
+#[test]
+fn mapping_plan_hit_refuses_like_a_fresh_store() {
+    const COMMIT: &str =
+        "(SELECT \"commit_seq\" FROM \"_norn_definition_version\" WHERE \"version\" = ?V)";
+    let cases = [
+        (
+            "model_hash",
+            "UPDATE \"_norn_definition_version\" SET \"model_hash\" = 'f' || \"model_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt_sha256",
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = 'f' || \"receipt_sha256\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "ddl_hash",
+            "UPDATE \"_norn_definition_version\" SET \"ddl_hash\" = 'f' || \"ddl_hash\" WHERE \"version\" = ?V".to_owned(),
+        ),
+        (
+            "receipt tamper",
+            format!("UPDATE \"_norn_receipt\" SET \"receipt_hash\" = 'f' || \"receipt_hash\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "receipt delete",
+            format!("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+        (
+            "journal delete",
+            format!("DELETE FROM \"_norn_export_journal\" WHERE \"commit_seq\" = {COMMIT}"),
+        ),
+    ];
+    for (name, tamper) in cases {
+        let (warm, fresh) = warm_and_fresh_refusals(&tamper);
+        assert_eq!(warm, fresh, "{name}: warm and fresh refusals differ");
+    }
+}
+
 #[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");

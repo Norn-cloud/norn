@@ -58,11 +58,20 @@ pub(crate) struct MappingPlan {
     compiled: Result<CompiledMapping, Vec<Diagnostic>>,
     artifact_pins: Vec<(String, String, String)>,
     definitions_digest: String,
+    /// Journal model snapshot the full retained proof ran on; a hit requires
+    /// the journal to still hold exactly this snapshot.
+    model_snapshot: crate::ModelDefinitionSnapshot,
 }
 
 /// MAPPING-PLAN-1: retained-definition work is memoized per store, keyed by the
-/// version, the digest of the row read on this call and the mapping. Any change
-/// to the retained row misses, and a miss repeats the full retained proof.
+/// version, a digest of the whole installed row read on this call and the
+/// mapping. Any change to any column of the row misses, and a miss repeats the
+/// full retained proof. A hit still re-reads and verifies the export-journal
+/// record, requires its installed row to equal the row read, requires the
+/// stored receipt at `commit_seq` to equal the journal's, and requires the
+/// journal's model snapshot to equal the one the plan was proven on. The model
+/// hash and governing-law checks are pure functions of that snapshot and the
+/// keyed row, so a hit performs or provably covers every retained check.
 #[derive(Debug, Default)]
 pub(crate) struct MappingPlanCache {
     plans: BTreeMap<(u64, String, String), Arc<MappingPlan>>,
@@ -141,7 +150,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
     }
 
-    /// MAPPING-PLAN-1: the retained row is re-read and digested on every call.
+    /// MAPPING-PLAN-1: the installed row, export-journal record and receipt are
+    /// re-read and compared on every call; only the pure model projection,
+    /// governing-law check and mapping compilation are reused.
     fn mapping_plan(
         &self,
         input: &MappingInput,
@@ -151,21 +162,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             self.retained_definition_model(version)?;
             return Err(mismatch());
         };
-        let retained = [
-            installed.canonical_set.as_str(),
-            installed.model_hash.as_str(),
-            installed.receipt_sha256.as_str(),
-        ]
-        .join("\0");
-        let identity =
-            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(retained.as_bytes());
-        let key = (version, identity, input.mapping.clone());
-        if let Some(cache) = self.mapping_plans
-            && let Some(plan) = cache.borrow().plans.get(&key)
+        let key = (version, digest(&installed)?, input.mapping.clone());
+        let installation = self.retained_definition_install(&installed)?;
+        let cached = self
+            .mapping_plans
+            .and_then(|cache| cache.borrow().plans.get(&key).cloned());
+        if let Some(plan) = cached
+            && plan.model_snapshot == installation.model
         {
-            return Ok(Arc::clone(plan));
+            return Ok(plan);
         }
-        self.retained_definition_model(version)?;
+        Self::retained_model_from(&installed, &installation)?;
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
         let mapping = artifacts
             .iter()
@@ -194,6 +201,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             compiled: compile_mapping_artifact(mapping, &artifacts, &[]),
             artifact_pins,
             definitions_digest: digest(&artifacts)?,
+            model_snapshot: installation.model,
         });
         if let Some(cache) = self.mapping_plans {
             let mut cache = cache.borrow_mut();
