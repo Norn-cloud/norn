@@ -755,6 +755,18 @@ fn claimed_commit(
     CellCommit<norn_kernel::ObservationEvent, JsonObject, JsonObject>,
     norn_kernel::ObservationAuthorization,
 ) {
+    claimed_commit_with(catalog, cell, claim, JsonObject::new())
+}
+/// [`claimed_commit`] proposing explicit link property values for a new edge.
+fn claimed_commit_with(
+    catalog: &norn_kernel::TypeCatalog<'_>,
+    cell: &ClaimCell,
+    claim: &norn_ir::mapping::ObservedLinkClaim,
+    values: JsonObject,
+) -> (
+    CellCommit<norn_kernel::ObservationEvent, JsonObject, JsonObject>,
+    norn_kernel::ObservationAuthorization,
+) {
     let source = FactKey::new(claim.source_type.as_str(), &claim.source_key);
     let read = norn_kernel::FactExpectation {
         key: source.clone(),
@@ -771,9 +783,7 @@ fn claimed_commit(
         vec![LinkWrite {
             key,
             expected: state.version,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
+            mutation: LinkMutation::Add { values },
         }]
     } else {
         vec![]
@@ -1259,4 +1269,165 @@ fn obs_link_foreign_capture_namespace_cannot_authorize_a_withdrawal() {
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
     assert!(cell.load_link(&key).expect("unchanged").values.is_some());
+}
+
+/// Commit `old`, then its replacement `successor`, through the backed withdrawal.
+fn replace_claim(
+    catalog: &norn_kernel::TypeCatalog<'_>,
+    cell: &mut ClaimCell,
+    old: &norn_ir::mapping::ObservedLinkClaim,
+    successor: &norn_ir::mapping::ObservedLinkClaim,
+) {
+    let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+    let key = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "two"),
+    );
+    let removal = LinkWrite {
+        key: key.clone(),
+        expected: cell.load_link(&key).expect("link").version,
+        mutation: LinkMutation::Remove,
+    };
+    let (mut commit, mut authority) = claimed_commit(catalog, cell, successor);
+    commit.links.push(removal);
+    append_retained_claim(catalog, cell, old, &mut commit, &mut authority);
+    let read = norn_kernel::FactExpectation {
+        key: source.clone(),
+        expected: cell.load(&source).expect("source").version,
+    };
+    authority
+        .seal_observed_link_claim(catalog, old, read, &commit)
+        .expect("backed withdrawal");
+    cell.commit_observed(commit, authority)
+        .expect("replacement");
+}
+
+#[test]
+fn obs_link_stale_claim_cannot_reverse_its_retained_replacement() {
+    let (mut types, cell, old) = claim_fixture();
+    types[0].links[0].cardinality.to = norn_ir::Multiplicity::Many;
+    let mut cell = cell.with_types(types.clone());
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let (commit, authority) = claimed_commit(&catalog, &cell, &old);
+    cell.commit_observed(commit, authority).expect("original");
+    let mut successor = old.clone();
+    successor.observation_id = "bundle:successor".into();
+    successor.target.as_mut().expect("target").key = "other".into();
+    replace_claim(&catalog, &mut cell, &old, &successor);
+    let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+    let stale = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "two"),
+    );
+    let current = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "other"),
+    );
+    let read = norn_kernel::FactExpectation {
+        key: source.clone(),
+        expected: cell.load(&source).expect("source").version,
+    };
+    let mut commit = CellCommit {
+        reads: vec![read.clone()],
+        links: vec![
+            LinkWrite {
+                key: current.clone(),
+                expected: cell.load_link(&current).expect("current").version,
+                mutation: LinkMutation::Remove,
+            },
+            LinkWrite {
+                key: stale.clone(),
+                expected: cell.load_link(&stale).expect("stale").version,
+                mutation: LinkMutation::Add {
+                    values: JsonObject::new(),
+                },
+            },
+        ],
+        ..CellCommit::empty()
+    };
+    let mut authority = norn_kernel::ObservationAuthorization::empty();
+    append_retained_claim(&catalog, &cell, &old, &mut commit, &mut authority);
+    append_retained_claim(&catalog, &cell, &successor, &mut commit, &mut authority);
+    for claim in [&old, &successor] {
+        authority
+            .seal_observed_link_claim(&catalog, claim, read.clone(), &commit)
+            .expect("retained evidence");
+    }
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    assert!(cell.load_link(&stale).expect("stale").values.is_none());
+    assert!(cell.load_link(&current).expect("current").values.is_some());
+}
+
+#[test]
+fn obs_link_withdrawal_refuses_while_another_connector_supports_the_edge() {
+    let (mut types, cell, old) = claim_fixture();
+    types[0].links[0].cardinality.to = norn_ir::Multiplicity::Many;
+    let mut cell = cell.with_types(types.clone());
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let (commit, authority) = claimed_commit(&catalog, &cell, &old);
+    cell.commit_observed(commit, authority).expect("original");
+    let mut corroboration = old.clone();
+    corroboration.source_scope = "another connector".into();
+    corroboration.observation_id = "bundle:corroboration".into();
+    let (commit, authority) = claimed_commit(&catalog, &cell, &corroboration);
+    cell.commit_observed(commit, authority)
+        .expect("corroboration");
+    let mut successor = old.clone();
+    successor.observation_id = "bundle:successor".into();
+    successor.target.as_mut().expect("target").key = "other".into();
+    let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+    let key = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "two"),
+    );
+    let (mut commit, mut authority) = claimed_commit(&catalog, &cell, &successor);
+    commit.links.push(LinkWrite {
+        key: key.clone(),
+        expected: cell.load_link(&key).expect("link").version,
+        mutation: LinkMutation::Remove,
+    });
+    append_retained_claim(&catalog, &cell, &old, &mut commit, &mut authority);
+    append_retained_claim(&catalog, &cell, &corroboration, &mut commit, &mut authority);
+    let read = norn_kernel::FactExpectation {
+        key: source.clone(),
+        expected: cell.load(&source).expect("source").version,
+    };
+    for claim in [&old, &corroboration] {
+        authority
+            .seal_observed_link_claim(&catalog, claim, read.clone(), &commit)
+            .expect("retained evidence");
+    }
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    assert!(cell.load_link(&key).expect("supported").values.is_some());
+}
+
+#[test]
+fn obs_link_convergent_add_refuses_non_default_link_values() {
+    let (mut types, cell, claim) = claim_fixture();
+    types[0].links[0].properties = serde_json::from_value(serde_json::json!([
+        {"id":"note", "type":{"kind":"text"}, "default":"plain"}
+    ]))
+    .expect("link property");
+    let mut cell = cell.with_types(types.clone());
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let note =
+        |value: &str| JsonObject::from([("note".into(), norn_ir::RuntimeValue::from(value))]);
+    let (commit, authority) = claimed_commit_with(&catalog, &cell, &claim, note("forged"));
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    let (commit, authority) = claimed_commit_with(&catalog, &cell, &claim, note("plain"));
+    cell.commit_observed(commit, authority)
+        .expect("default link values");
 }

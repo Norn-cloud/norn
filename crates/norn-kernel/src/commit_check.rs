@@ -127,20 +127,6 @@ impl<'m, 'a> CommitModel<'m, 'a> {
             })
     }
 
-    /// OBS-LINK-PENDING-1: resolve endpoint presence with admission's concrete identity.
-    ///
-    /// # Errors
-    /// A host identity lookup failed.
-    pub fn contains_after<E, C, T, V: CommitView + ?Sized>(
-        &self,
-        commit: &CellCommit<E, C, T>,
-        view: &V,
-        key: &FactKey,
-    ) -> Result<bool, CommitError<V::Error>> {
-        Ok(concrete_after(commit, *self, view, &self.canonical(key))?
-            .is_some_and(|concrete| self.is_a(&concrete, &key.object_type)))
-    }
-
     /// Materialize link properties under the source's effective concrete
     /// contract, including defaults and canonical UTC timestamps.
     ///
@@ -565,15 +551,16 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     next_versions(commit)
 }
 
-// Outgoing links share the source's authority, not their target's authority.
-// Authored incoming edges remain authored; pending target resolution carries
-// the original source's sealed scope and exact relation intent.
+/// Outgoing links share the source's authority, not their target's authority.
+/// Authored incoming edges remain authored; pending target resolution carries
+/// the original source's sealed scope and exact relation intent.
+///
+/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
+/// Authored writes retain their namespace and claim-metadata protections.
 #[allow(
     clippy::too_many_lines,
     reason = "one shared boundary fences source ownership, pending intents, and outgoing relations atomically"
 )]
-/// OBS-LINK-CONVERGE-1: only opaque claim edges share canonical relation authority.
-/// Authored writes retain their namespace and claim-metadata protections.
 fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,

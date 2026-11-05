@@ -190,6 +190,14 @@ pub enum ObservationRefusal {
     Overflow,
 }
 
+/// A prepared claim's standing within its contribution for this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimStanding {
+    Current,
+    Superseded,
+    Contested,
+}
+
 /// Retained source namespace protecting authored mutations of observed outputs.
 /// Canonical observed claims converge without acquiring this namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -755,50 +763,97 @@ impl ObservationAuthorization {
             self.reference_targets.insert(target.clone());
             self.reference_targets.insert(model.canonical(target));
         }
-        let superseded = self
-            .has_prepared_successor(claim)
+        let standing = self
+            .claim_standing(&claim_key, claim)
+            .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+        let supported_elsewhere = match &target {
+            Some(target) => self.supported_elsewhere(model, &claim_key, claim, target),
+            None => Ok(false),
+        }
+        .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+        let defaults = catalog
+            .effective_link_values(&key.object_type, claim.role.as_str(), &JsonObject::new())
             .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
         for write in commit.links.iter().filter(|w| {
             model.canonical(&w.key.source) == model.canonical(&key)
                 && w.key.link == claim.role.as_str()
+                && target
+                    .as_ref()
+                    .is_some_and(|t| model.canonical(t) == model.canonical(&w.key.target))
         }) {
             let permitted = match &write.mutation {
-                LinkMutation::Add { .. } => target
-                    .as_ref()
-                    .is_some_and(|t| model.canonical(t) == model.canonical(&write.key.target)),
+                // Claims carry no link properties: a convergent edge holds defaults only.
+                LinkMutation::Add { values } => {
+                    standing == ClaimStanding::Current && *values == defaults
+                }
                 LinkMutation::Remove => {
-                    superseded
-                        && target.as_ref().is_some_and(|t| {
-                            model.canonical(t) == model.canonical(&write.key.target)
-                        })
+                    standing == ClaimStanding::Superseded && !supported_elsewhere
                 }
             };
             if !permitted {
                 continue;
             }
-            let mut sealed = write.clone();
-            if let LinkMutation::Add { values } = &mut sealed.mutation {
-                *values = catalog
-                    .effective_link_values(&key.object_type, claim.role.as_str(), values)
-                    .map_err(|e| ObservationRefusal::Encoding(e.to_string()))?;
+            if !self.links.contains(write) {
+                self.links.push(write.clone());
             }
-            if !self.links.contains(&sealed) {
-                self.links.push(sealed.clone());
-            }
-            if !self.convergent_links.contains(&sealed) {
-                self.convergent_links.push(sealed);
+            if !self.convergent_links.contains(write) {
+                self.convergent_links.push(write.clone());
             }
         }
         Ok(())
     }
 
-    fn has_prepared_successor(
+    /// OBS-LINK-CONTRIBUTION-1: another prepared claim still supporting the
+    /// same canonical edge keeps it live; only superseded support is withdrawn.
+    fn supported_elsewhere(
         &self,
+        model: crate::CommitModel<'_, '_>,
+        claim_key: &FactKey,
         claim: &norn_ir::mapping::ObservedLinkClaim,
+        target: &FactKey,
     ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        let source = model.canonical(&FactKey::new(claim.source_type.as_str(), &claim.source_key));
+        let target = model.canonical(target);
+        for (other_key, (other, _)) in &self.claims {
+            let same_edge = other_key != claim_key
+                && other.role == claim.role
+                && model.canonical(&FactKey::new(other.source_type.as_str(), &other.source_key))
+                    == source
+                && other.target.as_ref().is_some_and(|t| {
+                    model.canonical(&FactKey::new(t.object_type.as_str(), &t.key)) == target
+                });
+            if same_edge && self.claim_standing(other_key, other)? != ClaimStanding::Superseded {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// OBS-LINK-CONTRIBUTION-1: supersession is one-way. A claim newly written
+    /// in this turn supersedes retained claims of its contribution with other
+    /// targets; retained evidence never supersedes a fresh claim. Competing
+    /// claims with no such order are contested and authorize no edge change.
+    fn claim_standing(
+        &self,
+        claim_key: &FactKey,
+        claim: &norn_ir::mapping::ObservedLinkClaim,
+    ) -> Result<ClaimStanding, norn_ir::canonical::CanonicalJsonError> {
+        let fresh = |key: &FactKey| self.writes.iter().any(|w| &w.write.key == key);
         let contribution = claim.contribution_id()?;
-        self.claims.values().try_fold(false, |found, (other, _)| {
-            Ok(found || (other.target != claim.target && other.contribution_id()? == contribution))
+        let (mut fresh_rival, mut retained_rival) = (false, false);
+        for (other_key, (other, _)) in &self.claims {
+            if other.target != claim.target && other.contribution_id()? == contribution {
+                if fresh(other_key) {
+                    fresh_rival = true;
+                } else {
+                    retained_rival = true;
+                }
+            }
+        }
+        Ok(match (fresh(claim_key), fresh_rival, retained_rival) {
+            (false, true, _) => ClaimStanding::Superseded,
+            (true, true, _) | (false, false, true) => ClaimStanding::Contested,
+            _ => ClaimStanding::Current,
         })
     }
 

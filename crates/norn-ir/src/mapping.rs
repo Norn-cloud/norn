@@ -820,10 +820,18 @@ pub struct ObservedLinkTarget {
 
 impl ObservedLinkClaim {
     /// Project the typed claim into its registry-declared scalar properties.
+    /// `evidence` holds the exact canonical JSON of the typed preimage
+    /// (sorted keys, verbatim strings and numbers), as UTF-8 text.
     ///
     /// # Errors
-    /// Serialization of the complete evidence preimage failed.
-    pub fn values(&self) -> Result<crate::RuntimeObject, serde_json::Error> {
+    /// The complete evidence preimage has no exact canonical encoding.
+    pub fn values(&self) -> Result<crate::RuntimeObject, crate::canonical::CanonicalJsonError> {
+        let evidence =
+            String::from_utf8(norn_canonical::canonical_json_exact_of(self)?).map_err(|error| {
+                crate::canonical::CanonicalJsonError::Serialize {
+                    message: error.to_string(),
+                }
+            })?;
         let text = |value: &str| crate::RuntimeValue::from(value);
         let nullable = |value: Option<&str>| value.map_or(crate::RuntimeValue::Null, text);
         Ok(crate::RuntimeObject::from([
@@ -840,7 +848,7 @@ impl ObservedLinkClaim {
                 "target_key".into(),
                 nullable(self.target.as_ref().map(|t| t.key.as_str())),
             ),
-            ("evidence".into(), text(&serde_json::to_string(self)?)),
+            ("evidence".into(), text(&evidence)),
         ]))
     }
 

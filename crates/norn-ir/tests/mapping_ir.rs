@@ -195,13 +195,18 @@ fn obs_link_identity_retains_explicit_targets_and_nullable_clears() {
     let values = clear.values().expect("registry projection");
     assert!(values.get("target_type").expect("target type").is_null());
     assert!(values.get("target_key").expect("target key").is_null());
-    let projected: norn_ir::mapping::ObservedLinkClaim = serde_json::from_str(
-        values
-            .get("evidence")
-            .and_then(norn_ir::RuntimeValue::as_str)
-            .expect("preimage"),
-    )
-    .expect("typed preimage");
+    let evidence = values
+        .get("evidence")
+        .and_then(norn_ir::RuntimeValue::as_str)
+        .expect("preimage");
+    assert_eq!(
+        evidence.as_bytes(),
+        norn_canonical::canonical_json_exact_of(clear)
+            .expect("exact canonical preimage")
+            .as_slice()
+    );
+    let projected: norn_ir::mapping::ObservedLinkClaim =
+        serde_json::from_str(evidence).expect("typed preimage");
     assert_eq!(&projected, clear);
     assert_eq!(clear.provenance.transform.as_deref(), Some("row.optional"));
     assert_ne!(target.id().expect("id"), clear.id().expect("id"));

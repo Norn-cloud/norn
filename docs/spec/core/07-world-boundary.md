@@ -202,17 +202,26 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   has made the retained row conform. The typed claim preimage and identity stay fixed.
 - **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
   all source claims remain individually addressable provenance. Observation
-  authority is confined to recomputed declared claims. The existing authored
-  relation-ownership check remains in force for authored mutations.
+  authority is confined to recomputed declared claims. Claims carry no link
+  property values, so a convergent addition must propose exactly the relation's
+  catalog-effective defaults. The existing authored relation-ownership check
+  remains in force for authored mutations.
 - **OBS-LINK-CONTRIBUTION-1:** the latest consumed claim for a source row,
   declared canonical source/role and mapping artifact contributes current membership.
   Its capture namespace comes from the existing connector/partition/source-row
   identity, so identical row aliases from independent connectors never supersede
   each other.
+  Supersession is one-way: a claim newly written in the consuming turn
+  supersedes retained claims of its contribution with other targets; retained
+  evidence never supersedes a fresh claim. Competing claims with no such order
+  are contested and authorize neither an addition nor a withdrawal.
   Replacing its target withdraws an earlier observed edge only if no active
   claim still supports that edge. Prepared old and successor evidence is
-  required for a withdrawal; authored edges without claim backing stay intact.
-  Every superseded claim remains immutable evidence.
+  required for a withdrawal, and the kernel refuses it while any other prepared
+  claim for the same canonical edge is not superseded. Enumerating every
+  retained supporting claim, including other connectors' claims not prepared in
+  the turn, is the claim planner's duty (#877). Authored edges without claim
+  backing stay intact. Every superseded claim remains immutable evidence.
 - **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
   canonical identity, including targets in the same capture. Target arrival
   resolves it without source redelivery or an arrival-order assumption. Capture,
@@ -223,10 +232,17 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   OBS-EVIDENCE-1. No source occurrence or contradictory claim is silently discarded.
   Native proposals violating those laws still refuse without writes.
 
-Unit 1 declares the claim concept and pins the MappingIR output correspondence;
-resolution, convergence and conflict handling require the subsequent runtime units.
-The claim's registry `evidence` scalar contains its canonical serialized typed
-preimage; endpoint columns permit lookup without treating serialized claims as authority.
+Unit 1 declares the claim concept, pins the MappingIR output correspondence and
+enforces at the kernel observation boundary: OBS-LINK-CLAIM-1 claim immutability
+and typed-only claim writes; OBS-LINK-CONVERGE-1 corroboration without namespace
+ownership, endpoint/type law and default-only link values; and
+OBS-LINK-CONTRIBUTION-1 one-way supersession with prepared-support checks.
+Pending resolution, complete support enumeration and conflict quarantine
+require the subsequent runtime units.
+The claim's registry `evidence` scalar holds the exact canonical JSON of its
+typed preimage (`canonical_json_exact_of`: sorted object keys, verbatim strings
+and number tokens) as UTF-8 text; endpoint columns permit lookup without
+treating serialized claims as authority.
 
 Named acceptance scenarios:
 
@@ -240,6 +256,12 @@ Named acceptance scenarios:
   the existing claim through re-observation.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
+- **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
+  its retained successor cannot restore the stale edge or withdraw the current one.
+- **OBS-LINK-SUPPORTED-WITHDRAWAL:** a replacement cannot withdraw an edge that
+  another connector's prepared claim still supports.
+- **OBS-LINK-LINK-VALUES:** a convergent addition proposing non-default link
+  property values refuses.
 - **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
   the same final canonical links and claim set; reopen/replay retains that state.
 - **OBS-LINK-QUARANTINE:** missing/foreign targets at the declared horizon and
