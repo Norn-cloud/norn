@@ -3,6 +3,11 @@
 //! The `law_check_control` samples are a control, not a finding: they evaluate one
 //! object's values already in memory and read no history, so they are flat in
 //! history size by construction and say nothing about laws that read history.
+//!
+//! The database goes in `NORN_BENCH_DIR` when set, otherwise in the system temp
+//! directory, which is memory-backed (tmpfs) on some hosts. Commit samples are
+//! durable, disk-backed results only when that directory is on disk, so set
+//! `NORN_BENCH_DIR` to a disk-backed path before reading them as durable cost.
 #![cfg(feature = "native")]
 #![allow(
     clippy::arithmetic_side_effects,
