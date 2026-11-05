@@ -5968,7 +5968,7 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
 /// the refusal from the warm store and from a cold store (opened before the
 /// tamper, never evaluated a bundle) on the same file. A store opened after the
 /// tamper must also refuse, at open or at recheck.
-fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
+fn warm_and_fresh_refusals(tamper: impl FnOnce(&CellStore, &NativeEngine, u64)) -> (String, String) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("plan.sqlite");
     let mut store = mapping_bundle_store(&path);
@@ -5992,12 +5992,7 @@ fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
     let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
         .expect("cold connection");
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
-    engine
-        .execute(
-            &tamper.replace("?V", &bundle.definitions_version.to_string()),
-            &[],
-        )
-        .expect("tamper");
+    tamper(&store, &engine, bundle.definitions_version);
     drop(engine);
     let warm = store
         .read()
@@ -6050,9 +6045,58 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
         ),
     ];
     for (name, tamper) in cases {
-        let (warm, cold) = warm_and_fresh_refusals(&tamper);
+        let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
+            engine
+                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .expect("tamper");
+        });
         assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
     }
+    // The only hit-specific guard: the installed row, journal record hash and
+    // receipt all still verify, but the journal's model snapshot differs from
+    // the one the plan was proven on.
+    let (warm, cold) = warm_and_fresh_refusals(|store, engine, version| {
+        let commit = store
+            .read()
+            .installed_definitions(Some(version))
+            .expect("definitions")
+            .expect("installed")
+            .commit_seq;
+        let record = store
+            .export_record(commit)
+            .expect("journal")
+            .expect("install record");
+        let mut value = serde_json::to_value(&record).expect("record JSON");
+        let properties = value["definitionInstall"]["model"]["objectTypes"][0]["properties"]
+            .as_array_mut()
+            .expect("snapshot properties");
+        assert!(properties.pop().is_some(), "snapshot has a property to drop");
+        let tampered: norn_cell::export::ExportRecord =
+            serde_json::from_value(value).expect("tampered record");
+        assert_ne!(
+            tampered.definition_install.as_ref().map(|i| &i.model),
+            record.definition_install.as_ref().map(|i| &i.model)
+        );
+        engine
+            .execute(
+                "UPDATE \"_norn_export_journal\" SET \"record\" = ?1, \"hash\" = ?2 WHERE \"commit_seq\" = ?3",
+                &[
+                    SqlValue::from(serde_json::to_string(&tampered).expect("record text")),
+                    SqlValue::from(tampered.hash().expect("record hash")),
+                    SqlValue::from(i64::try_from(commit).expect("commit")),
+                ],
+            )
+            .expect("rewrite the journal model snapshot");
+        assert_eq!(
+            store
+                .export_record(commit)
+                .expect("the rewritten journal record still verifies")
+                .expect("install record"),
+            tampered,
+            "only the model snapshot may differ, so the hit-specific guard is what refuses"
+        );
+    });
+    assert_eq!(warm, cold, "model snapshot: warm and cold refusals differ");
 }
 
 #[test]
