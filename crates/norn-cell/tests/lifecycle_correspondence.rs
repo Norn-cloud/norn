@@ -188,7 +188,7 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
         .expect("retained laws");
     let catalog = TypeCatalog::new(definitions.iter()).with_governing_laws(artifacts);
     assert_eq!(graph.inputs.nodes.len(), 10);
-    let mut compared = 0;
+    let mut compared = 0_usize;
     for (from, row) in graph.inputs.nodes.iter().enumerate() {
         let (committed, after) = native(&model, &catalog, None, create(row));
         assert_eq!(
@@ -197,7 +197,7 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
             "initial row {from}"
         );
         assert_eq!(after.as_ref(), if committed { Some(row) } else { None });
-        compared += 1;
+        compared = compared.checked_add(1).expect("bounded case count");
         for transition in &graph.inputs.machine.lifecycle.transitions {
             let edge = graph
                 .edges
@@ -220,7 +220,7 @@ fn compare(artifacts: &[ArtifactEnvelope], graph: &Graph) {
                 after.as_ref(),
                 Some(edge.map_or(row, |edge| &graph.inputs.nodes[edge.to]))
             );
-            compared += 1;
+            compared = compared.checked_add(1).expect("bounded case count");
         }
     }
     assert_eq!(
