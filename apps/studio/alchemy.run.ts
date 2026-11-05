@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import alchemy from "alchemy"
 import { Vite } from "alchemy/cloudflare"
@@ -37,7 +37,7 @@ export const studio = await Vite("studio", {
 await app.finalize()
 
 // No credential from the environment may end up in state: fail the deploy if one does, naming only the variable.
-const files = (readdirSync(stateDir, { recursive: true, withFileTypes: true }) as import("node:fs").Dirent[])
+const files = !existsSync(stateDir) ? [] : (readdirSync(stateDir, { recursive: true, withFileTypes: true }) as import("node:fs").Dirent[])
   .filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name))
 const leaks: Record<string, number> = {}
 for (const file of files) for (const [name, count] of Object.entries(leakedSecrets(readFileSync(file, "utf8"), process.env))) leaks[name] = (leaks[name] ?? 0) + count
