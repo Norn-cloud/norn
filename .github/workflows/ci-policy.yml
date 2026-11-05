@@ -351,10 +351,12 @@ jobs:
             if (!pr.mergeQueueEntry || pr.headRefOid !== '${{ steps.pr.outputs.head_sha }}') return;
             await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: pr.id });
             core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
-  # D43: implementation_proved claims are admitted only from receipts that the
-  # base-owned wrapper writes in this base-defined pull_request_target run. The
-  # candidate checkout is data: no step runs a candidate command, and the
-  # wrapper refuses extraction when cargo could run candidate build code.
+  # D43, D47: base-owned wrappers run Kani and hax on the candidate. Those tools
+  # compile candidate code, so this job is candidate-influenced: it holds no
+  # secrets, a read-only token and no OIDC token, its only cache is the tool
+  # cache that only this job reads, and every receipt it writes is
+  # candidate-reported. Tools run only when the pull request changes an
+  # implementation claim or an input of one.
   implementation-receipts:
     name: implementation receipts
     if: github.event_name == 'pull_request_target'
@@ -390,7 +392,11 @@ jobs:
           ref: ${{ steps.pr.outputs.head_sha }}
           path: candidate
           persist-credentials: false
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Decide whether any implementation claim or input changed
+        id: scope
+        run: python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"
+      - if: steps.scope.outputs.in_scope == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/norn-verification-tools
           key: implementation-tools-${{ hashFiles('trusted/scripts/bootstrap-verification-tools.sh', 'trusted/scripts/bootstrap-rust-extraction-tools.sh') }}
@@ -405,8 +411,10 @@ jobs:
           path: ${{ runner.temp }}/implementation-receipts
           if-no-files-found: ignore
           retention-days: 30
-  # A fresh runner that executes no candidate code admits receipts from this
-  # run, head, attempt and job only, and reports the verdict on the head.
+  # A fresh runner that executes no candidate code re-checks what it can
+  # itself (F* over the uploaded extraction, with its own pinned F*), labels
+  # the rest candidate-reported, and reports the verdict on the head. A
+  # producer that did not succeed fails this check.
   implementation-receipt-check:
     name: implementation receipt check
     needs: [implementation-receipts]
@@ -415,8 +423,11 @@ jobs:
       contents: read
       statuses: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
+      - name: Reject a receipt producer that did not succeed
+        if: needs.implementation-receipts.result != 'success'
+        run: exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.implementation-receipts.outputs.base_sha }}

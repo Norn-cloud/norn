@@ -67,13 +67,16 @@ class EnrollmentTests(unittest.TestCase):
                 module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
 
     def test_implementation_claims_are_admitted_only_from_receipts(self):
-        """Without base-wrapper receipts, every actual implementation claim is refused."""
+        """Without base-wrapper receipts, every actual implementation claim is refused (D43, D47)."""
         receipts = self._validator().implementation_receipts
         with tempfile.TemporaryDirectory() as directory:
-            errors = receipts.verify(ROOT, Path(directory), {})
+            errors, _ = receipts.verify(ROOT, Path(directory), {}, None)
         claims = sorted(receipts.implementation_claims(ROOT))
         self.assertEqual(claims, ["INV-ART-DIRECT-WRITE-PREDICATE", "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"])
-        self.assertEqual(errors, [f"{claim}: no receipt from the base-owned wrapper" for claim in claims])
+        self.assertEqual(errors[0], "INV-ART-DIRECT-WRITE-PREDICATE: no receipt from the base-owned wrapper")
+        # Kani runs on the candidate-influenced receipts runner: never admitted as implementation_proved.
+        self.assertRegex(errors[1], "^INV-CERT-INTEGER-NEGATION-CORRESPONDENCE: .*candidate-reported")
+        self.assertEqual(len(errors), 2)
 
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
@@ -221,6 +224,8 @@ class EnrollmentTests(unittest.TestCase):
         for prefix, suffix in (
             ("macro_rules! unused { () => { ", " }; }"),
             ('include!("other.rs"); ', ""),
+            ('const SOURCE: &str = include_str!("../../crates/norn-checker/src/exact_rational.rs"); ', ""),
+            ('const SOURCE: &[u8] = include_bytes !("../../crates/norn-checker/src/exact_rational.rs"); ', ""),
             ('#[path = "other.rs"] mod other; ', ""),
             ('#[path = "other.rs"] ', ""),
         ):
@@ -233,7 +238,7 @@ class EnrollmentTests(unittest.TestCase):
                 production.parent.mkdir(parents=True)
                 production.write_text("pub struct Rational;\n")
                 harness.write_text(prefix + proof + suffix)
-                with self.assertRaises(module.InvalidCoverage):
+                with self.assertRaisesRegex(module.InvalidCoverage, "cannot contain" if "!" in prefix else ""):
                     module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
                 # Normalized imports bind to claim evidence, without a validator allowlist.
                 harness.write_text('#[path = "../../crates/norn-checker/src/../src/exact_rational.rs"] mod production;\n' + proof)

@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "norn.implementation-receipt.v1",
   "title": "Base-owned implementation-proof receipt",
-  "description": "Written by scripts/ci/implementation_receipts.py from the trusted base checkout, one per implementation_proved claim and workflow run.",
+  "description": "Written by scripts/ci/implementation_receipts.py from the trusted base checkout, one per implementation_proved claim and workflow run. The receipts runner compiles candidate code, so every receipt is candidate-reported; the verifier's verdict ($defs/verdict) says what it re-checked itself.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "kind", "claim", "wrapper", "wrapperSha256", "repository", "headSha", "treeSha",
+  "required": ["schema", "trust", "kind", "claim", "wrapper", "wrapperSha256", "repository", "headSha", "treeSha",
                "runId", "runAttempt", "job", "tools", "inputs", "invocations", "outputs", "exitCode"],
   "properties": {
     "schema": {"const": "norn.implementation-receipt.v1"},
+    "trust": {"const": "candidate-reported"},
     "kind": {"enum": ["kani", "extraction"]},
     "claim": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]*$"},
     "wrapper": {"type": "string", "minLength": 1},
@@ -55,6 +56,19 @@
     "exitCode": {"type": "integer"}
   },
   "$defs": {
+    "verdict": {
+      "description": "One verifier line per implementation_proved claim. Only rechecked and unchanged claims are admitted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "kind", "verdict", "rechecked", "candidateReported"],
+      "properties": {
+        "claim": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]*$"},
+        "kind": {"enum": ["kani", "extraction"]},
+        "verdict": {"enum": ["rechecked", "candidate-reported", "unchanged"]},
+        "rechecked": {"type": "array", "items": {"enum": ["fstar-typecheck", "fstar-option-allowlist", "proof-hole-scan"]}},
+        "candidateReported": {"type": "array", "items": {"enum": ["hax-extraction", "kani-baseline", "kani-mutations"]}}
+      }
+    },
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "digests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/sha256"}}
   }
