@@ -23,7 +23,7 @@ BUDGET = 200_000_000
 def fetch(url, sha256, path):
     if not path.exists():
         request = urllib.request.Request(url, headers={"User-Agent": "norn-bench"})
-        with urllib.request.urlopen(request, timeout=120) as response, path.open("wb") as out:
+        with urllib.request.urlopen(request, timeout=120) as response, path.open("xb") as out:
             while chunk := response.read(1 << 20):
                 if out.tell() + len(chunk) > BUDGET:
                     raise ValueError("download exceeds pinned size budget")
@@ -34,7 +34,7 @@ def fetch(url, sha256, path):
 
 
 def write_jsonl(path, rows):
-    with path.open("w") as out:
+    with path.open("w", encoding="utf-8") as out:
         count = 0
         for row in rows:
             out.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -193,7 +193,7 @@ def extract(args):
                 "SELECT country, SUM(quantity) FROM uci GROUP BY country ORDER BY 2 DESC, 1 LIMIT 5").fetchall(),
         },
     }
-    (work / "oracle.json").write_text(json.dumps(oracle, indent=1))
+    (work / "oracle.json").write_text(json.dumps(oracle, indent=1), encoding="utf-8")
     print(json.dumps(oracle))
 
 

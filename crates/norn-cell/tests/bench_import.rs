@@ -473,7 +473,7 @@ fn real_rows_through_retained_mapping_and_cell() {
             .object("main", target.entity, &id)
             .expect("read");
         ids.push(id.clone());
-        let expected = target.entity == "bench.RetailLine"
+        let expected = (target.entity == "bench.RetailLine" && actual.is_some())
             || target.properties.iter().all(|(property, source)| {
                 let wanted = source.strip_prefix("input.").map_or_else(
                     || Some(source.trim_matches('\'')),
