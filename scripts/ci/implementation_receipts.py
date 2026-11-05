@@ -430,6 +430,10 @@ def fstar_inputs_safe(path: Path) -> None:
             flag.startswith("--") and flag[2:] in FSTAR_OPTIONS and value.isdigit()
             for flag, value in zip(words[::2], words[1::2])), f"{path.name}: F* option {argument!r} is not allowed")
     require(FSTAR_META.search(code) is None, f"{path.name}: F* meta-programs are not re-checked")
+    # The pinned F* proves False through an inner let rec (FStarLang/FStar#4554,
+    # fixed after 2026.08.16), so only top-level recursion is re-checked.
+    require(all(m.start() == 0 or code[m.start() - 1] == "\n" for m in re.finditer(r"\blet\s+rec\b", code)),
+            f"{path.name}: an inner let rec is unsound in the pinned F*")
     require(not fstar_holes(path), f"{path.name}: proof hole")
 
 
