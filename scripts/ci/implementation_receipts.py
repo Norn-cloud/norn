@@ -214,7 +214,8 @@ def tool_identity(name: str, env: dict) -> dict:
     require(path is not None, f"{name} is not installed")
     version = subprocess.run([path, "--version"], env=env, capture_output=True, text=True, timeout=120)
     return {"path": path, "sha256": sha256(Path(path).resolve()),
-            "version": (version.stdout or version.stderr).strip().splitlines()[0]}
+            # Some tools (hax) print the name and the version on separate lines.
+            "version": " ".join((version.stdout or version.stderr).split()[:8])}
 
 
 def invoke(argv: list[str], cwd: Path, env: dict, log: Path) -> dict:
