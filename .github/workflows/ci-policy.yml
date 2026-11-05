@@ -353,9 +353,10 @@ jobs:
             core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
   # D43, D47: base-owned wrappers run Kani and hax on the candidate. Those tools
   # compile candidate code, so this job is candidate-influenced: it holds no
-  # secrets, a read-only token and no OIDC token, its only cache is the tool
-  # cache that only this job reads, and every receipt it writes is
-  # candidate-reported. Tools run only when the pull request changes an
+  # secrets, a read-only token, no OIDC token and no cache (a cached tool
+  # directory would let one candidate poison the tools of the next run), and
+  # every receipt it writes is candidate-reported. The trusted bootstrap
+  # installs the pinned tools only when the pull request changes an
   # implementation claim or an input of one.
   implementation-receipts:
     name: implementation receipts
@@ -395,11 +396,6 @@ jobs:
       - name: Decide whether any implementation claim or input changed
         id: scope
         run: python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"
-      - if: steps.scope.outputs.in_scope == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/norn-verification-tools
-          key: implementation-tools-${{ hashFiles('trusted/scripts/bootstrap-verification-tools.sh', 'trusted/scripts/bootstrap-rust-extraction-tools.sh') }}
       - name: Run base-owned implementation wrappers
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}

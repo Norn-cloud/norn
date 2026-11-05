@@ -488,12 +488,11 @@ await github.rest.repos.createCommitStatus({
     # D43, D47: receipt jobs run only base-owned code, from the trusted checkout,
     # with the candidate checked out as data beside it. The producer compiles
     # candidate code, so it gets a read-only token, no secrets, no OIDC token
-    # and only the tool cache no other job reads; the checker uses no cache and
-    # fails when the producer did not succeed.
+    # and no cache; the checker uses no cache either and fails when the
+    # producer did not succeed. No executable step may be skipped or tolerated.
     wrapper = 'python3 trusted/scripts/ci/implementation_receipts.py {} --root candidate --head "$HEAD_SHA" ' \
               '--receipts "$RUNNER_TEMP/implementation-receipts"'
     scope = 'python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"'
-    tool_cache = "~/.cache/norn-verification-tools"
     for name, runs, permissions, base in (
             ("implementation-receipts", [scope, wrapper.format("run")], {"contents": "read"},
              "${{ steps.pr.outputs.base_sha }}"),
@@ -504,13 +503,7 @@ await github.rest.repos.createCommitStatus({
         caches = [step for step in steps if step.get("uses", "").startswith("actions/cache")]
         require("secrets." not in json.dumps(job) and "environment" not in job and "container" not in job
                 and "services" not in job, f"{name}: no secrets, environment, container or service")
-        if name == "implementation-receipt-check":
-            own_cache = caches == []
-        else:
-            own_cache = len(caches) == 1 and caches[0].get("if") == "steps.scope.outputs.in_scope == 'true'" \
-                and caches[0].get("with", {}).get("path") == tool_cache \
-                and str(caches[0]["with"].get("key", "")).startswith("implementation-tools-")
-        require(own_cache, f"{name}: only the producer may cache, and only its own tool cache")
+        require(caches == [], f"{name}: candidate-influenced tools and receipts are never cached")
         if name == "implementation-receipt-check":
             require(steps[0] == {"name": "Reject a receipt producer that did not succeed",
                                  "if": "needs.implementation-receipts.result != 'success'", "run": "exit 1"},
@@ -519,14 +512,15 @@ await github.rest.repos.createCommitStatus({
         require(job.get("permissions") == permissions and not job.get("continue-on-error")
                 and "github.event_name == 'pull_request_target'" in job.get("if", "")
                 and [step["run"].strip() for step in steps if "run" in step] == runs
+                and all("if" not in step and not step.get("continue-on-error")
+                        for step in steps if "run" in step and step["run"].strip() != "exit 1")
                 and all(not has_execution_override(job, step) for step in steps)
                 and [c.get("path") for c in checkouts] == ["trusted", "candidate"]
                 and checkouts[0].get("ref") == base and set(checkouts[0]) == {"ref", "path", "persist-credentials"}
                 and all(c.get("persist-credentials") is False for c in checkouts),
                 f"{name}: only the base-owned wrapper may execute, least-privileged, beside candidate data")
-    require(not any(marker in json.dumps(job) for other, job in jobs.items() if other != "implementation-receipts"
-                    for marker in (tool_cache, "implementation-tools")),
-            "only the implementation-receipts job may read its candidate-influenced tool cache")
+    require("norn-verification-tools" not in json.dumps(jobs),
+            "no job may cache the candidate-influenced verification tool directory")
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
