@@ -187,8 +187,11 @@ class ReceiptTest(unittest.TestCase):
         self.expected["headSha"] = self.head
         shutil.rmtree(self.out)
         self.produce()
-        self.forge("INV-EXTRACT", "module Lib\nlet g (x: bool) : bool = x\n")
-        self.rejected("INV-EXTRACT", "lib::f is not defined exactly once")
+        for module in ("module Lib\nlet g (x: bool) : bool = x\n",
+                       # A declaration only inside a comment is no definition.
+                       "module Lib\n(*\nlet f (x: bool) : bool = x\n*)\nlet g (x: bool) : bool = x\n"):
+            self.forge("INV-EXTRACT", module)
+            self.rejected("INV-EXTRACT", "lib::f is not defined exactly once")
 
     def test_solver_budget_options_are_allowed(self) -> None:
         self.produce()
