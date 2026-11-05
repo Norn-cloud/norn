@@ -64,15 +64,18 @@ class EnrollmentTests(unittest.TestCase):
             module.check_inventory(subprocess.CompletedProcess([], 0, success, ""), name, False)
 
     def _validator(self):
+        """Load a fresh copy of the coverage validator module."""
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
 
     def _claim(self, claim_id):
+        """Return (subsystem, claim) for an actual manifest claim."""
         return next((s, c) for s in self.coverage["subsystems"] for c in s["obligationClaims"] if c["id"] == claim_id)
 
     def _bindings(self, module, subsystems=None, gates=None, runner=None):
+        """Run the global binding check with optional mutated inputs."""
         module.validate_implementation_bindings(
             self.coverage["subsystems"] if subsystems is None else subsystems,
             self.gates["gates"] if gates is None else gates,
@@ -89,6 +92,7 @@ class EnrollmentTests(unittest.TestCase):
         production = (ROOT / original["correspondenceSource"]).read_text()
 
         def fake_kani(argv, cwd, **_):
+            """Simulate Kani: fail only when the proof reaches mutated production."""
             work = Path(cwd)
             harness = (work / argv[-1]).read_text()
             body = harness[harness.index("#[kani::proof]"):]

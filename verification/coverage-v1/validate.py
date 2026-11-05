@@ -793,20 +793,24 @@ def implementation_kind(claim: dict[str, Any]) -> str | None:
 
 
 def kani_implementation_claim(claim: dict[str, Any]) -> bool:
+    """True when the claim's executed proof command runs Kani."""
     return implementation_kind(claim) == "kani"
 
 
 def claim_schema_validator(definition: str) -> jsonschema.Draft202012Validator:
+    """Validate one typed claim definition from the result schema's $defs."""
     schema = load(CLAIM_SCHEMA_DEFS)
     return jsonschema.Draft202012Validator({"$defs": schema["$defs"], "$ref": f"#/$defs/{definition}"})
 
 
 def require_schema(definition: str, value: Any, message: str) -> None:
+    """Refuse `value` unless it matches the named typed claim definition."""
     errors = sorted(claim_schema_validator(definition).iter_errors(value), key=str)
     require(not errors, f"{message}: {errors[0].message if errors else ''}")
 
 
 def validate_implementation_kind(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
+    """Check a claim's evidence and typed fields against its derived kind."""
     kind = implementation_kind(claim)
     label = f"{subsystem_id}.{claim_id}"
     if kind is None:
@@ -864,6 +868,7 @@ def runner_invocation(runner_text: str, gate_id: str) -> tuple[str, str, list[st
 
 
 def require_wired(runner_text: str, gate: dict[str, Any], label: str, *, kani_target: bool = False) -> None:
+    """Require the runner to register `gate` with exactly its declared argv."""
     invocation = runner_invocation(runner_text, gate["id"])
     argv = None
     if invocation is not None:
