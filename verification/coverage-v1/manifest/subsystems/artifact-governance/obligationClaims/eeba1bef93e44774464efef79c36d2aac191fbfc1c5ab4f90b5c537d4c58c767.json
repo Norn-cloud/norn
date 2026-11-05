@@ -5,7 +5,7 @@
     "runtime": "exhaustive_bounded",
     "model": "missing",
     "proof": "implementation_proved",
-    "residual": "The promoted Rust table enumerates the current 11 ArtifactKind by 7 ArtifactLifecycle values and the F* theorem is total over the hax-extracted closed production representations. This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim.",
+    "residual": "The promoted Rust table enumerates the current 15 ArtifactKind by 7 ArtifactLifecycle values (105 combinations) and the F* theorem is total over the hax-extracted closed production representations. This proves only the pure predicate. API/store callsite completeness, faithful kind/lifecycle derivation, BAC review, trusted-checker receipts, active-pointer publication, persistence, authentication, authorization, concurrency, and any future enum variant before re-extraction remain outside the claim.",
     "evidence": {
       "runtime": {
         "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.runtime"
