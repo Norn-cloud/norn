@@ -4,16 +4,17 @@ import { ChartLine, Database, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
-import { QuestionsMenu, QuestionsPage } from "./questions.tsx"
+import { QuestionsPage, useQuestionsMenu } from "./questions.tsx"
 import { Shell, type Section } from "./shell.tsx"
+import { SourcesPage, useSourcesMenu } from "./sources.tsx"
+import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import { ObjectPage, ObjectsPage } from "./objects.tsx"
-import { SourcesPage } from "./sources.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why." },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", menu: QuestionsMenu },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step." },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", useMenu: useSourcesMenu },
+  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", useMenu: useQuestionsMenu },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", useMenu: useWorkflowsMenu },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "Every rule the system keeps, and how strongly each one is checked." },
 ]
 
@@ -38,7 +39,7 @@ const router = createRouter({
     ...SECTIONS.map((section) => createRoute({
       getParentRoute: () => root,
       path: section.path,
-      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : () => <NotYet {...section} />,
+      component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectsPage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$id", component: ObjectPage }),

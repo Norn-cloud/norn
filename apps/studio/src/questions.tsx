@@ -6,44 +6,15 @@ import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { member } from "./lib/exact.ts"
-import { FRESHNESS, bucketLabel, day, headline, period, scope } from "./lib/format.ts"
+import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
+import { chartFrame } from "./lib/chart.ts"
+import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
 import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
-import { measured, operandUnits } from "./lib/units.ts"
-import { MenuItem } from "./shell.tsx"
-
-interface Bucket {
-  readonly key: string
-  readonly label: string
-  readonly value: string
-  /** One sum, or numerator then denominator, as the server wrote them, each with its declared unit. */
-  readonly totals: readonly string[]
-  readonly members: readonly { readonly id: string; readonly amounts: readonly (string | null)[] }[]
-}
-
-function buckets({ question, answer, metrics, objectType }: QuestionAnswer): Bucket[] {
-  const units = operandUnits(question.document, metrics.document, objectType.document)
-  const text = (pointer: string) => answer.numbers.get(pointer) ?? "unavailable"
-  const operand = (pointer: string, index: number) => measured(text(pointer), units[index])
-  return Object.entries(answer.document.rows).map(([key, row]) => {
-    const at = `/rows/${member(key)}`
-    return {
-      key,
-      label: bucketLabel(row.bucket, question.document),
-      value: text(`${at}/value`),
-      totals: row.totals.map((_, index) => operand(`${at}/totals/${index}`, index)),
-      members: Object.entries(row.members).map(([id, { amounts }]) => ({
-        id,
-        amounts: amounts.map((amount, index) => amount === null ? null : operand(`${at}/members/${member(id)}/amounts/${index}`, index)),
-      })),
-    }
-  })
-}
-
-const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+import { RestatementCard } from "./restatement.tsx"
+import type { MenuEntry } from "./shell.tsx"
 
 function Exact({ value, totals }: { readonly value: string; readonly totals: readonly string[] }) {
   return totals.length > 1
@@ -85,9 +56,10 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
   const [open, setOpen] = useState<Bucket>()
   const question = read.question.document
   const answer = read.answer.document
-  const rows = buckets(read)
+  const rows = buckets(declarations(read), { answer, numbers: read.answer.numbers, at: "" })
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
+  const frame = chartFrame(rows)
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
     Object.values(partitions).map(({ complete }) => `${source} ${complete ? "complete" : "incomplete"}`))
   return (
@@ -102,34 +74,36 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
       </div>
       {latest && (
         <StatStrip>
-          <button type="button" className="block h-full rounded-xl text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px" onClick={() => setOpen(latest)}>
-            <KpiTile icon={Sigma} label={latest.label} value={latest.value} sub={fraction(latest.totals)} />
+          <button type="button" className="block h-full rounded-lg text-start transition-transform duration-150 ease-spring outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:translate-y-px" onClick={() => setOpen(latest)}>
+            <KpiTile icon={Sigma} label={latest.label} value={shown(latest)} sub={latest.totals.length > 1 ? `${fraction(latest.totals)} = ${latest.value} exactly` : undefined} />
           </button>
           <KpiTile icon={Rows3} label="Records counted" value={latest.members.length} sub={latest.label} />
           <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${changes(answer.knownAsOf)}`} />
         </StatStrip>
       )}
-      <Panel icon={ChartLine} label={headline(question)} action={period(question.window)}>
+      <Panel icon={ChartLine} label={headline(question)} action={frame ? `${period(question.window)} · scale ${frame.scale[0]}${frame.unit}–${frame.scale[1]}${frame.unit}` : period(question.window)}>
         <Well className="px-2 pt-4 pb-1">
-          <ChartContainer config={{ value: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
-            <AreaChart data={rows.map(({ label, value }) => ({ label, value: Number(value), exact: value }))} margin={{ left: 8, right: 8 }}>
+          {frame ? (
+          <ChartContainer config={{ position: { label: headline(question), color: "var(--chart-1)" } }} className="h-56 w-full">
+            <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
               <CartesianGrid vertical={false} strokeDasharray="2 4" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={24} />
-              <YAxis domain={["auto", "auto"]} tickLine={false} axisLine={false} width={56} tickFormatter={(tick: number) => tick.toFixed(4)} />
+              <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickCount={frame.unit === "%" ? frame.scale[1] - frame.scale[0] + 1 : 5} tickFormatter={(tick: number) => `${tick}${frame.unit}`} />
               <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => (
                 <div className="flex w-full justify-between gap-4">
                   <span className="text-muted-foreground">{headline(question)}</span>
-                  <span className="font-mono tabular-nums">{String(item.payload?.exact)}</span>
+                  <span className="font-mono tabular-nums">{String(item.payload?.shown)} <span className="text-muted-foreground">({String(item.payload?.exact)})</span></span>
                 </div>
               )} />} />
-              <Area dataKey="value" type="monotone" stroke="var(--color-value)" strokeWidth={1.5} fill="var(--color-value)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
             </AreaChart>
           </ChartContainer>
+          ) : <EmptyState icon={ChartLine}>The server returned no answers for this window.</EmptyState>}
         </Well>
       </Panel>
       <Panel icon={Rows3} label="Every week" action="Select a week to see its records">
         <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Period</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Exactly</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
           <TableBody>
             {rows.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
@@ -138,8 +112,9 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
                     {bucket.label}
                   </button>
                 </TableCell>
-                <TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell>
-                <TableCell className="text-right tabular-nums">{bucket.members.length}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{fraction(bucket.totals)} = {bucket.value}</TableCell>
+                <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -151,11 +126,12 @@ function QuestionCard({ read }: { readonly read: QuestionAnswer }) {
 }
 
 /** The questions on the board, for the submenu island. */
-export function QuestionsMenu() {
+export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
   const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
-  return <>{board.data?.map(({ question }) => (
-    <MenuItem key={question.document.name} href={`#${question.document.name}`}>{headline(question.document)}</MenuItem>
-  ))}</>
+  return board.data && [
+    ...board.data.map(({ question }) => ({ href: `#${question.document.name}`, label: headline(question.document) })),
+    { href: "#corrections", label: "Corrections" },
+  ]
 }
 
 export function QuestionsPage() {
@@ -169,6 +145,7 @@ export function QuestionsPage() {
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}
       {board.data?.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
+      <RestatementCard />
     </section>
   )
 }
