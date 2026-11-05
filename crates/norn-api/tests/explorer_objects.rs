@@ -20,7 +20,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-const SYSTEMS: [&str; 3] = ["erpnext", "shopify", "odoo"];
+// The recorded catalog leaves the Odoo pack out for now (see three-systems.definitions.json).
+const SYSTEMS: [&str; 2] = ["erpnext", "shopify"];
 const RECORDED_AT: &str = "2026-11-02T12:00:00Z";
 
 fn root() -> PathBuf {

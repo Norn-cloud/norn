@@ -10,6 +10,7 @@ export type HistoricalAnswer = Schemas["NornHistoricalQuestionResult"]
 export type Metric = Schemas["NornIrMetricDefinition"]
 export type ObjectType = Schemas["NornIrObjectTypeDef"]
 export type Artifact = Schemas["NornArtifactEnvelope"]
+export type Guarantees = Schemas["NornGuaranteesDocument"]
 export type ObjectPage = Schemas["NornObjectPage"]
 export type ObjectRecord = Schemas["NornObjectRecord"]
 export type LinkPage = Schemas["NornLinkPage"]
@@ -46,13 +47,15 @@ export interface Transport {
   readonly restatement: () => Promise<Restatement>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
+  /** The guarantees the model checker recorded for a law, one document per checked definition, keyed by recording name. */
+  readonly guarantees: () => Promise<readonly { readonly name: string; readonly read: Read<Guarantees> }[]>
   /** One page of a concept's authoritative objects after `after`; `null` when the server has no such read yet. */
   readonly objectPage: (objectType: string, after?: string) => Promise<Read<ObjectPage> | null>
   /** One object with its links and source lineage; `null` when it is not readable. */
   readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
-const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json"], { query: "?raw", import: "default", eager: true })
+const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
 
 const optional = <T,>(name: string): Read<T> | null =>
   recordings[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
@@ -85,6 +88,7 @@ export const recordedTransport: Transport = {
     asOf: recorded<HistoricalAnswer>("answers/scrap-yield.k1-as-of.answer.json"),
   }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
+  guarantees: async () => ["original", "mutant"].map((name) => ({ name, read: recorded<Guarantees>(`guarantees/constitution.${name}.guarantees.json`) })),
   objectPage: async (objectType, after) =>
     optional<ObjectPage>(`explorer/objects/${objectType}${after === undefined ? "" : `.after.${after.replaceAll("/", "~")}`}.page.json`),
   object: async (objectType, id) => {

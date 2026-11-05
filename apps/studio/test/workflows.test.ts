@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
-import { guardedFields, layout, workflows } from "../src/lib/workflows.ts"
+import { focusOf, guardedFields, layout, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
@@ -40,4 +40,11 @@ test("a guard reads as the fields it requires, in words", () => {
   const approve = named("core.analytics.Restatement")?.steps.find(({ transition }) => transition.id === "approve")
   expect(guardedFields(approve?.transition.guards ?? [])).toEqual(["reason", "slice ids", "candidate", "candidate digest"])
   expect(guardedFields(["(self.candidate != '') and (self.candidate_digest != '')"])).toEqual(["candidate", "candidate digest"])
+})
+
+test("focusing a step brings its states and the steps that touch them into view", () => {
+  const restatement = named("core.analytics.Restatement")
+  const focus = restatement && focusOf(restatement, "approve")
+  expect([...focus?.states ?? []].sort()).toEqual(["approved", "ready"])
+  expect([...focus?.adjacent ?? []].sort()).toEqual(["activate", "stage"])
 })
