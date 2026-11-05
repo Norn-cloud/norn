@@ -56,3 +56,11 @@ test("a period the correction empties is still restated, with nothing on the cor
   expect(changes.map(({ label, published: was, corrected: is }) => [label, was?.value, is])).toEqual([["Week of 19 Oct 2026", "0.98", undefined]])
   expect(changes[0]?.records.map(({ id, corrected: is }) => [id, is])).toEqual(week?.members.map(({ id }) => [id, undefined]))
 })
+
+test("a correction that only changes a record's version is still listed, with that record", () => {
+  const bucket = (version: number) => ({ key: "w1", label: "Week 1", value: "0.98", totals: ["294 g", "300 g"], members: [{ id: "lot-1", version, amounts: ["294 g", "300 g"] }] })
+  const [change, ...rest] = restated([bucket(1)], [bucket(2)], [])
+  expect(rest).toEqual([])
+  expect(change?.records.map(({ id, published, corrected }) => [id, published?.version, corrected?.version])).toEqual([["lot-1", 1, 2]])
+  expect(restated([bucket(1)], [bucket(1)], [])).toEqual([])
+})
