@@ -647,6 +647,30 @@ sudo() {{
 
 
 
+def execute_rights_publisher(script: str) -> dict[str, Any]:
+    """Run the actual publisher with an independently fixed, fresh decision."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.joinpath("rights-authority.cjs").write_text(
+            "module.exports=async(g,c,k,p,probe)=>probe||({rights:{},"
+            "publication:{digest:'" + "a" * 64 + "',failure_version:0},authority_deadline:Date.now()+600000});")
+        root.joinpath("rights-parameters.json").write_text("{}")
+        root.joinpath("rights-decision.json").write_text(json.dumps({"digest": "a" * 64}))
+        harness = """const context={repo:{owner:'owner',repo:'repo'},payload:{issue:{number:7}},
+serverUrl:'https://example.invalid',runId:42,sha:'default-branch-head'};
+const core={warning:()=>{},setFailed:()=>{}};
+const github={rest:{pulls:{get:async()=>({data:{head:{sha:'head'}}})},
+repos:{getCommit:async()=>({data:{commit:{tree:{sha:'tree'}}}}),listCommitStatusesForRef:()=>{},
+createCommitStatus:async row=>console.log(JSON.stringify(row))}},
+paginate:async()=>[{id:1,state:'success',creator:{login:'github-actions[bot]'},
+context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:'a'.repeat(64)})}]};
+(async()=>{
+""" + script + "\n})().catch(error=>{console.error(error);process.exit(1)});"
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10,
+                                env={**os.environ, "RUNNER_TEMP": directory}, check=True)
+    return json.loads(result.stdout)
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -655,6 +679,10 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "/approve-gates head", "", True, True),
         ("issue_comment", "edited", "revoked", "/approve-gates head", True, True),
         ("issue_comment", "deleted", "/approve-gates head", "", True, True),
+        ("issue_comment", "created", "/ack-rights head", "", True, True),
+        ("issue_comment", "created", "/revoke-rights head", "", True, True),
+        ("issue_comment", "deleted", "/revoke-rights head", "", True, True),
+        ("issue_comment", "edited", "ordinary text", "/revoke-rights head", True, True),
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
@@ -679,15 +707,7 @@ def workflow_trusted_policy_canaries(source: str) -> None:
     def report(status: str, *, resolved: bool = True) -> dict[str, Any]:
         script = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}", "head" if resolved else "").replace(
             "${{ job.status }}", status)
-        # Execute the actual workflow reporter against an API double. No API writes.
-        harness = """const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {issue: {number: 7}},
-            serverUrl: 'https://example.invalid', runId: 42};
-const github = {rest: {pulls: {get: async () => ({data: {head: {sha: 'head'}}})},
-    repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
-(async () => {
-""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
-        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
-        value = json.loads(result.stdout)
+        value = execute_rights_publisher(script)
         if value["sha"] != "head" or value["context"] != "trusted-policy":
             raise AssertionError("reporter lost the required head/context binding")
         return value
@@ -739,7 +759,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
             if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
+        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ github.event.workflow_run.head_sha }}" --repository "${{ github.repository }}"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
@@ -754,15 +774,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         for status in ("success", "failure", "cancelled", "skipped"):
             script = reporter["with"]["script"].replace("${{ github.event.workflow_run.head_sha }}", "group-head").replace(
                 "${{ github.sha }}", "default-branch-head").replace("${{ job.status }}", status)
-            # workflow_run checks belong to the default branch. The actual JS
-            # must explicitly publish onto the triggering merge-group commit.
-            harness = """const context = {repo: {owner: 'owner', repo: 'repo'},
-    sha: 'default-branch-head', serverUrl: 'https://example.invalid', runId: 42};
-const github = {rest: {repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
-(async () => {
-""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
-            result = subprocess.run(["bun", "-e", harness], check=True, capture_output=True, text=True, timeout=10)
-            value = json.loads(result.stdout)
+            value = execute_rights_publisher(script)
             if (value["sha"] != "group-head" or value["context"] != "trusted-policy"
                     or value["state"] != ("success" if status == "success" else "failure")):
                 raise AssertionError("merge-group required context/head/fail-closed verdict was lost")
@@ -786,9 +798,9 @@ const github = {rest: {repos: {createCommitStatus: async value => console.log(JS
             reporter["if"] = "success()"
         else:
             before, after = {
-                "context": ("context: 'trusted-policy'", "context: 'different-status'"),
+                "context": ("context:'trusted-policy'", "context:'different-status'"),
                 "head": ("${{ github.event.workflow_run.head_sha }}", "${{ github.sha }}"),
-                "state": ("'${{ job.status }}' === 'success' ? 'success' : 'failure'", "'success'"),
+                "state": ("'${{ job.status }}'==='success'", "true"),
             }[mutation]
             if before not in reporter["with"]["script"]:
                 raise AssertionError(f"merge-group mutation target drifted: {mutation}")
@@ -877,13 +889,13 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
             if change == "concurrency":
-                trusted["concurrency"]["cancel-in-progress"] = False
+                trusted["concurrency"]["cancel-in-progress"] = True
             elif change == "if":
                 trusted["if"] = "!cancelled() && github.event_name == 'pull_request_target'"
             else:
                 reporter = next(step for step in trusted["steps"]
                                 if step.get("name") == "Report trusted policy on the exact PR head")
-                reporter["with"]["script"] = reporter["with"]["script"].replace("context: 'trusted-policy'", "context: 'different-status'")
+                reporter["with"]["script"] = reporter["with"]["script"].replace("context:'trusted-policy'", "context:'different-status'")
             rejected(f"trusted-policy {change} mutation", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["trusted-policy"]["name"] = "trusted-policy"
@@ -1704,7 +1716,352 @@ def evidence_inventory_canaries() -> None:
     )
 
 
+def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -> dict:
+    if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (head, base, group_head, tree)):
+        raise ValueError("full lowercase commit/tree identities required")
+    public = yaml.safe_load((ROOT / ".github/workflows/ci-policy.yml").read_text())
+    group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
+    def program(job: dict, name: str) -> str:
+        return next(step["with"]["script"] for step in job["steps"] if step.get("name") == name)
+    pr_job, group_job = public["jobs"]["trusted-policy"], group["jobs"]["trusted-policy"]
+    programs = {
+        "capture": public["jobs"]["rights-capture"]["steps"][0]["with"]["script"],
+        "writer": public["jobs"]["rights-revocation"]["steps"][0]["with"]["script"],
+        "pr": program(pr_job, "Record admin approvals of the exact PR head"),
+        "group": program(group_job, "Record admin approvals of the queued heads"),
+        "publisher": program(pr_job, "Report trusted policy on the exact PR head"),
+        "groupPublisher": program(group_job, "Report trusted policy on the group head"),
+    }
+    replacements = {"${{ steps.pr.outputs.number }}": "7", "${{ steps.pr.outputs.head_sha }}": head,
+                    "${{ steps.pr.outputs.base_sha }}": base,
+                    "${{ steps.pr.outputs.head_repository }}": "Norn-cloud/norn",
+                    "${{ steps.group.outputs.base_sha }}": base,
+                    "${{ github.event.workflow_run.head_sha }}": group_head,
+                    "${{ job.status }}": "failure"}
+    programs["prSuccess"] = programs["publisher"].replace("${{ job.status }}", "success")
+    programs["groupSuccess"] = programs["groupPublisher"].replace("${{ job.status }}", "success")
+    programs["prB"] = programs["pr"].replace("${{ steps.pr.outputs.number }}", "8")
+    for key, script in programs.items():
+        for before, after in replacements.items(): script = script.replace(before, after)
+        programs[key] = script
+    harness = r"""(async function harnessMain() {
+  const assert=require('assert'), fs=require('fs');
+  const {head,base,groupHead,tree,programs}=JSON.parse(process.env.RIGHTS_CASE);
+  const context={repo:{owner:'Norn-cloud',repo:'norn'},payload:{},runId:105,serverUrl:'https://github.com'};
+  process.env.GITHUB_WORKFLOW_SHA='e'.repeat(40);
+  const path=process.env.RUNNER_TEMP+'/maintainer-approval.json', evidence={};
+  let runs,jobs,history,live,payloads,clock,nextRun,modeShared,unavailable=false,readFailure=false,paging=false,shifted=false;
+  let outputs={}, admission=0, groupAdmission=0, virtualNow=0;
+  let objects,retained,objectCounter,jobReads=0,largeHistory=false,releasing=0,releaseReads=0;
+  Date.now=()=>virtualNow;
+  globalThis.setTimeout=(callback,ms)=>{virtualNow+=ms;queueMicrotask(callback);return 0};
+  const core={setOutput:(name,value)=>{outputs[name]=value},warning:()=>{},setFailed:()=>{}};
+  const oid=value=>{const sha=(++objectCounter).toString(16).padStart(40,'0');objects.set(sha,value);return sha};
+  const execute=code=>new (Object.getPrototypeOf(async function(){}).constructor)('github','context','core',code)(github,context,core);
+  const prA={number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:base}};
+  const prB={...prA,number:8};
+  const makeRun=(id,event='issue_comment',epoch='protocol')=>({id,run_number:id,run_attempt:1,event,head_sha:epoch,
+    status:'completed',created_at:new Date(virtualNow).toISOString(),run_started_at:new Date(virtualNow).toISOString(),head_repository:{full_name:'Norn-cloud/norn'},repository:{full_name:'Norn-cloud/norn'}});
+  const github={rest:{repos:{
+    getCollaboratorPermissionLevel:async({username})=>({data:{permission:username==='owner'?'admin':'read'}}),
+    createCommitStatus:async value=>{
+      if(unavailable)throw {status:503};
+      history.push({...value,id:history.length+1,created_at:clock,creator:{login:'github-actions[bot]'}});
+    },
+    listCommitStatusesForRef:async({ref,page=1})=>({data:history.filter(row=>row.sha===ref).slice().reverse().slice((page-1)*100,page*100)}),
+    getContent:async({ref,path})=>{
+      let content;
+      if(objects.has(ref)){
+        const commit=objects.get(ref),files=objects.get(commit.tree.sha);
+        if(!files.has(path))throw {status:404};
+        content=objects.get(files.get(path));
+      }else content=ref==='legacy'?'name: Public core':'rights-authority-v4';
+      return {data:{type:'file',encoding:'base64',content:Buffer.from(content).toString('base64')}};
+    },
+    compareCommits:async()=>({data:{status:'ahead'}}),
+    getCommit:async({ref})=>({data:{commit:{tree:{sha:tree}},parents:ref===groupHead?[{sha:base},{sha:head}]:[{sha:base}]}}),
+    listPullRequestsAssociatedWithCommit:async()=>({data:[modeShared?prB:prA]})
+  },git:{
+    createBlob:async({content})=>({data:{sha:oid(content)}}),
+    createTree:async({base_tree,tree})=>{const files=new Map(base_tree?objects.get(base_tree):[]);for(const row of tree)files.set(row.path,row.sha);return {data:{sha:oid(files)}}},
+    createCommit:async({tree,parents})=>{const data={tree:{sha:tree},parents:parents.map(sha=>({sha}))};const sha=oid(data);data.sha=sha;return {data}},
+    getCommit:async({commit_sha})=>({data:objects.get(commit_sha)}),
+    getRef:async()=>{if(!retained)throw {status:404};return {data:{object:{sha:retained}}}},
+    createRef:async({sha})=>{assert(!retained);retained=sha},
+    updateRef:async({sha,force})=>{assert.equal(force,false);assert(objects.get(sha).parents.some(p=>p.sha===retained));retained=sha}
+  },pulls:{get:async()=>{throw Error('rights must not use a second PR snapshot')}},
+  issues:{listComments:function comments(){},getComment:async({comment_id})=>{if(!live.has(comment_id))throw {status:404};return {data:live.get(comment_id)}}},
+  actions:{
+    getWorkflowRun:async({run_id})=>{const run=runs.find(r=>r.id===run_id);if(!run)throw {status:404};return {data:run}},
+    getWorkflowRunAttempt:async({run_id,attempt_number})=>{const run=runs.find(r=>r.id===run_id);assert.equal(run?.run_attempt,attempt_number);return {data:run}},
+    listWorkflowRuns:async({page})=>{
+      if(readFailure)throw {status:503};
+      if(paging&&page===2&&!shifted){runs.unshift(makeRun(nextRun++,'push'));shifted=true}
+      const size=paging?2:100;
+      return {data:{workflow_runs:runs.slice((page-1)*size,page*size)}};
+    },
+    listJobsForWorkflowRunAttempt:function attemptJobs(){}
+  }},
+  paginate:async(method,args)=>{
+    if(method===github.rest.repos.listCommitStatusesForRef)return history.filter(row=>row.sha===args.ref).slice().reverse();
+    if(method===github.rest.actions.listJobsForWorkflowRunAttempt){
+      jobReads++;
+      if(args.run_id===releasing&&++releaseReads===2){
+        const value=jobs.get(releasing).get(1);
+        value[0].status='completed';value[1].status='completed';value[1].conclusion='success';
+        value[1].name='Rights ledger none comment 13';
+        runs.find(r=>r.id===releasing).status='completed';
+      }
+      return jobs.get(args.run_id)?.get(args.attempt_number)||[];
+    }
+    assert.equal(method,github.rest.issues.listComments);return [];
+  }};
+  const payload=(comment,action='created',pull=true,prior,number=7)=>({action,
+    issue:{number:pull?number:42,...(pull?{pull_request:{url:'synthetic'}}:{})},comment,
+    ...(prior?{changes:{body:{from:prior}}}:{})});
+  const comment=(id,body,created)=>({id,user:{login:'owner'},body,created_at:created,updated_at:created});
+  async function record(id,p,attempt=1,fail=false) {
+    context.payload=p;context.runId=id;outputs={};virtualNow=Math.max(virtualNow,Date.parse(clock));
+    process.env.GITHUB_RUN_ATTEMPT=String(attempt);process.env.GITHUB_TRIGGERING_ACTOR='owner';
+    await execute(programs.capture);
+    const data=JSON.parse(outputs.payload);
+    if(!payloads.has(id)){payloads.set(id,p);runs.unshift(makeRun(id));nextRun=Math.max(nextRun,id+1)}
+    runs.find(r=>r.id===id).run_attempt=attempt;
+    if(attempt>1)runs.find(r=>r.id===id).run_started_at=new Date(virtualNow).toISOString();
+    const possible=[p.comment.body,p.changes?.body?.from].some(body=>(body||'').includes('/ack-rights')||(body||'').includes('/revoke-rights'));
+    const capture={id:id*10+attempt,name:'Capture immutable rights event '+outputs.kind+' '+(possible?'possible':'none'),status:'completed',conclusion:'success',
+      steps:[{name:'Rights event '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'}]};
+    const journal={id:id*10+attempt+1,name:'Rights ledger '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'};
+    if(!jobs.has(id))jobs.set(id,new Map());
+    jobs.get(id).set(attempt,[capture,journal]);
+    if(outputs.kind==='issue'){
+      journal.name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
+      journal.conclusion='skipped';return;
+    }
+    process.env.RIGHTS_EVENT=outputs.payload;
+    unavailable=fail;
+    if(fail){
+      for(let retry=0;retry<4;retry++)await assert.rejects(()=>execute(programs.writer));
+      journal.conclusion='failure';
+    } else await execute(programs.writer);
+    unavailable=false;
+  }
+  async function collect(kind) {
+    context.runId=admission;context.payload=kind==='group'?{workflow_run:{id:groupAdmission}}:{};
+    process.env.GITHUB_RUN_ATTEMPT='1';
+    jobReads=0;const hadCheckpoint=!!retained;
+    await execute(programs[kind==='pr'?modeShared?'prB':'pr':'group']);
+    if(largeHistory&&hadCheckpoint)assert(jobReads<50,'checkpoint must bound ordinary-comment history');
+    return JSON.parse(fs.readFileSync(path));
+  }
+  async function snapshot(name) {
+    virtualNow=Math.max(virtualNow,Date.parse(clock));admission=nextRun++;groupAdmission=nextRun++;runs.unshift(makeRun(groupAdmission,'merge_group'),makeRun(admission,'pull_request_target'));
+    const pr=await collect('pr'),group=await collect('group');
+    context.runId=admission;context.payload={};await execute(programs.pr);
+    const a=JSON.parse(fs.readFileSync(path));
+    const substantive=doc=>Object.fromEntries(Object.entries(doc.rights).map(([head,trees])=>[head,
+      Object.values(trees).map(row=>({head_sha:row.head_sha,tree_sha:row.tree_sha,pending:row.pending,entries:row.entries}))]));
+    assert.deepEqual(substantive(a),substantive(pr));assert.deepEqual(substantive(group),substantive(pr));
+    evidence[name]={pr,group,a};
+  }
+  function pending(doc){return doc.rights[head][tree].pending}
+  async function publishFailure(){context.runId=admission;context.payload={};await execute(programs.publisher)}
+  async function publishSaved(kind,doc,runId,groupId){
+    context.runId=runId;context.payload=kind==='group'?{workflow_run:{id:groupId}}:{};
+    process.env.GITHUB_RUN_ATTEMPT='1';
+    fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-parameters.json',JSON.stringify(
+      {kind:kind==='group'?'group':'pr',head:kind==='group'?groupHead:head,base,repository:'Norn-cloud/norn',number:modeShared?8:7}));
+    fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-decision.json',JSON.stringify(doc.publication));
+    await execute(kind==='group'?programs.groupSuccess:programs.prSuccess);
+    const row=history.filter(row=>row.sha===(kind==='group'?groupHead:head)&&row.context==='trusted-policy').at(-1);
+    assert.equal(row.state,'failure','stale or expired saved success must never replace failure');
+  }
+
+  for(const layout of ['single','shared'])for(const removal of ['edited','deleted']){
+    modeShared=layout==='shared';history=[];live=new Map();jobs=new Map();payloads=new Map();nextRun=101;
+    clock='2026-11-03T00:00:00Z';virtualNow=Date.parse(clock);objects=new Map();retained=null;objectCounter=10000;
+    largeHistory=layout==='single'&&removal==='edited';
+    runs=[makeRun(largeHistory?10000:100,'issue_comment','legacy')];
+    if(largeHistory){
+      for(let id=10001;id<=20000;id++){
+        runs.unshift(makeRun(id));
+        jobs.set(id,new Map([[1,[
+          {name:'Capture immutable rights event pull none',status:'completed',conclusion:'success'},
+          {name:'Rights ledger none comment '+id,status:'completed',conclusion:'success'}]]]));
+      }
+      nextRun=20001;paging=true;shifted=false;
+    }
+    const firstRun=nextRun;
+    const first=comment(1,'/ack-rights '+head,clock);live.set(1,first);await record(nextRun++,payload(first));
+    if(modeShared){clock='2026-11-03T00:00:02Z';const second=comment(2,'/ack-rights '+head,clock);live.set(2,second);await record(nextRun++,payload(second,'created',true,undefined,8))}
+
+    const revoke=comment(9,'/revoke-rights '+head,'2026-11-03T00:01:00Z');
+    // Admission and group runs are immutable fences, independent of the source PR.
+
+    const prefix=layout+'-'+removal+'-';
+    await snapshot(prefix+'initial');
+    if(largeHistory){assert(shifted);paging=false}
+    const savedAdmission=admission,savedGroup=groupAdmission,savedInitial=evidence[prefix+'initial'];
+    clock='2026-11-03T00:01:00Z';const revokeRun=nextRun++;await record(revokeRun,payload(revoke),1,true);await publishFailure();
+    const removed=removal==='edited'?payload({...revoke,body:'ordinary text'},'edited',true,revoke.body):payload(revoke,'deleted');
+    const removedRun=nextRun++;await record(removedRun,removed,1,true);await publishFailure();
+    runs.sort((a,b)=>b.run_number-a.run_number);
+    assert(!history.filter(s=>s.context.toLowerCase().startsWith('rights-ledger/')).some(s=>JSON.parse(s.description).k==='revoke'));
+    await publishSaved('pr',savedInitial.pr,savedAdmission,savedGroup);
+    await publishSaved('group',savedInitial.group,savedAdmission,savedGroup);
+    await snapshot(prefix+'interleaving');
+    await snapshot(prefix+'pending');assert.deepEqual(pending(evidence[prefix+'pending'].pr).sort(),[revokeRun,removedRun]);
+    clock='2026-11-03T00:01:30Z';
+    const premature=comment(3,'/ack-rights '+head,clock);live.set(3,premature);await record(nextRun++,payload(premature,'created',true,undefined,modeShared?8:7));
+    await snapshot(prefix+'premature');assert.equal(pending(evidence[prefix+'premature'].pr).length,2);
+    clock='2026-11-03T03:02:00Z';await record(revokeRun,payloads.get(revokeRun),2);
+    await snapshot(prefix+'partial');assert.deepEqual(pending(evidence[prefix+'partial'].pr),[removedRun]);
+    clock='2026-11-03T03:02:01Z';await record(removedRun,payloads.get(removedRun),2);
+    await snapshot(prefix+'reconciled');assert.deepEqual(pending(evidence[prefix+'reconciled'].pr),[]);
+    clock='2026-11-03T03:03:00Z';
+    const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
+    await snapshot(prefix+'fresh');
+    const freshAdmission=admission,freshGroup=groupAdmission,freshDocs=evidence[prefix+'fresh'];
+    const normalNow=virtualNow;virtualNow+=7200001;
+    await publishSaved('pr',freshDocs.pr,freshAdmission,freshGroup);
+    await publishSaved('group',freshDocs.group,freshAdmission,freshGroup);
+    virtualNow=normalNow;
+    const waitingRun=nextRun++;
+    await record(waitingRun,payload(comment(13,'ordinary mention of /revoke-rights, not a command',clock)));
+    const waitingJobs=jobs.get(waitingRun).get(1);
+    waitingJobs[0].status='queued';waitingJobs[1].status='queued';
+    waitingJobs[1].name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
+    runs.find(r=>r.id===waitingRun).status='in_progress';
+    releasing=waitingRun;releaseReads=0;
+    await snapshot(prefix+'inflight');
+    assert(releaseReads>=2,'an in-flight capture must be awaited');
+    releasing=0;
+    // A failed cursor write leaves its retention commit unpublished. Recovery replays
+    // from the last authenticated cursor and advances the retention ref without force.
+    admission=nextRun++;groupAdmission=nextRun++;
+    runs.unshift(makeRun(groupAdmission,'merge_group'),makeRun(admission,'pull_request_target'));
+    unavailable=true;await assert.rejects(()=>collect('pr'));assert(!fs.existsSync(path));unavailable=false;
+    await collect('pr');
+    // A plain issue with a skipped, unexpanded journal is attributed by the saved capture payload.
+    await record(nextRun++,payload(comment(12,'/revoke-rights '+head,clock),'created',false));
+    await snapshot(prefix+'plain');assert.deepEqual(pending(evidence[prefix+'plain'].pr),[]);
+    paging=true;shifted=false;await snapshot(prefix+'paging');paging=false;
+    assert.deepEqual(pending(evidence[prefix+'paging'].pr),[]);
+    // The latest recorded acknowledgment remains the frontier after its comment disappears.
+    live.delete(4);await snapshot(prefix+'withdrawn');
+    live.set(4,fresh);
+    history.find(s=>s.context.startsWith('rights-ledger/')).context=
+      history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
+    await snapshot(prefix+'case');
+    const complete=[...runs];
+    for(const id of [revokeRun,admission,firstRun]){
+      runs=complete.filter(r=>r.id!==id);
+      for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path))}
+    }
+    runs=complete;readFailure=true;
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path))}
+    readFailure=false;
+    const original=jobs.get(removedRun).get(2);
+    jobs.get(removedRun).set(2,[original[0],{...original[1],conclusion:'skipped'}]);
+    assert(pending(await collect('pr')).includes(removedRun));
+    jobs.get(removedRun).set(2,original);
+  }
+  console.log(JSON.stringify(evidence));
+})().catch(error=>{console.error(error);process.exit(1)});"""
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True,
+                                env={**os.environ, "RUNNER_TEMP": directory, "RIGHTS_CASE": json.dumps({
+                                    "head": head, "base": base, "groupHead": group_head, "tree": tree, "programs": programs})}, timeout=40)
+    if result.returncode:
+        raise AssertionError(result.stderr[-4000:])
+    return json.loads(result.stdout)
+
+
+def durable_rights_history_canaries(source: str, merge: str) -> None:
+    rights_recovery_evidence("1" * 40, "2" * 40, "3" * 40, "4" * 40)
+    print("global target ledger: single/shared SHA recovery, plain-issue payloads and offset paging passed")
+
+
+def rights_workflow_canaries() -> None:
+    coverage_validator = load_module("norn_rights_workflow_canary", VALIDATOR)
+    source = (ROOT / ".github/workflows/ci-policy.yml").read_text()
+    merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
+    coverage_validator.validate_rights_contract(source, merge)
+    for label, before, after in [
+        ("missing rights evidence", '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"', ""),
+        ("stale PR binding", '--head "${{ steps.pr.outputs.head_sha }}"', '--head "old"'),
+        ("missing revocation", "(ack|revoke)", "(ack|ignored)"),
+        ("missing rights collector", "(ack|revoke)", "(ignored|revoke)"),
+        ("missing reviewer identity", "permission:await permission(live.user.login)", "permission:'admin'"),
+    ]:
+        if before not in source:
+            raise AssertionError(f"inactive rights canary: {label}")
+        try:
+            coverage_validator.validate_rights_contract(source.replace(before, after), merge)
+        except coverage_validator.InvalidCoverage:
+            pass
+        else:
+            raise AssertionError(f"accepted {label}")
+    for before in ['--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"',
+                   '--head "${{ github.event.workflow_run.head_sha }}"']:
+        try:
+            coverage_validator.validate_rights_contract(source, merge.replace(before, ""))
+        except coverage_validator.InvalidCoverage:
+            pass
+        else:
+            raise AssertionError("accepted uncovered merge-group rights")
+    for which in ("pr", "group"):
+        for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env", "container",
+                         "success-reporter", "wrong-head", "disabled-reporter", "reporter-token",
+                         "latest-history", "missing-history", "collector-failure"):
+            public = yaml.safe_load(source)
+            group = yaml.safe_load(merge)
+            document = public if which == "pr" else group
+            job = document["jobs"]["trusted-policy"]
+            validator = next(step for step in job["steps"] if "--rights-evidence" in step.get("run", ""))
+            reporter = next(step for step in job["steps"] if step.get("name", "").startswith("Report trusted policy"))
+            collector = next(step for step in job["steps"] if step.get("name", "").startswith("Record admin approvals"))
+            if mutation == "collector-failure": collector["continue-on-error"] = True
+            elif mutation == "shell": validator["shell"] = "/usr/bin/true {0}"
+            elif mutation == "job-shell": job["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
+            elif mutation == "workflow-shell": document["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
+            elif mutation == "working-directory": validator["working-directory"] = "candidate"
+            elif mutation == "validator-env": validator["env"] = {"PATH": "candidate/bin"}
+            elif mutation == "container": job["container"] = "untrusted.invalid/skip-validation:latest"
+            elif mutation == "success-reporter": reporter["with"]["script"] = reporter["with"]["script"].replace("'${{ job.status }}'==='success'", "true")
+            elif mutation == "wrong-head": reporter["with"]["script"] = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}" if which == "pr" else "${{ github.event.workflow_run.head_sha }}", "wrong-head")
+            elif mutation == "disabled-reporter": reporter["if"] = "false"
+            elif mutation == "reporter-token": reporter["with"]["github-token"] = "candidate-token"
+            elif mutation == "latest-history": collector["with"]["script"] = collector["with"]["script"].replace("listCommitStatusesForRef", "getCombinedStatusForRef")
+            elif mutation == "missing-history": collector["with"]["script"] = "const revocations = [];"
+            try:
+                coverage_validator.validate_rights_contract(yaml.safe_dump(public), yaml.safe_dump(group))
+            except coverage_validator.InvalidCoverage:
+                continue
+            raise AssertionError(f"accepted {which} {mutation}")
+    for mutation in ("cancel", "pending-cancel", "disabled", "failure-bypass", "before-resolve", "deleted-body"):
+        public = yaml.safe_load(source)
+        writer = public["jobs"]["rights-revocation"]
+        if mutation in {"cancel", "pending-cancel"}: writer["concurrency"] = {"group": "shared", "cancel-in-progress": mutation == "cancel"}
+        elif mutation == "disabled": writer["if"] = "false"
+        elif mutation == "failure-bypass": public["jobs"]["trusted-policy"]["steps"][1]["run"] = "true"
+        elif mutation == "before-resolve":
+            steps = public["jobs"]["trusted-policy"]["steps"]
+            steps[0], steps[1] = steps[1], steps[0]
+        elif mutation == "deleted-body": public["jobs"]["rights-capture"]["steps"][0]["with"]["script"] = "return;"
+        try:
+            coverage_validator.validate_rights_contract(yaml.safe_dump(public), merge)
+        except coverage_validator.InvalidCoverage:
+            continue
+        raise AssertionError(f"accepted revocation recorder {mutation}")
+    durable_rights_history_canaries(source, merge)
+    print("rights workflow canaries: missing/stale evidence, durable history and execution overrides refused")
+
+
 def main() -> int:
+    if len(sys.argv) == 6 and sys.argv[1] == "--rights-recovery":
+        print(json.dumps(rights_recovery_evidence(*sys.argv[2:])))
+        return 0
     if sys.argv[1:] == ["--workflow-contract"]:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
         workflow_verdict_canaries(source)
@@ -1713,10 +2070,12 @@ def main() -> int:
         workflow_trusted_policy_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
-        print("workflow contract: admission, verdict, context and merge-group publisher canaries passed")
+        rights_workflow_canaries()
+        print("workflow contract: admission, verdict, rights and merge-group publisher canaries passed")
         return 0
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
+    rights_workflow_canaries()
     manifest_canaries()
     coverage_layout_canaries()
     central_obligation_closure_canaries()

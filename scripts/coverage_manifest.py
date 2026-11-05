@@ -223,7 +223,8 @@ def migrate_entries() -> None:
             relative = path.relative_to(staged)
             target = staged_records / (relative.as_posix() + ".json")
             value = dict(templates[relative.parts[1]]) if relative.parts[0] == SUBSYSTEMS else _object(record_root / "index.json.json")
-            value["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            if relative.parts[0] == SUBSYSTEMS:
+                value.pop("sha256", None)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(value, indent=2) + "\n")
         replaced = []
