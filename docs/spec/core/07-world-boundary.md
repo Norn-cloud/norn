@@ -185,3 +185,106 @@ Interface-typed governed link targets resolve their concrete identity roots in t
 requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
+
+## Observed canonical relation claims (#823)
+
+- **OBS-LINK-CLAIM-1:** the canonical concept owns its relation. Each admitted
+  MappingIR `maps[].links` entry declares a source-field expression, role and
+  canonical target map or identity binding. Evaluation emits one immutable
+  `ObservedLinkClaim` per non-null output or explicit nullable-role clear.
+  Claim identity includes its retaining observation and complete provenance;
+  delivery order and redelivery do not establish identity. Source aliases
+  remain provenance; they never replace canonical endpoint keys. Only typed claim
+  preparation seals claim metadata at its computed identity. Generic observation
+  authority cannot create claim metadata or rewrite a retained claim; claim
+  identities remain immutable across observation preparation and authorization merges.
+  Seals compare the catalog-effective metadata, including extension defaults.
+  Re-observation never backfills or changes retained metadata when defaults evolve;
+  differing effective values refuse until the existing definition-migration path
+  has made the retained row conform. The typed claim preimage and identity stay fixed.
+- **OBS-LINK-CONVERGE-1:** equal canonical endpoints converge to one live link;
+  all source claims remain individually addressable provenance. Observation
+  authority is confined to recomputed declared claims. Claims carry no link
+  property values, so a convergent addition must propose exactly the relation's
+  catalog-effective defaults. The existing authored relation-ownership check
+  remains in force for authored mutations.
+- **OBS-LINK-CONTRIBUTION-1:** the latest consumed claim for a source row,
+  declared canonical source/role and mapping artifact contributes current membership.
+  Its capture namespace comes from the existing connector/partition/source-row
+  identity, so identical row aliases from independent connectors never supersede
+  each other.
+  Supersession is recorded and one-way: a claim names the earlier claims of its
+  contribution that it replaces in `supersedes`, part of its immutable preimage,
+  so the order persists across turns and content addressing keeps it acyclic.
+  Mapping evaluation leaves the record empty and the claim planner fills it from
+  retained claims, ordered by source occurrence rather than arrival; redelivery
+  reuses the retained claim. Retained evidence never supersedes a fresh claim. Competing claims with no recorded order are contested
+  and authorize neither an addition nor a withdrawal; they still hold their edges
+  until a fresh claim records their order.
+  Standing and edge support are decided once over the turn's final claim set, so
+  sealing a claim is only an intent and a claim merged later can still refuse it.
+  Replacing its target withdraws an earlier observed edge only if no active
+  claim still supports that edge. Prepared old and successor evidence is
+  required for a withdrawal, and the kernel refuses it while any other prepared
+  claim for the same canonical edge is not superseded. Authored edges without
+  claim backing stay intact. Every superseded claim remains immutable evidence.
+  The kernel enforces these rules over prepared claims only: it cannot see a
+  retained claim the turn did not prepare, so an omitted successor or supporter
+  leaves a stale claim current. It also accepts whatever `supersedes` a fresh
+  claim carries, so it cannot tell a newer occurrence from a late one. The claim
+  planner (#877) must prepare every retained claim of the edge and contribution,
+  and must order supersession by source occurrence, never by arrival: an older
+  source occurrence must never supersede a newer stored one, including a
+  late-arriving older occurrence that is not a redelivery. Such an occurrence
+  records no order over the newer claim, so the two stay contested until a later
+  occurrence records both. These gaps are ship blockers for #823: no production
+  caller of `seal_observed_link_claim` may land before #877.
+- **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
+  canonical identity, including targets in the same capture. Target arrival
+  resolves it without source redelivery or an arrival-order assumption. Capture,
+  claims, consumption and cursor advancement share the existing atomic boundary.
+  A declared capture horizon closes pending claims into evidence-bearing findings.
+- **OBS-LINK-CONFLICT-1:** incompatible to-one claims, cardinality or endpoint-type
+  violations become source-conflict findings and quarantine their subjects under
+  OBS-EVIDENCE-1. No source occurrence or contradictory claim is silently discarded.
+  Native proposals violating those laws still refuse without writes.
+
+Unit 1 declares the claim concept, pins the MappingIR output correspondence and
+enforces at the kernel observation boundary: OBS-LINK-CLAIM-1 claim immutability
+and typed-only claim writes; OBS-LINK-CONVERGE-1 corroboration without namespace
+ownership, endpoint/type law and default-only link values; and
+OBS-LINK-CONTRIBUTION-1 recorded one-way supersession with prepared-support
+checks over the final claim set.
+Pending resolution, complete support enumeration and conflict quarantine
+require the subsequent runtime units.
+The claim's registry `evidence` scalar holds the exact canonical JSON of its
+typed preimage (`canonical_json_exact_of`: sorted object keys, verbatim strings
+and number tokens) as UTF-8 text; endpoint columns permit lookup without
+treating serialized claims as authority.
+
+Named acceptance scenarios:
+
+- **OBS-LINK-DECLARED:** ERPNext, Shopify and Odoo retain every declared role,
+  target type/key and relation-rule provenance from their admitted mappings.
+- **OBS-LINK-IDENTITY:** changing a source, mapping pin, observation or endpoint
+  changes claim identity; repeated evaluation of the same evidence preserves it.
+  A clear and an unresolved explicit target are distinct claims.
+- **OBS-LINK-EXTENSION-DEFAULT:** an admitted extension default is included in
+  both creation and retained-read seals. A later changed default cannot rewrite
+  the existing claim through re-observation.
+- **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
+  relation produce one edge with three provenance entries.
+- **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
+  its retained successor cannot restore the stale edge or withdraw the current one,
+  whether the successor is prepared before or after the stale claim is sealed.
+  A fresh claim recording the successor wins, even when it returns to the old target.
+- **OBS-LINK-SUPPORTED-WITHDRAWAL:** a replacement cannot withdraw an edge that
+  another connector's prepared claim still supports; once that connector's own
+  replacement is recorded, a later turn can.
+- **OBS-LINK-LINK-VALUES:** a convergent addition proposing non-default link
+  property values refuses.
+- **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield
+  the same final canonical links and claim set; reopen/replay retains that state.
+- **OBS-LINK-QUARANTINE:** missing/foreign targets at the declared horizon and
+  contradictory to-one claims retain source facts plus findings; native illegal
+  link writes refuse, and no partial capture or cursor advance is visible.
