@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Separator } from "@/components/ui/separator"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInput, SidebarInset,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -50,11 +50,12 @@ const TINT = ["[&>svg]:text-muted-foreground", "[&>svg]:text-chart-1", "[&>svg]:
 function RailItem({ section, active }: { readonly section: Section; readonly active: boolean }) {
   const badge = (section.useBadge ?? none)()
   const Icon = section.icon
+  const { setOpenMobile } = useSidebar()
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={{ children: section.label, hidden: false }}
         className="relative mx-auto size-10! justify-center rounded-[11px]! p-0! text-muted-foreground hover:bg-sidebar-accent data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm [&>svg]:size-5!">
-        <Link to={section.path}>
+        <Link to={section.path} onClick={() => setOpenMobile(false)}>
           <Icon />
           <span className="sr-only">{section.label}</span>
           {/* Inside the tile: the button clips anything outside it. A count replaces the active dot. */}
@@ -72,6 +73,8 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
  * No server document declares a section action yet, so none is shown.
  */
 export function Submenu({ section }: { readonly section: Section }) {
+  // Navigating closes the phone sheet the submenu sits in.
+  const { setOpenMobile } = useSidebar()
   const [search, setSearch] = useState("")
   const all = (section.useMenu ?? none)() ?? []
   const query = search.trim().toLowerCase()
@@ -123,7 +126,7 @@ export function Submenu({ section }: { readonly section: Section }) {
                     <SidebarMenuItem key={entry.href}>
                       <SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}
                         className={cn("h-10 gap-3 rounded-lg px-3 text-[0.9375rem] hover:bg-muted data-[active=true]:bg-muted data-[active=true]:font-medium [&>svg]:size-[18px]", TINT[entry.tint ?? 0])}>
-                        <Link {...target(section, entry.href)}><Icon /><span className="truncate">{entry.label}</span></Link>
+                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}><Icon /><span className="truncate">{entry.label}</span></Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   )
