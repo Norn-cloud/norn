@@ -1711,3 +1711,44 @@ fn obs_link_removal_only_seal_needs_no_link_defaults() {
     cell.commit_observed(commit, authority).expect("withdrawal");
     assert!(cell.load_link(&key).expect("edge").values.is_none());
 }
+
+#[test]
+fn obs_link_retained_claim_cannot_supersede_a_fresh_claim() {
+    let (mut types, cell, base) = claim_fixture();
+    types[0].links[0].cardinality.to = norn_ir::Multiplicity::Many;
+    let mut cell = cell.with_types(types.clone());
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let held = claim_edge(&base, "other");
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: held.clone(),
+            expected: norn_kernel::FactVersion(0),
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("edge the fresh claim keeps");
+    let mut fresh = base.clone();
+    fresh.observation_id = "bundle:fresh".into();
+    fresh.target.as_mut().expect("target").key = "other".into();
+    // Retained first, naming the identity of a claim that does not exist yet.
+    let retained = replacement_of(&fresh, "bundle:retained", "two");
+    let (commit, authority) = claimed_commit(&catalog, &cell, &retained);
+    cell.commit_observed(commit, authority).expect("retained");
+    let read = source_read(&cell, &fresh);
+    let (mut commit, mut authority) = claimed_commit(&catalog, &cell, &fresh);
+    commit.links.push(removal(&cell, &held));
+    append_retained_claim(&catalog, &cell, &retained, &mut commit, &mut authority);
+    // Honoring the record would make `fresh` superseded and free its edge.
+    authority
+        .seal_observed_link_claim(&catalog, &fresh, read, &commit)
+        .expect("fresh evidence");
+    assert!(!authority.validates(&commit));
+    assert!(matches!(
+        cell.commit_observed(commit, authority),
+        Err(norn_kernel::CommitError::ObservationAuthorization)
+    ));
+    assert!(cell.load_link(&held).expect("kept").values.is_some());
+}

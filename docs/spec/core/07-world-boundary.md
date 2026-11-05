@@ -215,8 +215,8 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   contribution that it replaces in `supersedes`, part of its immutable preimage,
   so the order persists across turns and content addressing keeps it acyclic.
   Mapping evaluation leaves the record empty and the claim planner fills it from
-  retained claims; redelivery reuses the retained claim. Retained evidence never
-  supersedes a fresh claim. Competing claims with no recorded order are contested
+  retained claims, ordered by source occurrence rather than arrival; redelivery
+  reuses the retained claim. Retained evidence never supersedes a fresh claim. Competing claims with no recorded order are contested
   and authorize neither an addition nor a withdrawal; they still hold their edges
   until a fresh claim records their order.
   Standing and edge support are decided once over the turn's final claim set, so
@@ -228,9 +228,15 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   claim backing stay intact. Every superseded claim remains immutable evidence.
   The kernel enforces these rules over prepared claims only: it cannot see a
   retained claim the turn did not prepare, so an omitted successor or supporter
-  leaves a stale claim current. The claim planner (#877) must prepare every
-  retained claim of the edge and contribution. That gap is a ship blocker for
-  #823: no production caller of `seal_observed_link_claim` may land before #877.
+  leaves a stale claim current. It also accepts whatever `supersedes` a fresh
+  claim carries, so it cannot tell a newer occurrence from a late one. The claim
+  planner (#877) must prepare every retained claim of the edge and contribution,
+  and must order supersession by source occurrence, never by arrival: an older
+  source occurrence must never supersede a newer stored one, including a
+  late-arriving older occurrence that is not a redelivery. Such an occurrence
+  records no order over the newer claim, so the two stay contested until a later
+  occurrence records both. These gaps are ship blockers for #823: no production
+  caller of `seal_observed_link_claim` may land before #877.
 - **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
   canonical identity, including targets in the same capture. Target arrival
   resolves it without source redelivery or an arrival-order assumption. Capture,

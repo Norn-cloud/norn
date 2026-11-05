@@ -204,8 +204,6 @@ enum ClaimStanding {
 struct PreparedClaim {
     supersedes: BTreeSet<String>,
     values: JsonObject,
-    /// Written by this turn, rather than retained evidence it read.
-    fresh: bool,
     contribution: String,
     role: norn_ir::LinkId,
     source: FactKey,
@@ -766,24 +764,11 @@ impl ObservationAuthorization {
         model
             .link(&key.object_type, claim.role.as_str())
             .ok_or_else(|| ObservationRefusal::Encoding("claim role is undeclared".into()))?;
-        if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
-            self.source_scopes.push((
-                source.clone(),
-                ObservedSourceOwner::from_provenance(&claim.provenance),
-            ));
-            self.prepared_items = self.prepared_items.saturating_add(1);
-            if !commit.writes.iter().any(|w| w.key == key) {
-                self.observed_reads.push(source);
-            }
-        }
         let target = claim
             .target
             .as_ref()
             .map(|t| FactKey::new(t.object_type.as_str(), &t.key));
-        if let Some(target) = &target {
-            self.reference_targets.insert(target.clone());
-            self.reference_targets.insert(model.canonical(target));
-        }
+        let mut intents = Vec::new();
         for write in commit.links.iter().filter(|w| {
             model.canonical(&w.key.source) == model.canonical(&key)
                 && w.key.link == claim.role.as_str()
@@ -804,7 +789,24 @@ impl ObservationAuthorization {
                     continue;
                 }
             }
-            let intent = (claim_key.clone(), write.clone());
+            intents.push((claim_key.clone(), write.clone()));
+        }
+        // Every fallible check has passed: a refused seal records nothing.
+        if !self.source_scopes.iter().any(|(scope, _)| scope == &source) {
+            self.source_scopes.push((
+                source.clone(),
+                ObservedSourceOwner::from_provenance(&claim.provenance),
+            ));
+            self.prepared_items = self.prepared_items.saturating_add(1);
+            if !commit.writes.iter().any(|w| w.key == key) {
+                self.observed_reads.push(source);
+            }
+        }
+        if let Some(target) = &target {
+            self.reference_targets.insert(target.clone());
+            self.reference_targets.insert(model.canonical(target));
+        }
+        for intent in intents {
             if !self.claim_intents.contains(&intent) {
                 self.claim_intents.push(intent);
             }
@@ -817,14 +819,16 @@ impl ObservationAuthorization {
     /// claims, and retained evidence never supersedes a fresh claim. Rivals left
     /// unordered are contested and authorize no edge change.
     fn claim_standings(&self) -> BTreeMap<&FactKey, ClaimStanding> {
+        // A fresh claim is one this turn's final authorized writes create.
+        let fresh: BTreeSet<&FactKey> = self.writes.iter().map(|w| &w.write.key).collect();
         let superseded: BTreeSet<&FactKey> = self
             .claims
             .iter()
             .filter(|(key, claim)| {
-                self.claims.values().any(|other| {
+                self.claims.iter().any(|(other_key, other)| {
                     other.contribution == claim.contribution
                         && other.supersedes.contains(&key.key)
-                        && (other.fresh || !claim.fresh)
+                        && (fresh.contains(other_key) || !fresh.contains(key))
                 })
             })
             .map(|(key, _)| key)
@@ -1695,17 +1699,11 @@ pub fn prepare_observed_link_claim_snapshot(
         },
     )?;
     let model = crate::CommitModel::new(catalog);
-    let fresh = prepared
-        .authorization
-        .writes
-        .iter()
-        .any(|write| write.write.key == key);
     prepared.authorization.claims.insert(
         key,
         PreparedClaim {
             supersedes: claim.supersedes.clone(),
             values,
-            fresh,
             contribution,
             role: claim.role.clone(),
             source: model.canonical(&FactKey::new(claim.source_type.as_str(), &claim.source_key)),
