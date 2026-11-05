@@ -100,14 +100,21 @@ def main():
                    "inputs": {f: [str(BOUND[0]), str(BOUND[1])] for f in numeric}, "seed": 0,
                    "expectedStates": expected, "exclusions": {"authorization": "pre-authorized; outside profile"}}
         (directory / "bounds.json").write_text(json.dumps(profile))
-        run = subprocess.run([sys.executable, "scripts/run-generated-proofs.py", binary, str(directory / "original.json"),
-                              str(directory / "mutant.json"), str(work / "base.json"), str(directory / "bounds.json"),
-                              str(directory / "jobs"), tools], capture_output=True, text=True, timeout=500, check=False)
+        try:
+            run = subprocess.run([sys.executable, "scripts/run-generated-proofs.py", binary, str(directory / "original.json"),
+                                  str(directory / "mutant.json"), str(work / "base.json"), str(directory / "bounds.json"),
+                                  str(directory / "jobs"), tools], capture_output=True, text=True, timeout=500, check=False)
+        except subprocess.TimeoutExpired:
+            print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": None, "expectedStates": expected,
+                                                "report": None, "stderr": "proof driver timed out"}), flush=True)
+            continue
         report = None
         for line in reversed(run.stdout.splitlines()):
-            if line.startswith("{"):
+            try:
                 report = json.loads(line)
                 break
+            except json.JSONDecodeError:
+                continue
         print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": run.returncode, "expectedStates": expected,
                                             "report": report, "stderr": run.stderr[-400:] if report is None else ""}), flush=True)
 
