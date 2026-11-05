@@ -67,6 +67,7 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
                   <div className="text-meta text-muted-foreground">It would break the law</div>
                   <div className="text-[0.9375rem] leading-snug font-semibold">{refusal.law.name ?? refusal.law.artifactId}</div>
                   {refusal.law.rationale && <p className="text-muted-foreground">{refusal.law.rationale}</p>}
+                  {refusal.law.expression && <code className="inline-block pt-0.5 font-mono text-meta text-muted-foreground">{refusal.law.expression}</code>}
                 </div>
               </div>
             )}
@@ -74,7 +75,6 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
             <Details>
               <div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="font-mono">{refusal.code}</Badge></div>
               <Mono>{where(verdict.proposal)}</Mono>
-              {refusal.law?.expression && <Mono>{refusal.law.expression}</Mono>}
               {reasons(refusal.message)[0] !== refusal.message && <Mono>{refusal.message}</Mono>}
             </Details>
           </div>
@@ -89,7 +89,7 @@ export function DecisionCard({ onStop, onAlternative, disabled }: { readonly onS
   return (
     <div className="enter flex flex-wrap items-center gap-2 rounded-xl border bg-card p-2 ps-3.5 text-sm">
       <span className="me-auto text-muted-foreground">What next?</span>
-      <Button size="sm" variant="ghost" onClick={onStop} disabled={disabled}>Stop here</Button>
+      <Button size="sm" variant="ghost" onClick={onStop} disabled={disabled}>Stop</Button>
       <Button size="sm" onClick={onAlternative} disabled={disabled}><Sparkles />Try an alternative</Button>
     </div>
   )

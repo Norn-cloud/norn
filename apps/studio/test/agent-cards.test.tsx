@@ -18,6 +18,7 @@ test("a refusal shows the law in its own words and the checker's reason", () => 
   expect(html).toContain("Order quantity must be positive")
   expect(html).toContain("A purchase promises a positive quantity.")
   expect(html).toContain("law.model.predicate_type")
+  expect(html).toContain("self.ordered &gt; 0")
 })
 
 test("only the Worker's verdict shapes are read as verdicts", () => {
@@ -28,7 +29,7 @@ test("only the Worker's verdict shapes are read as verdicts", () => {
 
 test("after a refusal the user can stop or ask for an alternative", () => {
   const html = renderToStaticMarkup(<DecisionCard disabled={false} onStop={() => {}} onAlternative={() => {}} />)
-  expect(html).toContain("Stop here")
+  expect(html).toContain("Stop")
   expect(html).toContain("Try an alternative")
 })
 
