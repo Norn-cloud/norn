@@ -329,7 +329,7 @@ jobs:
             fs.writeFileSync(prefix+'/rights-parameters.json',JSON.stringify(parameters));
             const opening=await collect(github,context,core,parameters);
             await collect(github,context,core,parameters,opening);
-            await github.rest.repos.createCommitStatus({...context.repo,sha:parameters.head,state:'failure',context:'trusted-policy',
+            await github.rest.repos.createCommitStatus({...context.repo,sha:parameters.head,state:'pending',context:'trusted-policy',
               description:JSON.stringify({v:4,d:opening.publication.digest,f:opening.publication.failure_version})});
             const evidence=await collect(github,context,core,parameters);
             fs.writeFileSync(prefix+'/maintainer-approval.json',JSON.stringify(evidence));

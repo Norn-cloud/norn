@@ -763,6 +763,14 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
+        # The merge queue ejects a group on any failing required status, so a
+        # verdict written before validation finishes must stay pending.
+        early = job["steps"][:job["steps"].index(validators[0])]
+        interim = [call.split("\n", 1)[0] for step in early
+                   for call in step.get("with", {}).get("script", "").split("createCommitStatus(")[1:]]
+        interim = [call for call in interim if "context:'trusted-policy'" in call]
+        if len(interim) != 1 or "state:'pending'" not in interim[0]:
+            raise AssertionError("merge-group collector must write trusted-policy as pending before validation")
         reporters = [step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head"]
         if len(reporters) != 1:
             raise AssertionError("merge-group required status publisher is missing")
@@ -780,7 +788,8 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
                 raise AssertionError("merge-group required context/head/fail-closed verdict was lost")
 
     check(group)
-    for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state"):
+    for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state",
+                     "interim-failure", "interim-error", "interim-success"):
         document = copy.deepcopy(group)
         job = document["jobs"]["trusted-policy"]
         reporter = next(step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head")
@@ -796,6 +805,13 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             job["steps"].remove(reporter)
         elif mutation == "reporter-if":
             reporter["if"] = "success()"
+        elif mutation.startswith("interim-"):
+            collector = next(step for step in job["steps"] if step.get("name") == "Record admin approvals of the queued heads")
+            before = "state:'pending',context:'trusted-policy'"
+            if collector["with"]["script"].count(before) != 1:
+                raise AssertionError(f"merge-group mutation target drifted: {mutation}")
+            collector["with"]["script"] = collector["with"]["script"].replace(
+                before, f"state:'{mutation.removeprefix('interim-')}',context:'trusted-policy'")
         else:
             before, after = {
                 "context": ("context:'trusted-policy'", "context:'different-status'"),

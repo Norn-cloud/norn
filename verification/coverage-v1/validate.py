@@ -625,7 +625,7 @@ def validate_rights_contract(source: str, merge_source: str | None = None) -> No
         'Persist the target rights ledger': ('8b60fe98a60613841c5a345cb5860f8879635d37bede68583d372720c24e30cd', ['script', 'retries'], False, None),
         'Record admin approvals of the exact PR head': ('5f1941b2161103042bcc877c5bf1f17c035a9b7fc06f5661bd6ede074c3ae467', ['script'], False, None),
         'Report trusted policy on the exact PR head': ('223c0970b6a8f6493fcca9e8a3964528a23908cd6fa9db55c373a9db8b52985d', ['script', 'retries'], False, 'always()'),
-        'Record admin approvals of the queued heads': ('42a0aca9e405381feae34b7d4bdc6317a9f48efef6f446519f05e1cfb8a28937', ['script'], False, None),
+        'Record admin approvals of the queued heads': ('908e44fcdbdd60b9c2cf595daa7a7376c80264ddc67a304d87ddea790802ee1d', ['script'], False, None),
         'Report trusted policy on the group head': ('ec9e3099f381b8c71706ab6b1bd0b6c56cc3a280d67f66c956988f30650199c2', ['script', 'retries'], False, 'always()'),
     }
     def api_step(step: dict) -> None:
