@@ -2,7 +2,10 @@
 #![cfg(feature = "native")]
 #![allow(
     clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::needless_pass_by_value,
     clippy::panic,
+    clippy::unwrap_in_result,
     missing_docs,
     reason = "benchmark scenarios"
 )]
@@ -80,9 +83,8 @@ fn action(spec: &Value, entities: &[Value], drop_pre: bool) -> Value {
         let shorthand = target["props"][name].as_str().expect("input type");
         let ty = property_type(shorthand);
         let schema = match shorthand {
-            "text" => json!({"type":"string"}),
+            "text" | "date" => json!({"type":"string"}),
             "bool" => json!({"type":"boolean"}),
-            "date" => json!({"type":"string"}),
             _ => json!({"type":"number","nornType":ty}),
         };
         properties.insert(name.to_owned(), schema);
@@ -147,22 +149,22 @@ fn law(spec: &Value) -> Value {
 
 fn artifacts(case: &Value, remove: Option<&str>) -> Vec<ArtifactEnvelope> {
     let entities = case["entities"].as_array().expect("entities");
-    let mut values: Vec<Value> = entities
+    let actions = case["actions"].as_array().expect("actions");
+    let laws = case["laws"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|_| remove != Some("laws"))
+        .map(law);
+    entities
         .iter()
         .map(|e| entity(e, remove == Some("keys")))
-        .collect();
-    values.extend(
-        case["actions"]
-            .as_array()
-            .expect("actions")
-            .iter()
-            .map(|a| action(a, entities, remove == Some("pre"))),
-    );
-    if remove != Some("laws") {
-        values.extend(case["laws"].as_array().into_iter().flatten().map(law));
-    }
-    values
-        .into_iter()
+        .chain(
+            actions
+                .iter()
+                .map(|a| action(a, entities, remove == Some("pre"))),
+        )
+        .chain(laws)
         .map(|v| serde_json::from_value(v).expect("generated declaration"))
         .collect()
 }
