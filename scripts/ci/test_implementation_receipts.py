@@ -171,6 +171,25 @@ class ReceiptTest(unittest.TestCase):
             self.forge("INV-EXTRACT", module)
             self.rejected("INV-EXTRACT", fragment)
 
+    def test_symlinked_proof_inputs_and_missing_items_are_rejected(self) -> None:
+        # A committed symlink would make F* read bytes that are not in the reviewed commit.
+        outside = self.tmp / "outside.fst"
+        outside.write_text("module Proof\nopen Lib\n")
+        (self.root / "fst/Proof.fst").unlink()
+        (self.root / "fst/Proof.fst").symlink_to(outside)
+        self.commit()
+        self.expected["headSha"] = self.head
+        self.produce()
+        self.rejected("INV-EXTRACT", "symlink in a declared input path")
+        (self.root / "fst/Proof.fst").unlink()
+        (self.root / "fst/Proof.fst").write_text("module Proof\nopen Lib\n")
+        self.commit()
+        self.expected["headSha"] = self.head
+        shutil.rmtree(self.out)
+        self.produce()
+        self.forge("INV-EXTRACT", "module Lib\nlet g (x: bool) : bool = x\n")
+        self.rejected("INV-EXTRACT", "lib::f is not defined exactly once")
+
     def test_solver_budget_options_are_allowed(self) -> None:
         self.produce()
         self.forge("INV-EXTRACT", 'module Lib\n#set-options "--fuel 0 --ifuel 1 --z3rlimit 15"\n'
