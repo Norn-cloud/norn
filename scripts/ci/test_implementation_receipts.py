@@ -159,6 +159,7 @@ class ReceiptTest(unittest.TestCase):
                 ("module Lib\nassume val f : bool -> bool\n", "proof hole"),
                 ("module Lib\nlet f (x: bool) : bool = x\nlet t : squash False = magic ()\n", "proof hole"),
                 ("module Lib\nlet f (x: bool) : bool = unsafe_coerce 0\n", "proof hole"),
+                ("module Lib\nlet f (x: bool) : bool = x\nlet t () : Lemma False = Prims._assume False\n", "proof hole"),
                 ("module Lib\nlet f (x: bool) : bool = x\nlet t = admitP False\n", "proof hole"),
                 ('module Lib\n#set-options "--load_cmxs evil"\nlet f (x: bool) : bool = x\n', "is not allowed"),
                 ('module Lib\n#push-options "--z3cliopt smt.x=1"\nlet f (x: bool) : bool = x\n', "is not allowed"),
