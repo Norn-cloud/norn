@@ -28,7 +28,8 @@ export function deployTarget(env: Readonly<Record<string, string | undefined>>):
 }
 
 /** Environment variable names whose values are credentials. */
-export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD/i
+// Not a bare AUTH: AUTH_URL or AUTH_MODE hold plain settings that would fail deploys falsely.
+export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|PRIVATE|AUTH_CONFIG/i
 
 /**
  * Which credential-named variables' values appear in a text (a state file), by
