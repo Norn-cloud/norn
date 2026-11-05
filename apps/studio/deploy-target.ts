@@ -23,3 +23,21 @@ export function deployTarget(env: Readonly<Record<string, string | undefined>>):
   if (taken.length > 0) throw new Error(`Stage ${stage} cannot take the production domains ${taken.join(", ")}`)
   return { stage, worker: production ? "norn-studio-recorded" : `norn-studio-recorded-${stage}`, domains }
 }
+
+/** Environment variable names whose values are credentials. */
+export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD/i
+
+/**
+ * Which credential-named variables' values appear in a text (a state file), by
+ * name and count. Values shorter than 8 characters are too generic to match.
+ * Callers print only this: names and counts, never values.
+ */
+export function leakedSecrets(text: string, env: Readonly<Record<string, string | undefined>>): Record<string, number> {
+  const found: Record<string, number> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (!SECRET_NAME.test(name) || value === undefined || value.length < 8) continue
+    const count = text.split(value).length - 1
+    if (count > 0) found[name] = count
+  }
+  return found
+}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { deployTarget } from "../deploy-target.ts"
+import { deployTarget, leakedSecrets } from "../deploy-target.ts"
 
 test("production keeps the live Worker and both demo domains", () => {
   expect(deployTarget({})).toEqual({ stage: "prod", worker: "norn-studio-recorded", domains: ["studio.norn.cloud", "studio-demo.norn.cloud"] })
@@ -29,4 +29,11 @@ test("a non-production stage cannot take the production hostnames", () => {
   expect(() => deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud,studio.norn.cloud" }))
     .toThrow("cannot take the production domains studio.norn.cloud")
   expect(() => deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-demo.norn.cloud" })).toThrow("studio-demo.norn.cloud")
+})
+
+test("a state scan names the credential variables whose values it finds, and only those", () => {
+  const env = { GH_TOKEN: "ghp_example_value_123", S3_SECRET_KEY: "s3-secret-value", PATH: "/usr/bin:/bin", SHORT_KEY: "abc" }
+  const state = JSON.stringify({ props: { env: { GH_TOKEN: "ghp_example_value_123", PATH: "/usr/bin:/bin" } }, also: "ghp_example_value_123" })
+  expect(leakedSecrets(state, env)).toEqual({ GH_TOKEN: 2 })
+  expect(leakedSecrets(JSON.stringify({ props: { assets: "dist" } }), env)).toEqual({})
 })
