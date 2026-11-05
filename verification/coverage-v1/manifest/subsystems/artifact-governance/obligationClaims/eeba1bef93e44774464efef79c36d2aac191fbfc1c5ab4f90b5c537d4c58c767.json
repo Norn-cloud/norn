@@ -16,6 +16,21 @@
       "proof": {
         "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.proof"
       }
+    },
+    "extractionBinding": {
+      "package": "norn-ir",
+      "items": [
+        "norn_ir::direct_artifact_write_allowed"
+      ],
+      "module": "Norn_ir.fst",
+      "proofRoot": "verification/stripmine-2026-08-22/proofs/fstar",
+      "models": [
+        "FStar.Mul.fst",
+        "Core_models.fst"
+      ],
+      "proofs": [
+        "ArtifactPromotionProof.fst"
+      ]
     }
   }
 }
