@@ -5968,7 +5968,9 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
 /// the refusal from the warm store and from a cold store (opened before the
 /// tamper, never evaluated a bundle) on the same file. A store opened after the
 /// tamper must also refuse, at open or at recheck.
-fn warm_and_fresh_refusals(tamper: impl FnOnce(&CellStore, &NativeEngine, u64)) -> (String, String) {
+fn warm_and_fresh_refusals(
+    tamper: impl FnOnce(&CellStore, &NativeEngine, u64),
+) -> (String, String) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("plan.sqlite");
     let mut store = mapping_bundle_store(&path);
@@ -6070,7 +6072,10 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
         let properties = value["definitionInstall"]["model"]["objectTypes"][0]["properties"]
             .as_array_mut()
             .expect("snapshot properties");
-        assert!(properties.pop().is_some(), "snapshot has a property to drop");
+        assert!(
+            properties.pop().is_some(),
+            "snapshot has a property to drop"
+        );
         let tampered: norn_cell::export::ExportRecord =
             serde_json::from_value(value).expect("tampered record");
         assert_ne!(
