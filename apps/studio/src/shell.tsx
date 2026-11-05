@@ -75,7 +75,7 @@ export function Submenu({ section }: { readonly section: Section }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => (
-                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild><a href={entry.href}>{entry.label}</a></SidebarMenuButton></SidebarMenuItem>
+                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild><Link {...target(section, entry.href)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -123,6 +123,10 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
     </>
   )
 }
+
+/** Where an entry goes: its route, or an anchor on its section's page (so it navigates from a record page too). */
+export const target = (section: Pick<Section, "path">, href: string) =>
+  href.startsWith("#") ? { to: section.path, hash: href.slice(1) } : { to: href }
 
 /** The section a route belongs to: its own path, or a record page under it. */
 export const sectionOf = (sections: readonly Section[], pathname: string) =>
