@@ -73,7 +73,9 @@ fn boolean(expression: &Expression, context: &Value, work: &mut u64) -> Result<b
     *work = work.saturating_sub(attempt.units_used);
     match attempt.result.map_err(|error| error.to_string())?.value() {
         Value::Bool(value) => Ok(*value),
-        Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => Err("graph predicate is not Boolean".into()),
+        Value::Null | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+            Err("graph predicate is not Boolean".into())
+        }
     }
 }
 fn key(row: &Row) -> Result<Vec<u8>, String> {
@@ -114,7 +116,12 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
             .map_err(|error| format!("law {identity}: {error}"))?;
         let response = compile(expression.as_str(), work, &inputs.fields)
             .map_err(|error| format!("law {identity}: {error}"))?;
-        laws.push(Predicate { identity, condition, response, expected: matches!(law.modality, LawModality::Always {}) });
+        laws.push(Predicate {
+            identity,
+            condition,
+            response,
+            expected: matches!(law.modality, LawModality::Always {}),
+        });
     }
     Ok(laws)
 }
@@ -152,7 +159,8 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         let mut accepted = true;
         for law in &laws {
             let identity = law.identity;
-            let activated = law.condition
+            let activated = law
+                .condition
                 .as_ref()
                 .map(|expression| boolean(expression, context, &mut work))
                 .transpose()
