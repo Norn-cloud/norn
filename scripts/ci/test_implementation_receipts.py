@@ -63,9 +63,8 @@ class ReceiptTest(unittest.TestCase):
         for tool in ("kani", "cargo-hax", "fstar.exe"):
             (self.tmp / "tools/bin" / tool).write_text(STUB)
             (self.tmp / "tools/bin" / tool).chmod(0o755)
-        for command in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"]):
-            subprocess.run(["git", "-C", str(self.root), *command], check=True)
-        self.head = receipts.git(self.root, "rev-parse", "HEAD")
+        subprocess.run(["git", "-C", str(self.root), "init", "-q"], check=True)
+        self.commit()
         self.env = {"GITHUB_WORKSPACE": str(receipts.TRUSTED.parent), "GITHUB_REPOSITORY": "o/r",
                     "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": receipts.JOB}
         self.saved = os.environ.copy()
@@ -76,6 +75,11 @@ class ReceiptTest(unittest.TestCase):
         self.out = self.tmp / "receipts"
         self.expected = {"headSha": self.head, "repository": "o/r", "runId": "7", "runAttempt": "1",
                          "job": receipts.JOB}
+
+    def commit(self) -> None:
+        for command in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"]):
+            subprocess.run(["git", "-C", str(self.root), *command], check=True)
+        self.head = receipts.git(self.root, "rev-parse", "HEAD")
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -177,6 +181,23 @@ class ReceiptTest(unittest.TestCase):
         self.rejected("INV-KANI", "failed wrapper run")
         self.edit("INV-KANI", exitCode=0)
         self.rejected("INV-KANI", "noop: Kani verdict does not prove the claim")
+
+    def test_fstar_cannot_resolve_undeclared_candidate_modules(self) -> None:
+        # An undeclared helper with an axiom, opened by the declared proof.
+        (self.root / "fst/Helper.fst").write_text("module Helper\nassume val bad : squash False\n")
+        self.commit()
+        commands = []
+        self.addCleanup(setattr, receipts, "invoke", receipts.invoke)
+        receipts.invoke = (lambda real: lambda argv, cwd, env, log: commands.append(
+            (argv, sorted(str(f.relative_to(cwd)) for f in Path(cwd).rglob("*.fst")))) or real(argv, cwd, env, log))(receipts.invoke)
+        receipts.run(self.root, self.claims["INV-EXTRACT"], self.head, self.out, self.tmp / "tools")
+        for argv, visible in commands[1:]:
+            self.assertEqual(visible, ["out/Lib.fst", "proofs/Proof.fst"], argv)
+        # A hole in a declared proof fails the run.
+        (self.root / "fst/Proof.fst").write_text("module Proof\nlet x = admit ()\n")
+        self.commit()
+        shutil.rmtree(self.out)
+        self.assertEqual(receipts.run(self.root, self.claims["INV-EXTRACT"], self.head, self.out, self.tmp / "tools"), 1)
 
     def test_extraction_guard_refuses_local_build_scripts(self) -> None:
         metadata = {"packages": [{"id": "a", "name": "lib", "version": "0.1.0", "source": None,

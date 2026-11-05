@@ -52,15 +52,18 @@ class Refused(Exception):
 
 
 def require(condition: bool, message: str) -> None:
+    """Raise Refused with `message` unless `condition` holds."""
     if not condition:
         raise Refused(message)
 
 
 def sha256(path: Path) -> str:
+    """Hex SHA-256 of a file's bytes."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def git(root: Path, *arguments: str) -> str:
+    """Run git in `root` and return its stripped stdout."""
     return subprocess.run(["git", "-C", str(root), *arguments], check=True,
                           capture_output=True, text=True).stdout.strip()
 
@@ -73,6 +76,7 @@ def relative(value: object) -> str:
 
 
 def implementation_claims(root: Path) -> dict[str, dict]:
+    """Every implementation_proved claim in the checkout's coverage manifest, by id."""
     document = coverage_manifest.load(root / "verification/coverage-v1/manifest")
     claims = [c for s in document["subsystems"] for c in s["obligationClaims"]
               if c.get("proof") == "implementation_proved"]
@@ -82,10 +86,12 @@ def implementation_claims(root: Path) -> dict[str, dict]:
 
 
 def kind_of(claim: dict) -> str:
+    """The wrapper a claim's typed fields select: extraction iff it has an extractionBinding."""
     return "extraction" if "extractionBinding" in claim else "kani"
 
 
 def selector_kinds(claim: dict) -> set[str]:
+    """The selector kinds of a claim's proof evidence."""
     return {s.split(":", 1)[0] for e in claim["evidence"]["proof"] for s in e["selectors"]}
 
 
@@ -125,9 +131,11 @@ def extraction_plan(claim: dict, output: str) -> dict:
     include = " ".join(["-**", *(f"+{i}" for i in binding["items"])])
     argv = [["cargo-hax", "--no-custom-target-directory", "-C", "--locked", "-p", binding["package"],
              ";", "into", "-i", include, "--output-dir", output, "fstar"]]
-    argv += [["fstar.exe", "--include", root, f"{root}/{model}"] for model in binding["models"]]
-    argv += [["fstar.exe", "--include", root, "--include", output, f"{output}/{binding['module']}"]]
-    argv += [["fstar.exe", "--include", root, "--include", output, f"{root}/{p}"] for p in binding["proofs"]]
+    # F* runs in an isolated directory holding only the declared files and the
+    # generated module, so it cannot resolve an undeclared candidate module.
+    argv += [["fstar.exe", "--include", "proofs", f"proofs/{model}"] for model in binding["models"]]
+    argv += [["fstar.exe", "--include", "proofs", "--include", "out", f"out/{binding['module']}"]]
+    argv += [["fstar.exe", "--include", "proofs", "--include", "out", f"proofs/{p}"] for p in binding["proofs"]]
     inputs = ["Cargo.lock", *(f"{root}/{f}" for f in (*binding["models"], *binding["proofs"]))]
     return {"argv": argv, "inputs": inputs, **binding}
 
@@ -156,6 +164,7 @@ def fstar_holes(path: Path) -> bool:
 
 
 def mutated(source: str, mutation: dict | None) -> str:
+    """Apply one declared production mutation, which must match exactly once."""
     if mutation is None:
         return source
     require(source.count(mutation["before"]) == 1, f"{mutation['name']}: mutation must match exactly once")
@@ -200,6 +209,7 @@ def guard_cargo(root: Path, package: str) -> None:
 
 
 def tool_identity(name: str, env: dict) -> dict:
+    """The resolved path, binary SHA-256 and version line of one tool."""
     path = shutil.which(name, path=env["PATH"])
     require(path is not None, f"{name} is not installed")
     version = subprocess.run([path, "--version"], env=env, capture_output=True, text=True, timeout=120)
@@ -208,6 +218,7 @@ def tool_identity(name: str, env: dict) -> dict:
 
 
 def invoke(argv: list[str], cwd: Path, env: dict, log: Path) -> dict:
+    """Run one tool process, keep its output as `log`, and describe the invocation."""
     try:
         done = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=5400)
         text, code = done.stdout + done.stderr, done.returncode
@@ -254,22 +265,30 @@ def run(root: Path, claim: dict, head: str, out: Path, tools: Path) -> int:
                 "PATH": f"{tools}/bin:{tools}/cargo/bin:{os.environ['PATH']}",
                 "CARGO_TARGET_DIR": str(root / "target/hax")}
         env.pop("RUSTFLAGS")
+        isolated = Path(tempfile.mkdtemp(prefix="fstar-receipt-"))
         for index, argv in enumerate(plan["argv"]):
-            invocations.append(invoke(argv, root, env, directory / "logs" / f"{index}.log"))
+            invocations.append(invoke(argv, root if index == 0 else isolated, env, directory / "logs" / f"{index}.log"))
             if invocations[-1]["exitCode"] != 0:
                 failed = True
                 break
             if index == 0:
                 generated = root / output / plan["module"]
                 symbols = [i.rsplit("::", 1)[1] for i in plan["items"]]
-                failed = (not generated.is_file() or fstar_holes(generated)
-                          or any(fstar_holes(root / p) for p in plan["inputs"][1:])
+                if generated.is_file():
+                    (isolated / "out").mkdir()
+                    (isolated / "proofs").mkdir()
+                    shutil.copyfile(generated, isolated / "out" / plan["module"])
+                    for path in plan["inputs"][1:]:
+                        shutil.copyfile(root / path, isolated / "proofs" / Path(path).name)
+                # Every file F* can resolve beyond its own library is scanned.
+                failed = (not generated.is_file() or any(fstar_holes(f) for f in isolated.rglob("*") if f.is_file())
                           or any(len(re.findall(rf"(?m)^let {s} ", generated.read_text())) != 1 for s in symbols))
                 if failed:
                     break
                 (directory / "outputs").mkdir()
                 shutil.copyfile(generated, directory / "outputs" / plan["module"])
                 outputs[plan["module"]] = sha256(generated)
+        shutil.rmtree(isolated, ignore_errors=True)
         failed |= sha256(root / "Cargo.lock") != inputs["Cargo.lock"]
     used = sorted({entry["tool"] for entry in invocations})
     receipt = {
@@ -353,6 +372,7 @@ def verify(root: Path, receipts: Path, expected: dict) -> list[str]:
 
 
 def main() -> int:
+    """Run the wrappers (`run`) or admit their receipts (`verify`)."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=("run", "verify"))
     parser.add_argument("--root", type=Path, required=True, help="candidate checkout, read as data")
