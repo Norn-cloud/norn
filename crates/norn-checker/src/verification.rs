@@ -702,6 +702,12 @@ impl LawContext<'_> {
                 "/payload/response",
                 "interfaces do not declare lifecycle transition contracts",
             )),
+            LawResponse::TranslationPreserves { .. } => out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation source must be a concrete object type",
+            )),
         }
     }
 
@@ -840,6 +846,64 @@ impl LawContext<'_> {
                         "transition response must bind a subject lifecycle transition",
                     ));
                 }
+            }
+            LawResponse::TranslationPreserves {
+                target_type,
+                assignments,
+                observation,
+            } => self.check_translation(law, artifact, target_type, assignments, observation, out),
+        }
+    }
+
+    /// TRANSLATION-PRESERVES-1: admit a total, executable map to a resolved target.
+    /// Typing inside the goal fragment is decided by lowering, which stays Unknown.
+    fn check_translation(
+        &self,
+        law: &LawIR,
+        artifact: &ArtifactEnvelope,
+        target_type: &str,
+        assignments: &std::collections::BTreeMap<String, norn_ir::ZenExpression>,
+        observation: &norn_ir::verification::translation::TranslationObservation,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if !matches!(law.modality, LawModality::Always {}) || law.timing.is_some() {
+            out.push(finding(
+                codes::UNSUPPORTED_TEMPORAL,
+                artifact,
+                "/payload/modality",
+                "translation preservation is an untimed always law",
+            ));
+        }
+        let stored: Option<std::collections::BTreeSet<_>> = self
+            .env
+            .and_then(|env| env.record(target_type))
+            .map(|record| {
+                record
+                    .fields
+                    .iter()
+                    .filter(|(_, field)| matches!(field.source, FieldSource::Property { .. }))
+                    .map(|(id, _)| id)
+                    .collect()
+            });
+        if stored.is_none_or(|stored| !stored.iter().copied().eq(assignments.keys())) {
+            out.push(finding(
+                codes::UNKNOWN_BINDING,
+                artifact,
+                "/payload/response",
+                "translation must assign exactly the target object type's properties",
+            ));
+        }
+        for source in assignments
+            .values()
+            .chain([&observation.source, &observation.target])
+        {
+            if let Err(error) = Expression::compile(source.as_str()) {
+                out.push(finding(
+                    codes::PREDICATE_TYPE,
+                    artifact,
+                    "/payload/response",
+                    error.to_string(),
+                ));
             }
         }
     }
