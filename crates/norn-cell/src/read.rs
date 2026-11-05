@@ -1153,7 +1153,8 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     pub(crate) source_disputes_transaction: bool,
     pub(crate) source_disputes:
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
-    mapping_plans: Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
+    pub(crate) mapping_plans:
+        Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {

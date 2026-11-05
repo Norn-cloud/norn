@@ -5941,8 +5941,13 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
     let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
         .expect("cold connection");
     for bundle in &bundles {
-        store.read().recheck_mapping_bundle(bundle).expect("warm plan");
-        cold.read().recheck_mapping_bundle(bundle).expect("cold plan");
+        store
+            .read()
+            .recheck_mapping_bundle(bundle)
+            .expect("warm plan");
+        cold.read()
+            .recheck_mapping_bundle(bundle)
+            .expect("cold plan");
     }
     drop(cold);
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
