@@ -1742,6 +1742,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -2120,6 +2121,7 @@ impl<E: SqlEngine> CellStore<E> {
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
             source_disputes: RefCell::default(),
+            mapping_plans: RefCell::default(),
             quantity_boundary: Cell::new(None),
         }
     }
@@ -2389,9 +2391,11 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        StoreReader::new(&self.conn, &self.model)
+        let mut reader = StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
-            .with_quantity_boundary(self.quantity_boundary.get())
+            .with_quantity_boundary(self.quantity_boundary.get());
+        reader.mapping_plans = Some(&self.mapping_plans);
+        reader
     }
 
     /// Configure a host-owned, read-only check of the candidate transaction.

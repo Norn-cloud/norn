@@ -4,10 +4,13 @@ use crate::{
     engine::{SqlEngine, params},
     system::INBOX,
 };
-use norn_checker::mapping::{SourceDocument, compile_mapping_artifact};
-use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
+use norn_checker::mapping::{CompiledMapping, SourceDocument, compile_mapping_artifact};
+use norn_ir::{
+    ArtifactEnvelope, Diagnostic, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp,
+};
 use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, sync::Arc};
 
 /// Trusted source selection; every evaluation input participates in bundle identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +49,27 @@ pub struct MappingBundle {
     /// Mapping failures retained as ordinary evidence.
     pub diagnostics: Vec<RuntimeValue>,
 }
+
+/// Everything a bundle needs from one exact retained mapping, derived once.
+#[derive(Debug)]
+pub(crate) struct MappingPlan {
+    source_system: String,
+    source_instance: String,
+    datasets: Vec<String>,
+    compiled: Result<CompiledMapping, Vec<Diagnostic>>,
+    artifact_pins: Vec<(String, String, String)>,
+    definitions_digest: String,
+}
+
+/// MAPPING-PLAN-1: retained-definition work is memoized per store, keyed by the
+/// version, the digest of the row read on this call and the mapping. Any change
+/// to the retained row misses, and a miss repeats the full retained proof.
+#[derive(Debug, Default)]
+pub(crate) struct MappingPlanCache {
+    plans: BTreeMap<(u64, String, String), Arc<MappingPlan>>,
+}
+
+const MAX_MAPPING_PLANS: usize = 16;
 
 fn mismatch() -> CellError {
     CellError::MappingBundleMismatch
@@ -118,16 +142,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .ok_or_else(|| CellError::UnknownObjectType(object_type.into()))
     }
 
-    pub(crate) fn mapping_bundle(
+    /// MAPPING-PLAN-1: the retained row is re-read and digested on every call.
+    fn mapping_plan(
         &self,
-        raw: &RuntimeValue,
         input: &MappingInput,
         version: u64,
-    ) -> Result<MappingBundle, CellError> {
+    ) -> Result<Arc<MappingPlan>, CellError> {
+        let Some(installed) = self.installed_definitions(Some(version))? else {
+            self.retained_definition_model(version)?;
+            return Err(mismatch());
+        };
+        let identity = digest(&(
+            &installed.canonical_set,
+            &installed.model_hash,
+            &installed.receipt_sha256,
+        ))?;
+        let key = (version, identity, input.mapping.clone());
+        if let Some(cache) = self.mapping_plans
+            && let Some(plan) = cache.borrow().plans.get(&key)
+        {
+            return Ok(Arc::clone(plan));
+        }
         self.retained_definition_model(version)?;
-        let installed = self
-            .installed_definitions(Some(version))?
-            .ok_or_else(mismatch)?;
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
         let mapping = artifacts
             .iter()
@@ -141,16 +177,49 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .ok_or_else(mismatch)?;
         let schema: norn_ir::source_schema::SourceSchemaIr =
             serde_json::from_value(serde_json::to_value(source.payload.to_json_value())?)?;
+        let artifact_pins = [source, mapping]
+            .into_iter()
+            .map(|a| {
+                let pin = norn_checker::ArtifactRef::of(a)
+                    .map_err(|e| CellError::Encoding(e.to_string()))?;
+                Ok((pin.artifact_id, pin.version, pin.sha256))
+            })
+            .collect::<Result<Vec<_>, CellError>>()?;
+        let plan = Arc::new(MappingPlan {
+            source_system: schema.source.system,
+            source_instance: schema.source.instance,
+            datasets: schema.datasets.into_iter().map(|d| d.id).collect(),
+            compiled: compile_mapping_artifact(mapping, &artifacts, &[]),
+            artifact_pins,
+            definitions_digest: digest(&artifacts)?,
+        });
+        if let Some(cache) = self.mapping_plans {
+            let mut cache = cache.borrow_mut();
+            if cache.plans.len() >= MAX_MAPPING_PLANS {
+                cache.plans.clear();
+            }
+            cache.plans.insert(key, Arc::clone(&plan));
+        }
+        Ok(plan)
+    }
+
+    pub(crate) fn mapping_bundle(
+        &self,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+        version: u64,
+    ) -> Result<MappingBundle, CellError> {
+        let plan = self.mapping_plan(input, version)?;
         let field = |name: &str| {
             raw.get(name)
                 .and_then(RuntimeValue::as_str)
                 .ok_or_else(mismatch)
         };
         if field("contract")? != "norn.raw_observation/v1"
-            || field("source")? != schema.source.system
-            || input.connector_instance != schema.source.instance
+            || field("source")? != plan.source_system
+            || input.connector_instance != plan.source_instance
             || input.partition.trim().is_empty()
-            || !schema.datasets.iter().any(|d| d.id == input.dataset)
+            || !plan.datasets.contains(&input.dataset)
         {
             return Err(mismatch());
         }
@@ -163,9 +232,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         let source_document = SourceDocument::from_json(&input.dataset, &payload_text, None)?;
         let (records, diagnostics) = if field("kind")? == "upsert" {
-            match compile_mapping_artifact(mapping, &artifacts, &[])
-                .and_then(|compiled| compiled.apply(&[source_document], &input.recorded_at))
-            {
+            let outcome = match &plan.compiled {
+                Ok(compiled) => compiled.apply(&[source_document], &input.recorded_at),
+                Err(diagnostics) => Err(diagnostics.clone()),
+            };
+            match outcome {
                 Ok(records) => (records, Vec::new()),
                 Err(diagnostics) => (
                     Vec::new(),
@@ -185,29 +256,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 ],
             )
         };
-        let artifact_pins = [source, mapping]
-            .into_iter()
-            .map(|a| {
-                let pin = norn_checker::ArtifactRef::of(a)
-                    .map_err(|e| CellError::Encoding(e.to_string()))?;
-                Ok((pin.artifact_id, pin.version, pin.sha256))
-            })
-            .collect::<Result<Vec<_>, CellError>>()?;
-        let definitions_digest = digest(&artifacts)?;
         let address = digest(&(
             digest(raw)?,
             input,
             version,
-            &definitions_digest,
-            &artifact_pins,
+            &plan.definitions_digest,
+            &plan.artifact_pins,
         ))?;
         Ok(MappingBundle {
             digest: address,
             raw: raw.clone(),
             input: input.clone(),
             definitions_version: version,
-            definitions_digest,
-            artifact_pins,
+            definitions_digest: plan.definitions_digest.clone(),
+            artifact_pins: plan.artifact_pins.clone(),
             records,
             diagnostics,
         })

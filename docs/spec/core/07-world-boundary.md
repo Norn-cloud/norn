@@ -88,6 +88,8 @@ after cell-owned recomputation matches the pinned bundle
 CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
+**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins and definitions digest for one retained definition version. The retained row is read and digested on every bundle evaluation, and the reuse key includes that digest, so a changed row misses and repeats the full retained proof. Bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; a changed retained row refuses).
+
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
 connector/partition plus source/record/event identity, matching the ingress oracle.

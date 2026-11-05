@@ -5915,6 +5915,50 @@ fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption(
     }
 }
 
+/// MAPPING-PLAN-1: a warm plan equals a cold derivation, and a changed row misses.
+#[test]
+fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("plan.sqlite");
+    let mut store = mapping_bundle_store(&path);
+    let input = bundle_input();
+    store
+        .inject_mapping_bundle(&bundle_raw("WARM", "1.250"), &input)
+        .expect("first capture builds the plan");
+    store
+        .inject_mapping_bundle(&bundle_raw("REUSED", "1.500"), &input)
+        .expect("second capture reuses the plan");
+    let pending = store.read().pending_observations().expect("inbox");
+    assert_eq!(pending.len(), 2);
+    let bundles: Vec<norn_cell::mapping_bundle::MappingBundle> = pending
+        .iter()
+        .map(|row| {
+            let observed: norn_kernel::Observed<Value> =
+                norn_ir::runtime::decode(&row.observed).expect("observed");
+            norn_ir::runtime::decode(&observed.input).expect("bundle")
+        })
+        .collect();
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
+    for bundle in &bundles {
+        store.read().recheck_mapping_bundle(bundle).expect("warm plan");
+        cold.read().recheck_mapping_bundle(bundle).expect("cold plan");
+    }
+    drop(cold);
+    let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
+    tamper
+        .execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+            &[SqlValue::from("[]")],
+        )
+        .expect("tamper retained artifact bytes");
+    drop(tamper);
+    assert!(
+        store.read().recheck_mapping_bundle(&bundles[0]).is_err(),
+        "a changed retained row must not reuse the plan"
+    );
+}
+
 #[test]
 fn mapping_bundle_retains_nonconforming_source_records_and_complete_diagnostics() {
     let dir = tempfile::tempdir().expect("directory");
