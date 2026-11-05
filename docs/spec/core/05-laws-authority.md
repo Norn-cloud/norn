@@ -295,6 +295,15 @@ without suppressing independent supported laws. Native correspondence scenarios:
 `an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
 unit adds no solver discharge authority.
 
+`norn_checker::obligations::transition` retains ordered derivations, assignment
+origins and omitted caller fields, and projects exact integer affine creation
+deltas/equality residuals. Unsupported arithmetic, overflow and non-equalities
+remain Unknown; guards and law conditions are never erased. Input bounds,
+absence, singleton identity and empty-state coverage remain explicit assumptions:
+this view grants no unbounded writer-closure proof or evidence authority.
+Named cases check native affine evaluation, ordered substitutions/input requirements,
+mutant default origins, explicit refusals and unchanged Quint golden bytes.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
