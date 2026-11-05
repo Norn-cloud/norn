@@ -1,4 +1,8 @@
-//! BENCH-LATENCY-1: durable governed-commit and isolated law-check cost as history grows.
+//! BENCH-LATENCY-1: durable governed-commit cost as history grows.
+//!
+//! The `law_check_control` samples are a control, not a finding: they evaluate one
+//! object's values already in memory and read no history, so they are flat in
+//! history size by construction and say nothing about laws that read history.
 #![cfg(feature = "native")]
 #![allow(
     clippy::arithmetic_side_effects,
@@ -51,7 +55,7 @@ fn percentile(sorted: &[u128], p: usize) -> u128 {
 
 fn summary(mut samples: Vec<u128>) -> Value {
     samples.sort_unstable();
-    json!({"n":samples.len(),"p50_us":percentile(&samples,50),"p95_us":percentile(&samples,95),"p99_us":percentile(&samples,99)})
+    json!({"n":samples.len(),"p50_ns":percentile(&samples,50),"p95_ns":percentile(&samples,95),"p99_ns":percentile(&samples,99)})
 }
 
 #[test]
@@ -95,9 +99,10 @@ fn governed_commit_and_law_check_latency_by_history_size() {
         .expect("model")
         .with_governing_laws(&artifacts)
         .expect("laws");
-    let directory =
-        tempfile::tempdir_in(std::env::var("NORN_BENCH_DIR").unwrap_or_else(|_| ".".into()))
-            .expect("directory");
+    // Default to the system temp dir, never the crate directory under test.
+    let directory = std::env::var_os("NORN_BENCH_DIR")
+        .map_or_else(tempfile::tempdir, tempfile::tempdir_in)
+        .expect("directory");
     let path = directory.path().join("history.sqlite");
     let laws_only: Vec<ArtifactEnvelope> = artifacts
         .iter()
@@ -158,7 +163,7 @@ fn governed_commit_and_law_check_latency_by_history_size() {
                 &artifacts,
                 &id,
             );
-            commits.push(at.elapsed().as_micros());
+            commits.push(at.elapsed().as_nanos());
             assert!(
                 matches!(outcome, Ok(ActionOutcome::Committed { .. })),
                 "commit {measured}"
@@ -178,14 +183,14 @@ fn governed_commit_and_law_check_latency_by_history_size() {
             let mut fuel = 1_000_000;
             let failures =
                 governing_laws::evaluate(&catalog, &key, &values, &mut fuel).expect("law check");
-            law_only.push(at.elapsed().as_micros());
+            law_only.push(at.elapsed().as_nanos());
             assert!(failures.is_empty());
         }
         let size = std::fs::metadata(&path).expect("size").len();
         println!(
             "BENCH-LATENCY {}",
             json!({"laws":laws,"history":history,"records":seeded + measured,"commit":summary(commits),
-            "law_check":summary(law_only),"db_bytes":size,"elapsed_s":started.elapsed().as_secs()})
+            "law_check_control":summary(law_only),"db_bytes":size,"elapsed_s":started.elapsed().as_secs()})
         );
         drop(cell);
         history = history.saturating_mul(10);
