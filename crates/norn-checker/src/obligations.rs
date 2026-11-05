@@ -30,6 +30,8 @@ pub mod quint;
 mod quint_tests;
 /// Conjunction-only specialisation evidence provenance.
 pub mod specialisation;
+/// Exact symbolic projections of the shared declaration relation.
+pub mod transition;
 
 /// Generator semantics; changing the obligation rules invalidates all challenges.
 /// Profile 8 admits verbatim Unicode and binds exact source/expression bytes
