@@ -55,9 +55,33 @@ third-party code; keep its notices and provenance.
 ## Provenance
 
 Every tracked file `<path>` outside `.github/ci/provenance/` has one record,
-`.github/ci/provenance/artifacts/<path>.json`, with its SHA-256, origin,
-category and licence. A change updates that record's hash, a new file adds a
-record, and a deleted file deletes it. The path comes from the record's file
+`.github/ci/provenance/artifacts/<path>.json`, with its standing origin,
+category and licence declaration. Independently authored edits retain that
+metadata. New files add records; deletions remove records; renames move them.
+Origin, category, licence, sources, parents, notices, rights evidence and supported
+connector terms changes require corresponding metadata changes. Every changed
+payload and metadata path needs an admin `/ack-rights <exact head SHA>` comment,
+collected from the API by base-owned policy. Rights authority belongs to the
+immutable head SHA and tree, shared by every PR and merge group for that target.
+The acknowledgment reviews the standing declarations of the entire target tree,
+including every changed file. The latest recorded acknowledgment cannot fall
+back to an older review after editing or deletion. Saved run payloads identify
+pending events independently of PR numbers; any failed or missing receipt blocks
+that target until an admin reconciles the event and posts a fresh review.
+`/revoke-rights <SHA>` revokes the target across all PRs. `/approve-gates` remains
+a separate PR-scoped approval. New heads invalidate rights acknowledgments.
+Rights validation and publication serialize through a global authority mutex;
+test jobs remain parallel. Append-only SHA/tree checkpoints retain reconciled
+event history. Every publication re-reads them and binds its ledger digest and
+failure generation; expired or changed decisions publish failure.
+Human source review remains necessary. The gate binds all
+inspected bytes and records to the immutable candidate tree. Expanded archives
+must match that source commit exactly; generated exports require an independently
+verified external binding and are refused without one. Nested evidence and
+package-member hashes remain enforced. Historical top-level hashes stay readable
+and shape-checked but are authoritative only in explicit legacy distributions.
+Until the enabling validator lands on base, changed files still need correct
+legacy hashes for the old base-owned checker. The path comes from the record's file
 name, so it is not a field. `.github/ci/provenance/manifest.json` holds the
 version and software sources; nothing else lives in that directory.
 `cargo xtask ci provenance` enforces this, and
