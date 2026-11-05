@@ -15,9 +15,21 @@ const TITLE: Readonly<Record<string, string>> = {
   mutant: "With the loss rule removed (a deliberately broken copy)",
 }
 
+/** The colour a verdict reads in: refuted red, holding green, unknown muted. */
+const tone = (verdict: Guarantees["verdict"]) => verdict.kind === "refuted" ? "text-destructive" : verdict.kind === "bounded-pass" ? "text-success" : "text-muted-foreground"
+/** The icon for a verdict: a check, a cross, or a question mark. */
+const iconOf = (verdict: Guarantees["verdict"]) => verdict.kind === "bounded-pass" ? CircleCheck : verdict.kind === "refuted" ? CircleX : CircleHelp
+
+/** A verdict as its icon alone, named for screen readers. */
+function VerdictIcon({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
+  const Icon = iconOf(verdict)
+  return <Icon aria-label={verdictWords(verdict)} className={`size-4 shrink-0 ${tone(verdict)}`} />
+}
+
+/** A verdict as its icon and words. */
 function Verdict({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
-  const Icon = verdict.kind === "bounded-pass" ? CircleCheck : verdict.kind === "refuted" ? CircleX : CircleHelp
-  return <span className={`inline-flex items-center gap-1.5 font-medium ${verdict.kind === "refuted" ? "text-destructive" : verdict.kind === "bounded-pass" ? "text-success" : "text-muted-foreground"}`}><Icon className="size-4" />{verdictWords(verdict)}</span>
+  const Icon = iconOf(verdict)
+  return <span className={`inline-flex items-center gap-1.5 font-medium ${tone(verdict)}`}><Icon className="size-4" />{verdictWords(verdict)}</span>
 }
 
 function Story({ scenario }: { readonly scenario: NonNullable<Guarantees["goals"][number]["scenario"]> }) {
@@ -131,7 +143,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
     <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <section className="enter flex flex-col rounded-2xl border bg-card p-1.5">
         <h2 className="flex h-9 items-center gap-2 px-2.5 text-sm font-medium"><ShieldCheck aria-hidden className="size-4 text-muted-foreground" />{TITLE.original}</h2>
-        <div className="flex flex-1 flex-col justify-between gap-6 rounded-xl border bg-surface-subtle px-5 py-5">
+        <div className="flex flex-1 flex-col justify-between gap-5 rounded-xl border bg-surface-subtle px-5 py-5">
           <div className="space-y-2">
             <div className="flex items-baseline gap-3">
               <CircleCheck aria-hidden className="size-8 shrink-0 self-center text-success" />
@@ -139,6 +151,14 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
             </div>
             <div className="text-lg font-medium">checks proven</div>
           </div>
+          <ul className="divide-y rounded-lg border bg-card">
+            {declared.goals.filter(({ verdict }) => verdict.kind !== "unknown").map((goal) => (
+              <li key={goal.index} className="flex items-center gap-2.5 px-3 py-2 text-sm" title={verdictWords(goal.verdict)}>
+                <VerdictIcon verdict={goal.verdict} />
+                <span className="first-letter:uppercase">{field(goal.goalKind)}</span>
+              </li>
+            ))}
+          </ul>
           <p className="text-sm text-muted-foreground">
             <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · law <code className="text-meta text-foreground">{declared.lawId}</code>
           </p>
