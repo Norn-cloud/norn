@@ -1471,7 +1471,7 @@ fn source_read(
     }
 }
 
-fn edge(claim: &norn_ir::mapping::ObservedLinkClaim, target: &str) -> LinkKey {
+fn claim_edge(claim: &norn_ir::mapping::ObservedLinkClaim, target: &str) -> LinkKey {
     LinkKey::new(
         FactKey::new(claim.source_type.as_str(), &claim.source_key),
         claim.role.as_str(),
@@ -1497,7 +1497,7 @@ fn sealed_stale_addition(
     norn_kernel::ObservationAuthorization,
 ) {
     let read = source_read(cell, claim);
-    let stale = edge(claim, "two");
+    let stale = claim_edge(claim, "two");
     let mut commit = CellCommit {
         reads: vec![read.clone()],
         links: vec![LinkWrite {
@@ -1546,7 +1546,7 @@ fn obs_link_seal_then_merge_decides_standing_over_the_final_claim_set() {
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
     assert!(
-        cell.load_link(&edge(&old, "two"))
+        cell.load_link(&claim_edge(&old, "two"))
             .expect("edge")
             .values
             .is_none()
@@ -1564,7 +1564,7 @@ fn obs_link_seal_then_append_decides_standing_over_the_final_claim_set() {
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
     assert!(
-        cell.load_link(&edge(&old, "two"))
+        cell.load_link(&claim_edge(&old, "two"))
             .expect("edge")
             .values
             .is_none()
@@ -1575,7 +1575,7 @@ fn obs_link_seal_then_append_decides_standing_over_the_final_claim_set() {
 fn obs_link_fresh_claim_replaces_its_retained_successor_and_latest_wins() {
     let (types, mut cell, old, successor) = replaced_claims();
     let catalog = norn_kernel::TypeCatalog::new(&types);
-    let (current, stale) = (edge(&old, "other"), edge(&old, "two"));
+    let (current, stale) = (claim_edge(&old, "other"), claim_edge(&old, "two"));
     let latest = replacement_of(&successor, "bundle:latest", "two");
     let read = source_read(&cell, &old);
     let (mut commit, mut authority) = claimed_commit(&catalog, &cell, &latest);
@@ -1601,7 +1601,7 @@ fn obs_link_fresh_claim_replaces_its_retained_successor_and_latest_wins() {
 fn obs_link_fresh_claim_without_a_recorded_order_is_contested() {
     let (types, mut cell, old, successor) = replaced_claims();
     let catalog = norn_kernel::TypeCatalog::new(&types);
-    let current = edge(&old, "other");
+    let current = claim_edge(&old, "other");
     let mut unordered = replacement_of(&successor, "bundle:unordered", "two");
     unordered.supersedes.clear();
     let read = source_read(&cell, &old);
@@ -1637,7 +1637,7 @@ fn obs_link_withdrawn_corroboration_releases_an_edge_after_persisted_supersessio
     cell.commit_observed(commit, authority).expect("moved");
     // Turn 2: the corroborator moves on. Both orders were persisted by then.
     let withdrawn = replacement_of(&corroboration, "bundle:withdrawn", "other");
-    let stale = edge(&first, "two");
+    let stale = claim_edge(&first, "two");
     let read = source_read(&cell, &first);
     let (mut commit, mut authority) = claimed_commit(&catalog, &cell, &withdrawn);
     commit.links.push(removal(&cell, &stale));
@@ -1653,7 +1653,7 @@ fn obs_link_withdrawn_corroboration_releases_an_edge_after_persisted_supersessio
         .expect("no standing support remains");
     assert!(cell.load_link(&stale).expect("released").values.is_none());
     assert!(
-        cell.load_link(&edge(&first, "other"))
+        cell.load_link(&claim_edge(&first, "other"))
             .expect("kept")
             .values
             .is_some()
@@ -1675,7 +1675,7 @@ fn obs_link_removal_only_seal_needs_no_link_defaults() {
             .is_err(),
         "this relation has no default link values"
     );
-    let key = edge(&old, "two");
+    let key = claim_edge(&old, "two");
     cell.commit(CellCommit {
         links: vec![LinkWrite {
             key: key.clone(),
