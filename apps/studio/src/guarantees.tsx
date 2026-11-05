@@ -139,6 +139,7 @@ function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
 /** The proof story at a glance: the declared law holds on every eligible check; the broken copy is caught by a concrete case. */
 function Hero({ declared, broken }: { readonly declared: Guarantees; readonly broken: Guarantees | undefined }) {
   const counterexample = broken?.goals.find(({ scenario }) => scenario?.kind === "counterexample")?.scenario
+  const unknown = declared.goals.filter(({ verdict }) => verdict.kind === "unknown").length
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
       <section className="enter flex flex-col rounded-2xl border bg-card p-1.5">
@@ -149,7 +150,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
               <CircleCheck aria-hidden className="size-8 shrink-0 self-center text-success" />
               <span className="text-[3.25rem] leading-none font-light tracking-[-0.03em] tabular-nums">{declared.discharged}<span className="text-muted-foreground"> of {declared.eligible}</span></span>
             </div>
-            <div className="text-lg font-medium">checks proven</div>
+            <div className="text-lg font-medium">supported checks proven</div>
           </div>
           <ul className="divide-y rounded-lg border bg-card">
             {declared.goals.filter(({ verdict }) => verdict.kind !== "unknown").map((goal) => (
@@ -158,6 +159,12 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
                 <span className="first-letter:uppercase">{field(goal.goalKind)}</span>
               </li>
             ))}
+            {unknown > 0 && (
+              <li className="flex items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground">
+                <CircleHelp aria-hidden className="size-4 shrink-0" />
+                {unknown} of {declared.total} goals unknown: outside what this checker supports
+              </li>
+            )}
           </ul>
           <p className="text-sm text-muted-foreground">
             <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · law <code className="text-meta text-foreground">{declared.lawId}</code>
@@ -169,7 +176,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
         <div className="flex flex-1 flex-col gap-4 rounded-xl border bg-surface-subtle px-5 py-5">
           <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the law:</p>
           <BeforeAfter scenario={counterexample} />
-          <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
+          <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} supported checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
         </div>
       </section>}
     </div>
