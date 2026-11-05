@@ -52,6 +52,10 @@ EXTRACTION = {"id": "INV-EXTRACT", "proof": "implementation_proved", "extraction
 
 class ReceiptTest(unittest.TestCase):
     def setUp(self) -> None:
+        # Inherited Git location variables would redirect these git commands.
+        self.saved = os.environ.copy()
+        for name in [n for n in os.environ if n.startswith("GIT_")]:
+            del os.environ[name]
         self.tmp = Path(tempfile.mkdtemp())
         self.root = self.tmp / "candidate"
         files = {"src/lib.rs": "pub fn f() -> bool { GOOD }\n", "proof/h.rs": "#[kani::proof] fn proof() {}\n",
@@ -70,7 +74,6 @@ class ReceiptTest(unittest.TestCase):
         self.commit()
         self.env = {"GITHUB_WORKSPACE": str(receipts.TRUSTED.parent), "GITHUB_REPOSITORY": "o/r",
                     "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": receipts.JOB}
-        self.saved = os.environ.copy()
         os.environ.update(self.env)
         self.claims = {"INV-KANI": copy.deepcopy(KANI), "INV-EXTRACT": copy.deepcopy(EXTRACTION)}
         receipts.implementation_claims = lambda root: self.claims
@@ -154,6 +157,9 @@ class ReceiptTest(unittest.TestCase):
         for module, fragment in (
                 ("module Lib\nlet f (x: bool) : bool = ill-typed\n", "independent F* re-check failed"),
                 ("module Lib\nassume val f : bool -> bool\n", "proof hole"),
+                ("module Lib\nlet f (x: bool) : bool = x\nlet t : squash False = magic ()\n", "proof hole"),
+                ("module Lib\nlet f (x: bool) : bool = unsafe_coerce 0\n", "proof hole"),
+                ("module Lib\nlet f (x: bool) : bool = x\nlet t = admitP False\n", "proof hole"),
                 ('module Lib\n#set-options "--load_cmxs evil"\nlet f (x: bool) : bool = x\n', "is not allowed"),
                 ('module Lib\n#push-options "--z3cliopt smt.x=1"\nlet f (x: bool) : bool = x\n', "is not allowed"),
                 ("module Lib\nlet f (x: bool) : bool = x\nlet _ = assert True by (launch_process \"sh\" [] \"\")\n",
