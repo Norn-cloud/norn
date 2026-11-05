@@ -744,6 +744,16 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
     public = yaml.safe_load(source)
     group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
 
+    def status_calls(script: str) -> list[str]:
+        calls = []
+        for match in re.finditer(r"createCommitStatus\(", script):
+            depth, end = 1, match.end()
+            while depth and end < len(script):
+                depth += {"(": 1, ")": -1}.get(script[end], 0)
+                end += 1
+            calls.append(script[match.end():end])
+        return calls
+
     def check(document: dict[str, Any]) -> None:
         trigger = document.get("on", document.get(True))
         if trigger != {"workflow_run": {"workflows": [public["name"]], "types": ["requested"]}}:
@@ -766,9 +776,8 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         # The merge queue ejects a group on any failing required status, so a
         # verdict written before validation finishes must stay pending.
         early = job["steps"][:job["steps"].index(validators[0])]
-        interim = [call.split("\n", 1)[0] for step in early
-                   for call in step.get("with", {}).get("script", "").split("createCommitStatus(")[1:]]
-        interim = [call for call in interim if "context:'trusted-policy'" in call]
+        interim = [call for step in early for call in status_calls(step.get("with", {}).get("script", ""))
+                   if "context:'trusted-policy'" in call]
         if len(interim) != 1 or "state:'pending'" not in interim[0]:
             raise AssertionError("merge-group collector must write trusted-policy as pending before validation")
         reporters = [step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head"]
@@ -789,7 +798,7 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
 
     check(group)
     for mutation in ("trigger", "event", "permission", "validation", "reporter", "reporter-if", "context", "head", "state",
-                     "interim-failure", "interim-error", "interim-success"):
+                     "interim-failure", "interim-error", "interim-success", "interim-duplicate"):
         document = copy.deepcopy(group)
         job = document["jobs"]["trusted-policy"]
         reporter = next(step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head")
@@ -810,8 +819,11 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             before = "state:'pending',context:'trusted-policy'"
             if collector["with"]["script"].count(before) != 1:
                 raise AssertionError(f"merge-group mutation target drifted: {mutation}")
-            collector["with"]["script"] = collector["with"]["script"].replace(
-                before, f"state:'{mutation.removeprefix('interim-')}',context:'trusted-policy'")
+            if mutation == "interim-duplicate":
+                collector["with"]["script"] += "await github.rest.repos.createCommitStatus({state:'failure',\ncontext:'trusted-policy'});\n"
+            else:
+                collector["with"]["script"] = collector["with"]["script"].replace(
+                    before, f"state:'{mutation.removeprefix('interim-')}',context:'trusted-policy'")
         else:
             before, after = {
                 "context": ("context:'trusted-policy'", "context:'different-status'"),
