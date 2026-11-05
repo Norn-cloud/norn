@@ -18,8 +18,18 @@
       }
     },
     "extractionBinding": {
-      "gate": "artifact-governance-rust-extraction",
-      "result": "target/verification-results/artifact-governance-hax/Norn_ir.fst"
+      "package": "norn-ir",
+      "items": {
+        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.items"
+      },
+      "module": "Norn_ir.fst",
+      "proofRoot": "verification/stripmine-2026-08-22/proofs/fstar",
+      "models": {
+        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.models"
+      },
+      "proofs": {
+        "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.extractionBinding.proofs"
+      }
     }
   }
 }
