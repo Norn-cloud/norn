@@ -4,10 +4,9 @@ use crate::{
     engine::{SqlEngine, params},
     system::INBOX,
 };
+use norn_checker::Diagnostic;
 use norn_checker::mapping::{CompiledMapping, SourceDocument, compile_mapping_artifact};
-use norn_ir::{
-    ArtifactEnvelope, Diagnostic, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp,
-};
+use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
 use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
