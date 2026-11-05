@@ -324,7 +324,7 @@ def run(root: Path, claim: dict, head: str, out: Path, tools: Path) -> int:
                         shutil.copyfile(root / path, isolated / "proofs" / Path(path).name)
                 # Every file F* can resolve beyond its own library is scanned.
                 failed = (not generated.is_file() or any(fstar_holes(f) for f in isolated.rglob("*") if f.is_file())
-                          or any(len(re.findall(rf"(?m)^let {s} ", generated.read_text())) != 1 for s in symbols))
+                          or not all(defines_once(generated, s) for s in symbols))
                 if failed:
                     break
                 (directory / "outputs").mkdir()
@@ -428,6 +428,13 @@ def fstar_inputs_safe(path: Path) -> None:
     require(not fstar_holes(path), f"{path.name}: proof hole")
 
 
+def defines_once(module: Path, symbol: str) -> bool:
+    """Whether `module` has exactly one top-level `let symbol`, ignoring comments and strings."""
+    code = proof_holes().strip_comments_and_strings(module.read_text(encoding="utf-8"), line_marker="//",
+                                                    block=("(*", "*)"))
+    return len(re.findall(rf"(?m)^let {re.escape(symbol)} ", code)) == 1
+
+
 def plain_path(root: Path, path: str) -> Path:
     """`path` under `root`, refusing a symlink anywhere along it: F* must read committed bytes."""
     current = root
@@ -456,10 +463,8 @@ def recheck_fstar(root: Path, plan: dict, generated: Path, fstar: Path) -> None:
             shutil.copyfile(plain_path(root, path), work / "proofs" / Path(path).name)
         for path in sorted(f for f in work.rglob("*") if f.is_file()):
             fstar_inputs_safe(path)
-        source = generated.read_text(encoding="utf-8")
         for item in plan["items"]:
-            symbol = item.rsplit("::", 1)[1]
-            require(len(re.findall(rf"(?m)^let {re.escape(symbol)} ", source)) == 1,
+            require(defines_once(generated, item.rsplit("::", 1)[1]),
                     f"{item} is not defined exactly once in the uploaded module")
         env = {"PATH": f"{fstar.parent}:/usr/bin:/bin", "HOME": name}
         for index, argv in enumerate(plan["argv"][1:]):
