@@ -1,8 +1,13 @@
 //! BENCH-ITEM-1: opt-in observed import of link-free canonical slices.
 #![cfg(feature = "native")]
 #![allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
     clippy::expect_used,
+    clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "benchmark driver"
 )]
@@ -484,9 +489,9 @@ fn real_rows_through_retained_mapping_and_cell() {
                 })
             });
         if expected {
-            matched += 1
+            matched += 1;
         } else {
-            mismatched += 1
+            mismatched += 1;
         }
         if rows.is_multiple_of(500) {
             println!(
@@ -507,7 +512,7 @@ fn real_rows_through_retained_mapping_and_cell() {
                 let rule = serde_json::to_value(&finding.rule_ref).expect("finding rule");
                 let name = rule["lawId"]
                     .as_str()
-                    .or(rule["law_id"].as_str())
+                    .or_else(|| rule["law_id"].as_str())
                     .unwrap_or("other")
                     .to_owned();
                 *findings.entry(name).or_default() += 1;
@@ -529,7 +534,6 @@ fn real_rows_through_retained_mapping_and_cell() {
         let pool: Vec<_> = artifacts.iter().chain(&base).cloned().collect();
         country_weekly_quantity(&mut store, &pool)
     });
-    #[allow(clippy::cast_precision_loss, reason = "reporting")]
     let rate = rows as f64 / seconds;
     println!(
         "BENCH-IMPORT {}",
