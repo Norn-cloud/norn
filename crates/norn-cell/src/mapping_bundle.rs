@@ -151,11 +151,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             self.retained_definition_model(version)?;
             return Err(mismatch());
         };
-        let identity = digest(&(
-            &installed.canonical_set,
-            &installed.model_hash,
-            &installed.receipt_sha256,
-        ))?;
+        let retained = [
+            installed.canonical_set.as_str(),
+            installed.model_hash.as_str(),
+            installed.receipt_sha256.as_str(),
+        ]
+        .join("\0");
+        let identity =
+            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(retained.as_bytes());
         let key = (version, identity, input.mapping.clone());
         if let Some(cache) = self.mapping_plans
             && let Some(plan) = cache.borrow().plans.get(&key)
