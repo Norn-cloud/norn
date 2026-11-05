@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
 """Agent mapping trials: a model authors MappingIR, the real checker admits or refuses, and we iterate.
 
-Credentials and the checker transport are supplied by the caller through `run`.
-Rows and transcripts stay in the caller's scratch directory.
+The gateway URL and token come from the environment at run time and are never stored. The checker
+transport is `cargo_transport` (the ignored `bench_mapping` test binary); per-token prices come from
+fixtures/bench/mapping-trial-prices.json. Rows and transcripts stay in the caller's scratch directory.
+
+    cargo test --locked -p norn-cell --test bench_mapping --no-run   # prints the test binary path
+    NORN_BENCH_GATEWAY_URL=... NORN_BENCH_GATEWAY_TOKEN=... python3 scripts/bench_mapping_trials.py \
+        --binary target/debug/deps/bench_mapping-HASH --rows ROWS.json --scratch DIR \
+        --models google/gemini-3.8-flash,openai/gpt-5.4-mini --repeats 3 --cap 20
+
+ROWS.json maps each task's `rows` name (olist_products, olist_customers, olist_sellers, uci_lines) to a
+list of source rows.
 """
+import argparse
 import collections
 import concurrent.futures
+import http.client
+import itertools
 import json
+import os
+from pathlib import Path
 import re
+import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
 
 MAX_ROUNDS = 5
+MAX_COMPLETION = 6000
 ITEM_CONTRACT = {"entity": "canon.Item.entity", "interface": "canon.Catalog.interface",
                  "properties": {"id": "text", "code": "text", "label": "text"}}
 PARTY_CONTRACT = {"entity": "canon.Party.entity", "interface": "core.Agent.interface",
@@ -64,10 +80,11 @@ Example for a different source:
 {"property":"code","value":"input.sku"},{"property":"label","value":"input.title ?? ''"}]}]}"""
 
 # Hand-written candidates. Structural traps must refuse; semantic traps show what the checker cannot know.
-def _map(entity, interface, subject, properties):
-    return [{"id": "row", "source": {"dataset": "Rows"}, "target": {"entity": entity, "interface": interface},
-             "subject": subject, "sourceRecord": subject,
-             "properties": [{"property": k, "value": v} for k, v in properties]}]
+def _map(entity, interface, subject, properties, when=None):
+    row = {"id": "row", "source": {"dataset": "Rows"}, "target": {"entity": entity, "interface": interface},
+           "subject": subject, "sourceRecord": subject,
+           "properties": [{"property": k, "value": v} for k, v in properties]}
+    return [{**row, "when": when} if when else row]
 ITEM = ("canon.Item.entity", "canon.Catalog.interface")
 PARTY = ("canon.Party.entity", "core.Agent.interface")
 GOOD_ITEM = [("id", "input.product_id"), ("code", "input.product_id"), ("label", "input.product_category_name ?? ''")]
@@ -93,23 +110,58 @@ REFERENCE = {
     "olist_customers": _map(*PARTY, "input.customer_unique_id", [("display_name", "input.customer_unique_id"), ("kind", "'person'")]),
     "olist_sellers": _map(*PARTY, "input.seller_id", [("display_name", "input.seller_id"), ("kind", "'organization'")]),
     "uci_items": _map(*ITEM, "input.StockCode", [("id", "input.StockCode"), ("code", "input.StockCode"), ("label", "input.Description ?? ''")]),
-    "uci_customers": _map(*PARTY, "input.CustomerID ?? ''", [("display_name", "input.CustomerID ?? ''"), ("kind", "'person'")]),
+    # Lines without a customer are skipped, so no empty-key Party is created.
+    "uci_customers": _map(*PARTY, "input.CustomerID ?? ''", [("display_name", "input.CustomerID ?? ''"), ("kind", "'person'")],
+                          when="input.CustomerID != null"),
 }
 
 
 class Budget:
-    """Hard cap on estimated spend; the catalog's per-token prices drive the estimate."""
+    """Hard cap on estimated spend, priced from the catalogue's per-token prices.
+
+    Each call reserves its worst-case cost under the lock before it is sent: every prompt byte as a
+    token plus per-message overhead, and the full completion limit. A reply settles the reservation
+    to its reported usage. A refused HTTP request releases it. A call whose outcome is unknown
+    (timeout, dropped connection, unreadable or usage-free reply) keeps the worst case. Admission
+    requires spent + reserved + worst case <= cap, so estimated spend never exceeds the cap with any
+    number of workers.
+    """
     def __init__(self, cap, prices):
-        self.cap, self.prices, self.spent, self.lock = cap, prices, 0.0, threading.Lock()
+        self.cap, self.prices, self.spent, self.reserved, self.lock = cap, prices, 0.0, 0.0, threading.Lock()
         self.calls = 0
         self.tokens = collections.Counter()
+
     def open(self):
         with self.lock:
-            return self.spent < self.cap
-    def charge(self, model, prompt, completion):
+            return self.spent + self.reserved < self.cap
+
+    def reserve(self, model, messages):
+        cin, cout = self.prices[model]
+        prompt = sum(len(m["content"].encode()) + 16 for m in messages)
+        worst = prompt * cin + MAX_COMPLETION * cout
+        with self.lock:
+            if self.spent + self.reserved + worst > self.cap:
+                return None
+            self.reserved += worst
+        return worst
+
+    def release(self, reservation):
+        with self.lock:
+            self.reserved -= reservation
+
+    def forfeit(self, reservation):
+        with self.lock:
+            self.reserved -= reservation
+            self.spent += reservation
+            self.calls += 1
+            self.tokens["unknown_usage_calls"] += 1
+        return reservation
+
+    def settle(self, reservation, model, prompt, completion):
         cin, cout = self.prices[model]
         cost = prompt * cin + completion * cout
         with self.lock:
+            self.reserved -= reservation
             self.spent += cost
             self.calls += 1
             self.tokens["prompt"] += prompt
@@ -119,30 +171,45 @@ class Budget:
 
 def ask(url, token, model, messages, budget, log):
     limit = "max_completion_tokens" if model.startswith("openai/") else "max_tokens"
-    body = json.dumps({"model": model, "messages": messages, limit: 6000}).encode()
+    body = json.dumps({"model": model, "messages": messages, limit: MAX_COMPLETION}).encode()
     request = urllib.request.Request(url + "/chat/completions", data=body, method="POST", headers={
         "Authorization": "Bearer " + token, "Content-Type": "application/json", "User-Agent": "norn-bench"})
     for attempt in range(3):
+        reservation = budget.reserve(model, messages)
+        if reservation is None:
+            return None, "budget"
         try:
             with urllib.request.urlopen(request, timeout=180) as response:
                 data = json.load(response)
-            break
         except urllib.error.HTTPError as error:
+            budget.release(reservation)
             detail = error.read()[:200].decode("utf-8", "replace")
             if error.code < 500 and error.code != 429 or attempt == 2:
                 return None, f"http {error.code}: {detail}".replace(token, "***").replace(url, "<gateway>")
             time.sleep(5 * (attempt + 1))
-        except (TimeoutError, urllib.error.URLError) as error:
+            continue
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            # The gateway may have billed a call whose reply was lost, so the worst case stays charged.
+            cost = budget.forfeit(reservation)
+            log({"model": model, "failure": type(error).__name__, "cost": cost, "spent": budget.spent})
             if attempt == 2:
                 return None, type(error).__name__
-    usage = data.get("usage") or {}
-    prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
-    if prompt is None or completion is None:
-        prompt = prompt or sum(len(m["content"]) for m in messages) // 2
-        completion = completion or 6000
-    cost = budget.charge(model, prompt, completion)
-    log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": budget.spent})
-    return (data["choices"][0]["message"].get("content") or ""), None
+            time.sleep(5 * (attempt + 1))
+            continue
+        usage = data.get("usage") if isinstance(data, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        if isinstance(prompt, int) and isinstance(completion, int):
+            cost = budget.settle(reservation, model, prompt, completion)
+        else:
+            prompt = completion = None
+            cost = budget.forfeit(reservation)
+        log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": budget.spent})
+        try:
+            return (data["choices"][0]["message"].get("content") or ""), None
+        except (KeyError, IndexError, TypeError, AttributeError):
+            return None, "malformed_response"
+    return None, "retries exhausted"
 
 
 def prompt_for(task, rows):
@@ -181,7 +248,7 @@ def reference(name, row):
         return row["seller_id"], {"kind": "organization"}
     if name == "uci_items":
         return row["StockCode"], {"id": row["StockCode"], "code": row["StockCode"], "label": row.get("Description")}
-    if "CustomerID" not in row:
+    if row.get("CustomerID") in (None, ""):
         return None
     return str(row["CustomerID"]), {"kind": "person"}
 
@@ -273,8 +340,72 @@ def references(data, check):
 
 
 def run(url, token, models, repeats, data, check, prices, cap, log, workers=5, tasks=None):
+    """Run every trial under one shared hard cap (see `Budget`)."""
+    unpriced = sorted(set(models) - set(prices))
+    if unpriced:
+        raise ValueError(f"no catalogue price for {unpriced}; refusing before the first paid call")
     budget = Budget(cap, prices)
     jobs = [(m, t, r) for r in range(repeats) for t in (tasks or TASKS) for m in models]
     with concurrent.futures.ThreadPoolExecutor(workers) as pool:
         outcomes = list(pool.map(lambda j: trial(url, token, j[0], j[1], j[2], data, check, budget, log), jobs))
     return outcomes, budget
+
+
+def load_prices(path):
+    """Per-token (input, output) USD prices by gateway model id."""
+    catalogue = json.loads(Path(path).read_text())
+    return {model: (float(p["input"]), float(p["output"])) for model, p in catalogue["models"].items()}
+
+
+def cargo_transport(binary, scratch):
+    """The checker transport: one run of the ignored `bench_mapping` test binary per candidate."""
+    scratch = Path(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    counter, lock = itertools.count(), threading.Lock()
+
+    def check(candidate):
+        with lock:
+            path = scratch / f"candidate-{next(counter)}.json"
+        path.write_text(json.dumps(candidate))
+        env = dict(os.environ, NORN_BENCH_CANDIDATE=str(path))
+        try:
+            done = subprocess.run([binary, "candidate_mapping_admission_and_rows", "--exact", "--ignored", "--nocapture"],
+                                  capture_output=True, text=True, env=env, timeout=600, check=False)
+        except subprocess.TimeoutExpired:
+            return {"admitted": False, "diagnostics": [{"code": "harness.transport", "message": "checker timed out"}]}
+        for line in done.stdout.splitlines():
+            if line.startswith("BENCH-MAP "):
+                return json.loads(line.removeprefix("BENCH-MAP "))
+        return {"admitted": False, "diagnostics": [{"code": "harness.transport", "message": done.stderr[-400:]}]}
+    return check
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--binary", required=True, help="bench_mapping test binary")
+    parser.add_argument("--rows", required=True, help="JSON object of source rows by task rows name")
+    parser.add_argument("--scratch", required=True, help="directory for candidates and the transcript")
+    parser.add_argument("--prices", default="fixtures/bench/mapping-trial-prices.json")
+    parser.add_argument("--models", required=True, help="comma-separated gateway model ids")
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--cap", type=float, required=True, help="hard cap on estimated USD spend")
+    parser.add_argument("--workers", type=int, default=5)
+    parser.add_argument("--tasks", help="comma-separated task names; default all")
+    args = parser.parse_args()
+    url, token = os.environ["NORN_BENCH_GATEWAY_URL"].rstrip("/"), os.environ["NORN_BENCH_GATEWAY_TOKEN"]
+    data = json.loads(Path(args.rows).read_text())
+    check = cargo_transport(args.binary, Path(args.scratch) / "candidates")
+    transcript, lock = (Path(args.scratch) / "calls.jsonl").open("a"), threading.Lock()
+
+    def log(entry):
+        with lock:
+            transcript.write(json.dumps(entry) + "\n")
+            transcript.flush()
+    print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
+    outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
+                           args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
+    print(json.dumps({"outcomes": outcomes, "calls": budget.calls, "tokens": budget.tokens, "spent": budget.spent}))
+
+
+if __name__ == "__main__":
+    main()
