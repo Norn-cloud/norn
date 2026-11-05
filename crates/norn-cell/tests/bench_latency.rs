@@ -176,7 +176,7 @@ fn governed_commit_and_law_check_latency_by_history_size() {
         let size = std::fs::metadata(&path).expect("size").len();
         println!(
             "BENCH-LATENCY {}",
-            json!({"laws":laws,"history":history,"commit":summary(commits),
+            json!({"laws":laws,"history":history,"records":seeded + measured,"commit":summary(commits),
             "law_check":summary(law_only),"db_bytes":size,"elapsed_s":started.elapsed().as_secs()})
         );
         drop(cell);
