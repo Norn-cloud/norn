@@ -295,6 +295,15 @@ without suppressing independent supported laws. Native correspondence scenarios:
 `an_unsupported_governing_law_does_not_suppress_supported_laws`. This lowering
 unit adds no solver discharge authority.
 
+`norn_checker::obligations::transition` retains ordered derivations, assignment
+origins and omitted caller fields, and projects exact integer affine creation
+deltas/equality residuals. Unsupported arithmetic, overflow and non-equalities
+remain Unknown; guards and law conditions are never erased. Input bounds,
+absence, singleton identity and empty-state coverage remain explicit assumptions:
+this view grants no unbounded writer-closure proof or evidence authority.
+Named cases check native affine evaluation, ordered substitutions/input requirements,
+mutant default origins, explicit refusals and unchanged Quint golden bytes.
+
 **PROOF-QUINT-RUN-1:** the outer Python harness owns process execution. The native
 producer/binder reconstructs every Challenge, checks controller-retained model
 and result digests, and binds exact result bytes through EvidencePins. Current
@@ -420,6 +429,27 @@ Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
 `lifecycle_input_refusals_never_clip_the_domain`, and the generated
 `every_frozen_choice_keeps_the_complete_chart` property. Native commit
 correspondence and checked backend evidence are subsequent qualification units.
+
+**PROOF-LIFECYCLE-3:** the conditional graph retains every bounded row and every
+enabled declared transition whose post-state satisfies all supported governing
+laws. Initialization requires a declared initial state satisfying their
+conjunction. Context stays frozen; unreachable input rows remain available for
+local correspondence and never become initial states. Always/Never predicate
+laws are supported; temporal/state scopes, advisory laws and invariant responses
+remain Unknown. A work budget of 2,000,000 (expression source bytes, compilation
+and evaluation units), 128 laws and 16,384 edges are pinned. Each guard evaluation
+gets the native decide budget of 1,000,000 units and evaluation stops at the first
+false guard; each row's law conjunction shares one such budget, with one extra
+unit per expression, as a native write does. Those units also charge the work
+budget, and both limits are pinned. Exhausting any budget, duplicate valuations,
+inexact expression values and any step leaving the profile refuse the complete
+graph. No partial relation or solver discharge is returned.
+
+`every_bounded_initialization_and_transition_matches_native_commit` compares
+all initializations and every pre-state/transition pair with the checked native
+cell, including exact post-values and atomic refusal. The declaration variants
+cover a second governing law and a disabled guard; they never rewrite the actual
+App-root pack's recorded Unknown result. Checked backend evidence follows.
 
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 

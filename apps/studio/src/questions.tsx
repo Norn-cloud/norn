@@ -10,46 +10,13 @@ import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { buckets, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
-import { member } from "./lib/exact.ts"
-import { FRESHNESS, bucketLabel, day, headline, percent, period, scope } from "./lib/format.ts"
+import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
 import { recordedTransport, type QuestionAnswer } from "./lib/transport.ts"
-import { measured, operandUnits } from "./lib/units.ts"
+import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
-
-interface Bucket {
-  readonly key: string
-  readonly label: string
-  readonly value: string
-  /** One sum, or numerator then denominator, as the server wrote them, each with its declared unit. */
-  readonly totals: readonly string[]
-  readonly members: readonly { readonly id: string; readonly amounts: readonly (string | null)[] }[]
-}
-
-function buckets({ question, answer, metrics, objectType }: QuestionAnswer): Bucket[] {
-  const units = operandUnits(question.document, metrics.document, objectType.document)
-  const text = (pointer: string) => answer.numbers.get(pointer) ?? "unavailable"
-  const operand = (pointer: string, index: number) => measured(text(pointer), units[index])
-  return Object.entries(answer.document.rows).map(([key, row]) => {
-    const at = `/rows/${member(key)}`
-    return {
-      key,
-      label: bucketLabel(row.bucket, question.document),
-      value: text(`${at}/value`),
-      totals: row.totals.map((_, index) => operand(`${at}/totals/${index}`, index)),
-      members: Object.entries(row.members).map(([id, { amounts }]) => ({
-        id,
-        amounts: amounts.map((amount, index) => amount === null ? null : operand(`${at}/members/${member(id)}/amounts/${index}`, index)),
-      })),
-    }
-  })
-}
-
-const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
-
-/** A ratio reads as a percentage at one precision everywhere; a sum stays the server's text. */
-const shown = (bucket: Pick<Bucket, "value" | "totals">): string => bucket.totals.length > 1 ? percent(bucket.value) : bucket.value
 
 function Exact({ value, totals }: { readonly value: string; readonly totals: readonly string[] }) {
   return totals.length > 1
@@ -91,7 +58,7 @@ function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer;
   const [open, setOpen] = useState<Bucket>()
   const question = read.question.document
   const answer = read.answer.document
-  const rows = buckets(read)
+  const rows = buckets(declarations(read), { answer, numbers: read.answer.numbers, at: "" })
   const latest = rows.at(-1)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
@@ -165,7 +132,10 @@ function QuestionCard({ read, heading = "h2" }: { readonly read: QuestionAnswer;
 /** The questions on the board, for the submenu island. */
 export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
   const board = useQuery({ queryKey: ["question-board"], queryFn: recordedTransport.questionBoard })
-  return board.data?.map((read) => ({ href: `/questions/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) }))
+  return board.data && [
+    ...board.data.map((read) => ({ href: `/questions/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) })),
+    { href: "#corrections", label: "Corrections", group: "Corrections" },
+  ]
 }
 
 /** The object type a question counts, which is how the list groups questions. */
@@ -196,6 +166,7 @@ export function QuestionsPage() {
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}
       {board.data?.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
+      <RestatementCard />
     </section>
   )
 }
