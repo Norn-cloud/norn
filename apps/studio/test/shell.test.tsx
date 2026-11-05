@@ -4,7 +4,7 @@ import { Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
 
 const section: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -39,4 +39,10 @@ test("an anchor entry links to its section's page, so it navigates from a record
   expect(target(section, "/sources/canon.Holding")).toEqual({ to: "/sources/canon.Holding" })
   const html = await at("/sources/canon.Item/demo%2Fitem%2Fgold", () => <SidebarProvider><Submenu section={section} /></SidebarProvider>)
   expect(html).toContain('href="/sources#concept-canon.Party"')
+})
+
+test("the rail and submenu sit in one row that does not depend on the outer sidebar's classes", async () => {
+  const html = await at("/sources", () => <Shell sections={[section]} />)
+  expect(html).toContain("flex size-full min-h-0 flex-row")
+  expect(html).toContain("w-[calc(4rem+1px)]!")
 })
