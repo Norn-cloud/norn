@@ -172,5 +172,7 @@ fn selected_rules_admit_commit_and_refuse_with_atomicity_and_controls() {
         tested += 1;
     }
     assert_eq!(tested, 10);
-    println!("BENCH-RULE-1: {tested}/30 selected pointwise clauses exercised through this template");
+    println!(
+        "BENCH-RULE-1: {tested}/30 selected pointwise clauses exercised through this template"
+    );
 }
