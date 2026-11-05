@@ -211,17 +211,26 @@ causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
   Its capture namespace comes from the existing connector/partition/source-row
   identity, so identical row aliases from independent connectors never supersede
   each other.
-  Supersession is one-way: a claim newly written in the consuming turn
-  supersedes retained claims of its contribution with other targets; retained
-  evidence never supersedes a fresh claim. Competing claims with no such order
-  are contested and authorize neither an addition nor a withdrawal.
+  Supersession is recorded and one-way: a claim names the earlier claims of its
+  contribution that it replaces in `supersedes`, part of its immutable preimage,
+  so the order persists across turns and content addressing keeps it acyclic.
+  Mapping evaluation leaves the record empty and the claim planner fills it from
+  retained claims; redelivery reuses the retained claim. Retained evidence never
+  supersedes a fresh claim. Competing claims with no recorded order are contested
+  and authorize neither an addition nor a withdrawal; they still hold their edges
+  until a fresh claim records their order.
+  Standing and edge support are decided once over the turn's final claim set, so
+  sealing a claim is only an intent and a claim merged later can still refuse it.
   Replacing its target withdraws an earlier observed edge only if no active
   claim still supports that edge. Prepared old and successor evidence is
   required for a withdrawal, and the kernel refuses it while any other prepared
-  claim for the same canonical edge is not superseded. Enumerating every
-  retained supporting claim, including other connectors' claims not prepared in
-  the turn, is the claim planner's duty (#877). Authored edges without claim
-  backing stay intact. Every superseded claim remains immutable evidence.
+  claim for the same canonical edge is not superseded. Authored edges without
+  claim backing stay intact. Every superseded claim remains immutable evidence.
+  The kernel enforces these rules over prepared claims only: it cannot see a
+  retained claim the turn did not prepare, so an omitted successor or supporter
+  leaves a stale claim current. The claim planner (#877) must prepare every
+  retained claim of the edge and contribution. That gap is a ship blocker for
+  #823: no production caller of `seal_observed_link_claim` may land before #877.
 - **OBS-LINK-PENDING-1:** a missing target leaves a retained claim pending by
   canonical identity, including targets in the same capture. Target arrival
   resolves it without source redelivery or an arrival-order assumption. Capture,
@@ -236,7 +245,8 @@ Unit 1 declares the claim concept, pins the MappingIR output correspondence and
 enforces at the kernel observation boundary: OBS-LINK-CLAIM-1 claim immutability
 and typed-only claim writes; OBS-LINK-CONVERGE-1 corroboration without namespace
 ownership, endpoint/type law and default-only link values; and
-OBS-LINK-CONTRIBUTION-1 one-way supersession with prepared-support checks.
+OBS-LINK-CONTRIBUTION-1 recorded one-way supersession with prepared-support
+checks over the final claim set.
 Pending resolution, complete support enumeration and conflict quarantine
 require the subsequent runtime units.
 The claim's registry `evidence` scalar holds the exact canonical JSON of its
@@ -257,9 +267,12 @@ Named acceptance scenarios:
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
-  its retained successor cannot restore the stale edge or withdraw the current one.
+  its retained successor cannot restore the stale edge or withdraw the current one,
+  whether the successor is prepared before or after the stale claim is sealed.
+  A fresh claim recording the successor wins, even when it returns to the old target.
 - **OBS-LINK-SUPPORTED-WITHDRAWAL:** a replacement cannot withdraw an edge that
-  another connector's prepared claim still supports.
+  another connector's prepared claim still supports; once that connector's own
+  replacement is recorded, a later turn can.
 - **OBS-LINK-LINK-VALUES:** a convergent addition proposing non-default link
   property values refuses.
 - **OBS-LINK-PENDING-ORDER:** generated valid input orders and redeliveries yield

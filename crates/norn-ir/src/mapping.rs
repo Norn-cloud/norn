@@ -36,7 +36,7 @@
 
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entitlement::EntitlementStatus;
 use crate::members::present_non_null;
@@ -803,6 +803,13 @@ pub struct ObservedLinkClaim {
     pub target: Option<ObservedLinkTarget>,
     /// Source row, mapping version and exact relation rule.
     pub provenance: InstanceProvenance,
+    /// OBS-LINK-CONTRIBUTION-1: identities of the earlier claims of this
+    /// contribution that this claim replaces. Mapping evaluation leaves it empty;
+    /// the claim planner fills it from retained claims. It is part of the
+    /// evidence preimage, so retained claims stay ordered by a content-addressed,
+    /// necessarily acyclic chain. An empty set is absent from the preimage.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub supersedes: BTreeSet<String>,
 }
 
 /// Registry concept used for immutable, ordinary claim snapshots.
@@ -951,6 +958,7 @@ impl MappedRecord {
                     key: patch.target_key.clone(),
                 }),
                 provenance: patch.provenance.clone(),
+                supersedes: BTreeSet::new(),
             })
             .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
                 observation_id: observation_id.to_owned(),
@@ -964,6 +972,7 @@ impl MappedRecord {
                     provenance.transform = Some(format!("{}.{}", self.map, role.as_str()));
                     provenance
                 },
+                supersedes: BTreeSet::new(),
             }))
             .collect()
     }
