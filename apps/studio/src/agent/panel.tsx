@@ -38,15 +38,17 @@ function Progress({ step }: { readonly step: number }) {
     return () => clearInterval(timer)
   }, [])
   return (
-    <div role="status" aria-live="polite" className="enter rounded-xl border bg-card p-3.5 text-sm">
+    <div className="enter rounded-xl border bg-card p-3.5 text-sm">
+      {/* Only the step is announced; the seconds tick visually. */}
+      <p role="status" aria-live="polite" className="sr-only">{STEPS[step]}</p>
       <ol className="space-y-2.5">
         {STEPS.map((label, index) => (
-          <li key={label} className={cn("flex items-center gap-2.5 transition-colors", index > step && "text-muted-foreground/60")}>
+          <li key={label} aria-current={index === step ? "step" : undefined} className={cn("flex items-center gap-2.5 transition-colors", index > step && "text-muted-foreground/60")}>
             <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full border", index < step && "border-transparent bg-success text-background", index === step && "border-ring")}>
               {index < step ? <Check className="size-3" strokeWidth={3} /> : index === step ? <LoaderCircle className="size-3 animate-spin text-ring" /> : null}
             </span>
             <span className={cn(index === step && "font-medium")}>{label}</span>
-            {index === step && <span className="ms-auto text-meta text-muted-foreground tabular-nums">{seconds} s</span>}
+            {index === step && <span aria-hidden className="ms-auto text-meta text-muted-foreground tabular-nums">{seconds} s</span>}
           </li>
         ))}
       </ol>
