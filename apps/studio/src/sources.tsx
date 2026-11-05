@@ -124,7 +124,7 @@ function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; rea
       <header className="space-y-2">
         <h1 className="text-title font-medium">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-          <Badge variant="secondary">{systems.length > 0 ? `Fed by ${systems.join(", ")}` : "Shared interface"}</Badge>
+          <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
           <span className="font-mono">{concept.name}</span>
         </div>
@@ -179,17 +179,24 @@ export function ObjectTypePage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.kind === "concept" && <ObjectRecords concept={concept} />}
+      {concept?.definition === "object type" && <ObjectRecords concept={concept} />}
     </div>
   )
 }
 
-/** The object types the systems feed, for the submenu island. */
+/** The overview's groups: object types by whether a system feeds them, then shared interfaces. */
+const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept: Concept) => boolean }[] = [
+  { label: "Object types the systems feed", has: (concept) => concept.definition === "object type" && concept.kind === "concept" },
+  { label: "Other object types", has: (concept) => concept.definition === "object type" && concept.kind !== "concept" },
+  { label: "Shared interfaces", has: (concept) => concept.definition === "interface" },
+]
+
+/** The object types and shared interfaces, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
-  return catalog && (["concept", "core idea"] as const).flatMap((kind) => catalog.concepts.filter((concept) => concept.kind === kind)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: kind === "concept" ? "Object types" : "Shared interfaces" })))
+  return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces" })))
 }
 
 /** The admitted catalog, indexed once per read. */
@@ -224,12 +231,12 @@ export function SourcesPage() {
               <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
                 className="border-border bg-background ps-9 dark:bg-background" />
             </label>
-            {(["concept", "core idea"] as const).map((kind) => (
-              <div key={kind} className="space-y-3">
-                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Object types the systems feed" : "Shared interfaces"}</h3>
-                {catalog.concepts.some((concept) => concept.kind === kind && matches(concept))
+            {OVERVIEW_GROUPS.map(({ label, has }) => (
+              <div key={label} className="space-y-3">
+                <h3 className="text-meta font-medium text-muted-foreground">{label}</h3>
+                {catalog.concepts.some((concept) => has(concept) && matches(concept))
                   ? <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
+                      {catalog.concepts.filter((concept) => has(concept) && matches(concept)).map((concept) => (
                         <ConceptCard key={concept.name} concept={concept} />
                       ))}
                     </div>

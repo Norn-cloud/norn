@@ -78,3 +78,11 @@ test("a mapping target resolves through its entity artifact's declared name, wha
   ] as unknown as readonly Artifact[]
   expect(catalogOf(artifacts).byName.get("demo.Thing")?.feeds.map(({ system }) => system)).toEqual(["ERPNext"])
 })
+
+test("an object type no system feeds is still an object type, not a shared interface", () => {
+  const restatement = catalog.byName.get("core.analytics.Restatement")
+  expect(restatement?.definition).toBe("object type")
+  expect(restatement?.kind).toBe("core idea")
+  expect(catalog.byName.get("core.Agent")?.definition).toBe("interface")
+  expect(catalog.byName.get("canon.Holding")?.definition).toBe("object type")
+})
