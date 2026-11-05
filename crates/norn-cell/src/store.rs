@@ -2391,11 +2391,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        let mut reader = StoreReader::new(&self.conn, &self.model)
+        StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
-            .with_quantity_boundary(self.quantity_boundary.get());
-        reader.mapping_plans = Some(&self.mapping_plans);
-        reader
+            .with_mapping_plans(&self.mapping_plans)
+            .with_quantity_boundary(self.quantity_boundary.get())
     }
 
     /// Configure a host-owned, read-only check of the candidate transaction.
@@ -2764,7 +2763,8 @@ impl<E: SqlEngine> CellStore<E> {
             )?;
             admitted_boundary.set(boundary.or(new_boundary));
             let quality_disputes = RefCell::default();
-            let quality_reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&quality_disputes);
+            let quality_reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&quality_disputes);
             let quality_cutoff = prior_receipt.as_ref().map_or_else(|| quality_reader.next_commit_seq(), |receipt| Ok(receipt.body.commit_seq))?;
             crate::observation_quality::deduplicate(&quality_reader, &mut quantity_batch, quality_cutoff)?;
             let effective_batch = &quantity_batch;
@@ -2781,7 +2781,8 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(CellError::IdempotencyConflict(key.clone()).into());
             }
             let transaction_disputes = RefCell::default();
-            let reader = StoreReader::new(&self.conn, &self.model).with_transaction_source_disputes(&transaction_disputes);
+            let reader = StoreReader::new(&self.conn, &self.model)
+                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
@@ -2879,7 +2880,10 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
                 validate(
-                    &writer.reader().with_transaction_source_disputes(&validator_disputes),
+                    &writer
+                        .reader()
+                        .with_mapping_plans(&self.mapping_plans)
+                        .with_transaction_source_disputes(&validator_disputes),
                     effective_batch,
                     installation.is_some(),
                 )?;
