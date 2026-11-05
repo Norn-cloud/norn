@@ -85,7 +85,7 @@ run_phase() {
       python3 scripts/test_proof_enrollment.py
       python3 scripts/test_demo_scenarios.py
       cargo xtask ci policy
-      cargo xtask ci provenance
+      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       ;;
     test)
       select_shard "${2:-all}"
@@ -204,10 +204,10 @@ PY
       ;;
     provenance)
       export CI=true
-      cargo xtask ci provenance
+      cargo xtask ci provenance --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       mkdir -p "$upstream/distribution"
       git archive HEAD | tar -x -C "$upstream/distribution"
-      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD"
+      cargo xtask ci provenance --root "$upstream/distribution" --distribution --base-root "$PWD" --source-root "$PWD" --head "${NORN_CI_HEAD:-$(git rev-parse HEAD)}" --repository Norn-cloud/norn
       ;;
     *) printf 'Usage: %s [all|plan [--affected BASE [HEAD]]|shards|bundle-plan PLAN|bundle-check PLAN|bundle PLAN ID|PHASE [SHARD]] with PHASE one of: %s test-shards\n' "$0" "${phases[*]}" >&2; exit 2 ;;
   esac
