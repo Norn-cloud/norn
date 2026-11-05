@@ -222,25 +222,6 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn nonlocal_reads_are_unknown_even_in_an_inactive_branch() {
-        let fields = BTreeMap::from([("status".into(), norn_ir::PropertyType::Boolean {})]);
-        let mut work = WORK;
-        assert!(compile("self.status == true", &mut work, &fields).is_ok());
-        for expression in [
-            "false and actor.role == 'operator'",
-            "self.supplier.balance > 0",
-            "self",
-        ] {
-            assert!(Expression::compile(expression).is_ok(), "{expression}");
-            assert!(compile(expression, &mut work, &fields).is_err());
-        }
-    }
-}
-
 impl ApprovedContract {
     /// Reconstruct admitted inputs before building a complete law-filtered relation.
     /// # Errors
@@ -268,5 +249,24 @@ impl ApprovedContract {
                 .snapshot
                 .and_then(|inputs| build(inputs, &bounds.property)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn nonlocal_reads_are_unknown_even_in_an_inactive_branch() {
+        let fields = BTreeMap::from([("status".into(), norn_ir::PropertyType::Boolean {})]);
+        let mut work = WORK;
+        assert!(compile("self.status == true", &mut work, &fields).is_ok());
+        for expression in [
+            "false and actor.role == 'operator'",
+            "self.supplier.balance > 0",
+            "self",
+        ] {
+            assert!(Expression::compile(expression).is_ok(), "{expression}");
+            assert!(compile(expression, &mut work, &fields).is_err());
+        }
     }
 }
