@@ -37,3 +37,8 @@ test("a state scan names the credential variables whose values it finds, and onl
   expect(leakedSecrets(state, env)).toEqual({ GH_TOKEN: 2 })
   expect(leakedSecrets(JSON.stringify({ props: { assets: "dist" } }), env)).toEqual({})
 })
+
+test("a state scan finds a credential written with JSON escapes", () => {
+  const env = { API_SECRET: 'quote"and\\backslash\nnewline' }
+  expect(leakedSecrets(JSON.stringify({ props: { env } }), env)).toEqual({ API_SECRET: 1 })
+})

@@ -36,7 +36,9 @@ export function leakedSecrets(text: string, env: Readonly<Record<string, string 
   const found: Record<string, number> = {}
   for (const [name, value] of Object.entries(env)) {
     if (!SECRET_NAME.test(name) || value === undefined || value.length < 8) continue
-    const count = text.split(value).length - 1
+    // State is JSON: a value with quotes, backslashes or newlines appears escaped there.
+    const escaped = JSON.stringify(value).slice(1, -1)
+    const count = text.split(value).length - 1 + (escaped === value ? 0 : text.split(escaped).length - 1)
     if (count > 0) found[name] = count
   }
   return found
