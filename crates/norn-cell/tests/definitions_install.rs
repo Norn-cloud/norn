@@ -5965,7 +5965,9 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
 }
 
 /// Warm a store's mapping plan, apply `tamper` to the database file, and return
-/// the refusal from the warm store and from a fresh store on the same file.
+/// the refusal from the warm store and from a cold store (opened before the
+/// tamper, never evaluated a bundle) on the same file. A store opened after the
+/// tamper must also refuse, at open or at recheck.
 fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("plan.sqlite");
@@ -5987,6 +5989,8 @@ fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
         .read()
         .recheck_mapping_bundle(&bundle)
         .expect("warm plan before tamper");
+    let cold = CellStore::open(&path, store.model().clone(), StoreOptions::default())
+        .expect("cold connection");
     let engine = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
     engine
         .execute(
@@ -5999,12 +6003,17 @@ fn warm_and_fresh_refusals(tamper: &str) -> (String, String) {
         .read()
         .recheck_mapping_bundle(&bundle)
         .expect_err("warm store must refuse the tampered evidence");
-    let fresh = CellStore::open(&path, store.model().clone(), StoreOptions::default())
-        .expect("fresh connection")
+    let cold = cold
         .read()
         .recheck_mapping_bundle(&bundle)
-        .expect_err("fresh store must refuse the tampered evidence");
-    (format!("{warm:?}"), format!("{fresh:?}"))
+        .expect_err("cold store must refuse the tampered evidence");
+    if let Ok(reopened) = CellStore::open(&path, store.model().clone(), StoreOptions::default()) {
+        assert!(
+            reopened.read().recheck_mapping_bundle(&bundle).is_err(),
+            "a store opened after the tamper must refuse"
+        );
+    }
+    (format!("{warm:?}"), format!("{cold:?}"))
 }
 
 /// MAPPING-PLAN-REUSE: every check the full retained proof performs refuses a
@@ -6041,8 +6050,8 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
         ),
     ];
     for (name, tamper) in cases {
-        let (warm, fresh) = warm_and_fresh_refusals(&tamper);
-        assert_eq!(warm, fresh, "{name}: warm and fresh refusals differ");
+        let (warm, cold) = warm_and_fresh_refusals(&tamper);
+        assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
     }
 }
 
