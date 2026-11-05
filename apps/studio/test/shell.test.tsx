@@ -45,7 +45,7 @@ test("a submenu offers a search over its entries", async () => {
 })
 
 test("the rail and submenu sit in one row that does not depend on the outer sidebar's classes", async () => {
-  const html = await at("/sources", () => <Shell sections={[section]} />)
+  const html = await at("/sources", () => <Shell sections={[sources]} />)
   expect(html).toContain("flex size-full min-h-0 flex-row")
   expect(html).toContain("w-[calc(4rem+1px)]!")
 })
