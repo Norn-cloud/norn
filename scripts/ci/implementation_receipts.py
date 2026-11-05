@@ -428,22 +428,39 @@ def fstar_inputs_safe(path: Path) -> None:
     require(not fstar_holes(path), f"{path.name}: proof hole")
 
 
+def plain_path(root: Path, path: str) -> Path:
+    """`path` under `root`, refusing a symlink anywhere along it: F* must read committed bytes."""
+    current = root
+    for part in Path(path).parts:
+        current = current / part
+        require(not current.is_symlink(), f"{path}: symlink in a declared input path")
+    return current
+
+
 def recheck_fstar(root: Path, plan: dict, generated: Path, fstar: Path) -> None:
     """Re-run every F* step of an extraction claim on this runner.
 
     The inputs are the uploaded module and the declared proof files from the
     head commit, in an isolated directory, so F* resolves nothing undeclared.
+    Each declared item must be defined exactly once in the uploaded module;
+    whether that definition is hax's faithful extraction stays candidate-reported.
     """
-    require(generated.is_file(), "no extracted module was uploaded")
+    require(generated.is_file() and not generated.is_symlink() and not generated.parent.is_symlink(),
+            "no extracted module was uploaded")
     with tempfile.TemporaryDirectory(prefix="fstar-recheck-") as name:
         work = Path(name) / "work"
         (work / "out").mkdir(parents=True)
         (work / "proofs").mkdir()
         shutil.copyfile(generated, work / "out" / plan["module"])
         for path in plan["inputs"][1:]:
-            shutil.copyfile(root / path, work / "proofs" / Path(path).name)
+            shutil.copyfile(plain_path(root, path), work / "proofs" / Path(path).name)
         for path in sorted(f for f in work.rglob("*") if f.is_file()):
             fstar_inputs_safe(path)
+        source = generated.read_text(encoding="utf-8")
+        for item in plan["items"]:
+            symbol = item.rsplit("::", 1)[1]
+            require(len(re.findall(rf"(?m)^let {re.escape(symbol)} ", source)) == 1,
+                    f"{item} is not defined exactly once in the uploaded module")
         env = {"PATH": f"{fstar.parent}:/usr/bin:/bin", "HOME": name}
         for index, argv in enumerate(plan["argv"][1:]):
             done = invoke([str(fstar), *argv[1:]], work, env, Path(name) / f"{index}.log")
