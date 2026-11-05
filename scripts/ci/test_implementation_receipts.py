@@ -163,6 +163,9 @@ class ReceiptTest(unittest.TestCase):
                 ("module Lib\nlet f (x: bool) : bool = x\n[@@expect_failure]\nlet t () : Lemma False = ()\n",
                  "proof hole"),
                 ("module Lib\n[@@resolve_implicits]\nlet f (x: bool) : bool = x\n", "meta-programs"),
+                # FStarLang/FStar#4554: this proves False in the pinned F*.
+                ("module Lib\nlet f (x: bool) : bool = x\nlet g (n:nat) : (r:nat{r == n}) =\n"
+                 "  let rec go (m:nat) : (r:nat{r == n}) = n in go n\n", "inner let rec"),
                 ("module Lib\nlet f (x: bool) : bool = x\nlet t () : Lemma False = Prims._assume False\n", "proof hole"),
                 ("module Lib\nlet f (x: bool) : bool = x\nlet t = admitP False\n", "proof hole"),
                 ('module Lib\n#set-options "--load_cmxs evil"\nlet f (x: bool) : bool = x\n', "is not allowed"),
@@ -200,7 +203,8 @@ class ReceiptTest(unittest.TestCase):
     def test_solver_budget_options_are_allowed(self) -> None:
         self.produce()
         self.forge("INV-EXTRACT", 'module Lib\n#set-options "--fuel 0 --ifuel 1 --z3rlimit 15"\n'
-                                  '#push-options "--z3rlimit 80"\nlet f (x: bool) : bool = x\n#pop-options\n')
+                                  '#push-options "--z3rlimit 80"\nlet f (x: bool) : bool = x\n#pop-options\n'
+                                  'let rec top (n: nat) : nat = if n = 0 then 0 else top (n - 1)\n')
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
         self.assertFalse([e for e in errors if e.startswith("INV-EXTRACT")], errors)
 
