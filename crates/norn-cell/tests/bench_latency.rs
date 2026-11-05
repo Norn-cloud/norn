@@ -1,8 +1,13 @@
 //! BENCH-LATENCY-1: durable governed-commit and isolated law-check cost as history grows.
 #![cfg(feature = "native")]
 #![allow(
+    clippy::arithmetic_side_effects,
+    clippy::case_sensitive_file_extension_comparisons,
     clippy::expect_used,
+    clippy::indexing_slicing,
     clippy::panic,
+    clippy::similar_names,
+    clippy::too_many_lines,
     missing_docs,
     reason = "benchmark driver"
 )]
@@ -65,15 +70,18 @@ fn governed_commit_and_law_check_latency_by_history_size() {
     let artifacts: Vec<ArtifactEnvelope> = artifacts;
     let mut definitions: Vec<ObjectTypeDef> = artifacts
         .iter()
-        .filter_map(|a| match &a.payload {
-            ArtifactPayload::Entity(payload) => Some(
-                payload
-                    .to_json_value()
-                    .decode::<EntityRootV2>()
-                    .expect("entity")
-                    .object_type,
-            ),
-            _ => None,
+        .filter_map(|a| {
+            if let ArtifactPayload::Entity(payload) = &a.payload {
+                Some(
+                    payload
+                        .to_json_value()
+                        .decode::<EntityRootV2>()
+                        .expect("entity")
+                        .object_type,
+                )
+            } else {
+                None
+            }
         })
         .collect();
     definitions.push(audit_type());
