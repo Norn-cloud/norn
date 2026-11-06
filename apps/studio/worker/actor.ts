@@ -1,5 +1,17 @@
 import { activeMembership, type Auth } from "./auth.ts"
 
+/** Worker-held workspace-to-cell configuration; malformed or unmapped entries fail closed. */
+const DEFAULT_WORKSPACE_ENVIRONMENTS: Readonly<Record<string, string>> = { org_demo: "analytics" }
+export function workspaceEnvironment(orgId: string, configured?: string): string | null {
+  let mapping: unknown = DEFAULT_WORKSPACE_ENVIRONMENTS
+  if (configured !== undefined) {
+    try { mapping = JSON.parse(configured) } catch { return null }
+  }
+  if (typeof mapping !== "object" || mapping === null || Array.isArray(mapping) || !Object.hasOwn(mapping, orgId)) return null
+  const value = (mapping as Record<string, unknown>)[orgId]
+  return typeof value === "string" && value.trim() !== "" ? value : null
+}
+
 /**
  * Who a request acts as, resolved on the server from the verified session or
  * API key, never from anything the client asserts. The Norn host turns this

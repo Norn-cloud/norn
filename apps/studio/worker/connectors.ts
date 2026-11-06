@@ -1,4 +1,4 @@
-import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
+import { originAllowed, resolveActor, workspaceEnvironment, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { connectorString, connectorVersion, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
@@ -30,8 +30,8 @@ export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
   readonly TOOL_GATEWAY_URL?: string
   readonly BETTER_AUTH_URL: string
-  /** The cell environment binding definitions are installed in; `analytics` when unset. */
-  readonly NORN_ENVIRONMENT_ID?: string
+  /** Server-held JSON map from workspace ids to their cell environments. */
+  readonly STUDIO_WORKSPACE_ENVIRONMENTS?: string
 }
 
 /** What the routes reach outside the request: the bindings table, the person's grant and the network. */
@@ -137,7 +137,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
 
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
   const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
-  const cell = new BindingDefinitions(deps.host, auth, actor, env.NORN_ENVIRONMENT_ID)
+  const cell = new BindingDefinitions(deps.host, auth, actor, workspaceEnvironment(actor.orgId, env.STUDIO_WORKSPACE_ENVIRONMENTS))
   /** A definition write that did not land is a typed refusal; `null` when it landed or the stage keeps bindings locally. */
   const cellRefusal = (outcome: Install) =>
     outcome.kind === "refused" ? Response.json({ code: "connectors.binding_refused", error: "The cell refused this binding.", findings: outcome.findings }, { status: 422, headers: NO_STORE })

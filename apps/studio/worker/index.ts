@@ -1,4 +1,4 @@
-import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
+import { forwardToHost, originAllowed, resolveActor, workspaceEnvironment } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
 import type { AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
@@ -33,8 +33,8 @@ export interface Env {
   readonly TOOL_GATEWAY_URL?: string
   readonly TOOL_GATEWAY_CLIENT_ID?: string
   readonly TOOL_GATEWAY_CLIENT_SECRET?: string
-  /** The cell environment Studio's binding definitions go to; `analytics` when unset. */
-  readonly NORN_ENVIRONMENT_ID?: string
+  /** Server-held JSON map from workspace ids to their cell environments. */
+  readonly STUDIO_WORKSPACE_ENVIRONMENTS?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -75,16 +75,13 @@ export async function publicSignUp(response: Response): Promise<Response> {
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
 }
 
-/** Server-held workspace-to-cell configuration. Unmapped workspaces have no data cell. */
-const WORKSPACE_ENVIRONMENTS = new Map<string, string>([["org_demo", "analytics"]])
-
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : WORKSPACE_ENVIRONMENTS.get(member.organizationId) ?? null },
+    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : workspaceEnvironment(member.organizationId, env.STUDIO_WORKSPACE_ENVIRONMENTS) },
     { headers: { "cache-control": "no-store" } },
   )
 }

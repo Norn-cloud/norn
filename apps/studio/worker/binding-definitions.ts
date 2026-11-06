@@ -16,9 +16,6 @@ import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
 
 export const BINDING_KIND = "binding"
 
-/** The cell environment Studio's definitions use unless the stage names another (STUDIO's own calls use it too). */
-export const DEFAULT_ENVIRONMENT = "analytics"
-
 /** The definition payload DEFS admits for a binding. */
 export interface BindingPayload {
   readonly connector: ConnectorRef
@@ -75,15 +72,17 @@ export class CellUnavailable extends Error {}
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
   /** `environmentId` names the cell environment the definitions live in (DEFS's routes take it with orgId). */
-  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string = DEFAULT_ENVIRONMENT) {}
+  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string | null) {}
 
   /** DEFS's scope query: the actor's server-resolved organization and the environment. */
   private scoped(path: string): string {
+    if (this.environmentId === null) throw new CellUnavailable("This workspace has no data cell yet.")
     return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
     const { host } = this
+    if (this.environmentId === null) throw new CellUnavailable("This workspace has no data cell yet.")
     if (host === undefined) return null
     const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, "content-type": "application/json", accept: "application/json" })
     let response: Response

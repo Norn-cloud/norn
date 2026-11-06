@@ -63,6 +63,9 @@ test("the active organization selects its server-configured environment", async 
   const body = await (await call(env, "/api/me", { headers: { cookie } })).json() as { organization: { id: string }; environmentId: string | null }
   expect(body.organization.id).toBe("org_demo")
   expect(body.environmentId).toBe("analytics")
+  const configured = { ...env, STUDIO_WORKSPACE_ENVIRONMENTS: JSON.stringify({ org_demo: "warehouse" }) }
+  const changed = await (await call(configured, "/api/me", { headers: { cookie } })).json() as { environmentId: string | null }
+  expect(changed.environmentId).toBe("warehouse")
 })
 
 test("sign-out ends the session", async () => {
