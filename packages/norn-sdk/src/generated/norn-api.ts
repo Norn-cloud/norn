@@ -4,6 +4,120 @@
  */
 
 export interface paths {
+    "/v1/definitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/definitions/{id}`: one version of one definition, the current
+         *     one unless `version` names a past one.
+         *     # Errors
+         *     A denied caller (403), an invalid id (400), an unknown id or version (404
+         *     `definition.not_found`).
+         */
+        get: operations["get_definition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/definitions/{id}:retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/definitions/{id}:retire`: record a retired version; history
+         *     stays readable.
+         *     # Errors
+         *     A denied caller (403), an unknown id (404 `definition.not_found`), a stale
+         *     `expectedVersion` (409), an already retired definition (422).
+         */
+        post: operations["retire_definition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/definitions:admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/definitions:admit`: run the kind's validator. Side-effect free.
+         *     # Errors
+         *     A denied caller (403), a malformed request or id (400), an unknown kind
+         *     (422 `definition.kind_unknown`), or a host failure.
+         */
+        post: operations["admit_definition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/definitions:install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/definitions:install`: re-admit, then install the next version
+         *     through the governed definitions install.
+         *     # Errors
+         *     As [`admit_definition`]; an inadmissible payload (422 `definition.refused`
+         *     with diagnostics); a stale `expectedVersion` (409
+         *     `definition.version_conflict`).
+         */
+        post: operations["install_definition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/definitions:list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/definitions:list`: the current version of each definition of a
+         *     kind, ordered by id, retired ones only with `include=retired`.
+         *     # Errors
+         *     A denied caller (403), a missing kind, a bad limit or cursor (400).
+         */
+        get: operations["list_definitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/questions/{question}/answer": {
         parameters: {
             query?: never;
@@ -60,9 +174,11 @@ export interface paths {
          *     answer it once, under the same row gates and D53 redaction as a named
          *     question. Nothing is installed.
          *     # Errors
-         *     Any ungranted or undeclared metric or type (one opaque 403, before
-         *     admission), an inadmissible question (422 `question.refused` with
-         *     diagnostics), a bound (413), or a compute refusal.
+         *     Any ungranted metric or type, or an undeclared metric from a caller who
+         *     cannot read every declared metric (one opaque 403, before admission); an
+         *     inadmissible question, including an undeclared metric from a caller who
+         *     can (422 `question.refused` with diagnostics); a bound (413); or a
+         *     compute refusal.
          */
         post: operations["evaluate_question"];
         delete?: never;
@@ -106,6 +222,84 @@ export interface components {
             /** @description The same `QuestionIR` the answer was evaluated from. */
             question: Record<string, never>;
         };
+        /** @description `POST /v1/definitions:admit`. */
+        AdmitDefinitionRequest: {
+            /** @description The definition id. */
+            id: string;
+            /** @description `dashboard`, `question` or `agent`. */
+            kind: string;
+            /** @description The kind's payload. */
+            payload: Record<string, never>;
+        };
+        /** @description The admission decision. */
+        AdmitDefinitionResponse: {
+            /** @description True when no finding is an error. */
+            admitted: boolean;
+            /** @description Every finding, each pointing into the payload. */
+            diagnostics: components["schemas"]["RefusalDiagnostic"][];
+        };
+        /** @description One version of one definition. */
+        DefinitionDocument: {
+            /** @description The definition id. */
+            id: string;
+            /** @description Its kind. */
+            kind: string;
+            /** @description `active` or `retired`. */
+            lifecycle: string;
+            /** @description The admitted payload, as canonical JSON. */
+            payload: Record<string, never>;
+            /** @description The commit that installed this version. */
+            receipt: components["schemas"]["DefinitionReceipt"];
+            signoff: null | components["schemas"]["SignoffDocument"];
+            /**
+             * Format: int64
+             * @description This version.
+             */
+            version: number;
+        };
+        /** @description One page of definitions, ordered by id. */
+        DefinitionPage: {
+            /** @description The next page's cursor; null on the last page. */
+            cursor?: string | null;
+            /** @description This page. */
+            items: components["schemas"]["DefinitionSummary"][];
+        };
+        /** @description The commit that installed a version. */
+        DefinitionReceipt: {
+            /**
+             * Format: int64
+             * @description The commit sequence.
+             */
+            commitSeq: number;
+            /** @description The commit receipt's hash. */
+            receiptHash: string;
+            /**
+             * Format: int64
+             * @description Host time of the commit, in Unix milliseconds.
+             */
+            recordedAtMs: number;
+        };
+        /** @description One listed definition, without its payload. */
+        DefinitionSummary: {
+            /** @description The definition id. */
+            id: string;
+            /** @description Its kind. */
+            kind: string;
+            /** @description `active` or `retired`. */
+            lifecycle: string;
+            /** @description Its title. */
+            title: string;
+            /**
+             * Format: int64
+             * @description When its current version was installed, in Unix milliseconds.
+             */
+            updatedAtMs: number;
+            /**
+             * Format: int64
+             * @description Its current version.
+             */
+            version: number;
+        };
         /** @description `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer. */
         EvaluateRequest: {
             /**
@@ -113,6 +307,35 @@ export interface components {
              *     evaluated once and never installed.
              */
             question: Record<string, never>;
+        };
+        /** @description `POST /v1/definitions:install`. */
+        InstallDefinitionRequest: {
+            /**
+             * Format: int64
+             * @description The id's current version; absent requires that the id is unused.
+             */
+            expectedVersion?: number | null;
+            /** @description The definition id. */
+            id: string;
+            /** @description `dashboard`, `question` or `agent`. */
+            kind: string;
+            /** @description The kind's payload. */
+            payload: Record<string, never>;
+            signoff?: null | components["schemas"]["SignoffRequest"];
+        };
+        /** @description An installed (or retired) version. */
+        InstallDefinitionResponse: {
+            /** @description The definition id. */
+            id: string;
+            /** @description Always true. */
+            installed: boolean;
+            /** @description Its commit. */
+            receipt: components["schemas"]["DefinitionReceipt"];
+            /**
+             * Format: int64
+             * @description The new version.
+             */
+            version: number;
         };
         /**
          * LayoutSidecar
@@ -7973,6 +8196,8 @@ export interface components {
         RefusalDiagnostic: {
             /** @description Stable registered checker code: the rule that refused. */
             code: string;
+            /** @description The law that refused, when a declared law did. */
+            law?: string | null;
             /** @description Human-readable message; the code is the contract. */
             message: string;
             /** @description `error`, `warning` or `info`; any error refuses. */
@@ -7989,6 +8214,31 @@ export interface components {
             /** @description RFC 6901 JSON pointer into the submitted document. */
             pointer: string;
         };
+        /** @description `POST /v1/definitions/{id}:retire`. */
+        RetireDefinitionRequest: {
+            /**
+             * Format: int64
+             * @description The id's current version.
+             */
+            expectedVersion: number;
+        };
+        /** @description A recorded sign-off: every field set by the host. */
+        SignoffDocument: {
+            /** @description Lower-case hex SHA-256 of the host-recomputed restatement. */
+            restatementSha256: string;
+            /**
+             * Format: int64
+             * @description When the signed version was installed, in Unix milliseconds.
+             */
+            signedAtMs: number;
+            /** @description The installing principal. */
+            signer: string;
+        };
+        /** @description What a signer claims to have read. */
+        SignoffRequest: {
+            /** @description Lower-case hex SHA-256 of the UTF-8 restatement. */
+            restatementSha256: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -7998,6 +8248,346 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_definition: {
+        parameters: {
+            query?: {
+                /** @description Required organization. */
+                orgId?: string;
+                /** @description Required environment. */
+                environmentId?: string;
+                /** @description A past version; absent selects the current one. */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The definition id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionDocument"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    retire_definition: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The definition id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetireDefinitionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallDefinitionResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    admit_definition: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdmitDefinitionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdmitDefinitionResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    install_definition: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallDefinitionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallDefinitionResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_definitions: {
+        parameters: {
+            query?: {
+                /** @description Required organization. */
+                orgId?: string;
+                /** @description Required environment. */
+                environmentId?: string;
+                /** @description The kind to list. */
+                kind?: string;
+                /** @description `retired` also lists retired definitions. */
+                include?: string;
+                /** @description Page size, 1–100 (default 50). */
+                limit?: number;
+                /** @description The previous page's cursor, bound to `kind` and `include`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
     get_answer: {
         parameters: {
             query: {
