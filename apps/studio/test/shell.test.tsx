@@ -4,7 +4,10 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
-import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
+import type { Account } from "../src/lib/session.ts"
+import { Shell, Submenu, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+
+const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
@@ -45,7 +48,15 @@ test("a submenu offers a search over its entries", async () => {
 })
 
 test("the rail and submenu sit in one row that does not depend on the outer sidebar's classes", async () => {
-  const html = await at("/sources", () => <Shell sections={[sources]} />)
+  const html = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("flex size-full min-h-0 flex-row")
   expect(html).toContain("w-[calc(4rem+1px)]!")
+})
+
+test("the rail shows the signed-in user's initials and never the recorded-demo placeholder", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
+  expect(html).toContain(">AL<")
+  expect(html).not.toContain("Recorded demo")
+  expect(initials("")).toBe("?")
+  expect(initials("ada@example.com")).toBe("A")
 })
