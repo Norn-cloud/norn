@@ -140,9 +140,9 @@ fn malformed_requests_and_other_routes_refuse_without_reading() {
 
 #[test]
 fn reprovisioning_a_restarted_cell_reopens_the_same_revision() {
-    let directory = std::env::temp_dir().join(format!("norn-cell-do-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let path = directory.join("cell.sqlite");
+    // Exclusive to this run and removed on drop, including after a failure.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
     let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
     let scope = seed::demo_scope();
     let first = seed::provision(open(), &scope)
@@ -159,5 +159,4 @@ fn reprovisioning_a_restarted_cell_reopens_the_same_revision() {
         get(&host(open()), "/v1/definitions", SCOPE, VIEWER).1,
         document
     );
-    std::fs::remove_dir_all(&directory).unwrap();
 }
