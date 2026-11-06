@@ -88,8 +88,10 @@ jobs:
   # The full gate: `core.sh all` split into parallel jobs. The plan comes from
   # core.sh itself, so CI runs exactly its shards and phases (all but formal).
   # Pull requests and merge groups use affected plans; main runs the full set.
+  # A stacked pull request (base other than main) runs core only: no plan, so no
+  # bundles, and full fails until the pull request targets main.
   plan:
-    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
+    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref != 'main')
     runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
@@ -187,6 +189,7 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft || false }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
           PLAN: ${{ needs.plan.outputs.plan }}
@@ -196,6 +199,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+          [ "$EVENT" != pull_request ] || [ "$BASE_REF" = main ] || { echo "Stacked on $BASE_REF: the full gate runs once the pull request targets main"; exit 1; }
           jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
             type == "object" and (.mode == "full" or .mode == "affected") and
             .base_sha == $base and .head_sha == $head and
