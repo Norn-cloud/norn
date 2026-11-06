@@ -183,10 +183,19 @@ function NavAccount({ account, onSignOut }: { readonly account: Account; readonl
   )
 }
 
+/** A path segment as text; a malformed escape (e.g. `%E0%A4%A`) is shown as written instead of failing the page. */
+export function decoded(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 /** Section, item, then the record under it. */
 function Crumbs({ section, pathname }: { readonly section: Section; readonly pathname: string }) {
   const entry = ((section.useMenu ?? none)() ?? []).find(({ href }) => within(href, pathname))
-  const record = entry && pathname !== entry.href ? decodeURIComponent(pathname.slice(entry.href.length + 1)) : undefined
+  const record = entry && pathname !== entry.href ? decoded(pathname.slice(entry.href.length + 1)) : undefined
   const last = entry === undefined ? "section" : record === undefined ? "entry" : "record"
   return (
     <Breadcrumb className="min-w-0">
@@ -224,7 +233,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   const go = (to: { to: string; hash?: string }) => { setOpen(false); void navigate(to) }
   return (
     <>
-      <Button variant="outline" className="h-9 justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none md:w-56 md:px-3" onClick={() => setOpen(true)}>
+      <Button variant="outline" aria-label="Search" className="h-9 justify-start gap-2 px-2.5 font-normal text-muted-foreground shadow-none md:w-56 md:px-3" onClick={() => setOpen(true)}>
         <Search /><span className="hidden md:inline">Search…</span><kbd className="ms-auto hidden font-sans text-meta md:inline">⌘K</kbd>
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen} title="Search Studio" description="Go to a section or an item">

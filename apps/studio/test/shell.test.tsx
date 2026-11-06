@@ -4,7 +4,9 @@ import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { Account } from "../src/lib/session.ts"
-import { Shell as Bare, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+import { Shell as Bare, decoded, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+import { ViewProvider } from "../src/lib/view.tsx"
+
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 const Shell = (props: { readonly sections: readonly Section[] }) => <Bare {...props} account={account} onSignOut={() => {}} />
@@ -93,4 +95,24 @@ test("initials come from the name, else the email, else a placeholder", () => {
   expect(initials("Ada Lovelace")).toBe("AL")
   expect(initials("ada@example.com")).toBe("A")
   expect(initials("")).toBe("?")
+})
+
+test("a malformed escape in a record path is shown as written, not thrown", () => {
+  expect(decoded("demo%2Fitem")).toBe("demo/item")
+  expect(decoded("%E0%A4%A")).toBe("%E0%A4%A")
+})
+
+test("a browser that throws on storage still renders, in the business view", () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, get: () => { throw new DOMException("blocked", "SecurityError") } })
+  try {
+    expect(renderToStaticMarkup(<ViewProvider><span>ok</span></ViewProvider>)).toBe("<span>ok</span>")
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
+})
+
+test("the search button keeps its name when its label is hidden on phones", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
+  expect(html).toMatch(/<button[^>]*aria-label="Search"/)
 })
