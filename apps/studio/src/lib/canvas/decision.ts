@@ -22,7 +22,13 @@ export type Risk = (typeof RISKS)[number]
 
 const OPTION = S.record({ id: S.text(), label: S.text(), scope: S.text() })
 
-/** The decision Function contract (`norn.decision` v1): question and options in, the person's choice out. */
+/**
+ * A reference to the Norn built-in `norn.decision` v1 (lane RUNS owns it, its
+ * host implementation and its hashing; D58 and CELL-DO's answer 3). The canvas
+ * declares no Function and emits no manifest: this handle only gives lowering
+ * the schemas the approved contract states, so a drawn decision is typed.
+ * Replace it with RUNS' exported handle when that lands.
+ */
 export const DECISION_FN: FnRef = fn({
   id: "norn.decision",
   version: "1.0.0",

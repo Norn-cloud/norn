@@ -24,10 +24,14 @@ export async function loadChecker(packages: Record<string, () => Promise<Checker
   return (artifacts) => JSON.parse(module.checkArtifactSet(JSON.stringify(artifacts), "null")) as CheckResult
 }
 
-/** The context an agent is checked in: the cell's model allowlist, the org's bound tools and the admitted laws. */
+/**
+ * The context an agent is checked in, as the host supplies it (CELL-DO): the model allowlist, the org's tool
+ * bindings resolved to installed connectors and manifests by digest, and the installed laws. In the browser the
+ * check is feedback; the cell runs the same function in `:admit`'s agent validator and decides.
+ */
 export interface AgentContext {
   readonly models: readonly string[]
-  readonly bindings: readonly string[]
+  readonly bindings: readonly { readonly id: string; readonly connector: string; readonly manifestDigest: string }[]
   readonly laws: readonly string[]
 }
 

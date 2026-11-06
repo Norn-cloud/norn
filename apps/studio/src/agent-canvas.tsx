@@ -117,9 +117,17 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
     if (!agent) return { issues: [{ code: "canvas.agent.missing", message: "The agent node is missing" }], status: <Badge variant="destructive">1 finding</Badge> }
     if (checker.isError) return { issues: cellIssues, status: <span className="text-destructive" role="alert">{checker.error.message}: no live agent checks</span> }
     if (!checker.data) return { issues: cellIssues, status: <span role="status">Loading the checker…</span> }
-    const result = checker.data(agent, { models: [...OFFERED_MODELS], bindings: bindings.map(({ id: binding }) => binding), laws })
+    // The host checks tools against bindings resolved to connector manifests by digest. Until the gateway's binding
+    // list carries those digests, the browser leaves tools to the cell rather than calling every tool unbound.
+    const resolved = bindings.flatMap((binding) => {
+      const digest = (binding as Binding & { readonly manifestDigest?: string }).manifestDigest
+      return digest ? [{ id: binding.id, connector: binding.app, manifestDigest: digest }] : []
+    })
+    const toolsChecked = resolved.length === bindings.length
+    const result = checker.data(toolsChecked ? agent : { ...agent, tools: [] }, { models: [...OFFERED_MODELS], bindings: resolved, laws })
     const found = [...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, agent, code, message, span?.pointer ?? null)), ...cellIssues]
-    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
+    const badge = found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge>
+    return { issues: found, status: toolsChecked ? badge : <span className="flex items-center gap-2">{badge}<span className="text-meta text-muted-foreground">Tools are checked by the cell</span></span> }
   }, [checker.isError, checker.error, checker.data, bindings, laws, cellIssues])
 
   const save = async (graph: g.Graph) => {
