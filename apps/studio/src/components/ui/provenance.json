@@ -1,7 +1,7 @@
 {
   "vendor": {
     "path": "apps/studio/src/components/ui",
-    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source",
+    "method": "shadcn CLI 4.23.0 `init --preset luma --reinstall` (style radix-luma, base color neutral), copied as source; later `add sidebar command dropdown-menu` with the same CLI and style",
     "license": {
       "spdx": "MIT",
       "file": "LICENSE",
@@ -12,10 +12,20 @@
       "apps/studio/src/components/ui/button.tsx",
       "apps/studio/src/components/ui/card.tsx",
       "apps/studio/src/components/ui/chart.tsx",
+      "apps/studio/src/components/ui/command.tsx",
+      "apps/studio/src/components/ui/dialog.tsx",
+      "apps/studio/src/components/ui/dropdown-menu.tsx",
+      "apps/studio/src/components/ui/input-group.tsx",
       "apps/studio/src/components/ui/input.tsx",
-      "apps/studio/src/components/ui/sheet.tsx",
+      "apps/studio/src/components/ui/separator.tsx",
       "apps/studio/src/components/ui/shadcn.css",
+      "apps/studio/src/components/ui/sheet.tsx",
+      "apps/studio/src/components/ui/sidebar.tsx",
+      "apps/studio/src/components/ui/skeleton.tsx",
       "apps/studio/src/components/ui/table.tsx",
+      "apps/studio/src/components/ui/textarea.tsx",
+      "apps/studio/src/components/ui/tooltip.tsx",
+      "apps/studio/src/hooks/use-mobile.ts",
       "apps/studio/src/index.css",
       "apps/studio/src/lib/utils.ts"
     ],
