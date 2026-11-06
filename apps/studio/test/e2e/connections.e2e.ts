@@ -10,14 +10,14 @@ type Page = {
   url(): string
   waitForURL(url: string | RegExp, options?: { timeout?: number }): Promise<void>
   getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator
-  getByLabel(text: string | RegExp): Locator
+  getByLabel(text: string | RegExp, options?: { exact?: boolean }): Locator
   getByText(text: string | RegExp): Locator
   locator(selector: string): Locator
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
   route(url: string, handler: (route: { fulfill(response: { status: number; contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>
   unroute(url: string): Promise<void>
 }
-type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
+type Locator = { click(): Promise<void>; press(key: string): Promise<void>; fill(value: string): Promise<void>; check(): Promise<void>; selectOption(value: string): Promise<unknown>; getByLabel: Page["getByLabel"]; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
 const env = (name: string) => {
   const value = process.env[name]
@@ -29,23 +29,45 @@ if (!/^https:\/\/[a-z0-9.-]+$/.test(base)) throw new Error("E2E_BASE must be an 
 
 async function signIn(page: Page) {
   await page.goto(`${base}/`)
-  await page.getByLabel(/email/i).fill(env("E2E_EMAIL"))
-  await page.getByLabel(/password/i).fill(env("E2E_PASSWORD"))
-  await page.getByRole("button", { name: /sign in/i }).click()
+  await page.getByLabel("Email").fill(env("E2E_EMAIL"))
+  await page.getByLabel("Password").fill(env("E2E_PASSWORD"))
+  await page.getByLabel("Password").press("Enter")
   await page.getByRole("link", { name: /connections/i }).first().waitFor()
 }
 
-/** The gateway's own sign-in and consent pages: credentials are typed there, never into Norn. */
+/**
+ * The gateway's own pages (Executor 2.0.0-beta.37): its sign-in at /login when it has no session,
+ * then its consent at /mcp/authorize, whose Connect button returns to Studio. Credentials are
+ * typed there, never into Norn.
+ */
 async function gatewaySignIn(page: Page) {
-  await page.waitForURL(/\/api\/auth\/oauth2\/authorize|\/login|\/consent/, { timeout: 20_000 })
-  if (await page.getByLabel(/email/i).count() > 0) {
-    await page.getByLabel(/email/i).fill(env("E2E_GATEWAY_EMAIL"))
-    await page.getByLabel(/password/i).fill(env("E2E_GATEWAY_PASSWORD"))
-    await page.getByRole("button", { name: /sign in|continue|log in/i }).click()
+  await page.waitForURL(/gateway-next\.norn\.cloud\/(login|mcp\/authorize)/, { timeout: 30_000 })
+  if (/\/login/.test(page.url())) {
+    await page.getByLabel("Email").fill(env("E2E_GATEWAY_EMAIL"))
+    await page.getByLabel("Password").fill(env("E2E_GATEWAY_PASSWORD"))
+    await page.getByLabel("Password").press("Enter")
+    await page.waitForURL(/\/mcp\/authorize/, { timeout: 30_000 })
   }
-  const allow = page.getByRole("button", { name: /allow|approve|authorize|accept/i })
-  if (await allow.count() > 0) await allow.first().click()
+  await page.getByRole("button", { name: "Connect", exact: true }).click()
   await page.waitForURL(`${base}/connections`, { timeout: 30_000 })
+}
+
+/** The gateway's own connection form for the test app's API-key account, then back to Connections. */
+async function gatewayAccountForm(page: Page) {
+  await page.waitForURL(/gateway-next\.norn\.cloud\//, { timeout: 30_000 })
+  await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
+  await page.getByRole("button", { name: /^(connect|save|continue)$/i }).first().click()
+  await page.waitForURL(/gateway-next\.norn\.cloud\/.*(done|complete|success)|next\.norn\.cloud\/connections/, { timeout: 30_000 })
+}
+
+/** The test app's account is connected, connecting it through the gateway's form when it is not. */
+export async function ensureAccount(page: Page) {
+  await open(page)
+  const section = page.getByRole("region", { name: app() })
+  await section.waitFor()
+  const connect = section.getByRole("button", { name: "Connect", exact: true })
+  if (await connect.count() > 0) { await connect.first().click(); await gatewayAccountForm(page); await open(page) }
+  await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor()
 }
 
 const open = async (page: Page) => { await page.goto(`${base}/connections`); await page.getByRole("heading", { name: "Connections" }).waitFor() }
@@ -57,15 +79,15 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await open(page)
     const disconnect = page.getByRole("button", { name: "Disconnect", exact: true }).first()
     if (await disconnect.count() > 0) await disconnect.click()
-    await page.getByRole("button", { name: "Sign in to the gateway" }).click()
+    await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click()
     await gatewaySignIn(page); did("connect")
     await page.getByText("Signed in").waitFor(); did("view")
     await page.getByRole("button", { name: "Reconnect" }).first().click()
     await gatewaySignIn(page); await page.getByText("Signed in").waitFor(); did("reconnect")
     await page.getByRole("button", { name: "Disconnect" }).first().click()
-    await page.getByRole("button", { name: "Sign in to the gateway" }).waitFor(); did("disconnect")
+    await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).waitFor(); did("disconnect")
     // Leave the gateway signed in for the next kinds.
-    await page.getByRole("button", { name: "Sign in to the gateway" }).click(); await gatewaySignIn(page)
+    await page.getByRole("button", { name: "Sign in to the gateway", exact: true }).click(); await gatewaySignIn(page)
   },
   "App account": async (page, did) => {
     page.on("dialog", (dialog) => void dialog.accept())
@@ -73,12 +95,10 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     const section = page.getByRole("region", { name: app() })
     await section.waitFor()
     const connect = section.getByRole("button", { name: "Connect", exact: true })
-    if (await connect.count() === 0) { await section.getByRole("button", { name: "Disconnect" }).first().click(); await connect.first().waitFor() }
+    if (await connect.count() === 0) { await section.getByRole("button", { name: "Disconnect", exact: true }).first().click(); await connect.first().waitFor() }
     await connect.first().click()
-    // The gateway's own form for the test app's API key, then back.
-    await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
-    await page.getByRole("button", { name: /connect|save|continue/i }).first().click()
-    await open(page); await section.getByRole("button", { name: "Reconnect" }).first().waitFor(); did("connect")
+    await gatewayAccountForm(page)
+    await open(page); await section.getByRole("button", { name: "Reconnect", exact: true }).first().waitFor(); did("connect")
     await section.getByRole("button", { name: "View" }).first().click()
     await section.getByText("Provider").waitFor(); did("view")
     await section.getByRole("button", { name: "Rename" }).first().click()
@@ -86,11 +106,10 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     await page.getByLabel("Account name").fill(name)
     await section.getByRole("button", { name: "Save" }).click()
     await section.getByText(name).waitFor(); did("rename")
-    await section.getByRole("button", { name: "Reconnect" }).first().click()
-    await page.getByLabel(/api key|token/i).first().fill(env("E2E_APP_KEY"))
-    await page.getByRole("button", { name: /connect|save|continue/i }).first().click()
+    await section.getByRole("button", { name: "Reconnect", exact: true }).first().click()
+    await gatewayAccountForm(page)
     await open(page); await section.getByText(name).waitFor(); did("reconnect")
-    await section.getByRole("button", { name: "Disconnect" }).first().click()
+    await section.getByRole("button", { name: "Disconnect", exact: true }).first().click()
     await section.getByRole("button", { name: "Connect", exact: true }).waitFor(); did("disconnect")
   },
   "Connector error": async (page, did) => {
@@ -99,7 +118,8 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
     const inventory = `${base}/api/connectors/inventory`
     await page.route(inventory, (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: "connectors.reauth", error: "Your gateway sign-in has expired. Sign in to the gateway again.", action: { kind: "sign_in_gateway" } }) }))
     await open(page)
-    const alert = page.locator('[role="alert"][data-code="connectors.reauth"]')
+    // Both the apps panel and the bindings panel read the inventory, so the refusal shows in each.
+    const alert = page.locator('[role="alert"][data-code="connectors.reauth"]').first()
     await alert.waitFor(); did("show")
     await page.unroute(inventory)
     await alert.getByRole("button", { name: "Sign in to the gateway again" }).click()
@@ -110,7 +130,8 @@ const SPECS: Record<keyof typeof MATRIX, Spec> = {
   "Tool binding": async (page, did) => {
     // E2E_TOOL is a tool of E2E_APP with a string input E2E_TOOL_FIELD; the signed-in person is an admin.
     page.on("dialog", (dialog) => void dialog.accept())
-    await open(page)
+    // The gateway lists an app's tools only for a caller with its account connected.
+    await ensureAccount(page)
     const tool = env("E2E_TOOL"), field = env("E2E_TOOL_FIELD"), name = `e2e binding ${Date.now()}`
     await page.getByLabel("App").selectOption(app())
     await page.getByRole("button", { name: `Bind ${tool}` }).click()
