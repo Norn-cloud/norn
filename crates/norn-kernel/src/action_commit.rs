@@ -758,10 +758,10 @@ pub enum ActionRefusal<X> {
     /// RECEIPT-EFFECT-1: the referenced receipt cannot be consumed by this
     /// call (unknown, replayed, bound to another run or generation, not an
     /// accepted success, or its result does not fit the declared bindings).
-    #[error("the action's receipt was refused: {code}")]
+    #[error("the action's receipt was refused: {}", reason.code())]
     ReceiptRefused {
-        /// The stable `action.receipt_*` code.
-        code: &'static str,
+        /// Why.
+        reason: crate::receipt_binding::ReceiptRefusal,
     },
     /// The transition was refused by the decision-commit path.
     #[error(transparent)]
@@ -790,7 +790,7 @@ impl<X> ActionRefusal<X> {
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
-            Self::ReceiptRefused { code } => code,
+            Self::ReceiptRefused { reason } => reason.code(),
             Self::Decision(refusal) => refusal.code(),
         }
     }
@@ -1228,38 +1228,37 @@ fn resolve_receipt_effect<H: CellHost + ?Sized>(
     declaration: &norn_ir::ReceiptAcceptance,
     target: &FactKey,
 ) -> Result<ReceiptEffect, ActionRefusal<H::Error>> {
-    use crate::receipt_binding::{ReceiptBindingError, ReceiptReference};
-    let refuse = |code| ActionRefusal::ReceiptRefused { code };
+    use crate::receipt_binding::{ReceiptReference, ReceiptRefusal};
+    let refuse = |reason| ActionRefusal::ReceiptRefused { reason };
     let reference = effective_input
         .get(&declaration.reference_field)
         .ok_or_else(|| ActionRefusal::InvalidInput {
             field: declaration.reference_field.clone(),
         })?;
-    let reference = ReceiptReference::parse(reference).map_err(|error| refuse(error.code()))?;
+    let reference = ReceiptReference::parse(reference).map_err(|error| refuse(error.into()))?;
     let binding = match host.resolve_accepted_receipt(&reference, &declaration.manifest_digest) {
         Ok(Some(binding)) => binding,
-        Ok(None) => return Err(refuse("action.receipt_effect_unsupported")),
-        Err(ReceiptBindingError::Store(error)) => return Err(host_failure(error)),
-        Err(error) => return Err(refuse(error.code().unwrap_or("action.receipt_unknown"))),
+        Ok(None) => return Err(refuse(ReceiptRefusal::EffectUnsupported)),
+        Err(error) => return Err(error.into_refusal().map_or_else(host_failure, refuse)),
     };
     // The host authenticates; the kernel re-checks the pins it can see.
     if binding.manifest() != &declaration.manifest_digest {
-        return Err(refuse("action.receipt_binding_mismatch"));
+        return Err(refuse(ReceiptRefusal::BindingMismatch));
     }
     // RUN-BIND-1: a receipt resolves only the run it was dispatched under.
     if binding.run().id != target.key {
-        return Err(refuse("action.receipt_run_mismatch"));
+        return Err(refuse(ReceiptRefusal::RunMismatch));
     }
     let run_generation = binding.run().generation;
     let (digest, result, acceptance) = binding.into_parts();
     if acceptance.record.generation.0 != run_generation
         || acceptance.state.generation.0 != run_generation
     {
-        return Err(refuse("action.receipt_run_mismatch"));
+        return Err(refuse(ReceiptRefusal::RunMismatch));
     }
     if acceptance.requires_cell_lane || acceptance.destination.is_some() {
         // Predicate pins and written destinations need their own fences.
-        return Err(refuse("action.receipt_effect_unsupported"));
+        return Err(refuse(ReceiptRefusal::EffectUnsupported));
     }
     let mut changes = Vec::with_capacity(declaration.result_bindings.len().saturating_add(1));
     changes.push(FactChange::Set {
@@ -1272,7 +1271,7 @@ fn resolve_receipt_effect<H: CellHost + ?Sized>(
         let value = result
             .get(member.as_str())
             .cloned()
-            .ok_or_else(|| refuse("action.receipt_result_type"))?;
+            .ok_or_else(|| refuse(ReceiptRefusal::ResultType))?;
         changes.push(FactChange::Set {
             object_type: target.object_type.clone(),
             key: target.key.clone(),
@@ -4003,7 +4002,7 @@ where
                 && receipt_delivery.as_ref() == Some(consumed)
             {
                 ActionRefusal::ReceiptRefused {
-                    code: "action.receipt_not_pending",
+                    reason: crate::receipt_binding::ReceiptRefusal::NotPending,
                 }
             } else {
                 refusal
@@ -4023,7 +4022,7 @@ fn consume_receipt<X>(
     reads: &mut Vec<FactExpectation>,
 ) -> Result<crate::cell_host::Consumed, ActionRefusal<X>> {
     let mismatch = ActionRefusal::ReceiptRefused {
-        code: "action.receipt_binding_mismatch",
+        reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
     };
     if already_consumes {
         return Err(mismatch);

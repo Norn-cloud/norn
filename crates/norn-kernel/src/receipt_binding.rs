@@ -106,28 +106,91 @@ pub enum ReceiptBindingError<E> {
     Store(E),
 }
 
-impl<E> ReceiptBindingError<E> {
-    /// Stable refusal code; host failures are not receipt refusals.
+/// RECEIPT-EFFECT-1: why an action call cannot consume its receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReceiptRefusal {
+    /// The input supplied a body, not a reference.
+    BodyForbidden,
+    /// The reference is not a content digest.
+    ReferenceInvalid,
+    /// The host does not support receipt effects, or the acceptance needs
+    /// fences this path has not qualified.
+    EffectUnsupported,
+    /// No accepted receipt is visible under this reference.
+    Unknown,
+    /// An earlier action consumed the receipt.
+    Replayed,
+    /// The receipt's pins disagree with its acceptance or declaration.
+    BindingMismatch,
+    /// The receipt is not an accepted success.
+    NotAccepted,
+    /// The accepted summary does not fit the declared bindings.
+    ResultType,
+    /// The receipt belongs to another run or generation.
+    RunMismatch,
+    /// The receipt's delivery is no longer pending at commit.
+    NotPending,
+}
+
+impl ReceiptRefusal {
+    /// Stable `action.receipt_*` code.
     #[must_use]
-    pub const fn code(&self) -> Option<&'static str> {
-        Some(match self {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::BodyForbidden => "action.receipt_body_forbidden",
+            Self::ReferenceInvalid => "action.receipt_reference_invalid",
+            Self::EffectUnsupported => "action.receipt_effect_unsupported",
             Self::Unknown => "action.receipt_unknown",
             Self::Replayed => "action.receipt_replayed",
-            Self::Mismatch | Self::Canonical(_) => "action.receipt_binding_mismatch",
+            Self::BindingMismatch => "action.receipt_binding_mismatch",
             Self::NotAccepted => "action.receipt_not_accepted",
             Self::ResultType => "action.receipt_result_type",
-            Self::Store(_) => return None,
-        })
+            Self::RunMismatch => "action.receipt_run_mismatch",
+            Self::NotPending => "action.receipt_not_pending",
+        }
+    }
+
+    /// The refusal's category: an unknown receipt is indistinguishable from
+    /// an invisible one; consumption races are conflicts.
+    #[must_use]
+    pub const fn category(self) -> crate::refusal::RefusalCategory {
+        use crate::refusal::RefusalCategory;
+        match self {
+            Self::Unknown => RefusalCategory::Visibility,
+            Self::Replayed | Self::NotPending => RefusalCategory::Conflict,
+            Self::BodyForbidden
+            | Self::ReferenceInvalid
+            | Self::EffectUnsupported
+            | Self::BindingMismatch
+            | Self::NotAccepted
+            | Self::ResultType
+            | Self::RunMismatch => RefusalCategory::Invalid,
+        }
     }
 }
 
-impl ReferenceError {
-    /// Stable refusal code.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
+impl<E> ReceiptBindingError<E> {
+    /// The receipt refusal, or the host failure, which is never a refusal.
+    ///
+    /// # Errors
+    /// The host's own failure ([`ReceiptBindingError::Store`]).
+    pub fn into_refusal(self) -> Result<ReceiptRefusal, E> {
         match self {
-            Self::BodyForbidden => "action.receipt_body_forbidden",
-            Self::InvalidDigest => "action.receipt_reference_invalid",
+            Self::Unknown => Ok(ReceiptRefusal::Unknown),
+            Self::Replayed => Ok(ReceiptRefusal::Replayed),
+            Self::Mismatch | Self::Canonical(_) => Ok(ReceiptRefusal::BindingMismatch),
+            Self::NotAccepted => Ok(ReceiptRefusal::NotAccepted),
+            Self::ResultType => Ok(ReceiptRefusal::ResultType),
+            Self::Store(error) => Err(error),
+        }
+    }
+}
+
+impl From<ReferenceError> for ReceiptRefusal {
+    fn from(error: ReferenceError) -> Self {
+        match error {
+            ReferenceError::BodyForbidden => Self::BodyForbidden,
+            ReferenceError::InvalidDigest => Self::ReferenceInvalid,
         }
     }
 }

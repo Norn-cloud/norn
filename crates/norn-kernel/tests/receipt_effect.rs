@@ -610,3 +610,33 @@ fn an_unsupported_host_refuses_receipt_effects() {
     ));
     assert!(cell.ledger().is_empty());
 }
+
+#[test]
+fn receipt_refusals_have_distinct_codes_and_stable_categories() {
+    use norn_kernel::RefusalCategory;
+    use norn_kernel::receipt_binding::ReceiptRefusal::{self, *};
+    let all: [ReceiptRefusal; 10] = [
+        BodyForbidden,
+        ReferenceInvalid,
+        EffectUnsupported,
+        Unknown,
+        Replayed,
+        BindingMismatch,
+        NotAccepted,
+        ResultType,
+        RunMismatch,
+        NotPending,
+    ];
+    let codes: std::collections::BTreeSet<_> = all.iter().map(|reason| reason.code()).collect();
+    assert_eq!(codes.len(), all.len(), "every refusal has its own code");
+    assert!(codes.iter().all(|code| code.starts_with("action.receipt_")));
+    assert_eq!(Unknown.category(), RefusalCategory::Visibility);
+    assert_eq!(Replayed.category(), RefusalCategory::Conflict);
+    assert_eq!(NotPending.category(), RefusalCategory::Conflict);
+    for reason in all {
+        let refusal: norn_kernel::ActionRefusal<Infallible> =
+            norn_kernel::ActionRefusal::ReceiptRefused { reason };
+        assert_eq!(refusal.code(), reason.code());
+        assert_eq!(refusal.category(), reason.category());
+    }
+}
