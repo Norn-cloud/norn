@@ -103,7 +103,11 @@ function Frame(props: CanvasFrameProps) {
   // Whether the last pointer-down was on the canvas: its shortcuts apply only then.
   const canvasActive = useRef(false)
   useEffect(() => {
-    const track = (event: PointerEvent) => { canvasActive.current = event.target instanceof Element && event.target.closest("[data-canvas-surface]") !== null }
+    const track = (event: PointerEvent) => {
+      canvasActive.current = event.target instanceof Element && event.target.closest("[data-canvas-surface]") !== null
+      // React Flow keeps the browser from clearing a page text selection on the canvas; clear it, so copy means the canvas.
+      if (canvasActive.current) window.getSelection()?.removeAllRanges()
+    }
     window.addEventListener("pointerdown", track, true)
     return () => window.removeEventListener("pointerdown", track, true)
   }, [])
