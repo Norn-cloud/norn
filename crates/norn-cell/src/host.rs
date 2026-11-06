@@ -391,13 +391,18 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// A definitions-version or retained-revision conflict, or a store error.
     pub fn install_retained_definition(
         &mut self,
+        candidate_model: Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
         change: &crate::retained::RetainedDefinitionChange,
     ) -> Result<InstalledDefinitionSet, CellError> {
-        let installed =
-            self.store
-                .install_retained_definition(input, expected_version, &self.scope, change)?;
+        let installed = self.store.install_retained_definition(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            change,
+        )?;
         self.advance_to(LogicalTime::from_millis(installed.installed_at));
         Ok(installed)
     }

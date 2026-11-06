@@ -997,3 +997,244 @@ fn admit_and_get_return_the_recomputed_restatement() {
         (Value::Null, Value::Null)
     );
 }
+
+/// `lowerFlow`'s golden output (tools/norn-ts' vertical fixture), scoped to
+/// this cell as `lowerFlow` would scope it with the cell's scope option.
+const LOWERED: &str =
+    include_str!("../../../tools/norn-ts/fixtures/vertical/route-message.ir.json");
+const FLOW_ID: &str = "crm.route_message";
+const TOOL: &str = "norn.classify.whatsapp-intent";
+
+fn lowered() -> Vec<Value> {
+    let mut artifacts: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_demo", "environmentId": "analytics" });
+    }
+    artifacts
+}
+
+fn flow_body(id: &str, artifacts: Vec<Value>, expected: Option<u64>) -> Value {
+    let mut body = json!({ "kind": "flow", "id": id,
+        "payload": { "flow": { "id": FLOW_ID, "version": "1.0.0" }, "artifacts": artifacts } });
+    if let Some(expected) = expected {
+        body["expectedVersion"] = json!(expected);
+    }
+    body
+}
+
+fn install_flow(cell: &Cell, body: &Value) -> (u16, Value) {
+    post(cell, "/v1/definitions:install", ADMIN, body)
+}
+
+fn codes_of(refused: &Value) -> Vec<String> {
+    pointers(refused)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+}
+
+#[test]
+fn a_flow_installs_into_the_kernel_set_once_its_tool_is_bound() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    // Its one perform names a tool nothing binds yet.
+    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    assert_eq!(status, 422, "{refused}");
+    let unknown = pointers(&refused);
+    assert!(!unknown.is_empty(), "{refused}");
+    for (code, pointer) in &unknown {
+        assert_eq!(code, "definition.flow_function_unknown");
+        assert!(
+            pointer.starts_with("/artifacts/1/payload/graph/nodes/"),
+            "{unknown:?}"
+        );
+    }
+
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    assert_eq!(status, 200, "{installed}");
+    assert_eq!(
+        installed["flow"],
+        json!({ "flowId": FLOW_ID, "version": "1.0.0", "ruleArtifactId": "crm.route_message.flow.rule", "runType": "crm.RouteMessageRun" })
+    );
+    // The artifacts are in the active kernel set, verbatim, for the driver.
+    let (_, catalog) = get(&cell, "/v1/definitions", "", VIEWER);
+    let ids: Vec<&str> = catalog["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["artifactId"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&"crm.route_message.flow.rule") && ids.contains(&"crm.RouteMessageRun.entity"),
+        "{ids:?}"
+    );
+    let (_, document) = get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER);
+    assert_eq!(document["flow"], installed["flow"]);
+    assert_eq!(document["restatement"], Value::Null);
+
+    // `uses` reports the pinned version, from the same extraction the install checked.
+    let (_, page) = get(
+        &cell,
+        "/v1/definitions:list",
+        &format!("&kind=flow&uses={TOOL}"),
+        VIEWER,
+    );
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["items"][0]["pinnedVersion"], json!("1"));
+    let rule = lowered()
+        .into_iter()
+        .find(|a| a["kind"] == json!("rule"))
+        .unwrap();
+    let pairs: Vec<(String, String)> = norn_checker::flow_performs::perform_refs(&rule["payload"])
+        .unwrap()
+        .into_iter()
+        .filter_map(|perform| perform.name)
+        .collect();
+    assert!(!pairs.is_empty());
+    assert!(
+        pairs
+            .iter()
+            .all(|pair| *pair == (TOOL.to_owned(), "1".to_owned())),
+        "{pairs:?}"
+    );
+    let (_, none) = get(
+        &cell,
+        "/v1/definitions:list",
+        "&kind=flow&uses=studio.binding.other",
+        VIEWER,
+    );
+    assert_eq!(none["items"], json!([]));
+    assert_eq!(
+        get(
+            &cell,
+            "/v1/definitions:list",
+            &format!("&kind=dashboard&uses={TOOL}"),
+            VIEWER
+        )
+        .0,
+        400
+    );
+
+    // Editing the tool moves its version; the pinned flow no longer installs until re-pinned.
+    assert_eq!(
+        install_binding(
+            &cell,
+            TOOL,
+            &binding("Intent v2", "member", &json!({})),
+            Some(1)
+        )
+        .0,
+        200
+    );
+    let (status, stale) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), Some(1)));
+    assert_eq!(status, 422, "{stale}");
+    assert!(
+        codes_of(&stale)
+            .iter()
+            .all(|code| code == "definition.flow_function_unknown"),
+        "{stale}"
+    );
+
+    // Retiring keeps the artifacts and is refused while runs cannot be ruled out.
+    let retire = json!({ "expectedVersion": 1 });
+    let (status, live) = post(
+        &cell,
+        &format!("/v1/definitions/{FLOW_ID}:retire"),
+        ADMIN,
+        &retire,
+    );
+    assert_eq!(
+        (status, live["code"].clone()),
+        (409, json!("definition.flow_runs_live")),
+        "{live}"
+    );
+}
+
+#[test]
+fn a_registered_builtin_resolves_a_perform() {
+    fn resolve(function: &str, version: u32) -> bool {
+        function == TOOL && version == 1
+    }
+    let cell = cell(DefinitionKinds::default().with_builtins(resolve));
+    let (status, installed) = install_flow(&cell, &flow_body(FLOW_ID, lowered(), None));
+    assert_eq!(status, 200, "{installed}");
+}
+
+#[test]
+fn a_flow_owns_exactly_its_two_lowered_artifacts() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    let admit = |body: &Value| post(&cell, "/v1/definitions:admit", ADMIN, body).1;
+    // The definition id is flow.id.
+    assert_eq!(
+        codes_of(&admit(&flow_body("crm.other_flow", lowered(), None))),
+        ["definition.flow_id_mismatch"]
+    );
+    // An artifact it does not own, or an action, is refused.
+    let mut foreign = lowered();
+    let mut extra = foreign[0].clone();
+    extra["artifactId"] = json!("crm.Other.entity");
+    foreign.push(extra);
+    let found = admit(&flow_body(FLOW_ID, foreign, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_artifact_foreign".to_owned()),
+        "{found}"
+    );
+    let mut declared = lowered();
+    declared.push(
+        serde_json::from_str(include_str!(
+            "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
+        ))
+        .unwrap(),
+    );
+    let found = admit(&flow_body(FLOW_ID, declared, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_action_declared".to_owned()),
+        "{found}"
+    );
+    // An artifact scoped outside the cell is refused.
+    let foreign_scope: Vec<Value> = serde_json::from_str(LOWERED).unwrap();
+    let found = admit(&flow_body(FLOW_ID, foreign_scope, None));
+    assert!(
+        codes_of(&found).contains(&"definition.flow_scope_conflict".to_owned()),
+        "{found}"
+    );
+    // A computed function name cannot be resolved before it runs.
+    let computed: Vec<Value> = serde_json::from_str(
+        &serde_json::to_string(&lowered())
+            .unwrap()
+            .replace(&format!("function: '{TOOL}'"), "function: input.fn"),
+    )
+    .unwrap();
+    let found = admit(&flow_body(FLOW_ID, computed, None));
+    assert!(
+        !codes_of(&found).is_empty()
+            && codes_of(&found)
+                .iter()
+                .all(|code| code == "definition.flow_function_unknown"),
+        "{found}"
+    );
+    assert!(
+        found["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a literal")
+    );
+    // Only the rule and the Run entity: dropping either is a shape refusal.
+    let found = admit(&flow_body(
+        FLOW_ID,
+        lowered().into_iter().take(1).collect(),
+        None,
+    ));
+    assert_eq!(
+        codes_of(&found),
+        ["definition.flow_shape_invalid"],
+        "{found}"
+    );
+}

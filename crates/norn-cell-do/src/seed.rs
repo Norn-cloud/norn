@@ -6,13 +6,11 @@
 //! computed, not copied; an identical provision on a restarted Durable Object
 //! reopens the first revision without writing (`provision_definitions`).
 
-use std::collections::BTreeSet;
 use std::fmt;
 
 use norn_api::scope::CellScope;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::SqlEngine};
-use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
-use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ir::ArtifactEnvelope;
 
 const DEFINITIONS: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
@@ -79,87 +77,22 @@ pub(crate) fn provision_set<E: SqlEngine>(
 pub(crate) fn admit_set(
     artifacts: &[ArtifactEnvelope],
 ) -> Result<(Model, InstalledDefinitionInput), SeedError> {
-    let value = |artifact: &ArtifactEnvelope| {
-        serde_json::to_value(artifact)
-            .map_err(|e| fail("artifact wire")(&e))
-            .and_then(|wire| RuntimeValue::from_json(wire).map_err(|e| fail("artifact value")(&e)))
-    };
-    // The packs are checked over the core layer as a trusted base, which the
-    // cell retains in the same set (`baseArtifactIds` on the definitions read).
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts
-        .iter()
-        .cloned()
-        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
-    let candidate_values = candidates
-        .iter()
-        .map(value)
-        .collect::<Result<Vec<_>, _>>()?;
-    let base_values = base.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let checked = check_artifact_set_with_receipt(
-        &ReceiptSources::new(&candidate_values, &base_values)
-            .map_err(|e| fail("receipt sources")(&e))?,
-        &EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
-        &ResourceLimitProfile::norn_limits_v1(),
-    )
-    .map_err(|e| fail("admission")(&e))?;
-    if !checked.receipt.admitted {
-        return Err(SeedError(format!(
-            "demo definitions refused: {:?}",
-            checked.diagnostics
-        )));
-    }
-    let receipt = checked
-        .receipt
-        .canonical_json()
-        .map_err(|e| fail("receipt")(&e))?;
-    let sources = artifacts.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let canonical_set = RuntimeValue::Array(sources)
-        .canonical_json()
-        .map_err(|e| fail("canonical set")(&e))?;
+    let admitted =
+        norn_api::kernel_set::admit_kernel_set(artifacts).map_err(|refusal| match refusal {
+            norn_api::kernel_set::KernelRefusal::Refused(diagnostics) => {
+                SeedError(format!("demo definitions refused: {diagnostics:?}"))
+            }
+            norn_api::kernel_set::KernelRefusal::Invalid(detail) => SeedError(detail),
+        })?;
     let input = InstalledDefinitionInput {
-        canonical_set: String::from_utf8(canonical_set).map_err(|e| fail("set")(&e))?,
+        canonical_set: admitted.canonical_set,
         registry: vec![],
-        receipt_sha256: checked
-            .receipt
-            .content_sha256()
-            .map_err(|e| fail("receipt digest")(&e))?,
-        admission_receipt: Some(String::from_utf8(receipt).map_err(|e| fail("receipt")(&e))?),
+        receipt_sha256: admitted.receipt_sha256,
+        admission_receipt: Some(admitted.receipt),
         readmission: None,
         diff: serde_json::json!({}),
         installed_at: INSTALLED_AT,
         layout: None,
     };
-    Ok((model(artifacts)?, input))
-}
-
-/// The normalized model of the set's entity roots and their governing laws.
-fn model(artifacts: &[ArtifactEnvelope]) -> Result<Model, SeedError> {
-    let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-    for artifact in artifacts
-        .iter()
-        .filter(|a| a.kind() == ArtifactKind::Entity)
-    {
-        let root: EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
-            .and_then(serde_json::from_value)
-            .map_err(|e| fail(&artifact.artifact_id)(&e))?;
-        match root {
-            EntityRoot::V2(root) => objects.push(root.object_type),
-            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-            EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
-                return Err(SeedError(format!(
-                    "{} is outside the three-systems profile",
-                    artifact.artifact_id
-                )));
-            }
-        }
-    }
-    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
-        .map_err(|e| fail("model")(&e))?
-        .with_governing_laws(artifacts)
-        .map_err(|e| fail("governing laws")(&e))
+    Ok((admitted.model, input))
 }

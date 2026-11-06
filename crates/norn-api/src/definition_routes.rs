@@ -190,6 +190,7 @@ pub struct DefinitionKinds {
     agent: Option<(AgentChecker, AgentAdmissionContext)>,
     restater: Option<Restater>,
     roles: Vec<String>,
+    builtins: Option<crate::flow_definitions::Builtins>,
 }
 
 /// The deterministic plain-words restatement generator (D59), shared with
@@ -206,6 +207,14 @@ impl DefinitionKinds {
     #[must_use]
     pub fn with_roles(mut self, roles: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.roles = roles.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Register the built-in function resolver a flow's performs are
+    /// checked against (`norn_builtins::resolve`).
+    #[must_use]
+    pub fn with_builtins(mut self, resolve: crate::flow_definitions::Builtins) -> Self {
+        self.builtins = Some(resolve);
         self
     }
 
@@ -324,6 +333,9 @@ pub struct InstallDefinitionResponse {
     pub version: u64,
     /// Its commit.
     pub receipt: DefinitionReceipt,
+    /// For a flow: its id, version, rule and Run type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<crate::flow_definitions::FlowSummary>,
 }
 
 /// `GET /v1/definitions:list` query.
@@ -341,8 +353,10 @@ pub struct ListDefinitionsQuery {
     pub include: Option<String>,
     /// Page size, 1–100 (default 50).
     pub limit: Option<u32>,
-    /// The previous page's cursor, bound to `kind` and `include`.
+    /// The previous page's cursor, bound to `kind`, `include` and `uses`.
     pub cursor: Option<String>,
+    /// With `kind=flow`: only flows whose performs use this binding id.
+    pub uses: Option<String>,
 }
 
 /// One listed definition, without its payload.
@@ -361,6 +375,9 @@ pub struct DefinitionSummary {
     pub lifecycle: String,
     /// When its current version was installed, in Unix milliseconds.
     pub updated_at_ms: u64,
+    /// With `uses`: the binding version this flow's performs are pinned to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_version: Option<String>,
 }
 
 /// One page of definitions, ordered by id.
@@ -415,6 +432,9 @@ pub struct DefinitionDocument {
     /// Lower-case hex SHA-256 of `restatement`; null with it.
     #[schema(required = true, nullable = true)]
     pub restatement_sha256: Option<String>,
+    /// For a flow: its id, version, rule and Run type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<crate::flow_definitions::FlowSummary>,
 }
 
 /// Whether `id` matches `^[a-z][a-z0-9._-]{0,127}$`.
@@ -473,6 +493,11 @@ fn kind_unknown(kind: &str) -> Refusal {
     )
 }
 
+/// The 422 `definition.refused` carrying `diagnostics`.
+pub(crate) fn refused_with(diagnostics: Vec<RefusalDiagnostic>) -> Refusal {
+    refused(diagnostics)
+}
+
 fn refused(diagnostics: Vec<RefusalDiagnostic>) -> Refusal {
     let mut refusal = Refusal::new(
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -506,6 +531,7 @@ fn not_found() -> Refusal {
 struct Admitted {
     title: String,
     canonical: String,
+    flow: Option<crate::flow_definitions::Flow>,
 }
 
 /// Canonical JSON text of `payload`.
@@ -534,13 +560,26 @@ fn validate<E: SqlEngine>(
     actor: &str,
     kinds: &DefinitionKinds,
     questions: Option<&dyn AdHocQuestions<E>>,
+    id: &str,
     kind: &str,
     payload: &RawValue,
 ) -> Result<(Admitted, Vec<RefusalDiagnostic>), Refusal> {
     let canonical = canonical(payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
     let mut findings = Vec::new();
+    let mut flow = None;
     match kind {
+        "flow" => {
+            let (flow_findings, checked) = crate::flow_definitions::check(
+                id,
+                &canonical,
+                host.scope(),
+                kinds.builtins,
+                &active_binding_versions(host)?,
+            );
+            findings.extend(flow_findings);
+            flow = checked;
+        }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
@@ -584,7 +623,55 @@ fn validate<E: SqlEngine>(
         .and_then(Value::as_str)
         .map(|title| title.trim().to_owned())
         .unwrap_or_default();
-    Ok((Admitted { title, canonical }, findings))
+    let title = flow
+        .as_ref()
+        .map_or(title, |flow| flow.summary.flow_id.clone());
+    Ok((
+        Admitted {
+            title,
+            canonical,
+            flow,
+        },
+        findings,
+    ))
+}
+
+/// A flow definition's summary, read from its stored payload.
+fn flow_summary(definition: &RetainedDefinition) -> Option<crate::flow_definitions::FlowSummary> {
+    if definition.kind != "flow" {
+        return None;
+    }
+    let value: Value = serde_json::from_str(&definition.payload).ok()?;
+    let flow_id = value.pointer("/flow/id")?.as_str()?;
+    let (_, rule_artifact_id) = crate::flow_definitions::owned_ids(flow_id);
+    Some(crate::flow_definitions::FlowSummary {
+        flow_id: flow_id.to_owned(),
+        version: value.pointer("/flow/version")?.as_str()?.to_owned(),
+        rule_artifact_id,
+        run_type: crate::flow_definitions::run_type(flow_id),
+    })
+}
+
+/// The current version of each installed, active binding definition.
+fn active_binding_versions<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<std::collections::BTreeMap<String, u64>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let mut versions = std::collections::BTreeMap::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = reader
+            .retained_definitions("binding", false, after.as_deref(), MAX_LIST_LIMIT)
+            .map_err(Refusal::host)?;
+        for record in &page {
+            versions.insert(record.definition.id.clone(), record.definition.revision);
+        }
+        if page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX) {
+            return Ok(versions);
+        }
+        after = page.last().map(|record| record.definition.id.clone());
+    }
 }
 
 /// The cell's installed, non-retired binding definitions as agent tool
@@ -853,6 +940,7 @@ pub fn admit_definition<E: SqlEngine>(
         actor,
         kinds,
         questions,
+        &request.id,
         &request.kind,
         &request.payload,
     )?;
@@ -913,6 +1001,7 @@ fn append<E: SqlEngine>(
     mut definition: RetainedDefinition,
     expected: Option<u64>,
     signed: Option<(&str, String)>,
+    flow: Option<&crate::flow_definitions::Flow>,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
     let _epoch = host.definition_write()?;
@@ -949,11 +1038,31 @@ fn append<E: SqlEngine>(
             signed_at: installed_at,
             restatement_sha256,
         });
+        // A flow is installed into the kernel set, admitted against the set
+        // active now, under the definitions write lock; anything else
+        // carries the active set, receipt and model unchanged.
+        let (model, canonical_set, receipt_sha256, admission_receipt) = match flow {
+            Some(flow) => {
+                let admitted = crate::flow_definitions::rebuild(&active.canonical_set, flow)?;
+                (
+                    admitted.model,
+                    admitted.canonical_set,
+                    admitted.receipt_sha256,
+                    Some(admitted.receipt),
+                )
+            }
+            None => (
+                cell.store().model().clone(),
+                active.canonical_set,
+                active.receipt_sha256,
+                active.admission_receipt,
+            ),
+        };
         let input = InstalledDefinitionInput {
-            canonical_set: active.canonical_set,
+            canonical_set,
             registry: active.registry,
-            receipt_sha256: active.receipt_sha256,
-            admission_receipt: active.admission_receipt,
+            receipt_sha256,
+            admission_receipt,
             readmission: None,
             diff: serde_json::json!({
                 "added": [], "removed": [], "changed": [], "narrowing": [],
@@ -977,7 +1086,7 @@ fn append<E: SqlEngine>(
             expected_revision: expected,
         };
         let installed =
-            match cell.install_retained_definition(&input, Some(active.version), &change) {
+            match cell.install_retained_definition(model, &input, Some(active.version), &change) {
                 Ok(installed) => installed,
                 Err(
                     CellError::RetainedDefinitionConflict { .. }
@@ -997,6 +1106,7 @@ fn append<E: SqlEngine>(
         id: record.definition.id.clone(),
         version: record.definition.revision,
         receipt: receipt(host, &record)?,
+        flow: flow_summary(&record.definition),
     })
 }
 
@@ -1025,6 +1135,7 @@ pub fn install_definition<E: SqlEngine>(
         actor,
         kinds,
         questions,
+        &request.id,
         &request.kind,
         &request.payload,
     )?;
@@ -1060,6 +1171,7 @@ pub fn install_definition<E: SqlEngine>(
         },
         request.expected_version,
         signed,
+        payload.flow.as_ref(),
         now_ms,
     )
 }
@@ -1131,6 +1243,17 @@ pub fn retire_definition<E: SqlEngine>(
     if current.definition.revision != request.expected_version {
         return Err(version_conflict());
     }
+    if current.definition.kind == "flow" {
+        // A retired flow keeps its artifacts; retiring is refused while a
+        // run may be live, and without the run ledger's count none can be
+        // ruled out.
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            crate::flow_definitions::codes::RUNS_LIVE,
+            "the flow may have live runs",
+            "live runs cannot be ruled out until the run ledger reports them; retire when it does",
+        ));
+    }
     if current.definition.lifecycle == RetainedLifecycle::Retired {
         return Err(refused(vec![RefusalDiagnostic {
             code: codes::ALREADY_RETIRED.to_owned(),
@@ -1152,6 +1275,7 @@ pub fn retire_definition<E: SqlEngine>(
         definition,
         Some(request.expected_version),
         None,
+        None,
         now_ms,
     )
 }
@@ -1161,6 +1285,8 @@ struct Cursor {
     k: String,
     r: bool,
     a: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    u: Option<String>,
 }
 
 fn cursor_invalid() -> Refusal {
@@ -1213,34 +1339,60 @@ pub fn list_definitions<E: SqlEngine>(
                 .map_err(|_malformed| cursor_invalid())?;
             let cursor: Cursor =
                 serde_json::from_slice(&bytes).map_err(|_malformed| cursor_invalid())?;
-            if cursor.k != kind || cursor.r != include_retired {
+            if cursor.k != kind || cursor.r != include_retired || cursor.u != query.uses {
                 return Err(cursor_invalid());
             }
             Ok(cursor.a)
         })
         .transpose()?;
+    if query.uses.is_some() && kind != "flow" {
+        return Err(Refusal::invalid("uses filters kind=flow"));
+    }
     let _epoch = host.definition_read()?;
-    let mut rows = {
+    let wanted = usize::try_from(limit.saturating_add(1)).unwrap_or(usize::MAX);
+    let mut rows: Vec<(RetainedDefinitionRecord, Option<String>)> = Vec::new();
+    {
         let cell = host.cell()?;
         let reader = cell.store().read();
-        reader
-            .retained_definitions(
-                kind,
-                include_retired,
-                after.as_deref(),
-                limit.saturating_add(1),
-            )
-            .map_err(Refusal::host)?
-    };
+        let mut after = after;
+        // With `uses`, pages are read until enough flows match: the filter is
+        // the same perform extraction the install check runs.
+        loop {
+            let page = reader
+                .retained_definitions(kind, include_retired, after.as_deref(), MAX_LIST_LIMIT)
+                .map_err(Refusal::host)?;
+            let exhausted = page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX);
+            after = page.last().map(|record| record.definition.id.clone());
+            for record in page {
+                let pinned = match &query.uses {
+                    None => None,
+                    Some(binding) => {
+                        match crate::flow_definitions::pinned_version(
+                            &record.definition.payload,
+                            binding,
+                        ) {
+                            Some(version) => Some(version),
+                            None => continue,
+                        }
+                    }
+                };
+                rows.push((record, pinned));
+            }
+            if exhausted || rows.len() >= wanted {
+                break;
+            }
+        }
+    }
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
     let cursor = if more {
         rows.last()
-            .map(|last| {
+            .map(|(last, _)| {
                 serde_json::to_vec(&Cursor {
                     k: kind.to_owned(),
                     r: include_retired,
                     a: last.definition.id.clone(),
+                    u: query.uses.clone(),
                 })
                 .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
                 .map_err(Refusal::host)
@@ -1252,13 +1404,14 @@ pub fn list_definitions<E: SqlEngine>(
     Ok(DefinitionPage {
         items: rows
             .into_iter()
-            .map(|row| DefinitionSummary {
+            .map(|(row, pinned_version)| DefinitionSummary {
                 id: row.definition.id,
                 kind: row.definition.kind,
                 title: row.definition.title,
                 version: row.definition.revision,
                 lifecycle: row.definition.lifecycle.as_str().to_owned(),
                 updated_at_ms: row.recorded_at,
+                pinned_version,
             })
             .collect(),
         cursor,
@@ -1302,6 +1455,7 @@ pub fn get_definition<E: SqlEngine>(
         &record.definition.payload,
     );
     Ok(DefinitionDocument {
+        flow: flow_summary(&record.definition),
         restatement,
         restatement_sha256,
         id: record.definition.id,
