@@ -33,6 +33,18 @@ function auth(env: Env): Auth {
   return instance
 }
 
+/**
+ * The public answer to a successful sign-up: the same keys in the same order for a new and a
+ * registered address, a placeholder id, no server timestamps and no cookie. Better Auth's own
+ * body differs between the two (a real row vs a synthetic one, createdAt taken at different points).
+ */
+export async function publicSignUp(response: Response): Promise<Response> {
+  if (!response.ok) return response
+  const { user } = (await response.json()) as { user: { email: string; name: string } }
+  const body = { token: null, user: { id: crypto.randomUUID(), email: user.email, name: user.name, emailVerified: false } }
+  return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
+}
+
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
@@ -49,6 +61,7 @@ export default {
     const { pathname } = new URL(request.url)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
+    if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     const session = await auth(env).api.getSession({ headers: request.headers })

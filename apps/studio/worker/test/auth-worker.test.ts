@@ -116,19 +116,21 @@ test("an unverified account cannot accept an invitation sent to its address", as
   expect(db.query("select count(*) as n from member where organizationId = ?").get(org)).toEqual({ n: 1 })
 })
 
-test("sign-up answers a registered address exactly like a new one, with no session for either", async () => {
+test("sign-up answers a registered address byte for byte like a new one, apart from a placeholder id", async () => {
   const env = stage()
   await post(env, "/api/auth/sign-up/email", { email: "gi@example.com", password: "correct horse battery", name: "Gi" })
-  const shape = async (email: string) => {
+  const answer = async (email: string) => {
     const response = await post(env, "/api/auth/sign-up/email", { email, password: "another horse battery", name: "Gi" })
-    const body = (await response.json()) as { token: unknown; user: Record<string, unknown> }
-    return { status: response.status, cookies: response.headers.getSetCookie().filter((line) => line.includes("session_token")), token: body.token, keys: Object.keys(body.user).sort(), email: body.user.email, verified: body.user.emailVerified }
+    return { status: response.status, cookies: response.headers.getSetCookie(), text: await response.text() }
   }
-  const existing = await shape("gi@example.com")
-  const fresh = await shape("ha@example.com")
-  expect(existing).toEqual({ ...fresh, email: "gi@example.com" })
-  expect(fresh).toMatchObject({ status: 200, cookies: [], token: null, verified: false })
-  // The registered account keeps its original password.
+  const existing = await answer("gi@example.com")
+  const fresh = await answer("ha@example.com")
+  const masked = (text: string, email: string) => text.replace(/"id":"[0-9a-f-]{36}"/, '"id":"ID"').replace(email, "EMAIL")
+  expect(masked(existing.text, "gi@example.com")).toBe(masked(fresh.text, "ha@example.com"))
+  expect(masked(fresh.text, "ha@example.com")).toBe('{"token":null,"user":{"id":"ID","email":"EMAIL","name":"Gi","emailVerified":false}}')
+  expect([existing.status, fresh.status, existing.cookies, fresh.cookies]).toEqual([200, 200, [], []])
+  // The registered account keeps its original password, and the new one can sign in.
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "another horse battery" })).status).toBe(401)
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
+  expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
 })
