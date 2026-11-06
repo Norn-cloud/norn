@@ -1,12 +1,13 @@
 import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, LayoutDashboard, ShieldCheck, Workflow } from "lucide-react"
+import { ChartLine, Database, Gauge, Inbox, LayoutDashboard, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { createRoot } from "react-dom/client"
+import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
@@ -16,6 +17,7 @@ import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
+  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work" },
   { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model" },
   { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model" },
   { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model" },
