@@ -22,6 +22,8 @@ test("the catalogue offers the world's object set, properties and metrics, and t
   expect(catalog.metrics.map(({ name, label }) => `${name}:${label}`)).toEqual(["demo.input:Input", "demo.recovered:Recovered", "demo.yield:Yield"])
   expect(catalog.grains).toEqual(["day", "week", "month", "quarter", "year"])
   expect(catalog.operators).toEqual(["eq", "ne", "lt", "le", "gt", "ge"])
+  expect(catalog.declarations.metrics).toEqual(ANALYTICS.metrics)
+  expect(catalog.declarations.objectType?.name).toBe("demo.Conversion")
 })
 
 test("a built question goes to the checker as it was sent, and its verdict comes back as the checker wrote it", async () => {

@@ -57,6 +57,8 @@ export function questionCatalog() {
     grains: GRAINS,
     operators: OPERATORS,
     example: ANALYTICS.example,
+    // The declarations an answer to a built question is read with: units, ratios and labels.
+    declarations: { metrics: ANALYTICS.metrics, objectType: entity?.payload.objectType ?? null },
   }
 }
 
