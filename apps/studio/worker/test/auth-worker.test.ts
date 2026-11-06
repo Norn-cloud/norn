@@ -28,7 +28,7 @@ test("sign-up sets an HTTP-only, secure, same-site session cookie and an owned o
   const env = stage()
   const signUp = await post(env, "/api/auth/sign-up/email", { email: "ada@example.com", password: "correct horse battery", name: "Ada" })
   expect(signUp.status).toBe(200)
-  const session = signUp.headers.getSetCookie().find((line) => line.startsWith("__Secure-better-auth.session_token="))
+  const session = signUp.headers.getSetCookie().find((line) => line.startsWith("__Secure-norn.session_token="))
   expect(session).toBeDefined()
   expect(session).toMatch(/HttpOnly/i)
   expect(session).toMatch(/Secure/i)
