@@ -497,6 +497,14 @@ class ReceiptTest(unittest.TestCase):
         self.edit("INV-KANI", inputs={"src/lib.rs": "0" * 64})
         self.rejected("INV-KANI", "input digests")
 
+    def test_rejected_kani_receipt_reports_no_result(self) -> None:
+        # CodeRabbit r4494250473: a receipt that fails validation reports no Kani result.
+        self.produce()
+        self.edit("INV-KANI", inputs={"src/lib.rs": "0" * 64})
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertIn("INV-KANI: receipt input digests do not match the candidate", errors)
+        self.assertNotIn("INV-KANI", {v["claim"] for v in verdicts})
+
     def test_nonzero_exit_is_rejected(self) -> None:
         # The mutant replaces nothing that matters, so it still verifies.
         self.claims["INV-KANI"]["correspondenceMutations"] = [{"name": "noop", "before": "pub fn", "after": "pub  fn"}]
