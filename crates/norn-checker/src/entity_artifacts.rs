@@ -191,10 +191,18 @@ pub(crate) fn check_entity_artifacts_using(
     )
 }
 
+/// Lifecycle findings, one per state, that share the lifecycle's pointer.
+const STATE_FINDINGS: [&str; 2] = [
+    crate::lifecycles::codes::UNREACHABLE_STATE,
+    crate::lifecycles::codes::DEAD_END_STATE,
+];
+
 /// Keep the first of the findings identical in `(code, artifactId,
 /// pointer)`, preserving order. UI-law findings also include their message
 /// in the identity, because distinct effects and composed render paths may
-/// share the same real JSON pointer.
+/// share the same real JSON pointer. So do a lifecycle's unreachable and
+/// dead-end states: each is its own finding, all at the lifecycle's pointer,
+/// and the message is what names the state.
 pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) -> Vec<Diagnostic> {
     let mut seen = BTreeSet::new();
     findings
@@ -210,7 +218,8 @@ pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) ->
                     .unwrap_or_default(),
                 ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
                     && diagnostic.message.starts_with("UI law:"))
-                    || diagnostic.code.as_str() == "consistency.normative.conflict")
+                    || diagnostic.code.as_str() == "consistency.normative.conflict"
+                    || STATE_FINDINGS.contains(&diagnostic.code.as_str()))
                     .then(|| diagnostic.message.clone()),
             ))
         })

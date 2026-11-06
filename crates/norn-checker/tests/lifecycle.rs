@@ -501,3 +501,35 @@ fn inherited_path_property_survives_redeclaration_and_target_narrowing() {
     child.lifecycles[0].transitions.truncate(1);
     assert!(run(&[parent, child], &[], None).is_empty());
 }
+
+/// Every stuck state is its own finding: two unreachable states of one
+/// lifecycle share the lifecycle's pointer, and the artifact set's dedup must
+/// not fold the second into the first.
+#[test]
+fn every_unreachable_state_of_one_lifecycle_is_reported() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../registry/core/artifacts/commerce.SalesOrder.entity.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("sales order is readable")).expect("sales order is JSON");
+    // Without `invoice`, neither `invoiced` nor `completed` is reachable.
+    value["payload"]["objectType"]["lifecycles"][0]["transitions"]
+        .as_array_mut()
+        .expect("transitions")
+        .retain(|transition| transition["id"] != "invoice");
+    let artifact = norn_checker::decode_artifact_json(&value).expect("sales order decodes");
+    let findings = norn_checker::check_artifact_set(
+        &[artifact],
+        &norn_checker::EntityArtifactSetContext { registry: &BTreeSet::new(), base: &[], tenant: None },
+    );
+    let unreachable: Vec<&str> = findings
+        .iter()
+        .filter(|finding| finding.code.as_str() == codes::UNREACHABLE_STATE)
+        .map(|finding| finding.message.as_str())
+        .collect();
+    assert_eq!(
+        unreachable,
+        [
+            "state \"invoiced\" is not reachable from an initial state",
+            "state \"completed\" is not reachable from an initial state",
+        ]
+    );
+}
