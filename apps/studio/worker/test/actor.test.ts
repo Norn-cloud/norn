@@ -85,3 +85,12 @@ test("without a session or a connected host, Norn calls refuse", async () => {
   const cookie = await signUp(env, "ed@example.com")
   expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(503)
 })
+
+test("a request body reaches the host unchanged", async () => {
+  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const cookie = await signUp(env, "fe@example.com")
+  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ proposal: 1 }) })
+  expect(response.status).toBe(202)
+  expect((await seen[0]?.json()) as unknown).toEqual({ proposal: 1 })
+  expect(seen[0]?.headers.get("content-type")).toBe("application/json")
+})
