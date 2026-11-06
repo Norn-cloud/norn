@@ -32,7 +32,8 @@ export class Cell {
       const [org, env] = JSON.parse(request.headers.get(CELL_HEADER));
       const issuer = this.env.NORN_HOST_ISSUER;
       const jwks = issuer === undefined ? undefined : await this.jwks();
-      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks);
+      // The stage's lineage handle secret (D53); without it answers refuse.
+      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks, this.env.NORN_LINEAGE_KEY);
     })().catch((error) => {
       this.opening = null;
       throw error;

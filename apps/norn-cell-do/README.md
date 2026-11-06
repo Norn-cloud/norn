@@ -38,6 +38,12 @@ from a token:
 - `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);
 - `NORN_HOST_JWKS_URL`: its JWKS document (Studio's `/api/auth/jwks`).
 
+A secret, one per stage and never shared between stages:
+
+- `NORN_LINEAGE_KEY`: base64url, at least 32 bytes. It keys the public
+  `lineageRef` handles (D53) together with each cell's scope. Without it the
+  analytics cell refuses every answer and trace.
+
 The cell fetches the JWKS when it opens; a token naming an unknown key id
 triggers at most one refetch per minute, then the request is retried once.
 Set `ALLOWED_ORIGINS` (comma-separated) to let a browser origin read it.

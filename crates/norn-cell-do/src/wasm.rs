@@ -80,7 +80,10 @@ pub struct Reply {
 impl NornCell {
     /// Open (provisioning on first use) the cell for the DO's own scope.
     /// `issuer` and `jwks` are the pinned token issuer and its key document;
-    /// without the `fixtures` feature both are required.
+    /// without the `fixtures` feature both are required. `lineage_key` is the
+    /// stage's `NORN_LINEAGE_KEY` secret (base64url, at least 32 bytes) that
+    /// keys lineage handles (D53); without a usable key the analytics cell
+    /// refuses every answer and trace.
     ///
     /// # Errors
     /// The scope has no published cell, provisioning failed, or no usable
@@ -92,6 +95,7 @@ impl NornCell {
         environment_id: String,
         issuer: Option<String>,
         jwks: Option<String>,
+        lineage_key: Option<String>,
     ) -> Result<Self, JsValue> {
         let scope = CellScope {
             org_id,
@@ -102,7 +106,13 @@ impl NornCell {
             (seed::provision(engine, &scope).map_err(rejected)?, None)
         } else if scope == analytics::analytics_scope() {
             let opened = analytics::provision(engine, &scope).map_err(rejected)?;
-            let questions = DemoQuestions::new(opened.plan, scope.clone());
+            let secret = lineage_key
+                .and_then(|key| {
+                    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+                    URL_SAFE_NO_PAD.decode(key.trim_end_matches('=')).ok()
+                })
+                .unwrap_or_default();
+            let questions = DemoQuestions::new(opened.plan, scope.clone()).with_handle_key(&secret);
             (opened.store, Some(questions))
         } else {
             return Err(JsValue::from_str("no cell is published for this scope"));
