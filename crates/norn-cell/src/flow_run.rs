@@ -184,6 +184,43 @@ fn state_of<E: SqlEngine>(
     }
 }
 
+/// Before `batch`'s writes apply: every run it starts must be new. A run id
+/// already started in this world refuses `run.exists`; a run object that
+/// already exists (untracked, or written before the start) refuses
+/// `run.start_invalid`, so only a creating write starts a run.
+///
+/// # Errors
+/// `run.exists`, `run.start_invalid`, or SQL engine errors.
+pub(crate) fn check_starts<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+) -> Result<(), CellError> {
+    for start in starts(batch)? {
+        if reader.flow_run(&batch.world, &start.run_id)?.is_some() {
+            return Err(refused("run.exists"));
+        }
+        let declared = reader
+            .model()
+            .object_types()
+            .any(|declared| declared.name.as_str() == start.object_type);
+        if !declared
+            || reader
+                .object(&batch.world, &start.object_type, &start.run_id)?
+                .is_some()
+        {
+            return Err(refused("run.start_invalid"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a ledger event is a run start (host bookkeeping, not a domain
+/// event a typed commit reader decodes).
+#[must_use]
+pub fn is_run_start(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(RUN_STARTED)
+}
+
 /// Record the runs `batch` starts and refresh every run it writes, inside the
 /// commit's transaction (after its writes are applied).
 ///
@@ -313,6 +350,45 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             params![world, run_id],
             decode,
         )
+    }
+
+    /// RUN-LIVE-1: how many runs of `flow` in `world` are live: their run
+    /// object exists and its lifecycle state is not a terminal state of its
+    /// Run type's lifecycle. A Run type the model no longer declares counts
+    /// as live, so a retire guard fails closed.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn live_runs(&self, world: &str, flow: &str) -> Result<u64, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "object_type","state_property","state" FROM "{FLOW_RUN}" INDEXED BY "_norn_flow_run/flow_state" WHERE "world"=?1 AND "flow_id"=?2 AND "state" IS NOT NULL"#
+            ),
+            params![world, flow],
+        )?;
+        let mut live = 0_u64;
+        for values in rows {
+            let row = SqlRow(values);
+            let (object_type, property, state): (String, String, String) =
+                (row.get(0)?, row.get(1)?, row.get(2)?);
+            let terminal = self
+                .model()
+                .object_types()
+                .find(|declared| declared.name.as_str() == object_type)
+                .and_then(|declared| {
+                    declared
+                        .lifecycles
+                        .iter()
+                        .find(|lifecycle| lifecycle.property.as_str() == property)
+                })
+                .is_some_and(|lifecycle| lifecycle.terminal.contains(&state));
+            if !terminal {
+                live = live
+                    .checked_add(1)
+                    .ok_or(CellError::OutOfRange("live runs"))?;
+            }
+        }
+        Ok(live)
     }
 
     /// One page of runs in `world`, in run-id order, filtered by flow and

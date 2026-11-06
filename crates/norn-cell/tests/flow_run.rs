@@ -301,3 +301,132 @@ fn the_ledger_survives_reopen() {
         before
     );
 }
+
+#[test]
+fn live_runs_count_only_non_terminal_existing_runs_of_one_flow() {
+    let mut store = store();
+    for (run, flow) in [
+        ("run-1", "flow.a"),
+        ("run-2", "flow.a"),
+        ("run-3", "flow.a"),
+        ("run-4", "flow.b"),
+    ] {
+        store
+            .commit(&batch(10, vec![put(run, "started")], &[start(run, flow)]))
+            .expect("start");
+    }
+    store
+        .commit(&batch(20, vec![put("run-2", "completed")], &[]))
+        .expect("complete");
+    store
+        .commit(&batch(
+            30,
+            vec![FactWriteRow::Delete {
+                object_type: RUN.to_owned(),
+                key: "run-3".to_owned(),
+            }],
+            &[],
+        ))
+        .expect("delete");
+    let reader = store.read();
+    assert_eq!(
+        reader.live_runs("main", "flow.a").expect("count"),
+        1,
+        "run-1 only"
+    );
+    assert_eq!(reader.live_runs("main", "flow.b").expect("count"), 1);
+    assert_eq!(reader.live_runs("main", "flow.none").expect("count"), 0);
+    assert_eq!(reader.live_runs("fork-1", "flow.a").expect("count"), 0);
+}
+
+#[test]
+fn only_a_creating_write_starts_a_run() {
+    let mut store = store();
+    // An object written before any start is not a new run.
+    store
+        .commit(&batch(10, vec![put("run-1", "started")], &[]))
+        .expect("untracked object");
+    let ledger = store.read().ledger(0).expect("ledger").len();
+    let refused = store
+        .commit(&batch(
+            11,
+            vec![put("run-1", "awaiting_perform_load")],
+            &[start("run-1", "flow.a")],
+        ))
+        .expect_err("an update is not a start");
+    assert_eq!(refusal(&refused), Some("run.start_invalid"));
+    assert_eq!(store.read().ledger(0).expect("ledger").len(), ledger);
+    assert!(
+        store
+            .read()
+            .flow_run("main", "run-1")
+            .expect("read")
+            .is_none()
+    );
+    // A tracked run still refuses run.exists.
+    store
+        .commit(&batch(
+            12,
+            vec![put("run-2", "started")],
+            &[start("run-2", "flow.a")],
+        ))
+        .expect("start");
+    let refused = store
+        .commit(&batch(
+            13,
+            vec![put("run-2", "started")],
+            &[start("run-2", "flow.a")],
+        ))
+        .expect_err("already started");
+    assert_eq!(refusal(&refused), Some("run.exists"));
+}
+
+#[test]
+fn the_typed_commit_reader_skips_run_start_bookkeeping() {
+    use norn_kernel::{CellCommit, FactEvent, FactKey, FactMutation, FactVersion, FactWrite};
+    let mut cell = norn_cell::SqliteCell::<
+        FactEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >::open_in_memory(
+        model(),
+        "tenant/dev",
+        |command: &norn_kernel::Command<norn_kernel::cell_host::JsonObject>| {
+            command.payload.clone()
+        },
+    )
+    .expect("cell");
+    let values = BTreeMap::from([
+        (
+            "run_id".to_owned(),
+            RuntimeValue::String("run-1".to_owned()),
+        ),
+        (
+            "status".to_owned(),
+            RuntimeValue::String("started".to_owned()),
+        ),
+    ]);
+    cell.commit_run_start(
+        CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new(RUN, "run-1"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put { values },
+            }],
+            ..CellCommit::empty()
+        },
+        &start("run-1", "flow.a"),
+    )
+    .expect("run start");
+    let commits = cell.commits().expect("typed commits still read");
+    assert_eq!(commits.len(), 1);
+    assert!(
+        cell.store()
+            .read()
+            .ledger(0)
+            .expect("ledger")
+            .iter()
+            .any(|entry| norn_cell::flow_run::is_run_start(&entry.event)),
+        "the run start stays in the hash-chained ledger"
+    );
+}
