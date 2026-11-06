@@ -743,7 +743,12 @@ fn obs_link_unrelated_item_labels_do_not_spend_the_claim_budget() {
 fn provider(cell: &Cell) -> BTreeSet<String> {
     cell.store()
         .read()
-        .links(MAIN_WORLD, "canon.OrderLine", "provider", "demo/order/1/line/1")
+        .links(
+            MAIN_WORLD,
+            "canon.OrderLine",
+            "provider",
+            "demo/order/1/line/1",
+        )
         .expect("provider")
         .into_iter()
         .map(|l| l.target)
@@ -764,7 +769,10 @@ fn obs_link_late_older_occurrence_is_contested_until_a_newer_one_records_order()
     let mut customer = rows[6].clone();
     customer["record"]["provider_ref"] = json!("demo/party/customer");
     capture(&mut cell, "erpnext", &custodian, "3");
-    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/custodian".into()]));
+    assert_eq!(
+        provider(&cell),
+        BTreeSet::from(["demo/party/custodian".into()])
+    );
     capture(&mut cell, "erpnext", &customer, "2");
     assert_eq!(
         provider(&cell),
@@ -779,12 +787,17 @@ fn obs_link_late_older_occurrence_is_contested_until_a_newer_one_records_order()
         .into_iter()
         .find(|c| {
             c.role.as_str() == "provider"
-                && c.target.as_ref().is_some_and(|t| t.key == "demo/party/customer")
+                && c.target
+                    .as_ref()
+                    .is_some_and(|t| t.key == "demo/party/customer")
         })
         .expect("late claim retained as evidence");
     assert_eq!(late.supersedes.len(), 1, "it orders only over the snapshot");
     capture(&mut cell, "erpnext", &customer, "4");
-    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/customer".into()]));
+    assert_eq!(
+        provider(&cell),
+        BTreeSet::from(["demo/party/customer".into()])
+    );
 }
 
 #[test]
@@ -803,5 +816,8 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
         "owner arrival must read the superseding claim, though it names only the custodian"
     );
     capture(&mut cell, "erpnext", &rows[1], "snapshot");
-    assert_eq!(provider(&cell), BTreeSet::from(["demo/party/custodian".into()]));
+    assert_eq!(
+        provider(&cell),
+        BTreeSet::from(["demo/party/custodian".into()])
+    );
 }

@@ -46,7 +46,10 @@ pub(crate) struct LinkPlan {
 
 fn touches(claim: &ObservedLinkClaim, scope: &BTreeSet<String>) -> bool {
     scope.contains(&claim.source_key)
-        || claim.target.as_ref().is_some_and(|t| scope.contains(&t.key))
+        || claim
+            .target
+            .as_ref()
+            .is_some_and(|t| scope.contains(&t.key))
 }
 
 fn source_version(bundle: &MappingBundle) -> Result<&str, CellError> {
@@ -180,7 +183,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     }
                     cache.insert(id, bundle);
                 }
-                for claim in current.map(MappingBundle::link_claims).transpose()?.into_iter().flatten() {
+                for claim in current
+                    .map(MappingBundle::link_claims)
+                    .transpose()?
+                    .into_iter()
+                    .flatten()
+                {
                     if touches(&claim, scope) {
                         closed.insert(claim.source_key);
                     }
@@ -216,10 +224,19 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .collect();
                 let id = claim.id()?;
                 recorded.push((contribution.clone(), id.clone()));
-                entries.push(Entry { claim, id, contribution, fresh: *fresh, disputed: *disputed });
+                entries.push(Entry {
+                    claim,
+                    id,
+                    contribution,
+                    fresh: *fresh,
+                    disputed: *disputed,
+                });
             }
             for (contribution, id) in recorded {
-                history.entry(contribution).or_default().push((version.to_owned(), id));
+                history
+                    .entry(contribution)
+                    .or_default()
+                    .push((version.to_owned(), id));
             }
         }
         if entries.len() > MAX_CLAIMS {
@@ -231,7 +248,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .filter(|e| touches(&e.claim, scope))
                 .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
                 .collect();
-            entries.retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
+            entries
+                .retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
         }
         Ok(entries)
     }
@@ -284,15 +302,27 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };
-        let target = |e: &Entry| e.claim.target.as_ref().map(|t| fact(&t.object_type, &t.key));
+        let target = |e: &Entry| {
+            e.claim
+                .target
+                .as_ref()
+                .map(|t| fact(&t.object_type, &t.key))
+        };
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
         for entry in entries.iter().filter(|e| !e.disputed) {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
-            groups.entry((source, entry.claim.role.clone())).or_default().push(entry);
+            groups
+                .entry((source, entry.claim.role.clone()))
+                .or_default()
+                .push(entry);
         }
         let present = |key: &FactKey| -> Result<bool, CellError> {
             let canonical = model.canonical(key);
-            let concrete = match commit.writes.iter().find(|w| model.canonical(&w.key) == canonical) {
+            let concrete = match commit
+                .writes
+                .iter()
+                .find(|w| model.canonical(&w.key) == canonical)
+            {
                 Some(write) => matches!(write.mutation, FactMutation::Put { .. })
                     .then(|| write.key.object_type.clone()),
                 None => GuardView(self).concrete(&canonical)?,
@@ -329,14 +359,22 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     Standing::Current if !exists && present(source)? && present(&to)? => {
                         LinkMutation::Add {
                             values: model
-                                .effective_link_values(commit, &GuardView(self), &key, &RuntimeObject::new())
+                                .effective_link_values(
+                                    commit,
+                                    &GuardView(self),
+                                    &key,
+                                    &RuntimeObject::new(),
+                                )
                                 .map_err(|e| CellError::Encoding(e.to_string()))?,
                         }
                     }
                     Standing::Superseded if exists && !supported => LinkMutation::Remove,
                     _ => continue,
                 };
-                links.insert(model.canonical_link(&key), self.mapping_link_write(key, mutation)?);
+                links.insert(
+                    model.canonical_link(&key),
+                    self.mapping_link_write(key, mutation)?,
+                );
             }
             if links.len() > before {
                 sealed.extend(group.iter().map(|e| e.claim.clone()));
@@ -344,8 +382,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
         let mut links: Vec<_> = links.into_values().collect();
         links.sort_by_key(|w| matches!(&w.mutation, LinkMutation::Add { .. }));
-        let fresh = entries.into_iter().filter(|e| e.fresh).map(|e| e.claim).collect();
-        Ok(LinkPlan { links, fresh, sealed })
+        let fresh = entries
+            .into_iter()
+            .filter(|e| e.fresh)
+            .map(|e| e.claim)
+            .collect();
+        Ok(LinkPlan {
+            links,
+            fresh,
+            sealed,
+        })
     }
 
     fn mapping_link_exists(
@@ -396,7 +442,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let model = CommitModel::new(catalog);
         let expectation = |key: FactKey| -> Result<FactExpectation, CellError> {
             Ok(FactExpectation {
-                expected: FactVersion(self.version(MAIN_WORLD, key.object_type.as_str(), &key.key)?),
+                expected: FactVersion(self.version(
+                    MAIN_WORLD,
+                    key.object_type.as_str(),
+                    &key.key,
+                )?),
                 key,
             })
         };
@@ -485,7 +535,9 @@ mod tests {
         let reader = store.read();
         let scope = BTreeSet::from(["demo/\"quoted\"".to_owned()]);
         assert_eq!(
-            reader.claim_bundles(Some(&scope), MAX_CLAIM_BUNDLES).expect("scoped"),
+            reader
+                .claim_bundles(Some(&scope), MAX_CLAIM_BUNDLES)
+                .expect("scoped"),
             ["mapping-bundle:1", "mapping-bundle:1003"],
         );
         for refused in [

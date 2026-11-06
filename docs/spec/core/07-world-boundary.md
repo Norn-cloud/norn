@@ -260,12 +260,19 @@ require the subsequent runtime units.
 Unit 2 admits claims and resolves equal endpoints through the existing observed
 commit path. The consumed mapping-bundle journal retains pending claims and
 recomputable multi-source provenance; a transaction guard rechecks the planned
-links against that journal before admission. Each source record/role/mapping
-contribution retains its latest consumed claim for planning, while historical
-claims remain evidence. A plan or link provenance read selects only bundles naming
-its commit's objects or claim endpoints, so unrelated bundles spend no budget. The
-selected set refuses above 1,000 bundles, 4 MiB of bundle evidence or 20,000 claims;
-budget exhaustion cannot silently omit a claim.
+links against that journal before admission. The planner records `supersedes`
+as every earlier-consumed claim of the contribution with a lower raw
+`source_version` (lexicographic, as the dataplane orders it), so a retained
+claim's identity recomputes exactly from the journal and a late older occurrence
+records no order over a newer one. It prepares every claim of each changed
+canonical source/role group and plans only the edge changes the kernel's
+final-set standing authorizes. A plan or link provenance read selects bundles
+naming its commit's objects or claim endpoints, then the bundles naming those
+claims' sources, so unrelated bundles spend no budget while every earlier claim
+of an affected contribution is read. The selected set refuses above 1,000
+bundles, 4 MiB of bundle evidence or 20,000 claims; budget exhaustion cannot
+silently omit a claim. Contradiction and horizon findings require the subsequent
+runtime unit.
 The claim's registry `evidence` scalar holds the exact canonical JSON of its
 typed preimage (`canonical_json_exact_of`: sorted object keys, verbatim strings
 and number tokens) as UTF-8 text; endpoint columns permit lookup without
@@ -291,6 +298,11 @@ Named acceptance scenarios:
   resolves with its inherited effective link defaults, exactly as commit
   normalization does. Redeclared subtype defaults and native type promotion
   remain catalog/admission refusals.
+- **OBS-LINK-LATE-OCCURRENCE:** an older source version captured after a newer
+  one supersedes only older claims; the two stay contested, the newer edge stays,
+  and a later version records the order.
+- **OBS-LINK-CLOSED-SCOPE:** a target arrival reads the superseding claim of a
+  contribution even when that claim names a different target.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
