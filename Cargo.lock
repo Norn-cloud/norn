@@ -1665,6 +1665,7 @@ dependencies = [
  "norn-ir",
  "serde",
  "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
