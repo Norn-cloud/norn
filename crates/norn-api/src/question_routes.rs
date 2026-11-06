@@ -73,7 +73,9 @@ pub const DEFAULT_MIN_DISCLOSED_BUCKET: usize = 3;
 fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
     let key = runtime.handle_key();
     if key.len() < 32 {
-        return Err(Refusal::host("the lineage handle key is shorter than 32 bytes"));
+        return Err(Refusal::host(
+            "the lineage handle key is shorter than 32 bytes",
+        ));
     }
     Ok(key)
 }

@@ -12,7 +12,7 @@ export const live = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
+  "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -531,7 +531,7 @@ export const fresh = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "645c52fdff038aabb52662030ad90c6b357a2012242bdd33537bb4ec236b7298",
+  "lineageRef": "c371dfcfdfebbc2fde11abf5854c6227fd72ec579af9253437cf7e9e84fa826a",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1050,7 +1050,7 @@ export const stale = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "8809478ef359d407386bb00a53eb7bdeb5aa03f4c35eb1df0305324210a94693",
+  "lineageRef": "09f9f082602182b351b6145a9d1a9c274a1edf50e69ff886d9a13a6cec5d360a",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1569,7 +1569,7 @@ export const incomplete = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "8b93ec88129f67afd054b3df19b836c28a511773bf9698a80f416f12cd758fdd",
+  "lineageRef": "1fd7dab408a988ab73cdb6a6ccd959ff7c4ad9b402cdc82e3e0ea8c6c2cd1e88",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -2095,7 +2095,7 @@ export const historical = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "44bd6ceb2a9f22654caaab35a4b15b53a56c8bc13905ac923015631b4bddae9f",
+    "lineageRef": "6d034fdd2ce30f4590c791e72524f47ee0e562c2ee0b1b57548a3fefdc0f5916",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -2616,7 +2616,7 @@ export const restricted_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
+    "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3208,7 +3208,7 @@ export const unavailable_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "b51e58c78efc9a950acd95c02b294c2aca45640379d1ef86c111560d1a166b53",
+    "lineageRef": "bf0102def47098fb26545da87a73d33981ce368c37b3efd75c9e2426c173adce",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3964,7 +3964,7 @@ export const resolved_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 81,
     "grain": "demo.Conversion",
-    "lineageRef": "33b715933c9584d0a998aff02013c91c0010e0e59f974c624044f0c6983b2788",
+    "lineageRef": "b50b29ac912d921927c2900409cf5546a696ff7d095290ceffd2847108af4d7d",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
