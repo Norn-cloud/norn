@@ -170,7 +170,7 @@ test("live signed question is retired after the row", async ({ page }) => {
     await page.getByRole("button", { name: "This is what I asked for" }).click()
     await page.getByRole("button", { name: "Save question" }).click()
     await expect(page.getByText("Saved · version 1")).toBeVisible()
-    await page.getByRole("button", { name: "Open", exact: true }).first().click()
+    await page.getByText(id, { exact: true }).locator("..").locator("..").getByRole("button", { name: "Open", exact: true }).click()
     await expect(page.getByText(/Signed off by you on/)).toBeVisible()
     await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled()
   } finally {
