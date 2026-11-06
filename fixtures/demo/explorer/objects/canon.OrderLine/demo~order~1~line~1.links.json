@@ -1,0 +1,31 @@
+{
+  "objectType": "canon.OrderLine",
+  "id": "demo/order/1/line/1",
+  "items": [
+    {
+      "sourceType": "canon.OrderLine",
+      "link": "provider",
+      "source": "demo/order/1/line/1",
+      "targetType": "canon.Party",
+      "target": "demo/party/owner",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.OrderLine",
+      "link": "receiver",
+      "source": "demo/order/1/line/1",
+      "targetType": "canon.Party",
+      "target": "demo/party/customer",
+      "version": 1
+    },
+    {
+      "sourceType": "canon.OrderLine",
+      "link": "resource",
+      "source": "demo/order/1/line/1",
+      "targetType": "canon.Holding",
+      "target": "demo/holding/owner/north/gold",
+      "version": 1
+    }
+  ],
+  "hasMore": false
+}
