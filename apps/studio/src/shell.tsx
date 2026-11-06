@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { Bell, ChevronRight, ChevronsUpDown, Keyboard, Search, UserRound, type LucideIcon } from "lucide-react"
+import { Bell, ChevronRight, ChevronsUpDown, Keyboard, LogOut, Search, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,7 @@ import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, ViewToggle, useView } from "@/lib/view"
-import { useViewer } from "@/lib/viewer"
+import type { Account } from "@/lib/session"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 
 export interface Section {
@@ -149,15 +149,30 @@ function NavSection({ section, pathname }: { readonly section: Section; readonly
   )
 }
 
-/** Who is reading. The server decides what they see; the recorded demo has no sign-in. */
-function NavViewer() {
-  const viewer = useViewer()
+export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
+
+/** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
+function NavAccount({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
+  const { isMobile } = useSidebar()
+  const { user, organization } = account
   return (
     <SidebarMenu><SidebarMenuItem>
-      <SidebarMenuButton size="lg" tooltip={`Viewing as ${viewer.name}`}>
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted ring-1 ring-border"><UserRound className="size-4 text-muted-foreground" /></span>
-        <span className="grid flex-1 text-start text-sm leading-tight"><span className="truncate font-medium">Viewing as {viewer.name}</span><span className="truncate text-xs text-muted-foreground">{viewer.role ?? "Not signed in"}</span></span>
-      </SidebarMenuButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton size="lg" tooltip={`${user.name} · ${organization?.name ?? "No organization"}`} className="data-[state=open]:bg-sidebar-accent">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium ring-1 ring-border">{initials(user.name || user.email)}</span>
+            <span className="grid flex-1 text-start text-sm leading-tight"><span className="truncate font-medium">{user.name}</span><span className="truncate text-xs text-muted-foreground">{organization ? `${organization.name} · ${organization.role}` : "No organization"}</span></span>
+            <ChevronsUpDown className="ms-auto" />
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side={isMobile ? "bottom" : "right"} align="end" className="min-w-56">
+          <DropdownMenuLabel className="grid"><span className="font-medium">{user.name}</span><span className="text-meta font-normal text-muted-foreground">{user.email}</span></DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="grid font-normal"><span>{organization?.name ?? "No organization"}</span>{organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </SidebarMenuItem></SidebarMenu>
   )
 }
@@ -254,10 +269,10 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
 
 /**
  * A sidebar that collapses to icons (workspace, sections with their items,
- * who is viewing), a page bar with breadcrumbs, search and the view, the
+ * who is signed in), a page bar with breadcrumbs, search and the view, the
  * page, and the inspector docked on its right.
  */
-export function Shell({ sections, tools }: { readonly sections: readonly Section[]; readonly tools?: ReactNode }) {
+export function Shell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   const main = sections.filter(({ foot }) => foot !== true)
@@ -277,7 +292,7 @@ export function Shell({ sections, tools }: { readonly sections: readonly Section
             ))}
             {foot.length > 0 && <SidebarGroup className="mt-auto"><SidebarMenu>{foot.map((section) => <NavSection key={section.path} section={section} pathname={pathname} />)}</SidebarMenu></SidebarGroup>}
           </SidebarContent>
-          <SidebarFooter><NavViewer /></SidebarFooter>
+          <SidebarFooter><NavAccount account={account} onSignOut={onSignOut} /></SidebarFooter>
           <SidebarRail />
         </Sidebar>
         <SidebarInset className="flex-row">

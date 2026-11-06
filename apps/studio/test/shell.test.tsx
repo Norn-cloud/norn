@@ -3,7 +3,11 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Shell, sectionOf, target, type Section } from "../src/shell.tsx"
+import type { Account } from "../src/lib/session.ts"
+import { Shell as Bare, initials, sectionOf, target, type Section } from "../src/shell.tsx"
+
+const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
+const Shell = (props: { readonly sections: readonly Section[] }) => <Bare {...props} account={account} onSignOut={() => {}} />
 import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const sources: Section = {
@@ -46,7 +50,7 @@ test("the breadcrumbs name the section, the item and the record id", async () =>
   expect(crumbs).toContain("demo/item/gold")
 })
 
-test("the page bar holds search, the view toggle, shortcuts and notifications; the sidebar names the workspace and the viewer", async () => {
+test("the page bar holds search, the view toggle, shortcuts and notifications; the sidebar names the workspace and the signed-in account", async () => {
   const html = await at("/sources", () => <Shell sections={[sources, questions]} />)
   expect(html).toContain("Search…")
   expect(html).toContain('aria-label="Business or technical view"')
@@ -54,7 +58,9 @@ test("the page bar holds search, the view toggle, shortcuts and notifications; t
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
   expect(html).toContain("Synthetic world")
-  expect(html).toContain("Viewing as Recorded demo")
+  expect(html).toContain("Ada Lovelace")
+  expect(html).toContain("Analytical · viewer")
+  expect(html).not.toContain("Recorded demo")
 })
 
 test("only workspaces with recorded documents open; the rest say they have none", () => {
@@ -78,4 +84,10 @@ test("a section's count sits in the theme's destructive pair", async () => {
   const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).not.toContain("text-white")
+})
+
+test("initials come from the name, else the email, else a placeholder", () => {
+  expect(initials("Ada Lovelace")).toBe("AL")
+  expect(initials("ada@example.com")).toBe("A")
+  expect(initials("")).toBe("?")
 })
