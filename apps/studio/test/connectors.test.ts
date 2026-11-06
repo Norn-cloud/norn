@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { api, fixAction, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, fixLabel, MATRIX, matrixTable } from "../src/lib/connectors.ts"
+import { api, EXECUTABLE_FIXES, fixAction, offersButton, startFix, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, fixLabel, MATRIX, matrixTable } from "../src/lib/connectors.ts"
 
 const answering = (status: number, body: unknown) => (async () => Response.json(body, { status })) as unknown as typeof fetch
 
@@ -32,4 +32,36 @@ test("only a fix action the page knows reaches it", () => {
   expect(fixAction({ kind: "delete_everything" })).toBeNull()
   expect(fixAction("sign_in_gateway")).toBeNull()
   expect(fixAction(null)).toBeNull()
+})
+
+test("every fix the page offers a button for executes: it reaches a gateway page", async () => {
+  const calls: string[] = []
+  const gatewayPage = "https://gateway.example/form"
+  const call = (async (path: string) => {
+    calls.push(path)
+    if (path === "/link") return { url: gatewayPage }
+    if (path === "/accounts/acc1") return { apps: ["other", "github"] }
+    if (path === "/apps/other/accounts") return { requirements: [{ requirement: "x", account: "acc9", state: null }] }
+    if (path === "/apps/github/accounts") return { requirements: [{ requirement: "github", account: "acc1", state: "reconnect_required" }] }
+    if (path.endsWith("/connect")) return { url: gatewayPage }
+    throw new Error(`unexpected ${path}`)
+  }) as Parameters<typeof startFix>[1]
+  const offered = [
+    { kind: "sign_in_gateway" }, { kind: "connect_account", app: "github", requirement: "github" },
+    { kind: "reconnect_account", app: "github", account: "acc1" }, { kind: "reconnect_account", app: null, account: "acc1" },
+  ] as const
+  for (const action of offered) {
+    expect(offersButton(action)).toBe(true)
+    expect(await startFix(action, call)).toBe(gatewayPage)
+  }
+  // A reconnect without its app found the app from the account, and reconnected that account.
+  expect(calls).toContain("/accounts/acc1")
+  // connect_account, and both reconnects (with and without its app), each start one connection.
+  expect(calls.filter((p) => p === "/apps/github/accounts/github/connect").length).toBe(3)
+  // Every kind with a button has a handler; advice has no button.
+  expect([...EXECUTABLE_FIXES].sort()).toEqual(["connect_account", "reconnect_account", "sign_in_gateway"])
+  expect(offersButton({ kind: "ask_admin" })).toBe(false)
+  // An account linked to no app fails with a typed error, never silently.
+  const unlinked = (async (path: string) => path === "/accounts/gone" ? { apps: [] } : { requirements: [] }) as Parameters<typeof startFix>[1]
+  expect(await startFix({ kind: "reconnect_account", app: null, account: "gone" }, unlinked).catch((e: unknown) => e)).toMatchObject({ code: "connectors.account_not_linked" })
 })

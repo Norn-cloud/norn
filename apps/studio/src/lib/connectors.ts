@@ -69,6 +69,35 @@ export interface Tool {
   readonly bindings: readonly string[]
 }
 
+type Call = <T>(path: string, init?: { readonly method: string; readonly body?: unknown }) => Promise<T>
+const enc = encodeURIComponent
+
+/** Kinds whose fix the page performs itself; `ask_admin` is advice, shown without a button. */
+export const EXECUTABLE_FIXES = ["sign_in_gateway", "connect_account", "reconnect_account"] as const
+export const offersButton = (action: FixAction) => (EXECUTABLE_FIXES as readonly string[]).includes(action.kind)
+
+/**
+ * Perform a fix: every action the page offers a button for resolves to the gateway page that
+ * fixes it (sign-in, or the account's connection form), or fails with the server's typed error.
+ * A reconnect without its app finds the app from the account itself.
+ */
+export async function startFix(action: FixAction, call: Call = api): Promise<string> {
+  switch (action.kind) {
+    case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST" })).url
+    case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {} })).url
+    case "reconnect_account": {
+      const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`)).apps
+      for (const app of apps) {
+        const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`)
+        const requirement = requirements.find((entry) => entry.account === action.account)?.requirement
+        if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account } })).url
+      }
+      throw new ConnectorError(409, "connectors.account_not_linked", "This account is no longer linked to any app; connect it again from its app.")
+    }
+    case "ask_admin": throw new ConnectorError(403, "connectors.ask_admin", "Only an organization admin can do this.")
+  }
+}
+
 /** Fix labels, in the words the page's buttons use. */
 export const fixLabel = (action: FixAction): string => {
   switch (action.kind) {
