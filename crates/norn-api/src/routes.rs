@@ -378,62 +378,130 @@ mod tests {
             host.cell().unwrap().store().verified_head().unwrap()
         );
     }
+    /// The three-systems set admitted over its `core`/`std` base: the wire
+    /// artifacts, the base ids and one retained set builder per artifact list.
+    struct OverBase {
+        artifacts: Vec<serde_json::Value>,
+        base_ids: Vec<String>,
+        receipt: String,
+        digest: String,
+    }
+    impl OverBase {
+        fn admit() -> Self {
+            let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
+                "../../../fixtures/demo/explorer/three-systems.definitions.json"
+            ))
+            .unwrap();
+            let value = |a: &norn_ir::ArtifactEnvelope| {
+                RuntimeValue::from_json(serde_json::to_value(a).unwrap()).unwrap()
+            };
+            let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(|a| {
+                a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
+            });
+            let checked = check_artifact_set_with_receipt(
+                &ReceiptSources::new(
+                    &candidates.iter().map(value).collect::<Vec<_>>(),
+                    &base.iter().map(value).collect::<Vec<_>>(),
+                )
+                .unwrap(),
+                &EntityArtifactSetContext {
+                    registry: &BTreeSet::new(),
+                    base: &base,
+                    tenant: None,
+                },
+                &ResourceLimitProfile::norn_limits_v1(),
+            )
+            .unwrap();
+            assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
+            Self {
+                artifacts: artifacts
+                    .iter()
+                    .map(|a| serde_json::to_value(a).unwrap())
+                    .collect(),
+                base_ids: base.iter().map(|a| a.artifact_id.clone()).collect(),
+                receipt: String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
+                digest: checked.receipt.content_sha256().unwrap(),
+            }
+        }
+        /// The same receipt and digest over `artifacts` as the retained set.
+        fn retained(&self, artifacts: Vec<serde_json::Value>) -> InstalledDefinitionSet {
+            let set = RuntimeValue::from_json(serde_json::Value::Array(artifacts)).unwrap();
+            InstalledDefinitionSet {
+                canonical_set: String::from_utf8(set.canonical_json().unwrap()).unwrap(),
+                admission_receipt: Some(self.receipt.clone()),
+                receipt_sha256: self.digest.clone(),
+                ..installed(&host())
+            }
+        }
+        fn position(&self, id: &str) -> usize {
+            self.artifacts
+                .iter()
+                .position(|a| a["artifactId"] == id)
+                .unwrap()
+        }
+        fn verify(&self, artifacts: Vec<serde_json::Value>) -> Result<Vec<String>, Refusal> {
+            verify_retained(&self.retained(artifacts), host().scope())
+        }
+    }
+
     /// A receipt whose base is retained in the same set verifies here and
-    /// names that base; the base is never resolved from outside the cell.
+    /// names that base, in any retained order; the base is never resolved
+    /// from outside the cell.
     #[test]
     fn retained_base_definitions_verify_and_are_listed() {
-        let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(include_str!(
-            "../../../fixtures/demo/explorer/three-systems.definitions.json"
-        ))
-        .unwrap();
-        let value = |a: &norn_ir::ArtifactEnvelope| {
-            RuntimeValue::from_json(serde_json::to_value(a).unwrap()).unwrap()
-        };
-        let is_base = |a: &&norn_ir::ArtifactEnvelope| {
-            a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
-        };
-        let base: Vec<_> = artifacts.iter().filter(is_base).cloned().collect();
-        let candidates: Vec<_> = artifacts
-            .iter()
-            .filter(|a| !is_base(a))
-            .map(value)
-            .collect();
-        let checked = check_artifact_set_with_receipt(
-            &ReceiptSources::new(&candidates, &base.iter().map(value).collect::<Vec<_>>()).unwrap(),
-            &EntityArtifactSetContext {
-                registry: &BTreeSet::new(),
-                base: &base,
-                tenant: None,
-            },
-            &ResourceLimitProfile::norn_limits_v1(),
-        )
-        .unwrap();
-        assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
-        let set = |canonical_set: String| InstalledDefinitionSet {
-            canonical_set,
-            admission_receipt: Some(
-                String::from_utf8(checked.receipt.canonical_json().unwrap()).unwrap(),
-            ),
-            receipt_sha256: checked.receipt.content_sha256().unwrap(),
-            ..installed(&host())
-        };
-        let all = RuntimeValue::Array(artifacts.iter().map(value).collect());
-        let retained = set(String::from_utf8(all.canonical_json().unwrap()).unwrap());
-        let listed = verify_retained(&retained, host().scope()).unwrap();
-        let mut expected: Vec<_> = base.iter().map(|a| a.artifact_id.clone()).collect();
-        let mut sorted = listed.clone();
-        sorted.sort();
+        let admitted = OverBase::admit();
+        let mut expected = admitted.base_ids.clone();
         expected.sort();
-        assert_eq!(sorted, expected);
+        let mut listed = admitted.verify(admitted.artifacts.clone()).unwrap();
+        listed.sort();
+        assert_eq!(listed, expected);
         assert!(!listed.is_empty());
-        // Without its base the set cannot be verified in this cell.
-        let missing = RuntimeValue::Array(candidates);
-        let partial = set(String::from_utf8(missing.canonical_json().unwrap()).unwrap());
+        let mut reordered = admitted.artifacts.clone();
+        reordered.reverse();
+        let mut listed = admitted.verify(reordered).unwrap();
+        listed.sort();
+        assert_eq!(listed, expected);
+    }
+
+    /// Every substitution of a retained base artifact refuses against the
+    /// original receipt and digest; an incomplete base is context-unavailable.
+    #[test]
+    fn substituted_replayed_or_missing_base_artifacts_refuse() {
+        let admitted = OverBase::admit();
+        let (a, b) = (
+            admitted.position(&admitted.base_ids[0]),
+            admitted.position(&admitted.base_ids[1]),
+        );
+        let unavailable = "defs.receipt_context_unavailable";
+        // (a) Same id and version, other content: the content hash differs.
+        let mut substituted = admitted.artifacts.clone();
+        substituted[a]["lifecycle"] = "deprecated".into();
+        assert_eq!(admitted.verify(substituted).unwrap_err().code, "host.error");
+        // (b) Another version of a base artifact is not the receipt's base.
+        let mut versioned = admitted.artifacts.clone();
+        versioned[a]["version"] = "0.2.0".into();
+        assert_eq!(admitted.verify(versioned).unwrap_err().code, unavailable);
+        // (c) An older base artifact replayed against the newer receipt.
+        let mut replayed = admitted.artifacts.clone();
+        replayed[a]["version"] = "0.0.1".into();
+        replayed[a]["lifecycle"] = "superseded".into();
+        assert_eq!(admitted.verify(replayed).unwrap_err().code, unavailable);
+        // (d) Base B missing, replaced by a duplicate of A: the base count
+        // still matches, but the base set is not the receipt's.
+        let mut duplicated = admitted.artifacts.clone();
+        duplicated[b] = duplicated[a].clone();
+        assert_eq!(admitted.verify(duplicated).unwrap_err().code, "host.error");
+        // A partly missing base is the generic context-unavailable refusal.
+        let mut partial = admitted.artifacts.clone();
+        partial.remove(b);
+        let refused = admitted.verify(partial).unwrap_err();
+        assert_eq!((refused.status, refused.code.as_str()), (409, unavailable));
         assert_eq!(
-            verify_retained(&partial, host().scope()).unwrap_err().code,
-            "defs.receipt_context_unavailable"
+            serde_json::to_string(&refused).unwrap(),
+            serde_json::to_string(&context_unavailable()).unwrap()
         );
     }
+
     #[test]
     fn retained_receipt_checks_sources_and_context_without_readmission() {
         let host = host();

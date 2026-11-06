@@ -1294,6 +1294,7 @@ where
             &[],
             &[],
             None,
+            None,
         )
     }
 
@@ -1310,7 +1311,24 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], None, None)
+    }
+
+    /// Commit a kernel-prepared turn that creates a flow's run object, and
+    /// record the run in the run ledger in the same transaction
+    /// (RUN-LEDGER-1). The commit must create `start.run_id` as a
+    /// `start.object_type` object; otherwise the store refuses
+    /// `run.start_invalid` and nothing commits. A run id already started in
+    /// this world refuses `run.exists`.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_run_start(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        start: &crate::flow_run::RunStart,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, Some(start))
     }
 
     pub(crate) fn commit_observed_evidence(
@@ -1336,6 +1354,7 @@ where
             &references,
             &[],
             mapped_bundle,
+            None,
         )
     }
 
@@ -1354,6 +1373,7 @@ where
         references: &[norn_kernel::FactExpectation],
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped_bundle: Option<&crate::mapping_bundle::MappingBundle>,
+        run_start: Option<&crate::flow_run::RunStart>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1418,6 +1438,10 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
+        if let Some(start) = run_start {
+            // RUN-LEDGER-1: the store records the run in this commit's transaction.
+            batch.events.push(start.event().map_err(CommitError::Host)?);
+        }
         // Only the non-serializable, kernel-bound proof reaches this path.
         // Persist additive occurrence inputs so export/restore replays the
         // same classification without trusting a serialized subtraction.
@@ -1724,7 +1748,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], None, None)
     }
 
     fn commit_action_references(
@@ -1745,6 +1769,7 @@ where
             proof.reference_reads(),
             proof.property_reads(),
             None,
+            None,
         )
     }
 
@@ -1762,7 +1787,7 @@ where
         commit: CellCommit<E, C, I>,
         proof: OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None)
+        self.commit_with_authorization(commit, None, Some(proof), None, &[], &[], &[], None, None)
     }
 
     fn commit_observed(

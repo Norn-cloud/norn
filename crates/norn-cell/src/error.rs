@@ -79,6 +79,9 @@ pub enum CellError {
     /// Deterministic query semantics or snapshot preconditions refused.
     #[error("{0}")]
     ComputeRefused(&'static str),
+    /// RUN-LEDGER-1: a run start or run write was refused (`run.*`).
+    #[error("{0}")]
+    RunRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,
