@@ -13,6 +13,8 @@ pub mod scope;
 
 pub use clock::{Clock, ManualClock};
 
+/// FLOW-DRIVER-1: perform dispatch and result turns of flow runs.
+pub mod flow_driver;
 /// Shared cell and definition epoch.
 pub mod host;
 /// Generic MCP catalog and dispatch boundary.
@@ -25,8 +27,6 @@ pub mod question_routes;
 pub mod routes;
 /// Start, read and list runs of installed flows (RUN-ROUTES-1).
 pub mod run_routes;
-/// FLOW-DRIVER-1: perform dispatch and result turns of flow runs.
-pub mod flow_driver;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 
