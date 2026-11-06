@@ -87,7 +87,9 @@ export function authOptions(config: AuthConfig) {
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
     },
     plugins: [
-      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true }),
+      // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
+      // sender verifies addresses, nobody can join an organization by claiming an invited email.
+      organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true }),
       apiKey({ references: "organization", enableMetadata: true, rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 120 } }),
       magicLink({
         expiresIn: 10 * MINUTE,
