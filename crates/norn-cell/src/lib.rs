@@ -58,6 +58,7 @@ pub mod read;
 mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
+pub mod retained;
 pub mod source_provenance;
 pub mod store;
 pub mod system;

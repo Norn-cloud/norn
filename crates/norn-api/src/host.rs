@@ -53,6 +53,12 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn definition_read(&self) -> Result<RwLockReadGuard<'_, ()>, Refusal> {
         self.definitions.read().map_err(Refusal::host)
     }
+    /// Hold the epoch exclusively while a definition install commits.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn definition_write(&self) -> Result<std::sync::RwLockWriteGuard<'_, ()>, Refusal> {
+        self.definitions.write().map_err(Refusal::host)
+    }
     /// HOST-READ-1: authorize and check explicit scope before opening storage.
     /// # Errors
     /// Every policy or scope failure has the same opaque 403 document.

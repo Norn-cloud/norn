@@ -531,6 +531,9 @@ pub struct DefinitionInstallRecord {
     /// set under a newer checker or profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readmission: Option<DefinitionReadmission>,
+    /// The retained (non-kernel) definition revision this commit appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained: Option<crate::retained::RetainedDefinitionChange>,
 }
 
 /// Construct the exact ledger event emitted for a typed definition install.
@@ -1753,6 +1756,7 @@ struct DefinitionInstallContext<'a> {
     candidate_model: &'a Model,
     input: &'a InstalledDefinitionInput,
     expected_version: Option<u64>,
+    retained: Option<&'a crate::retained::RetainedDefinitionChange>,
 }
 
 struct DefinitionPreflight {
@@ -1792,6 +1796,9 @@ fn preflight_definition_install<E: SqlEngine>(
             })
         })
         .transpose()?;
+    if let Some(change) = install.retained {
+        crate::retained::preflight(engine, change)?;
+    }
     let (layout, layout_revision) =
         resolve_layout_snapshot(previous.as_ref(), install.input.layout.as_deref())?;
     if install.input.readmission.is_some() {
@@ -2033,6 +2040,7 @@ impl<E: SqlEngine> CellStore<E> {
             candidate_model: &store.model,
             input,
             expected_version: Some(0),
+            retained: None,
         };
         store
             .commit_guarded_inner(
@@ -2136,6 +2144,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
+        crate::retained::init(conn)?;
         crate::payload_storage::init(conn)?;
         // Before the model's indexes name `p:` columns of an older file.
         crate::migration::upgrade_raw_property_columns(conn, model)?;
@@ -2535,6 +2544,7 @@ impl<E: SqlEngine> CellStore<E> {
             &input,
             Some(install.installed.version.saturating_sub(1)),
             &record.batch.scope,
+            install.retained.as_ref(),
             CommitOrigin::Retained(record),
         )
     }
@@ -2563,6 +2573,34 @@ impl<E: SqlEngine> CellStore<E> {
             &input,
             expected_version,
             scope,
+            None,
+            CommitOrigin::Current,
+        )
+    }
+
+    /// Install one retained (non-kernel) definition revision through the
+    /// governed definitions install: the kernel set, receipt and model in
+    /// `input` must be the active ones, unchanged; the commit appends the
+    /// revision, a new definitions version and its ledger event atomically.
+    /// The revision is compare-and-set on the id's current revision.
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, or a store error.
+    pub fn install_retained_definition(
+        &mut self,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        scope: &str,
+        change: &crate::retained::RetainedDefinitionChange,
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let model = self.model.clone();
+        self.install_definitions_from_origin(
+            model,
+            input,
+            expected_version,
+            scope,
+            Some(change),
             CommitOrigin::Current,
         )
     }
@@ -2573,6 +2611,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
         scope: &str,
+        retained: Option<&crate::retained::RetainedDefinitionChange>,
         origin: CommitOrigin<'_>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         let batch = CommitBatch {
@@ -2585,6 +2624,7 @@ impl<E: SqlEngine> CellStore<E> {
             candidate_model: &candidate_model,
             input,
             expected_version,
+            retained,
         };
         let result = self.commit_guarded_inner(
             &batch,
@@ -2627,6 +2667,7 @@ impl<E: SqlEngine> CellStore<E> {
             candidate_model,
             input,
             expected_version,
+            retained: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
         Ok(
@@ -2716,6 +2757,7 @@ impl<E: SqlEngine> CellStore<E> {
                     model: install.candidate_model.definitions_snapshot(),
                     diff: install.input.diff.clone(),
                     readmission: install.input.readmission.clone(),
+                    retained: install.retained.cloned(),
                 };
                 (version, Some(record), Some(event_batch))
             } else {
@@ -2850,6 +2892,15 @@ impl<E: SqlEngine> CellStore<E> {
                             to_i64(record.installed.layout_revision, "layout revision")?,
                             layout,
                         ],
+                    )?;
+                }
+                if let Some(change) = &record.retained {
+                    crate::retained::insert(
+                        &self.conn,
+                        &change.definition,
+                        version,
+                        commit_seq,
+                        record.installed.installed_at,
                     )?;
                 }
                 self.conn.execute(
@@ -3306,6 +3357,7 @@ mod identity_history_tests {
                 &legacy_input,
                 Some(1),
                 "s",
+                None,
                 super::CommitOrigin::Retained(&retained),
             )
             .expect("legacy-shaped install through the shared writer");

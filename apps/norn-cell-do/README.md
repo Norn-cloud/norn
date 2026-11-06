@@ -32,8 +32,10 @@ A deployed cell accepts only the Studio Worker's signed host token (#817):
 `Authorization: Bearer <EdDSA JWT>`, audience `norn-host`, at most five
 minutes, its `norn.org` equal to the cell's organization, its role mapped
 through `studio-roles/1` and then the declared grant table
-`norn-cell-do-grants/1` (viewer: Population; member: + Values; admin and
-owner: + Sources). Two Worker settings are pinned configuration, never taken
+`norn-cell-do-grants/2` (viewer: Population; member: + Values; admin and
+owner: + Sources, and they alone write retained definitions: dashboards and
+agents through `/v1/definitions:admit`, `:install` and `/{id}:retire`).
+Two Worker settings are pinned configuration, never taken
 from a token:
 
 - `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);

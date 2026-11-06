@@ -134,6 +134,16 @@ pub enum CellError {
         /// Version currently installed in the cell.
         actual: Option<u64>,
     },
+    /// A retained definition's current revision changed since the caller read it.
+    #[error("retained definition {id} revision conflict: expected {expected:?}, found {actual:?}")]
+    RetainedDefinitionConflict {
+        /// The retained definition id.
+        id: String,
+        /// Revision the request was planned against.
+        expected: Option<u64>,
+        /// Revision currently installed.
+        actual: Option<u64>,
+    },
     /// A declassification's exact current fact version no longer matches.
     #[error(
         "marking declassification version conflict for {object_type}/{key}: expected {expected}, found {actual:?}"

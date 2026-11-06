@@ -219,8 +219,8 @@ fn a_restarted_analytics_cell_answers_identically_without_reloading() {
     let reopened = analytics::provision(open(), &analytics::analytics_scope()).unwrap();
     assert_eq!(
         reopened.store.verified_head().unwrap().commits,
-        1,
-        "K1 loads exactly once"
+        2,
+        "the governed provision and the K1 load each happen exactly once"
     );
     drop(reopened);
     assert_eq!(
@@ -284,4 +284,101 @@ fn answers_need_the_stage_lineage_key_and_handles_are_per_secret() {
         .status,
         200
     );
+}
+
+/// A cell opened before the analytics cell had a definitions version (the K1
+/// rows in a model-only store) upgrades in place on open: v1 is installed
+/// once, after the rows, which keep answering identically.
+#[test]
+fn an_analytics_cell_without_definitions_upgrades_in_place_once() {
+    let directory = std::env::temp_dir().join(format!(
+        "norn-cell-do-analytics-upgrade-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    let scope = analytics::analytics_scope();
+    {
+        // The previous provisioning: a model-only store and one K1 commit.
+        let object = analytics::object_type().unwrap();
+        let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
+        let mut old = norn_cell::CellStore::from_engine(open(), model).unwrap();
+        old.commit(&analytics::k1_batch(&scope).unwrap()).unwrap();
+        assert!(old.read().installed_definitions(None).unwrap().is_none());
+    }
+    let fresh = get(
+        &cell(NativeEngine::open_in_memory().unwrap()),
+        &answer_path(),
+        SCOPE,
+        VIEWER,
+    )
+    .body;
+    let upgraded = analytics::provision(open(), &scope).unwrap();
+    assert_eq!(
+        upgraded.store.verified_head().unwrap().commits,
+        2,
+        "the K1 load, then v1"
+    );
+    let v1 = upgraded
+        .store
+        .read()
+        .installed_definitions(None)
+        .unwrap()
+        .unwrap();
+    assert_eq!((v1.version, v1.commit_seq), (1, 2));
+    drop(upgraded);
+    // A second open is a no-op.
+    let reopened = analytics::provision(open(), &scope).unwrap();
+    assert_eq!(reopened.store.verified_head().unwrap().commits, 2);
+    assert_eq!(
+        reopened
+            .store
+            .read()
+            .installed_definitions(None)
+            .unwrap()
+            .unwrap(),
+        v1
+    );
+    drop(reopened);
+    // The rows answer as a fresh cell's do, and the catalog read serves v1.
+    // Only the ledger-bound revision hash and the lineage handle keyed by it
+    // differ: the upgraded cell's history is K1, then v1.
+    let served = cell(open());
+    let history_free = |body: &str| {
+        let mut answer: Value = serde_json::from_str(body).unwrap();
+        let fields = answer.as_object_mut().unwrap();
+        fields.remove("lineageRef").unwrap();
+        fields["revision"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hash")
+            .unwrap();
+        answer
+    };
+    assert_eq!(
+        history_free(&get(&served, &answer_path(), SCOPE, VIEWER).body),
+        history_free(&fresh)
+    );
+    let catalog: Value =
+        serde_json::from_str(&get(&served, "/v1/definitions", SCOPE, VIEWER).body).unwrap();
+    assert_eq!(catalog["version"], 1, "{catalog}");
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn a_fresh_analytics_cell_installs_v1_then_loads_k1() {
+    let opened = analytics::provision(
+        NativeEngine::open_in_memory().unwrap(),
+        &analytics::analytics_scope(),
+    )
+    .unwrap();
+    assert_eq!(opened.store.verified_head().unwrap().commits, 2);
+    let v1 = opened
+        .store
+        .read()
+        .installed_definitions(None)
+        .unwrap()
+        .unwrap();
+    assert_eq!((v1.version, v1.commit_seq), (1, 1));
 }
