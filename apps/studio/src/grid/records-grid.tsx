@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, ExternalLink, Filter, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -18,7 +18,7 @@ import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
-import { alignRight, Cell, isWithheld, WITHHELD, WITHHELD_HINT, type GridRow } from "./cells.tsx"
+import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 
 const ROW = 36
@@ -37,9 +37,18 @@ function SortMark({ direction }: { readonly direction: "asc" | "desc" | undefine
   return <ArrowUpDown className="size-3 opacity-40" aria-hidden />
 }
 
+/** The Records card, on the D65 depth model the canvas uses: hairline border, top highlight, contact plus ambient shadow. */
 function Shell({ children }: { readonly children: ReactNode }) {
-  return <Panel icon={Rows3} label="Records"><Well className="p-3">{children}</Well></Panel>
+  return (
+    <section aria-label="Records" className="rounded-node border border-node-border bg-card p-3 shadow-[var(--node-highlight),var(--elevation-node)]">
+      <h2 className="flex items-center gap-2 px-1 pb-3 text-panel font-medium"><Rows3 className="size-4 text-muted-foreground" aria-hidden />Records</h2>
+      {children}
+    </section>
+  )
 }
+
+/** The Record column stays put while the others scroll sideways. */
+const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 
 /**
  * An object type's records, one server page at a time. Sorting, filtering and paging are the
@@ -84,9 +93,26 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
 
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
   const columns = fields.filter(({ id }) => shown.has(id))
-  const template = `minmax(12rem,1.4fr) ${columns.map(() => "minmax(8rem,1fr)").join(" ")}`
+  // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
+  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(8rem,1fr)" : "minmax(9.5rem,1fr)").join(" ")}`
+  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "8rem" : "9.5rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
+  const [edges, setEdges] = useState({ right: false })
+  const measureEdges = () => {
+    const el = scroller.current
+    if (el === null) return
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+    setEdges((current) => current.right === right ? current : { right })
+  }
+  useEffect(() => {
+    measureEdges()
+    const el = scroller.current
+    if (el === null || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measureEdges)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [rows.length, columns.length])
   const virtual = useVirtualizer({ count: rows.length, getScrollElement: () => scroller.current, estimateSize: () => ROW, overscan: 8, initialRect: { width: 1024, height: 480 } })
 
   const changeQuery = (next: { sort?: readonly SortKey[]; filter?: Predicate | null; limit?: number }) => {
@@ -121,119 +147,136 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const filterCount = filter?.all.length ?? 0
   const draftDirty = JSON.stringify(draft) !== JSON.stringify(applied)
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
+  const pill = "h-8 rounded-lg px-2.5 text-sm"
 
   return (
     <Shell>
       <div className="grid gap-3">
-        <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Records">
-          <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" disabled={!canQuery || filterable(fields).length === 0} title={off}>
-                <Filter /> Filter{filterCount > 0 && <Badge variant="secondary" className="ml-1">{filterCount}</Badge>}
-                {draftDirty && <span className="size-1.5 rounded-full bg-primary" aria-label="Unapplied changes" />}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-[min(44rem,90vw)]">
-              <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} />
-            </PopoverContent>
-          </Popover>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button variant="outline" size="sm"><Columns3 /> Columns</Button></DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-              <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {fields.map((field) => (
-                <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
-                  onSelect={(event) => event.preventDefault()}
-                  onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
-                  {field.id.replaceAll("_", " ")}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <label className="flex items-center gap-1 text-meta text-muted-foreground">
-            Per page
-            <select className="h-8 rounded-md border bg-background px-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery} title={off}
-              onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
-              {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
-          {sort.length > 0 && <Button variant="ghost" size="sm" onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+        {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
+        {refused && (
+          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <span className="font-medium">{refused.message}</span>
+            {sortProblems.map((problem) => <span key={`${problem.pointer}:${problem.code}`} className="text-meta">{problem.message}</span>)}
+            <span className="flex-1" />
+            <Button variant="outline" size="sm" className={pill} onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button>
+          </div>
+        )}
+        {result.isError && (
+          <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <span>{result.error instanceof Error ? result.error.message : "The records could not be read."}</span>
+            <span className="flex-1" />
+            <Button variant="outline" size="sm" className={pill} onClick={() => void result.refetch()}>Retry</Button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+            <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className={pill} disabled={!canQuery || filterable(fields).length === 0} title={off}>
+                  <Filter /> Filter{filterCount > 0 && <span className="ml-0.5 rounded-md bg-primary/10 px-1.5 text-xs tabular-nums text-primary">{filterCount}</span>}
+                  {draftDirty && <span className="size-1.5 rounded-full bg-primary" aria-label="Unapplied changes" />}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[min(44rem,90vw)] rounded-node border-node-border shadow-float">
+                <FilterEditor fields={fields} draft={draft} onDraft={setDraft} onApply={applyFilter} onClear={clearFilter} applied={applied} diagnostics={refused?.diagnostics ?? []} />
+              </PopoverContent>
+            </Popover>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="sm" className={pill}><Columns3 /> Columns</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto rounded-node border-node-border shadow-float">
+                <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {fields.map((field) => (
+                  <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
+                    onSelect={(event) => event.preventDefault()}
+                    onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
+                    {field.id.replaceAll("_", " ")}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span className="mx-0.5 h-5 w-px bg-node-border" aria-hidden />
+            <label className="flex items-center gap-1.5 px-1.5 text-meta text-muted-foreground">
+              Per page
+              <select className="h-7 rounded-md border border-node-border bg-background px-1.5 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" value={limit} disabled={!canQuery} title={off}
+                onChange={(event) => changeQuery({ limit: Number(event.target.value) })}>
+                {PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            {sort.length > 0 && <Button variant="ghost" size="sm" className={pill} onClick={() => changeQuery({ sort: [] })}>Clear sort</Button>}
+          </div>
           <span className="flex-1" />
-          {page?.origin === "recorded" && <Badge variant="outline" title={RECORDED}>Recorded</Badge>}
+          {page?.origin === "recorded" && <Badge variant="outline" className="border-node-border" title={RECORDED}>Recorded</Badge>}
           <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
             {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
           </span>
         </div>
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
-        {refused && (
-          <div role="alert" className="grid gap-1 rounded-md border border-destructive/40 p-3 text-sm text-destructive">
-            <span>{refused.message}</span>
-            {sortProblems.map((problem) => <span key={`${problem.pointer}:${problem.code}`} className="text-meta">{problem.message}</span>)}
-            <span><Button variant="outline" size="sm" onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button></span>
-          </div>
-        )}
-        {result.isError && (
-          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
-            <span>{result.error instanceof Error ? result.error.message : "The records could not be read."}</span>
-            <Button variant="outline" size="sm" onClick={() => void result.refetch()}>Retry</Button>
-          </div>
-        )}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
           <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review.</p>
         )}
 
-        <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
-          aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey}
-          className={cn("relative max-h-[60vh] overflow-auto rounded-lg border text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring", result.isFetching && "opacity-70")}>
-          <div role="row" aria-rowindex={1} className="sticky top-0 z-10 grid border-b bg-muted/60 backdrop-blur" style={{ gridTemplateColumns: template }}>
-            <div role="columnheader" className="px-3 py-2 font-medium">Record</div>
-            {columns.map((field: Field) => {
-              const key = sort.find(({ property }) => property === field.id)
-              const can = canQuery && sortable(field)
-              return (
-                <div key={field.id} role="columnheader" aria-sort={key ? (key.direction === "asc" ? "ascending" : "descending") : undefined} className={cn("px-3 py-2 font-medium", alignRight(field) && "text-right")}>
-                  <button type="button" disabled={!can} title={can ? "Sort (Shift adds a key)" : off ?? "This kind of value can't be sorted."}
-                    className="inline-flex items-center gap-1 disabled:cursor-default" onClick={(event) => changeQuery({ sort: cycleSort(sort, field.id, event.shiftKey) })}>
-                    {field.id.replaceAll("_", " ")}{can && <SortMark direction={key?.direction} />}
-                    {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
-                  </button>
+        <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">
+          <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
+            aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
+            className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
+            <div style={{ minWidth: width }}>
+              <div role="row" aria-rowindex={1} className="sticky top-0 z-20 grid border-b border-node-border bg-muted" style={{ gridTemplateColumns: template }}>
+                <div role="columnheader" className={cn(STICKY, "bg-muted px-3 py-2 font-medium")}>Record</div>
+                {columns.map((field: Field) => {
+                  const key = sort.find(({ property }) => property === field.id)
+                  const can = canQuery && sortable(field)
+                  const label = field.id.replaceAll("_", " ")
+                  return (
+                    <div key={field.id} role="columnheader" aria-sort={key ? (key.direction === "asc" ? "ascending" : "descending") : undefined}
+                      className={cn("flex min-w-0 items-center px-3 py-2 font-medium", alignRight(field) && "justify-end")}>
+                      <button type="button" disabled={!can} title={can ? `${label}: sort (Shift adds a key)` : `${label}: ${off ?? "this kind of value can't be sorted"}`}
+                        className="inline-flex min-w-0 items-center gap-1 whitespace-nowrap disabled:cursor-default" onClick={(event) => changeQuery({ sort: cycleSort(sort, field.id, event.shiftKey) })}>
+                        <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
+                        {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              {result.isPending && <div className="grid gap-1 p-3" aria-label="Reading records">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}</div>}
+              {page !== undefined && rows.length === 0 && (
+                <div className="sticky left-0 w-full max-w-[min(100%,64rem)] p-6">
+                  {filterCount > 0
+                    ? <EmptyState icon={Filter} title="No matches">No records match this filter. <Button variant="link" className="h-auto p-0" onClick={clearFilter}>Clear filter</Button></EmptyState>
+                    : <EmptyState icon={Rows3}>No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
                 </div>
-              )
-            })}
-          </div>
-          {result.isPending && <div className="grid gap-1 p-3" aria-label="Reading records">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}</div>}
-          {page !== undefined && rows.length === 0 && (
-            <div className="p-6">
-              {filterCount > 0
-                ? <EmptyState icon={Filter} title="No matches">No records match this filter. <Button variant="link" className="h-auto p-0" onClick={clearFilter}>Clear filter</Button></EmptyState>
-                : <EmptyState icon={Rows3}>No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
+              )}
+              <div className="relative" style={{ height: virtual.getTotalSize() }}>
+                {virtual.getVirtualItems().map((item) => {
+                  const row = rows[item.index]
+                  if (row === undefined) return null
+                  const withheld = isWithheld(row)
+                  const current = item.index === active
+                  return (
+                    <div key={`${row.record.objectType}:${row.record.id}`} id={`row-${item.index}`} role="row" aria-rowindex={item.index + 2} aria-selected={current}
+                      data-withheld={withheld || undefined}
+                      className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
+                      style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
+                      onClick={() => { setActive(item.index); setOpened(row) }}>
+                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}>{nameOf(row)}</div>
+                      {withheld
+                        ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
+                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("min-w-0 truncate px-3", alignRight(field) && "text-right")}><Cell field={field} row={row} /></div>)}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          )}
-          <div className="relative" style={{ height: virtual.getTotalSize() }}>
-            {virtual.getVirtualItems().map((item) => {
-              const row = rows[item.index]
-              if (row === undefined) return null
-              const withheld = isWithheld(row)
-              return (
-                <div key={`${row.record.objectType}:${row.record.id}`} id={`row-${item.index}`} role="row" aria-rowindex={item.index + 2} aria-selected={item.index === active}
-                  data-withheld={withheld || undefined}
-                  className={cn("absolute inset-x-0 grid cursor-pointer items-center border-b hover:bg-muted/40", item.index === active && "bg-accent/60")}
-                  style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
-                  onClick={() => { setActive(item.index); setOpened(row) }}>
-                  <div role="gridcell" className="truncate px-3 font-medium">{nameOf(row)}</div>
-                  {columns.map((field) => <div key={field.id} role="gridcell" className={cn("truncate px-3", alignRight(field) && "text-right")}><Cell field={field} row={row} /></div>)}
-                </div>
-              )
-            })}
           </div>
+          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
         </div>
 
         <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
-          <Button variant="outline" size="sm" disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
+          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={pageIndex === 0} onClick={() => { setPageIndex(pageIndex - 1); setActive(0) }}>Previous</Button>
           <span className="tabular-nums">Page {pageIndex + 1}</span>
-          <Button variant="outline" size="sm" disabled={page?.next === undefined || result.isFetching}
+          <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
             onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
         </nav>
       </div>
@@ -263,7 +306,7 @@ function RecordDrawer({ concept, fields, row, origin, onClose }: {
           </SheetHeader>
           <div className="grid gap-4 px-4 pb-6">
             {isWithheld(row)
-              ? <p className="rounded-md border p-3 text-sm text-muted-foreground" title={WITHHELD_HINT}>{WITHHELD}: {WITHHELD_HINT}</p>
+              ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
                 {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><Cell field={field} row={row} /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>

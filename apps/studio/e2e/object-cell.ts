@@ -6,7 +6,7 @@ import type { Page, Route } from "@playwright/test"
  * It exists so the grid's rows run before the cell deploys the route; it is not a client policy.
  */
 
-export interface Holding { readonly id: string; readonly withheld: boolean; readonly values: Readonly<Record<string, string>> }
+export interface Holding { readonly id: string; readonly withheld: boolean; readonly withheldProperties: readonly string[]; readonly values: Readonly<Record<string, string>> }
 
 const METHODS = ["fifo", "moving_average"] as const
 const BASES = ["on_hand", "available"] as const
@@ -23,13 +23,15 @@ const OPS: Readonly<Record<string, readonly string[]>> = {
 const DECIMAL = /^-?\d+(\.\d+)?$/
 const PROPERTY = /^[a-z][a-z0-9_]*$/
 
-export function population(count: number, withheldEvery = 0): Holding[] {
+/** `count` holdings; every `withheldEvery`th row is withheld, and every `costHiddenEvery`th withholds only its stock cost. */
+export function population(count: number, withheldEvery = 0, costHiddenEvery = 0): Holding[] {
   return Array.from({ length: count }, (_, index) => {
     const n = index + 1
     const quantity = `${(n * 37) % 1000}.${String((n * 7) % 1000).padStart(3, "0")}`
     return {
       id: `demo/holding/${String(n).padStart(4, "0")}`,
       withheld: withheldEvery > 0 && n % withheldEvery === 0,
+      withheldProperties: costHiddenEvery > 0 && n % costHiddenEvery === 0 ? ["stock_cost"] : [],
       values: {
         resource_code: `R-${String(n).padStart(4, "0")}`, quantity, unit: "g", currency: "USD",
         valuation_method: METHODS[n % 2] ?? "fifo", location: n % 3 === 0 ? "north" : "south",
@@ -157,7 +159,7 @@ export async function objectCell(page: Page, rows: readonly Holding[]): Promise<
     const slice = ordered.slice(offset, offset + limit)
     const next = offset + limit < ordered.length ? btoa(JSON.stringify({ offset: offset + limit, shape, snapshot })) : null
     // Exact decimals go out as JSON number tokens, as the cell writes them.
-    const records = slice.map((row) => `{"objectType":"canon.Holding","id":${JSON.stringify(row.id)},"scope":"org_demo/analytics","version":1,"withheld":${row.withheld},"values":${row.withheld ? "null" : `{${Object.entries(row.values).map(([k, v]) => `${JSON.stringify(k)}:${KINDS[k] === "decimal" ? v : JSON.stringify(v)}`).join(",")}}`}}`)
+    const records = slice.map((row) => `{"objectType":"canon.Holding","id":${JSON.stringify(row.id)},"scope":"org_demo/analytics","version":1,"withheld":${row.withheld},"withheldProperties":${JSON.stringify(row.withheld ? [] : row.withheldProperties)},"values":${row.withheld ? "null" : `{${Object.entries(row.values).filter(([k]) => !row.withheldProperties.includes(k)).map(([k, v]) => `${JSON.stringify(k)}:${KINDS[k] === "decimal" ? v : JSON.stringify(v)}`).join(",")}}`}}`)
     const body = `{"objectType":"canon.Holding","records":[${records.join(",")}],"quarantineCount":0,"scannedThrough":null,"query":${JSON.stringify({ sort, filter })},"next":${JSON.stringify(next)},"total":{"count":${ordered.length},"approximate":false}}`
     return route.fulfill({ status: 200, contentType: "application/json", body })
   })

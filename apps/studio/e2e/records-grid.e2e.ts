@@ -144,14 +144,21 @@ test("reopen: a record opens from the grid, closes, reopens, and opens in full",
 
 test("withheld rows read Withheld everywhere, sort last, and never match a filter", async ({ page }) => {
   await session(page)
-  const cell = await objectCell(page, population(40, 4))
+  const cell = await objectCell(page, population(40, 4, 3))
   await page.goto("/objects/canon.Holding")
   const withheld = grid(page).locator('[data-withheld="true"]')
-  await expect(withheld.first()).toContainText("Withheld")
+  await expect(withheld.first()).toContainText("Withheld: you can't see this record's values")
   await expect(withheld.first()).not.toContainText("USD")
+  // One message spans the row; the record id stays in its own cell.
+  await expect(withheld.first().getByRole("gridcell")).toHaveCount(2)
+  await expect(withheld.first().getByRole("gridcell").first()).toHaveText("demo/holding/0004")
+  // A row whose stock cost alone is withheld reads Withheld in that cell only.
+  const costHidden = rows(page).nth(2)
+  await expect(costHidden.getByRole("gridcell").nth(8)).toHaveText("Withheld")
+  await expect(costHidden).toContainText("111.021")
   await shoot(page, "withheld")
   await withheld.first().click()
-  await expect(page.getByRole("dialog")).toContainText("Withheld: The server withheld this record's values")
+  await expect(page.getByRole("dialog")).toContainText("Withheld: you can't see this record's values")
   await page.keyboard.press("Escape")
   await page.getByRole("columnheader", { name: "quantity", exact: true }).getByRole("button").click()
   await expect(rows(page).first()).not.toHaveAttribute("data-withheld", "true")

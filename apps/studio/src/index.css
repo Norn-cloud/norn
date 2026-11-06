@@ -53,6 +53,32 @@
   --sidebar-border: #e5e7eb;
   --sidebar-ring: #2563eb;
   --elevation-1: 0 1px 2px 0 rgb(10 10 10 / 0.06), 0 1px 3px -1px rgb(10 10 10 / 0.05);
+  /*
+   * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
+   * a tight contact shadow plus a large, very faint ambient one, a hairline border and a top highlight.
+   * Hover lifts (deeper ambient); selection is an accent ring, never a heavier border.
+   */
+  --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
+  --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
+  --elevation-float: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px -8px rgb(15 23 42 / 0.16);
+  --node-border: rgb(15 23 42 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --node-radius: 14px;
+  --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
+  --canvas-surface: #fafafa;
+  --canvas-dot: rgb(15 23 42 / 0.09);
+  --edge: #8a929e;
+  --edge-active: var(--ring);
+  /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
+  --tint-state: #64748b;
+  --tint-tool: #2563eb;
+  --tint-ask: #c2410c;
+  --tint-route: #0f766e;
+  --tint-wait: #7c5e10;
+  --tint-outcome: #15803d;
+  --tint-agent: #4338ca;
+  --tint-law: #be123c;
+  --tint-start: #334155;
 }
 
 .dark {
@@ -94,6 +120,25 @@
   --sidebar-border: #38383d;
   --sidebar-ring: #4aa3f0;
   --elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 2px 6px -1px rgb(0 0 0 / 0.35);
+  --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
+  --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
+  --elevation-float: 0 1px 2px rgb(0 0 0 / 0.5), 0 10px 28px -8px rgb(0 0 0 / 0.65);
+  --node-border: rgb(255 255 255 / 0.09);
+  --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
+  --canvas-surface: #151517;
+  --canvas-dot: rgb(255 255 255 / 0.08);
+  --edge: #73737d;
+  --edge-active: var(--ring);
+  --tint-state: #94a3b8;
+  --tint-tool: #60a5fa;
+  --tint-ask: #fb923c;
+  --tint-route: #2dd4bf;
+  --tint-wait: #facc15;
+  --tint-outcome: #4ade80;
+  --tint-agent: #a5b4fc;
+  --tint-law: #fb7185;
+  --tint-start: #cbd5e1;
 }
 
 @theme inline {
@@ -108,6 +153,12 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --shadow-elevation: var(--elevation-1);
+  --shadow-node: var(--elevation-node);
+  --shadow-node-hover: var(--elevation-node-hover);
+  --shadow-float: var(--elevation-float);
+  --radius-node: var(--node-radius);
+  --color-node-border: var(--node-border);
+  --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --text-meta: 0.8125rem;
   --text-panel: 0.9375rem;

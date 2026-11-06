@@ -66,7 +66,9 @@ test("a live page that echoes its query turns sorting on and shows the server's 
   expect(html).toContain("Sort (Shift adds a key)")
   expect(html).toContain("2 records")
   expect(html).toContain("Alpha")
-  expect(html).toMatch(/data-withheld="true"[^]*>Withheld</)
+  expect(html).toMatch(/data-withheld="true"[^]*Withheld: you can&#x27;t see this record&#x27;s values/)
+  // One row-spanning message, not one per cell.
+  expect(html.match(/data-withheld="true"[^]*?<\/div><\/div>/)?.[0].match(/role="gridcell"/g)).toHaveLength(2)
 })
 
 test("an approximate total reads as about", async () => {
@@ -97,4 +99,8 @@ test("typed cells keep the server's exact text", () => {
   expect(cellText(field("on", { kind: "date" }), row)).toBe("2026-11-06")
   expect(cellText(field("missing", { kind: "text" }), row)).toBe("—")
   expect(cellText(field("qty", { kind: "decimal" }), { ...row, record: { ...row.record, values: null as never, withheld: true } as never })).toBe("Withheld")
+  // A property the server lists is withheld; a missing one is a dash, never the other way round.
+  const partly = { ...row, record: { ...row.record, withheld: false, withheldProperties: ["qty"] } as never }
+  expect(cellText(field("qty", { kind: "decimal" }), partly)).toBe("Withheld")
+  expect(cellText(field("missing", { kind: "text" }), partly)).toBe("—")
 })
