@@ -119,7 +119,9 @@ admitted first, then the host authorizer decides the `StartRun(flow)` operation
 start turn (`{kind: "start", runId}` over an absent run), and the cell commits the
 resulting run object, dispatches and ledger row in one commit (RUN-LEDGER-1).
 An exact retry returns the existing run with 200. The same id under another flow
-refuses `run.exists`. An unknown flow refuses `run.flow_not_found`, and a refused
+refuses `run.exists`. An unknown flow refuses `run.flow_not_found`, a retired flow
+(its rule's lifecycle is `retired`) refuses `run.flow_retired` (409) while its live
+runs still advance, and a refused
 start turn returns the kernel's code. `GET /v1/runs/{id}` and
 `GET /v1/runs?flow=&state=&cursor=&limit=` read the ledger in run-id order. Every
 run passes the ordinary `values` read gate on its object type. An unreadable run
