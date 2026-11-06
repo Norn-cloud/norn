@@ -2,6 +2,7 @@ import { apiKey } from "@better-auth/api-key"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
 import { APIError } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
+import { genericOAuth } from "better-auth/plugins/generic-oauth"
 import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
@@ -51,9 +52,38 @@ export interface AuthConfig {
   readonly defaultOrganizationId?: string
   /** "js" where the runtime has no `node:crypto.scrypt` (celld); absent or "native" otherwise. */
   readonly scrypt?: PasswordScrypt
+  /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
+  readonly gateway?: GatewayClient
+}
+
+/** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from Infisical by name. */
+export interface GatewayClient {
+  readonly url: string
+  readonly clientId: string
+  readonly clientSecret: string
 }
 
 const MINUTE = 60
+
+/**
+ * Link-only OAuth to the gateway: a signed-in person grants Studio their gateway access once,
+ * Better Auth keeps the grant encrypted in `account` and refreshes it, and the Worker uses it
+ * server-side. It never signs anyone in or creates a Norn user.
+ */
+const gatewayLink = (gateway: GatewayClient) => genericOAuth({
+  config: [{
+    providerId: "executor",
+    clientId: gateway.clientId,
+    clientSecret: gateway.clientSecret,
+    authorizationUrl: `${gateway.url}/api/auth/oauth2/authorize`,
+    tokenUrl: `${gateway.url}/api/auth/oauth2/token`,
+    userInfoUrl: `${gateway.url}/api/auth/oauth2/userinfo`,
+    scopes: ["openid", "email", "offline_access", "executor"],
+    pkce: true,
+    disableSignUp: true,
+    disableImplicitSignUp: true,
+  }],
+})
 
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
@@ -87,6 +117,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         }
       },
     },
+    // Gateway grants are linked to an existing session only (never a sign-in), so the gateway's
+    // email need not match; tokens are encrypted at rest.
+    account: { encryptOAuthTokens: true, accountLinking: { enabled: true, trustedProviders: ["executor"], allowDifferentEmails: true } },
     session: {
       expiresIn: 7 * 24 * 60 * MINUTE,
       updateAge: 24 * 60 * MINUTE,
@@ -131,6 +164,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       }),
       // Short-lived tokens the Worker mints for the Norn host (#817); the host verifies them against /api/auth/jwks.
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
+      ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
     ],
     databaseHooks: {
       user: {

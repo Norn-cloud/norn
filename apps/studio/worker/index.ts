@@ -4,6 +4,7 @@ import type { AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
 import type { Scope } from "./limits.ts"
 import { passwordScrypt } from "./password.ts"
+import { connectors } from "./connectors.ts"
 
 export { AgentBudget } from "./budget.ts"
 
@@ -28,6 +29,10 @@ export interface Env {
   readonly STUDIO_DEFAULT_ORG?: string
   /** "js" selects the pure-JS scrypt (set by the celld config); Cloudflare leaves it unset. */
   readonly AUTH_SCRYPT?: string
+  /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
+  readonly GATEWAY_URL?: string
+  readonly GATEWAY_CLIENT_ID?: string
+  readonly GATEWAY_CLIENT_SECRET?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -46,7 +51,9 @@ function auth(env: Env): Auth {
   const sendMagicLink = mail === undefined || from === undefined ? undefined : async ({ to, url }: MagicLinkMail) => {
     await mail.send({ to, from, subject: "Sign in to Norn Studio", text: `Sign in to Norn Studio: ${url}\n\nThe link expires in 10 minutes. If you did not ask for it, ignore this email.` })
   }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG } })
+  const { GATEWAY_URL: url, GATEWAY_CLIENT_ID: clientId, GATEWAY_CLIENT_SECRET: clientSecret } = env
+  const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
+  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, scrypt: passwordScrypt(env.AUTH_SCRYPT), ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -156,6 +163,11 @@ export default {
       // Loaded on first use, like the assistant: the checker's WebAssembly is not needed elsewhere.
       const { questionsRoute } = await import("./questions.ts")
       return questionsRoute(request, pathname, async () => (await import("./checker.ts")).admitQuestion)
+    }
+    if (pathname.startsWith("/api/connectors/")) {
+      // A gateway URL without its OAuth client is not a gateway this stage can use.
+      const gatewayEnv = env.GATEWAY_CLIENT_ID === undefined || env.GATEWAY_CLIENT_SECRET === undefined ? { ...env, GATEWAY_URL: undefined } : env
+      return connectors(request, gatewayEnv, auth(env), pathname.slice("/api/connectors".length), { db: env.AUTH_DB })
     }
     const session = await auth(env).api.getSession({ headers: request.headers })
     if (session === null) return refuse(401, "Sign in first.")
