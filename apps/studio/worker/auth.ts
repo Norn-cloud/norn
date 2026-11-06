@@ -62,6 +62,9 @@ const MINUTE = 60
  * Better Auth keeps the grant encrypted in `account` and refreshes it, and the Worker uses it
  * server-side. It never signs anyone in or creates a Norn user.
  */
+/** The resource Studio's gateway tokens are for: the gateway's product API (`/api`), not its MCP endpoint. */
+export const gatewayResource = (gateway: GatewayClient) => `${gateway.url}/api`
+
 const gatewayLink = (gateway: GatewayClient) => genericOAuth({
   config: [{
     providerId: "executor",
@@ -74,6 +77,10 @@ const gatewayLink = (gateway: GatewayClient) => genericOAuth({
     pkce: true,
     disableSignUp: true,
     disableImplicitSignUp: true,
+    // RFC 8707: the gateway issues tokens only for a named resource, its product API.
+    authorizationUrlParams: { resource: gatewayResource(gateway) },
+    tokenUrlParams: { resource: gatewayResource(gateway) },
+    refreshTokenParams: { resource: gatewayResource(gateway) },
     getUserInfo: (tokens) => gatewaySubject(gateway, tokens.accessToken),
   }],
 })

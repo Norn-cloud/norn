@@ -12,6 +12,8 @@ export interface GatewayTool {
   readonly description: string | null
   readonly inputSchema: unknown
   readonly outputSchema: unknown | null
+  /** The app version the gateway evaluated this tool from; null when it did not say. */
+  readonly version: string | null
 }
 
 export interface GatewayApp {
@@ -110,14 +112,14 @@ export class Gateway {
     const body = record(await this.request("GET", `/api/organizations/${segment(organization)}/apps/${segment(app)}/tools${query}`))
     const tools = list(body.items).map(record).flatMap((tool) => {
       const name = text(tool.name)
-      return name === null ? [] : [{ app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }]
+      return name === null ? [] : [{ app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null, version: text(tool.version) ?? text(body.version) }]
     })
     return { tools, next: text(body.next) }
   }
 
   async tool(organization: string, app: string, name: string): Promise<GatewayTool> {
     const tool = record(await this.request("GET", `/api/organizations/${segment(organization)}/apps/${segment(app)}/tools/${segment(name)}`))
-    return { app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }
+    return { app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null, version: text(tool.version) }
   }
 
   /** The user's links for each of an app's per-user account requirements. */

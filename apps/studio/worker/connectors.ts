@@ -1,6 +1,6 @@
 import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
-import { getBinding, listBindings, readDraft, removeBinding, runInput, saveBinding, type Binding } from "./bindings.ts"
+import { getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -184,7 +184,9 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
       const tool = await gateway.tool(organization, target.app, target.tool)
       const draft = readDraft(body, tool.inputSchema, existing)
       if ("error" in draft) return refusal(400, "connectors.binding_invalid", draft.error, undefined, draft.field)
-      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, existing?.id) })
+      // Pinned to the tool as the gateway serves it now: the canvas and the host admit by this digest, never by name.
+      const pin = { manifestDigest: await manifestDigest(toolManifest(tool)), connector: { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: tool.version } }
+      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, pin, existing?.id) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
