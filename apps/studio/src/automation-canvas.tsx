@@ -46,18 +46,27 @@ type ExitEdgeData = { readonly label?: string; readonly full?: string }
  */
 export function ExitEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }: EdgeProps<Edge<ExitEdgeData, "exit">>) {
   const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  // The label never runs under a card: going forward it is clamped to the gap before the target card and ends at
+  // its edge (cut with an ellipsis, in full on hover); a gap too small for a word shows none, the exit's handle names it.
+  const forward = targetX > sourceX
+  const room = forward ? Math.min(LABEL_MAX, targetX - sourceX - 2 * LABEL_GAP) : LABEL_MAX
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
-      {data?.label && (
+      {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute max-w-32 truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
-            style={{ transform: `translate(0, -50%) translate(${sourceX + 8}px, ${sourceY}px)` }}>{data.label}</div>
+          <div data-exit-label={id} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
+            style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
     </>
   )
 }
+
+/** Exit labels: at most this wide, this far from either card, and none narrower than a short word. */
+const LABEL_MAX = 128
+const LABEL_GAP = 8
+const LABEL_MIN = 32
 
 const EDGE_TYPES = { exit: ExitEdge }
 

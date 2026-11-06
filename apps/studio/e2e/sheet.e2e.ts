@@ -51,3 +51,15 @@ test.describe("at 75% zoom", () => {
     await cell.screenshot({ path: `test-results/sheet/zoom75-${id.replace("/", "--")}.png` })
   })
 })
+
+// An exit label never runs under a card: each label's box is clear of every node at the default view.
+test("sheet: exit labels stay in the gap before the next card", async ({ page }) => {
+  await page.goto("/sheet.html?state=automation%2Froute-selected")
+  await expect(page.locator("[data-exit-label]").first()).toBeVisible()
+  const [labels, nodes] = await Promise.all([".react-flow__edgelabel-renderer [data-exit-label]", ".react-flow__node"].map((selector) =>
+    page.locator(selector).evaluateAll((all) => all.map((one) => one.getBoundingClientRect().toJSON() as DOMRect))))
+  for (const label of labels!) for (const node of nodes!) {
+    const overlaps = label.x < node.x + node.width - 0.5 && label.x + label.width > node.x + 0.5 && label.y < node.y + node.height - 0.5 && label.y + label.height > node.y + 0.5
+    expect(overlaps).toBe(false)
+  }
+})
