@@ -301,3 +301,40 @@ fn the_ledger_survives_reopen() {
         before
     );
 }
+
+#[test]
+fn live_runs_count_only_non_terminal_existing_runs_of_one_flow() {
+    let mut store = store();
+    for (run, flow) in [
+        ("run-1", "flow.a"),
+        ("run-2", "flow.a"),
+        ("run-3", "flow.a"),
+        ("run-4", "flow.b"),
+    ] {
+        store
+            .commit(&batch(10, vec![put(run, "started")], &[start(run, flow)]))
+            .expect("start");
+    }
+    store
+        .commit(&batch(20, vec![put("run-2", "completed")], &[]))
+        .expect("complete");
+    store
+        .commit(&batch(
+            30,
+            vec![FactWriteRow::Delete {
+                object_type: RUN.to_owned(),
+                key: "run-3".to_owned(),
+            }],
+            &[],
+        ))
+        .expect("delete");
+    let reader = store.read();
+    assert_eq!(
+        reader.live_runs("main", "flow.a").expect("count"),
+        1,
+        "run-1 only"
+    );
+    assert_eq!(reader.live_runs("main", "flow.b").expect("count"), 1);
+    assert_eq!(reader.live_runs("main", "flow.none").expect("count"), 0);
+    assert_eq!(reader.live_runs("fork-1", "flow.a").expect("count"), 0);
+}

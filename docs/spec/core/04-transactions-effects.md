@@ -106,8 +106,10 @@ creating write, or with a run id already started in the world, refuses
 (`run.start_invalid`, `run.exists`) and nothing commits. The ledger derives only
 from committed batches, so every engine that runs the store's SQL maintains it and
 export replay rebuilds it. It is a read index, not authority: reads go through the
-caller's read gates on the Run type. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
-**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**.
+caller's read gates on the Run type. `live_runs(flow)` counts the runs whose object
+exists in a non-terminal state of its Run type's lifecycle (RUN-LIVE-1), for a retire
+guard; an undeclared Run type counts as live. Named scenarios (`crates/norn-cell/tests/flow_run.rs`):
+**RUN-LEDGER-START**, **RUN-LEDGER-REFUSE**, **RUN-LEDGER-PAGE**, **RUN-LEDGER-REOPEN**, **RUN-LIVE**.
 
 ### Durable flow scheduling and identity (#515)
 

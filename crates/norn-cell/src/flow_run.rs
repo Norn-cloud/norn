@@ -315,6 +315,45 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
+    /// RUN-LIVE-1: how many runs of `flow` in `world` are live: their run
+    /// object exists and its lifecycle state is not a terminal state of its
+    /// Run type's lifecycle. A Run type the model no longer declares counts
+    /// as live, so a retire guard fails closed.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn live_runs(&self, world: &str, flow: &str) -> Result<u64, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "object_type","state_property","state" FROM "{FLOW_RUN}" INDEXED BY "_norn_flow_run/flow_state" WHERE "world"=?1 AND "flow_id"=?2 AND "state" IS NOT NULL"#
+            ),
+            params![world, flow],
+        )?;
+        let mut live = 0_u64;
+        for values in rows {
+            let row = SqlRow(values);
+            let (object_type, property, state): (String, String, String) =
+                (row.get(0)?, row.get(1)?, row.get(2)?);
+            let terminal = self
+                .model()
+                .object_types()
+                .find(|declared| declared.name.as_str() == object_type)
+                .and_then(|declared| {
+                    declared
+                        .lifecycles
+                        .iter()
+                        .find(|lifecycle| lifecycle.property.as_str() == property)
+                })
+                .is_some_and(|lifecycle| lifecycle.terminal.contains(&state));
+            if !terminal {
+                live = live
+                    .checked_add(1)
+                    .ok_or(CellError::OutOfRange("live runs"))?;
+            }
+        }
+        Ok(live)
+    }
+
     /// One page of runs in `world`, in run-id order, filtered by flow and
     /// state. The last row's id is the next page's `after` cursor.
     ///
