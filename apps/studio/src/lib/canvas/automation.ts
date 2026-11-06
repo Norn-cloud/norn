@@ -39,7 +39,7 @@ export const automationKinds: Kinds = {
  * a removed branch goes with it.
  */
 export function setBranches(graph: Graph, id: string, branches: readonly Condition[][], order: readonly number[]): Graph {
-  const moved = new Map(order.flatMap((old, index) => old >= 0 ? [[`b${old}`, `b${index}`] as const] : []))
+  const moved = new Map<string, string>(order.flatMap((old, index) => old >= 0 ? [[`b${old}`, `b${index}`] as const] : []))
   return {
     nodes: graph.nodes.map((node) => node.id === id ? { ...node, config: { ...node.config, branches: JSON.stringify(branches) } } : node),
     edges: graph.edges.flatMap((edge) => {

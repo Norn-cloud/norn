@@ -42,6 +42,7 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
 
 test("connection: create, view, delete, reconnect, undo/redo, validate, reopen", async ({ page }) => {
   await open(page, "Automation")
+  // view + delete + validate: without overdue → open, the open outcome is unreachable.
   await clickEdge(page, "overdue.next")
   await expect(page.getByText(/Overdue \(next\) → Open/)).toBeVisible()
   await page.keyboard.press("Delete")
@@ -50,17 +51,28 @@ test("connection: create, view, delete, reconnect, undo/redo, validate, reopen",
   await press(page, "z")
   await expect(edge(page, "overdue.next")).toHaveCount(1)
   await press(page, "Shift+z")
-  await drag(page, out(page, "overdue", "otherwise"), into(page, "open"))
-  await expect(edge(page, "overdue.otherwise")).toHaveCount(1)
+  await expect(edge(page, "overdue.next")).toHaveCount(0)
+  // create: draw it again; the automation checks clean.
+  await drag(page, out(page, "overdue", "next"), into(page, "open"))
+  await expect(edge(page, "overdue.next")).toHaveCount(1)
   await expect(page.getByText("Checker: no findings")).toBeVisible()
-  await clickEdge(page, "overdue.otherwise")
-  await drag(page, edge(page, "overdue.otherwise").locator(".react-flow__edgeupdater-target"), into(page, "remind"))
+  // reconnect: move its end onto remind, which already has an entry: a join the canvas names.
+  await clickEdge(page, "overdue.next")
+  await drag(page, edge(page, "overdue.next").locator(".react-flow__edgeupdater-target"), into(page, "remind"))
   await expect(page.getByText("canvas.flow.join").first()).toBeVisible()
   await press(page, "z")
   await expect(page.getByText("Checker: no findings")).toBeVisible()
+  // validate through lowering: leaving by otherwise instead leaves the remind path without an outcome.
+  await clickEdge(page, "overdue.next")
+  await page.keyboard.press("Delete")
+  await drag(page, out(page, "overdue", "otherwise"), into(page, "open"))
+  await expect(edge(page, "overdue.otherwise")).toHaveCount(1)
+  await expect(page.getByText("NORN-FLOW-RESULT").first()).toBeVisible()
+  // reopen: the drawn connection and its finding come back after a reload.
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
   await expect(edge(page, "overdue.otherwise")).toHaveCount(1)
+  await expect(page.getByText("NORN-FLOW-RESULT").first()).toBeVisible()
 })
 
 test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", async ({ page }) => {
