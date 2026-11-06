@@ -22,7 +22,7 @@ use crate::{
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
-use norn_cell::{MAIN_WORLD, ObjectRecord, engine::SqlEngine};
+use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 
 /// Largest page a caller may ask for.
 pub const MAX_PAGE: usize = 100;
@@ -45,6 +45,12 @@ pub trait ObjectAccess: Send + Sync {
         object_type: &str,
         row: Option<&ObjectRecord>,
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal>;
+
+    /// Fault-injection seam for tests: called inside each locked read section
+    /// of a page, after its opening head check and before its reads. A host
+    /// mapping does nothing here.
+    #[doc(hidden)]
+    fn within_snapshot(&self) {}
 }
 
 fn not_found() -> Refusal {
@@ -128,8 +134,9 @@ fn collection<'h, E: SqlEngine>(
 ///
 /// # Errors
 /// A denied gate (one opaque 403), an undeclared type (404), an oversized
-/// page (400), a commit while the page was read (a retryable 409) or a host
-/// failure. Unreadable rows never refuse a page: a bound on raw rows would
+/// page (400), a commit while the page was read (409 `object.snapshot_moved`,
+/// `retryable`: the client repeats the read with bounded backoff; the host
+/// never retries internally) or a host failure. Unreadable rows never refuse a page: a bound on raw rows would
 /// reveal how many exist.
 pub fn get_object_page<E: SqlEngine>(
     host: &DevHost<E>,
@@ -151,42 +158,46 @@ pub fn get_object_page<E: SqlEngine>(
         scanned_through: None,
     };
     // The cell lock is held per batch, never for the whole scan, and row
-    // authorization runs without it. Every acquisition must see the commit head
-    // the page started at, so a page never mixes two snapshots.
+    // authorization runs without it. Each locked section reads the commit head
+    // before and after its reads and both must equal the head the page started
+    // at: heads only grow, so the reads saw that one snapshot and a page is never
+    // assembled from two.
     let mut snapshot = None;
-    let locked = |snapshot: &mut Option<u64>| -> Result<_, Refusal> {
+    let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
         let cell = host.cell()?;
-        let head = cell
-            .store()
-            .read()
-            .head_commit_seq()
-            .map_err(Refusal::host)?;
-        if *snapshot.get_or_insert(head) != head {
+        let reader = cell.store().read();
+        let head = || reader.head_commit_seq().map_err(Refusal::host);
+        let start = *snapshot.get_or_insert(head()?);
+        if head()? != start {
             return Err(snapshot_moved());
         }
-        Ok(cell)
+        access.within_snapshot();
+        read(&reader)?;
+        if head()? != start {
+            return Err(snapshot_moved());
+        }
+        Ok(())
     };
     let mut cursor = after.map(str::to_owned);
     loop {
-        let batch = {
-            let cell = locked(&mut snapshot)?;
-            let reader = cell.store().read();
+        let mut batch = Vec::new();
+        within(&mut |reader| {
             if !reader.model().has_type(object_type) {
                 return Err(not_found());
             }
-            reader
+            batch = reader
                 .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
-                .map_err(Refusal::host)?
-        };
+                .map_err(Refusal::host)?;
+            Ok(())
+        })?;
         let exhausted = batch.len() < SCAN_BATCH;
         let visible: Vec<(bool, ObjectRecord)> = batch
             .into_iter()
             .map(|row| (row_visible(host, access, &actor, &row), row))
             .collect();
-        let quarantined = {
-            let cell = locked(&mut snapshot)?;
-            let reader = cell.store().read();
-            visible
+        let mut quarantined = Vec::with_capacity(visible.len());
+        within(&mut |reader| {
+            quarantined = visible
                 .iter()
                 .map(|(seen, row)| {
                     if *seen {
@@ -196,8 +207,9 @@ pub fn get_object_page<E: SqlEngine>(
                     }
                 })
                 .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)?
-        };
+                .map_err(Refusal::host)?;
+            Ok(())
+        })?;
         for ((seen, row), quarantined) in visible.into_iter().zip(quarantined) {
             cursor = Some(row.id.clone());
             if !seen {

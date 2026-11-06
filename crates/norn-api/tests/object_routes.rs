@@ -448,3 +448,77 @@ fn a_commit_during_the_scan_refuses_the_page_as_retryable() {
         get_object_page(&host, &scope(), Some("reader"), TYPE, None, 100, &Mapping).unwrap();
     assert!(retried.records.iter().any(|r| r.id == "SYN-LATE"));
 }
+
+/// Commits through a second connection inside the `nth` locked read section of
+/// a page, after its opening head check (the fault-injection seam).
+struct CommitsInside {
+    path: std::path::PathBuf,
+    model: Model,
+    nth: usize,
+    sections: std::sync::atomic::AtomicUsize,
+}
+impl ObjectAccess for CommitsInside {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        Mapping.access(scope, actor, capability, object_type, row)
+    }
+    fn within_snapshot(&self) {
+        let section = self
+            .sections
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if section == self.nth {
+            let mut store = CellStore::open(
+                &self.path,
+                self.model.clone(),
+                norn_cell::StoreOptions::default(),
+            )
+            .expect("second connection");
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical().key(),
+                    logical_time: query_support::CLOCK + 20_000_000,
+                    writes: vec![put(
+                        "SYN-INSIDE",
+                        1_000,
+                        900,
+                        "2026-07-10T12:00:00Z",
+                        "gold",
+                    )],
+                    ..CommitBatch::default()
+                })
+                .expect("commit inside the section");
+        }
+    }
+}
+
+/// A commit after a section's opening head check and before its reads (the
+/// batch read, or the quarantine reads) refuses the page: the closing check
+/// sees the moved head, so quarantine state from one snapshot never filters
+/// rows read at another.
+#[test]
+fn a_commit_inside_a_read_section_refuses_the_page() {
+    for (nth, section) in [(1, "batch read"), (2, "quarantine reads")] {
+        let (host, dir) = host();
+        let commits = CommitsInside {
+            path: dir.path().join("cell.sqlite"),
+            model: quality_model().0,
+            nth,
+            sections: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let refused = get_object_page(&host, &scope(), Some("reader"), TYPE, None, 100, &commits)
+            .unwrap_err();
+        assert_eq!(
+            (refused.status, refused.code.as_str(), refused.retryable),
+            (409, "object.snapshot_moved", true),
+            "{section}"
+        );
+    }
+}
