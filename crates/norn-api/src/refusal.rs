@@ -102,14 +102,12 @@ pub struct Refusal {
     /// ungranted resource.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<RefusalDiagnostic>,
-    /// On `definition.signoff_mismatch` only: the plain-words restatement the
-    /// host recomputed from the caller's own admitted payload, so the signer
-    /// can read and sign exactly those words. Absent otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub restatement: Option<String>,
-    /// Lower-case hex SHA-256 of `restatement`, with it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub restatement_sha256: Option<String>,
+    /// On `definition.signoff_mismatch` only: the host's restatement of the
+    /// caller's own admitted payload, flattened into the refusal as
+    /// `restatement` and `restatementSha256`. Absent otherwise.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    #[schema(inline)]
+    pub restatement: Option<Box<RefusalRestatement>>,
 }
 
 /// One checker finding in a refusal.
@@ -169,6 +167,16 @@ impl RefusalDiagnostic {
     }
 }
 
+/// The words a signer can sign: what the host reads the submission as.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusalRestatement {
+    /// The plain-words restatement the host recomputed.
+    pub restatement: String,
+    /// Lower-case hex SHA-256 of `restatement`'s UTF-8 bytes.
+    pub restatement_sha256: String,
+}
+
 /// A location in the submitted document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -197,7 +205,6 @@ impl Refusal {
             self.reason = None;
             self.diagnostics.clear();
             self.restatement = None;
-            self.restatement_sha256 = None;
         }
         self
     }
@@ -221,7 +228,6 @@ impl Refusal {
             explanation: explanation.into(),
             diagnostics: Vec::new(),
             restatement: None,
-            restatement_sha256: None,
         }
     }
 
