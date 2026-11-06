@@ -1,0 +1,21 @@
+{
+  "sha256": "4ab94025042fcc353494dc322f614934b176b54b86197fbf74e7e18e61a534b0",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "fixtures/ir/metrics/ontology.json",
+    "fixtures/demo/answers/scrap-yield.object-type.json",
+    "fixtures/demo/answers/scrap-yield.metrics.json"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
