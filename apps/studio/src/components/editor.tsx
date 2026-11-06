@@ -10,7 +10,18 @@ import { history, modKey, type History, type Issue } from "@/lib/editor"
  * last saved or opened. Shortcuts: mod+Z undo, mod+Shift+Z or mod+Y redo,
  * mod+S save, mod+Enter run.
  */
-export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; readonly onSave?: (value: T) => void; readonly onRun?: (value: T) => void }) {
+/** Which editor action a keydown asks for; undo and redo only while this editor owns the shortcuts. */
+export function shortcutOf(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">, { shortcuts, save, run }: { readonly shortcuts: boolean; readonly save: boolean; readonly run: boolean }): "undo" | "redo" | "save" | "run" | undefined {
+  if (!(event.metaKey || event.ctrlKey)) return undefined
+  const key = event.key.toLowerCase()
+  if (key === "z" || key === "y") return !shortcuts ? undefined : key === "z" && !event.shiftKey ? "undo" : "redo"
+  if (key === "s" && save) return "save"
+  if (key === "enter" && run) return "run"
+  return undefined
+}
+
+/** `shortcuts: false` while another editor (a sheet over this one) owns undo and redo. */
+export function useEditor<T>({ initial, onSave, onRun, shortcuts = true }: { readonly initial: T; readonly onSave?: (value: T) => void; readonly onRun?: (value: T) => void; readonly shortcuts?: boolean }) {
   const [state, setState] = useState<History<T>>(() => history.start(initial))
   const [saved, setSaved] = useState<T>(initial)
   const value = state.present
@@ -20,16 +31,14 @@ export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; 
   /** Open a stored object: it becomes the clean state, with no history behind it. */
   const open = useCallback((next: T) => { setState(history.start(next)); setSaved(next) }, [])
   const markSaved = useCallback((at: T) => setSaved(at), [])
-  const actions = useRef({ onSave, onRun, value })
+  const actions = useRef({ onSave, onRun, value, shortcuts })
   // Written after each commit, not during render; layout effects run before the browser can deliver the next keydown.
-  useLayoutEffect(() => { actions.current = { onSave, onRun, value } })
+  useLayoutEffect(() => { actions.current = { onSave, onRun, value, shortcuts } })
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return
-      const key = event.key.toLowerCase()
-      const act = key === "z" && !event.shiftKey ? undo : (key === "z" && event.shiftKey) || key === "y" ? redo
-        : key === "s" && actions.current.onSave ? () => actions.current.onSave?.(actions.current.value)
-        : key === "enter" && actions.current.onRun ? () => actions.current.onRun?.(actions.current.value) : undefined
+      const { onSave: save, onRun: run, value: current, shortcuts: owned } = actions.current
+      const shortcut = shortcutOf(event, { shortcuts: owned, save: save !== undefined, run: run !== undefined })
+      const act = shortcut === "undo" ? undo : shortcut === "redo" ? redo : shortcut === "save" ? () => save?.(current) : shortcut === "run" ? () => run?.(current) : undefined
       if (act === undefined) return
       event.preventDefault()
       act()

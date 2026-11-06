@@ -133,15 +133,18 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       if ("saved" in result) { setAt(result.saved); editor.markSaved(dashboard); onSaved?.(result.saved) }
     },
   })
-  const editor = useEditor<Dashboard>({ initial: stored?.dashboard ?? EMPTY, onSave: (dashboard) => save.mutate({ dashboard }) })
+  // While the question sheet is open, its builder owns undo and redo.
+  const editor = useEditor<Dashboard>({ initial: stored?.dashboard ?? EMPTY, onSave: (dashboard) => save.mutate({ dashboard }), shortcuts: editing === undefined })
   const { value: dashboard, set } = editor
   // Live validation: the cell's admit is side-effect free, so it runs on every edit (after a pause).
   useEffect(() => {
     if (dashboard.title.trim() === "" && dashboard.tiles.length === 0) return
+    // A response for an edit since superseded must not replace the current findings.
+    let cancelled = false
     const timer = setTimeout(() => {
-      store.admit(at?.id ?? dashboardId(dashboard.title), dashboard).then((admission) => setFindings(admission.admitted ? [] : admission.findings), () => {})
+      store.admit(at?.id ?? dashboardId(dashboard.title), dashboard).then((admission) => { if (!cancelled) setFindings(admission.admitted ? [] : admission.findings) }, () => {})
     }, 400)
-    return () => clearTimeout(timer)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [store, at?.id, dashboard])
   const tiles = (next: readonly Tile[]) => set((current) => ({ ...current, tiles: layoutTiles(next) }))
   const issues = issuesOfFindings(findings)
@@ -201,7 +204,7 @@ export function DashboardEditorPage() {
   const navigate = useNavigate()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
-  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined, retry: false })
+  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined, retry: false, refetchOnWindowFocus: false })
   const fresh = id === undefined
   const [title, setTitle] = useState(id === undefined ? "New dashboard" : "Dashboard")
   useEffect(() => { if (stored.data) setTitle(stored.data.dashboard.title || "Untitled dashboard") }, [stored.data])
