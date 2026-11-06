@@ -10,8 +10,8 @@ test("saving admits then installs under a stable id; a refusal comes back as fin
   expect(refused).toEqual({ findings: [{ code: "dashboard.title", message: "A dashboard needs a title.", pointer: "/title", law: null }] })
   expect(("findings" in refused ? refused.findings : []).map(({ pointer }) => dashboardField(pointer))).toEqual(["title"])
   const dashboard: Dashboard = { title: "Refinery weekly", tiles: [tile("a")] }
-  const id = dashboardId(dashboard.title)
-  expect(id).toBe("studio.dashboard.refinery_weekly")
+  const id = dashboardId(dashboard.title, "3f9a1c2b7d4e")
+  expect(id).toBe("studio.dashboard.refinery_weekly_3f9a1c2b7d4e")
   const first = await saveDashboard(store, id, dashboard)
   expect(first).toMatchObject({ saved: { id, version: 1, receipt: { receiptHash: `r-${id}-1` } } })
   expect(await saveDashboard(store, id, { ...dashboard, title: "Refinery, weekly" }, 1)).toMatchObject({ saved: { version: 2 } })
@@ -95,4 +95,16 @@ test("every definition route uses the current server scope and refuses a workspa
   environmentId = null
   await expect(store.list()).rejects.toThrow("This workspace has no data cell yet.")
   expect(paths).toHaveLength(6)
+})
+
+test("two new dashboards whose titles read alike get distinct ids", () => {
+  const ids = new Set(["Refinery weekly", "refinery  weekly", "Refinery-weekly"].map((title) => dashboardId(title)))
+  expect(ids.size).toBe(3)
+  expect([...ids].every((id) => /^studio\.dashboard\.refinery_weekly_[0-9a-f]{12}$/.test(id))).toBe(true)
+})
+
+test("a stored definition whose payload is not a dashboard is no dashboard: the cell did not answer", async () => {
+  const reader = (body: unknown) => async () => new Response(JSON.stringify(body), { status: 200 })
+  for (const payload of [null, "x", { tiles: [] }, { title: "t" }, { title: "t", tiles: {} }])
+    await expect(cellDefinitions(reader({ id: "d", kind: "dashboard", version: 1, payload })).get("d")).rejects.toBeInstanceOf(CellUnavailable)
 })

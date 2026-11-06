@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { EditorToolbar, RowActions, ValidationPanel } from "../src/components/editor.tsx"
+import { EditorToolbar, RowActions, ValidationPanel, shortcutOf } from "../src/components/editor.tsx"
 import { VERBS, history, list, modKey, verbTable } from "../src/lib/editor.ts"
 import { SUITES } from "./e2e/suites.ts"
-import { defineVerbs, supported } from "./e2e/verbs.ts"
+import { defineVerbs, exitStatus, supported } from "./e2e/verbs.ts"
 
 test("history undoes and redoes whole states, forgets the redo branch on a new edit, and keeps at most 100 steps", () => {
   let h = history.start(0)
@@ -80,4 +80,24 @@ test("a refusal shows once: the validation panel, with the codes under Details; 
   const { Wrench } = await import("lucide-react")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench} title="No tools bound yet">No tool can run from Norn until an admin binds it.</EmptyState>)).toContain(">No tools bound yet<")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench}>Nothing.</EmptyState>)).toContain(">No data yet<")
+})
+
+test("the e2e runner fails when no verb ran, as well as when one failed", () => {
+  expect(exitStatus(0, 0)).toBe(1)
+  expect(exitStatus(3, 1)).toBe(1)
+  expect(exitStatus(3, 0)).toBe(0)
+})
+
+test("undo and redo shortcuts go to the editor that owns them; save and run only where offered", () => {
+  const key = (key: string, extra: Partial<KeyboardEvent> = {}) => ({ key, metaKey: false, ctrlKey: true, shiftKey: false, ...extra })
+  const owner = { shortcuts: true, save: true, run: false }
+  expect(shortcutOf(key("z"), owner)).toBe("undo")
+  expect(shortcutOf(key("Z", { shiftKey: true }), owner)).toBe("redo")
+  expect(shortcutOf(key("y"), owner)).toBe("redo")
+  expect(shortcutOf(key("s"), owner)).toBe("save")
+  expect(shortcutOf(key("Enter"), owner)).toBeUndefined()
+  expect(shortcutOf(key("z", { ctrlKey: false }), owner)).toBeUndefined()
+  const covered = { ...owner, shortcuts: false }
+  expect(shortcutOf(key("z"), covered)).toBeUndefined()
+  expect(shortcutOf(key("y"), covered)).toBeUndefined()
 })

@@ -1,5 +1,6 @@
 import { readDocument, type Read } from "./exact.ts"
 import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { FRESHNESS } from "./format.ts"
 import type { Answer, Schemas } from "./transport.ts"
 
 /** A refusal exactly as the server wrote it (`{code, category, message, explanation}`). */
@@ -46,33 +47,66 @@ export interface Trace {
  * and its policy decide what comes back. 401 and 503 (no host bound to this
  * stage) mean live reads are not available, and the page keeps its recording.
  */
-export async function hostRead<T>(path: string, fetcher: Fetch = fetch): Promise<LiveRead<T>> {
+export async function hostRead<T>(path: string, fetcher: Fetch = fetch, isDocument: (value: unknown) => boolean = () => true): Promise<LiveRead<T>> {
+  let response: Response
+  let text: string
   try {
     const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
-    const response = await scoped(path, { headers: { accept: "application/json" } })
-    const text = await response.text()
-    if (response.ok) return { kind: "read", read: readDocument<T>(text, "live") }
-    if (response.status === 403) {
-      try {
-        const body = JSON.parse(text) as Partial<Refusal>
-        if (typeof body.code === "string" && typeof body.message === "string") return { kind: "refused", refusal: body as Refusal }
-      } catch { /* not the host's refusal document: the Worker's own */ }
-    }
-    return { kind: "unavailable", status: response.status }
+    response = await scoped(path, { headers: { accept: "application/json" } })
+    text = await response.text()
   } catch (error) {
     return error instanceof StudioScopeError && error.message === NO_DATA_CELL
       ? { kind: "unavailable", status: 0, reason: "no-cell" }
       : { kind: "unavailable", status: error instanceof CellUnavailable ? error.status : 0 }
   }
+  if (response.ok) {
+    try {
+      const read = readDocument<T>(text, "live")
+      // Valid JSON that is not the document asked for (`null`, an error object) is no live read either.
+      if (isDocument(read.document)) return { kind: "read", read }
+    } catch { /* not JSON */ }
+    return { kind: "unavailable", status: response.status }
+  }
+  if (response.status === 403) {
+    try {
+      const body = JSON.parse(text) as Partial<Refusal>
+      if (typeof body.code === "string" && typeof body.message === "string") return { kind: "refused", refusal: body as Refusal }
+    } catch { /* not the host's refusal document: the Worker's own */ }
+  }
+  return { kind: "unavailable", status: response.status }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** Amounts as the host sends them; `null` is a row whose values the server withheld from the reader's role. */
+const isAmounts = (value: unknown): boolean => value === null || (Array.isArray(value) && value.every((amount) => amount === null || typeof amount === "number"))
+
+/** One answer row as `buckets` reads it: a bucket key, its totals, and each member's version and amounts. */
+const isRow = (row: unknown): boolean =>
+  isRecord(row) && "bucket" in row && Array.isArray(row.totals) && isRecord(row.members) &&
+  Object.values(row.members).every((member) => isRecord(member) && typeof member.version === "number" && isAmounts(member.amounts))
+
+/** The fields of a `NornQueryResult` the question card reads, down to each row and watermark partition. */
+export const isAnswer = (value: unknown): boolean =>
+  isRecord(value) && isRecord(value.rows) && Object.values(value.rows).every(isRow) &&
+  isRecord(value.watermarks) && Object.values(value.watermarks).every((partitions) => isRecord(partitions) && Object.values(partitions).every((partition) => isRecord(partition) && typeof partition.complete === "boolean")) &&
+  typeof value.freshness === "string" && Object.hasOwn(FRESHNESS, value.freshness) &&
+  typeof value.lineageRef === "string" && typeof value.nowMs === "number" && typeof value.knownAsOf === "number"
+
+/** The fields of a `NornNumericTrace` the records drawer reads, for every contribution. */
+export const isTrace = (value: unknown): boolean =>
+  isRecord(value) && typeof value.bucket === "string" && Array.isArray(value.contributions) &&
+  value.contributions.every((contribution) => isRecord(contribution) && isRecord(contribution.fact) &&
+    typeof contribution.fact.key === "string" && typeof contribution.fact.version === "number" && isAmounts(contribution.amounts) &&
+    typeof contribution.receiptHash === "string" && typeof contribution.commitSeq === "number" && typeof contribution.restricted === "boolean")
+
 export const liveAnswer = (question: string, fetcher?: Fetch) =>
-  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer`, fetcher)
+  hostRead<Answer>(`/v1/questions/${encodeURIComponent(question)}/answer`, fetcher, isAnswer)
 
 /** One bucket of a live answer; `bucket` is the answer's row key exactly as the server wrote it. */
 export const liveTrace = (question: string, lineageRef: string, bucket: string, fetcher?: Fetch) => {
   const query = new URLSearchParams({ lineageRef, bucket })
-  return hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${query}`, fetcher)
+  return hostRead<Trace>(`/v1/questions/${encodeURIComponent(question)}/trace?${query}`, fetcher, isTrace)
 }
 
 /**
