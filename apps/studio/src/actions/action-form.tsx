@@ -1,9 +1,10 @@
-import { AlertTriangle, Check, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, X } from "lucide-react"
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
   ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
@@ -277,36 +278,49 @@ function problemsBySection(sections: readonly Section[], diagnostics: readonly D
   return sections.map((section) => section.fields.reduce((n, field) => n + problemsAt(diagnostics, field.pointer).length, 0))
 }
 
-/** The wizard's steps: each section, then the review. Steps already reached can be revisited; one with a refusal says how many. */
+/**
+ * The wizard's progress: "Step 2 of 4 · Where it is" over a thin bar of one segment per step
+ * (each section, then the review). A segment is a button: reached steps can be reopened, the
+ * rest are closed; hover or focus names the step, and a step with a refusal says how many.
+ */
 function Steps({ sections, step, reached, counts, onGo }: {
   readonly sections: readonly Section[]; readonly step: number; readonly reached: number; readonly counts: readonly number[]; readonly onGo: (to: number) => void
 }) {
   const names = [...sections.map((s) => s.title ?? "More"), "Review"]
+  const label = (index: number) => {
+    const problems = counts[index] ?? 0
+    return `${names[index]}${problems > 0 ? `, ${problems} ${problems === 1 ? "problem" : "problems"}` : ""}`
+  }
   return (
-    <nav aria-label="Steps">
-      <ol className="flex flex-wrap items-center gap-1.5">
-        {names.map((name, index) => {
-          const current = index === step
-          const done = index < step || (index <= reached && !current)
-          const problems = counts[index] ?? 0
-          return (
-            <li key={name + index} className="flex items-center gap-1.5">
-              {index > 0 && <span aria-hidden className="h-px w-3 bg-node-border" />}
-              <button type="button" disabled={index > reached} aria-current={current ? "step" : undefined} onClick={() => onGo(index)}
-                className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors disabled:cursor-default disabled:opacity-50",
-                  current ? "border-transparent bg-primary text-primary-foreground" : "border-node-border bg-card hover:bg-muted",
-                  problems > 0 && !current && "border-destructive/40 text-destructive")}>
-                <span className={cn("inline-flex size-4 items-center justify-center rounded-full text-[10px] tabular-nums", current ? "bg-primary-foreground/20" : "bg-muted")}>
-                  {problems > 0 ? "!" : done ? <Check className="size-2.5" aria-hidden /> : index + 1}
-                </span>
-                {name}
-                {problems > 0 && <span className="sr-only">, {problems} {problems === 1 ? "problem" : "problems"}</span>}
-              </button>
-            </li>
-          )
-        })}
-      </ol>
-    </nav>
+    <div className="grid gap-2">
+      <p aria-live="polite" className="flex items-baseline gap-1.5 text-sm">
+        <span className="text-muted-foreground tabular-nums">Step {step + 1} of {names.length}</span>
+        <span aria-hidden className="text-muted-foreground">·</span>
+        <span className="font-medium">{names[step]}</span>
+      </p>
+      <nav aria-label="Steps">
+        <ol className="flex gap-1">
+          {names.map((name, index) => {
+            const current = index === step
+            const problems = counts[index] ?? 0
+            return (
+              <li key={name + index} className="flex-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button" disabled={index > reached} aria-current={current ? "step" : undefined} aria-label={label(index)} onClick={() => onGo(index)}
+                      className="group block w-full py-1.5 outline-none disabled:cursor-default">
+                      <span className={cn("block h-1.5 rounded-full transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-1",
+                        problems > 0 ? "bg-destructive/70" : current ? "bg-primary" : index <= reached ? "bg-primary/35 group-hover:bg-primary/55" : "bg-muted")} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{label(index)}{index > reached ? " (not reached yet)" : ""}</TooltipContent>
+                </Tooltip>
+              </li>
+            )
+          })}
+        </ol>
+      </nav>
+    </div>
   )
 }
 

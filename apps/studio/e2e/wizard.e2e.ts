@@ -37,15 +37,25 @@ const steps = (page: Page) => sheet(page).getByRole("navigation", { name: "Steps
 test("view: one step per group, Back keeps what was typed, steps not reached are closed, the review shows every value with Edit", async ({ page }) => {
   await start(page)
   const form = sheet(page)
-  await expect(steps(page)).toHaveText(["1What is held", "2Where it is", "3More", "4Review"])
+  // A compact stepper: "Step 1 of 4 · What is held" over one bar segment per step.
+  await expect(form.getByText("Step 1 of 4")).toBeVisible()
+  await expect(form.getByText("What is held", { exact: true }).first()).toBeVisible()
+  const names = ["What is held", "Where it is", "More", "Review"]
+  for (const [i, name] of names.entries()) await expect(steps(page).nth(i)).toHaveAccessibleName(name)
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step")
   await expect(steps(page).nth(2)).toBeDisabled()
+  // Hover (or focus) names a step; one not reached yet says so.
+  await steps(page).nth(3).hover({ force: true })
+  await expect(page.getByRole("tooltip")).toHaveText("Review (not reached yet)")
   await expect(form.getByLabel("Location › Site")).toHaveCount(0) // one step at a time
   await form.getByLabel("Holding id").fill("demo/holding/7001")
   await form.getByLabel("Quantity").fill("4.250")
   await form.getByLabel("Valuation method").selectOption("fifo")
   await form.getByRole("button", { name: "Next" }).click()
   await expect(steps(page).nth(1)).toHaveAttribute("aria-current", "step")
+  await expect(form.getByText("Step 2 of 4")).toBeVisible()
+  await steps(page).nth(0).focus()
+  await expect(page.getByRole("tooltip")).toHaveText("What is held")
   await form.getByLabel("Location › Site").fill("vault-b")
   await shoot(page, "step")
   await form.getByRole("button", { name: "Back" }).click()
