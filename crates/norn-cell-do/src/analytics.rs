@@ -187,7 +187,6 @@ fn plan(object: ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
     question.name = QUESTION.into();
     question.object_set = norn_ir::ObjectTypeName(TYPE.into());
     question.comparison = None;
-    let shape = |value: Value| serde_json::from_value(value).map_err(|e| fail("question shape", e));
     question.metrics = shape(json!([{"metric":"demo.yield"}]))?;
     question.dimensions = shape(json!([{"path":{"property":"occurred_at"},"grain":"week"}]))?;
     question.filters =
@@ -292,4 +291,8 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
             delegation: Delegation::Direct,
         })
     }
+}
+
+fn shape<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, SeedError> {
+    serde_json::from_value(value).map_err(|e| fail("question shape", e))
 }
