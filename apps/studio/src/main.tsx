@@ -11,7 +11,7 @@ import { ObjectTypePage, SourcesPage, useSourcesMenu } from "./sources.tsx"
 import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
-import { ObjectPage } from "./objects.tsx"
+import { SourcesItemPage } from "./objects.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
@@ -46,7 +46,7 @@ const router = createRouter({
       component: section.path === "/questions" ? QuestionsPage : section.path === "/sources" ? SourcesPage : section.path === "/workflows" ? WorkflowsPage : section.path === "/guarantees" ? GuaranteesPage : section.path === "/status" ? StatusPage : () => <NotYet {...section} />,
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
-    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
   ]),
 })

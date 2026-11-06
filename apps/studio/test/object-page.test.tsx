@@ -8,7 +8,8 @@ import { readDocument } from "../src/lib/exact.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage } = await import("../src/objects.tsx")
+const { ObjectPage, SourcesItemPage } = await import("../src/objects.tsx")
+const { ObjectTypePage } = await import("../src/sources.tsx")
 
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
@@ -44,4 +45,21 @@ test("a record id with slashes is the rest of the path, so a reload finds it wit
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).not.toContain("Not Found")
+})
+
+test("the object type's own URL still opens the type, not an empty record", async () => {
+  const client = new QueryClient()
+  client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+  const root = createRootRoute()
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
+      createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/sources/canon.Holding"] }),
+  })
+  await router.load()
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(html).not.toContain("This record is not available yet")
+  expect(html).toContain("canon.Holding")
 })
