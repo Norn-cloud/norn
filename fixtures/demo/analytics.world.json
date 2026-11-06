@@ -1,0 +1,153 @@
+{
+  "note": "The analytics world the demo cell answers demo.yield_week from (norn-cell-do analytics.rs): the demo.Conversion entity, its recorded metric definitions, and the admitted question as an example. Studio's assistant admits proposed questions against it.",
+  "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "demo.Conversion.entity.v2",
+      "kind": "entity",
+      "namespace": "demo",
+      "name": "demo.Conversion",
+      "version": "0.1.0",
+      "lifecycle": "draft",
+      "scope": {},
+      "dependencies": [],
+      "provenance": {
+        "source": "import",
+        "sourcePath": "synthetic:scrap-yield-k1.csv"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "objectType": {
+          "name": "demo.Conversion",
+          "properties": [
+            {
+              "id": "input",
+              "type": {
+                "kind": "decimal",
+                "additivity": {
+                  "kind": "additive"
+                },
+                "scale": 3,
+                "unit": {
+                  "system": "ucum",
+                  "code": "g"
+                }
+              }
+            },
+            {
+              "id": "recovered",
+              "type": {
+                "kind": "decimal",
+                "additivity": {
+                  "kind": "additive"
+                },
+                "scale": 3,
+                "unit": {
+                  "system": "ucum",
+                  "code": "g"
+                }
+              }
+            },
+            {
+              "id": "loss",
+              "type": {
+                "kind": "decimal",
+                "additivity": {
+                  "kind": "additive"
+                },
+                "scale": 3,
+                "unit": {
+                  "system": "ucum",
+                  "code": "g"
+                }
+              }
+            },
+            {
+              "id": "occurred_at",
+              "type": {
+                "kind": "timestamp",
+                "timezone": "utc"
+              }
+            },
+            {
+              "id": "metal",
+              "type": {
+                "kind": "text"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "metrics": [
+    {
+      "name": "demo.input",
+      "label": "Input",
+      "type": "simple",
+      "type_params": {
+        "expr": "input",
+        "metric_aggregation_params": {
+          "semantic_model": "demo.Conversion",
+          "agg": "sum",
+          "agg_time_dimension": "occurred_at"
+        }
+      },
+      "x-norn": {
+        "irVersion": "0.1",
+        "additivity": {
+          "kind": "additive"
+        },
+        "timeDimension": {
+          "property": "occurred_at"
+        },
+        "owner": "finance",
+        "certified": true
+      }
+    },
+    {
+      "name": "demo.recovered",
+      "label": "Recovered",
+      "type": "simple",
+      "type_params": {
+        "expr": "recovered",
+        "metric_aggregation_params": {
+          "semantic_model": "demo.Conversion",
+          "agg": "sum",
+          "agg_time_dimension": "occurred_at"
+        }
+      },
+      "x-norn": {
+        "irVersion": "0.1",
+        "additivity": {
+          "kind": "additive"
+        },
+        "timeDimension": {
+          "property": "occurred_at"
+        },
+        "owner": "finance",
+        "certified": true
+      }
+    },
+    {
+      "name": "demo.yield",
+      "label": "Yield",
+      "type": "ratio",
+      "type_params": {
+        "numerator": "demo.recovered",
+        "denominator": "demo.input"
+      },
+      "x-norn": {
+        "irVersion": "0.1",
+        "additivity": {
+          "kind": "non_additive"
+        },
+        "timeDimension": {
+          "property": "occurred_at"
+        },
+        "owner": "finance",
+        "certified": true
+      }
+    }
+  ]
+}
