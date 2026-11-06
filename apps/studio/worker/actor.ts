@@ -62,6 +62,20 @@ export async function hostToken(auth: Auth, actor: NornActor, now = Math.floor(D
   return token
 }
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+
+/**
+ * Whether a request may reach the host as its actor. A cookie-authenticated
+ * (user) request that can change state must come from the Studio origin itself:
+ * a sibling *.norn.cloud site is same-site, so the cookie alone proves nothing.
+ * A missing or "null" Origin refuses. API-key (service) calls carry their own
+ * credential and need no Origin.
+ */
+export function originAllowed(request: Request, actor: NornActor, studioOrigin: string): boolean {
+  if (actor.actorKind === "service" || SAFE_METHODS.has(request.method)) return true
+  return request.headers.get("origin") === studioOrigin
+}
+
 /**
  * Forward a request to the Norn host as its actor. Only the method, path,
  * query, body and content headers travel; cookies, the API key and any

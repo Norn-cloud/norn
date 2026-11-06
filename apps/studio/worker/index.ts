@@ -1,4 +1,4 @@
-import { forwardToHost, resolveActor } from "./actor.ts"
+import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
@@ -58,6 +58,7 @@ export default {
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
+      if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
     }

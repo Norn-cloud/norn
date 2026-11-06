@@ -29,8 +29,11 @@ const call = (env: Env, path: string, init: RequestInit = {}) => {
   headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
   return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
 }
+/** Sign up (no session is issued), then sign in with the password; returns the session cookie. */
 const signUp = async (env: Env, email: string) => {
-  const response = await call(env, "/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ email, password: "correct horse battery", name: "Ada" }) })
+  const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify(body) })
+  await call(env, "/api/auth/sign-up/email", init({ email, password: "correct horse battery", name: "Ada" }))
+  const response = await call(env, "/api/auth/sign-in/email", init({ email, password: "correct horse battery" }))
   return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
 }
 const claims = (token: string) => JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
@@ -89,8 +92,52 @@ test("without a session or a connected host, Norn calls refuse", async () => {
 test("a request body reaches the host unchanged", async () => {
   const { env, seen } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "fe@example.com")
-  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ proposal: 1 }) })
+  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ proposal: 1 }) })
   expect(response.status).toBe(202)
   expect((await seen[0]?.json()) as unknown).toEqual({ proposal: 1 })
   expect(seen[0]?.headers.get("content-type")).toBe("application/json")
+})
+
+test("a cookie-authenticated write from anywhere but the Studio origin never reaches the host", async () => {
+  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const cookie = await signUp(env, "gu@example.com")
+  for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
+    const headers: Record<string, string> = { cookie, "content-type": "text/plain" }
+    if (origin !== undefined) headers.origin = origin
+    const response = await call(env, "/api/host/v1/actions", { method: "POST", headers, body: "{}" })
+    expect([origin, response.status]).toEqual([origin, 403])
+  }
+  expect(seen).toHaveLength(0)
+  // A read needs no Origin; a write from the Studio itself goes through.
+  expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(202)
+  expect((await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN }, body: "{}" })).status).toBe(202)
+  expect(seen).toHaveLength(2)
+})
+
+test("an API-key write needs no Origin", async () => {
+  const { env, seen, auth } = stage(() => new Response(null, { status: 202 }))
+  const cookie = await signUp(env, "ha@example.com")
+  const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
+  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })
+  expect(response.status).toBe(202)
+  expect(seen).toHaveLength(1)
+})
+
+test("a member removed from the organization, or switched to one they left, reaches nothing there", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
+  const ownerCookie = await signUp(env, "io@example.com")
+  const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie: ownerCookie } }), auth)
+  const memberCookie = await signUp(env, "ja@example.com")
+  const memberId = (db.query("select id from user where email = 'ja@example.com'").get() as { id: string }).id
+  db.run("insert into member (id, organizationId, userId, role, createdAt) values ('m-ja', ?, ?, 'member', ?)", [owner?.orgId ?? "", memberId, new Date().toISOString()])
+  db.run("update session set activeOrganizationId = ? where userId = ?", [owner?.orgId ?? "", memberId])
+  const asMember = () => resolveActor(new Request(ORIGIN, { headers: { cookie: memberCookie } }), auth)
+  expect((await asMember())?.orgId).toBe(owner?.orgId)
+  db.run("delete from member where id = 'm-ja'")
+  expect(await asMember()).toBeNull()
+  expect((await call(env, "/api/host/v1/defs", { headers: { cookie: memberCookie } })).status).toBe(401)
+  const setActive = await call(env, "/api/auth/organization/set-active", { method: "POST", headers: { cookie: memberCookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ organizationId: owner?.orgId }) })
+  expect(setActive.status).toBe(403)
+  expect(seen).toHaveLength(0)
 })
