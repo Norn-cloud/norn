@@ -73,11 +73,31 @@ export function fieldOf(pointer: string | null): string | null {
 export const issuesOf = (verdict: QuestionVerdict | undefined): readonly Issue[] =>
   verdict === undefined || verdict.admitted ? [] : verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer ?? null) }))
 
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
+const isStrings = (value: unknown): boolean => Array.isArray(value) && value.every((item) => typeof item === "string")
+
+/** The response as a catalogue, if it has every field the builder reads; anything else is no catalogue. */
+export function catalogOf(value: unknown): QuestionCatalog | undefined {
+  if (!isObject(value) || !(value.objectSet === null || typeof value.objectSet === "string") || !isObject(value.example) || typeof value.example.irVersion !== "string" || typeof value.example.calendar !== "string") return undefined
+  const { properties, metrics, grains, operators } = value
+  if (!Array.isArray(properties) || !properties.every((p) => isObject(p) && typeof p.name === "string" && typeof p.kind === "string" && (p.unit === null || typeof p.unit === "string"))) return undefined
+  if (!Array.isArray(metrics) || !metrics.every((m) => isObject(m) && typeof m.name === "string" && typeof m.label === "string" && typeof m.type === "string")) return undefined
+  return isStrings(grains) && isStrings(operators) ? value as unknown as QuestionCatalog : undefined
+}
+
+const UNAVAILABLE = "The question catalogue is not available on this deployment."
+
 export async function readCatalog(): Promise<QuestionCatalog> {
   const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json" } })
-  if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : "The question catalogue is not available on this deployment.")
-  return await response.json() as QuestionCatalog
+  if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : UNAVAILABLE)
+  const catalog = catalogOf(await response.json().catch(() => undefined))
+  if (catalog === undefined) throw new Error(UNAVAILABLE)
+  return catalog
 }
+
+/** A check's result belongs to the draft it was run on; after any edit, undo or redo it is shown no longer, and a late response for an older draft is ignored. */
+export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D) =>
+  check.variables === draft ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
 async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
   const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
@@ -137,7 +157,8 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
-  const issues = issuesOf(check.data)
+  const checked = checkedFor(check, draft)
+  const issues = issuesOf(checked.data)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const property = catalog.properties.find(({ name }) => name === draft.by)
   const propertyOptions = catalog.properties.map(({ name }) => [name, words(name)] as const)
@@ -186,10 +207,10 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         </form>
       </Panel>
       <div className="space-y-3">
-        {check.isIdle && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
-        {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
-        {check.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
-        {check.data && <QuestionCard verdict={check.data} />}
+        {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
+        {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
+        {checked.data && <ValidationPanel issues={issues} title="The checker refused this question" />}
+        {checked.data && <QuestionCard verdict={checked.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {onUse && check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && JSON.stringify(check.variables) !== JSON.stringify(draft) && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
