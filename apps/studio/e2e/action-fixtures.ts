@@ -55,6 +55,8 @@ export const ADJUST_HOLDING = {
   inputSchema: {
     type: "object", additionalProperties: false, required: ["id", "quantity", "reason"],
     properties: { id: { type: "string", title: "Holding id" }, quantity: { ...decimal("g", 3), title: "Counted quantity" }, reason: { type: "string", title: "Reason" } },
+    // One group: a single-page form with a titled section (two or more groups make a wizard).
+    "x-norn": { groups: [{ id: "count", title: "The count", fields: ["/quantity", "/reason"] }] },
   },
 } as const
 

@@ -37,37 +37,35 @@ async function newRecord(page: Page, title: string) {
   await page.getByRole("menuitem", { name: title }).click()
 }
 
+/** "Open a holding" declares two groups, so it is a wizard: fill each step from the first, ending on the review. */
 async function fillHolding(page: Page, id: string, quantity: string) {
   const form = sheet(page)
   await form.getByLabel("Holding id").fill(id)
   await form.getByLabel("Resource code").fill("R-9001")
   await form.getByLabel("Quantity").fill(quantity)
   await form.getByLabel("Valuation method").selectOption("moving_average")
+  await form.getByRole("button", { name: "Next" }).click()
   await form.getByLabel("Location › Site").fill("vault-a")
+  await form.getByRole("button", { name: "Next" }).click()
+  await form.getByRole("button", { name: "Review" }).click()
 }
 
-test("view: the form is the action's admitted schema: titled fields, help, a choice, and its groups as sections", async ({ page }) => {
+test("view: a single-group schema is one page: its titled section, the record's id locked first, the submit bar in view", async ({ page }) => {
   await open(page)
-  await newRecord(page, "Open a holding")
-  const form = sheet(page)
-  await expect(form.getByRole("heading", { name: "Open a holding" })).toBeVisible()
-  await page.keyboard.press("Escape")
   await page.getByRole("button", { name: "New holding" }).click()
   await expect(page.getByRole("menuitem")).toHaveText(["Open a holding", "Restock holding"])
-  await page.getByRole("menuitem", { name: "Open a holding" }).click()
-  await expect(form.locator("section h3")).toHaveText(["What is held", "Where it is", "More"])
-  // The record's id, required and ungrouped, leads the first section.
+  await page.keyboard.press("Escape")
+  await rowFor(page, "demo/holding/0001").click()
+  await page.getByRole("button", { name: "Adjust quantity" }).click()
+  const form = sheet(page)
+  await expect(form.getByRole("navigation", { name: "Steps" })).toHaveCount(0)
+  await expect(form.locator("section h3")).toHaveText(["The count"])
   await expect(form.locator("section").first().locator("label").first()).toHaveText(/^Holding id/)
-  await expect(form.getByText("How the cost of stock is worked out when it leaves.")).toBeVisible()
-  await expect(form.getByLabel("Valuation method").locator("option")).toHaveText(["Choose…", "fifo", "moving_average"])
+  await expect(form.getByLabel("Counted quantity")).toHaveAttribute("placeholder", "e.g. 12.500")
   await expect(form.getByText("(g)")).toBeVisible()
-  await expect(form.getByLabel("Location › Bin")).toBeVisible()
-  await expect(form.getByLabel("Note")).toBeVisible()
-  await expect(form.getByLabel("Quantity")).toHaveAttribute("placeholder", "e.g. 12.500")
-  // The submit bar stays on screen on a long form.
-  await expect(form.getByRole("button", { name: "Open a holding" })).toBeInViewport()
+  await expect(form.getByRole("button", { name: "Adjust quantity" })).toBeInViewport()
   // Business view: no action id under the title.
-  await expect(form.getByText("canon.holding.open")).toHaveCount(0)
+  await expect(form.getByText("canon.holding.adjust")).toHaveCount(0)
   await shoot(page, "sections")
 })
 
@@ -97,12 +95,14 @@ test("validate: the cell's refusal lands on each field it names; fixing them com
   await newRecord(page, "Open a holding")
   const form = sheet(page)
   await form.getByLabel("Quantity").fill("12,5")
+  for (const next of ["Next", "Next", "Review"]) await form.getByRole("button", { name: next }).click()
   await form.getByRole("button", { name: "Open a holding" }).click()
+  // The wizard opens the first step the cell refused something on.
   await expect(form.getByRole("alert").first()).toContainText("The cell refused this input.")
   await expect(form.getByLabel("Quantity")).toHaveAttribute("aria-invalid", "true")
   await expect(form.locator('[data-pointer="/quantity"]')).toContainText("must be an exact number")
   await expect(form.locator('[data-pointer="/resource_code"]')).toContainText("Resource code is required.")
-  await expect(form.locator('[data-pointer="/location/site"]')).toContainText("Site is required.")
+  await expect(form.getByRole("button", { name: /Where it is, 1 problem/ })).toBeVisible()
   await shoot(page, "refused")
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
