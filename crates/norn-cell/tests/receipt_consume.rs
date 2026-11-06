@@ -18,7 +18,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use norn_cell::{CellError, SqliteCell, StoreOptions};
+use norn_cell::{CellError, Model, SqliteCell, StoreOptions};
 use norn_ir::function::{
     CacheOrigin, Digest, ExecutionProvenance, FunctionOutcome, FunctionReceipt, ResourceUse,
     RunRef, SuccessOutcome,
@@ -140,6 +140,32 @@ impl CellHost for DurableReceiptCell {
     fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
         self.cell.load(key)
     }
+    // The durable host's own read and commit paths, forwarded unchanged.
+    fn supports_reference_reads(&self) -> bool {
+        self.cell.supports_reference_reads()
+    }
+    fn load_reference(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
+        self.cell.load_reference(key, max_bytes)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
+        self.cell.load_bounded(key, max_bytes)
+    }
+    fn commit_action_references(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+        proof: norn_kernel::action_commit::ActionReferenceReads,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.cell.commit_action_references(commit, proof, quantity)
+    }
     fn resolve_accepted_receipt(
         &self,
         reference: &ReceiptReference,
@@ -173,7 +199,7 @@ impl CellHost for DurableReceiptCell {
 fn open(path: &Path, issued: BTreeMap<String, Issued>) -> DurableReceiptCell {
     let cell = Sqlite::open(
         path,
-        common::model_of(&run_types()),
+        Model::from_definitions(&run_types(), &[]).expect("models the run type"),
         StoreOptions::default(),
         SCOPE,
         |command: &Command<JsonObject>| command.payload.clone(),
@@ -354,7 +380,7 @@ fn receipt_consumption_is_atomic_across_a_crash_and_a_reopen() {
     // The disk image a crash just before the consuming commit leaves.
     common::crash_image(&path, &before);
     let outcome = commit_action(&mut cell, &catalog, &decide(&action, &digest, "k1"), &Allow)
-        .expect("the accepted receipt commits");
+        .unwrap_or_else(|refusal| panic!("error: the accepted receipt commits: {refusal:?}"));
     assert!(matches!(outcome, ActionOutcome::Committed { .. }));
     // The disk image a crash just after it leaves (WAL included).
     common::crash_image(&path, &after);
