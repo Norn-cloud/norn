@@ -6,11 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { Account } from "../src/lib/session.ts"
 import { Shell as Bare, decoded, initials, sectionOf, target, type Section } from "../src/shell.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
-
+import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const account: Account = { user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" }, organization: { id: "o1", name: "Analytical", role: "viewer" } }
 const Shell = (props: { readonly sections: readonly Section[] }) => <Bare {...props} account={account} onSignOut={() => {}} />
-import { WORKSPACES } from "../src/lib/workspaces.ts"
 
 const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "", kind: "source", group: "Model",

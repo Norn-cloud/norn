@@ -7,6 +7,8 @@ import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 
+/** The Worker's execution context; these requests schedule no background work. */
+const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
 const ORIGIN = "https://studio-preview.norn.cloud"
 const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8")
 
@@ -28,7 +30,7 @@ let address = 0
 const call = (env: Env, path: string, init: RequestInit = {}) => {
   const headers = new Headers(init.headers)
   headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
+  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env, CONTEXT)
 }
 const post = (env: Env, path: string, body: unknown, cookie?: string) =>
   call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, ...cookie === undefined ? {} : { cookie } } })
