@@ -36,7 +36,7 @@ export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; 
     globalThis.addEventListener?.("keydown", onKey)
     return () => globalThis.removeEventListener?.("keydown", onKey)
   }, [undo, redo])
-  return { value, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: JSON.stringify(value) !== JSON.stringify(saved) }
+  return { value, revision: state, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: JSON.stringify(value) !== JSON.stringify(saved) }
 }
 
 /** Asks before leaving an editor with unsaved changes, in the app and when closing the tab. */
@@ -45,14 +45,19 @@ export function DirtyGuard({ dirty }: { readonly dirty: boolean }) {
   return null
 }
 
-export function EditorToolbar({ editor, onSave, saving, children }: { readonly editor: Pick<ReturnType<typeof useEditor>, "undo" | "redo" | "canUndo" | "canRedo" | "dirty">; readonly onSave?: () => void; readonly saving?: boolean; readonly children?: React.ReactNode }) {
+/**
+ * Undo, redo, save, and what has been kept: "Unsaved changes" while edited,
+ * "Saved · version n" once a save succeeded, and "Not saved" for anything
+ * never saved. It never claims a save that did not happen.
+ */
+export function EditorToolbar({ editor, onSave, saving, version, children }: { readonly editor: Pick<ReturnType<typeof useEditor>, "undo" | "redo" | "canUndo" | "canRedo" | "dirty">; readonly onSave?: () => void; readonly saving?: boolean; readonly version?: number; readonly children?: React.ReactNode }) {
   const mod = modKey()
   return (
     <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Editor">
       <Button type="button" variant="ghost" size="icon" aria-label="Undo" title={`Undo (${mod}Z)`} disabled={!editor.canUndo} onClick={editor.undo}><Undo2 /></Button>
       <Button type="button" variant="ghost" size="icon" aria-label="Redo" title={`Redo (${mod}Shift+Z)`} disabled={!editor.canRedo} onClick={editor.redo}><Redo2 /></Button>
       {onSave && <Button type="button" variant="outline" size="sm" title={`Save (${mod}S)`} disabled={!editor.dirty || saving} onClick={onSave}><Save />{saving ? "Saving…" : "Save"}</Button>}
-      {editor.dirty ? <Badge variant="outline">Unsaved changes</Badge> : <span className="text-meta text-muted-foreground">All changes saved</span>}
+      {editor.dirty ? <Badge variant="outline">Unsaved changes</Badge> : <span className="text-meta text-muted-foreground">{version === undefined ? "Not saved" : `Saved · version ${version}`}</span>}
       {children}
     </div>
   )
