@@ -26,5 +26,7 @@ pub mod routes;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 
+/// The trusted transport's identity seam: verified host tokens to Norn principals.
+pub mod principal;
 /// Scoped PDP authority for complete refusal diagnostics.
 pub mod refusal_disclosure;
