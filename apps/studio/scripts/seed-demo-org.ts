@@ -9,7 +9,7 @@
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=admin
  *
- * Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY. The members must already have signed up.
+ * Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY. The members must already have signed up and verified their email addresses.
  */
 import { ORG_ROLES, type OrgRole } from "../worker/auth.ts"
 
@@ -27,12 +27,31 @@ export function seedStatements(members: readonly { readonly email: string; reado
     { sql: `insert into "organization" ("id", "name", "slug", "createdAt") values (?, ?, ?, ?) on conflict ("id") do nothing`, params: [DEMO_ORG.id, DEMO_ORG.name, DEMO_ORG.slug, at] },
     ...members.flatMap(({ email, role }) => [
       {
-        sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, "id", ?, ? from "user" where "email" = ? and not exists (select 1 from "member" where "organizationId" = ? and "userId" = "user"."id")`,
+        sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, "id", ?, ? from "user" where "email" = ? and "emailVerified" = 1 and not exists (select 1 from "member" where "organizationId" = ? and "userId" = "user"."id")`,
         params: [`m_${DEMO_ORG.id}_${crypto.randomUUID()}`, DEMO_ORG.id, role, at, email, DEMO_ORG.id],
       },
-      { sql: `update "member" set "role" = ? where "organizationId" = ? and "userId" = (select "id" from "user" where "email" = ?)`, params: [role, DEMO_ORG.id, email] },
+      { sql: `update "member" set "role" = ? where "organizationId" = ? and "userId" = (select "id" from "user" where "email" = ? and "emailVerified" = 1)`, params: [role, DEMO_ORG.id, email] },
     ]),
   ]
+}
+
+/** Verify every account before writing, and check each guarded role update took effect. */
+export async function seedDemoOrg(
+  members: readonly { readonly email: string; readonly role: OrgRole }[],
+  now: Date,
+  query: (statement: Statement) => Promise<{ results: unknown[]; changes: number }>,
+): Promise<void> {
+  for (const { email } of members) {
+    const result = await query({ sql: `select "id" from "user" where "email" = ? and "emailVerified" = 1`, params: [email] })
+    if (result.results.length !== 1) throw new Error(`Demo account is missing or its email is not verified: ${email}`)
+  }
+  const statements = seedStatements(members, now)
+  for (const [index, statement] of statements.entries()) {
+    const result = await query(statement)
+    if (index > 0 && index % 2 === 0 && result.changes !== 1) {
+      throw new Error(`Demo membership could not be updated for a verified account: ${members[index / 2 - 1]?.email}`)
+    }
+  }
 }
 
 /** `email=role` pairs, each role one the organization plugin knows. */
@@ -61,10 +80,13 @@ async function main(argv: readonly string[]) {
   if (!found.success) throw new Error(`could not list D1 databases: ${JSON.stringify(found.errors)}`)
   const database = (found.result as { uuid: string; name: string }[]).find((db) => db.name === name)
   if (database === undefined) throw new Error(`no D1 database ${name}`)
-  for (const { sql, params } of seedStatements(members, new Date())) {
+  await seedDemoOrg(members, new Date(), async ({ sql, params }) => {
     const result = await api(`/${database.uuid}/query`, { sql, params })
     if (!result.success) throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
-  }
+    const row = (result.result as { results?: unknown[]; meta?: { changes?: number } }[] | null)?.[0]
+    if (!row || !Array.isArray(row.results) || typeof row.meta?.changes !== "number") throw new Error("seed failed: invalid D1 response")
+    return { results: row.results, changes: row.meta.changes }
+  })
   const check = await api(`/${database.uuid}/query`, { sql: `select "user"."email" as email, "member"."role" as role from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ?`, params: [DEMO_ORG.id] })
   const stored = (check.result as { results?: unknown }[] | null)?.[0]?.results
   if (!check.success || stored === undefined) throw new Error(`could not read ${DEMO_ORG.id}'s members back: ${JSON.stringify(check.errors)}`)

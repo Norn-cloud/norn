@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { DEMO_ORG, parseMembers, seedStatements } from "../../scripts/seed-demo-org.ts"
+import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
@@ -20,8 +20,13 @@ function stage() {
     BETTER_AUTH_URL: ORIGIN,
     STUDIO_DEFAULT_ORG: DEMO_ORG.id,
   }
-  const seed = () => { for (const { sql, params } of seedStatements(parseMembers(["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=admin"]), new Date())) db.prepare(sql).run(...params) }
-  return { db, env, seed, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
+  const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=admin"]) => seedDemoOrg(parseMembers(members), new Date(), async ({ sql, params }) => {
+    const statement = db.prepare(sql)
+    if (sql.startsWith("select")) return { results: statement.all(...params), changes: 0 }
+    return { results: [], changes: statement.run(...params).changes }
+  })
+  const verify = (email: string) => db.prepare(`update "user" set "emailVerified" = 1 where "email" = ?`).run(email)
+  return { db, env, seed, verify, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
 }
 
 let address = 0
@@ -38,19 +43,22 @@ const signIn = async (env: Env, email: string) => cookieOf(await post(env, "/api
 const claims = (token: string) => JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { norn: Record<string, unknown> }
 
 test("seeding twice makes one Norn demo organization with each demo member once, in its role", async () => {
-  const { db, env, seed } = stage()
+  const { db, env, seed, verify } = stage()
   for (const email of ["viewer@demo.norn.cloud", "analyst@demo.norn.cloud"]) await signUp(env, email)
-  seed()
-  seed()
+  verify("viewer@demo.norn.cloud")
+  verify("analyst@demo.norn.cloud")
+  await seed()
+  await seed()
   expect(db.query(`select "name", "slug" from "organization" where "id" = ?`).all(DEMO_ORG.id)).toEqual([{ name: "Norn demo", slug: "norn-demo" }])
   expect(db.query(`select "user"."email" as email, "role" from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ? order by email`).all(DEMO_ORG.id))
     .toEqual([{ email: "analyst@demo.norn.cloud", role: "admin" }, { email: "viewer@demo.norn.cloud", role: "viewer" }])
 })
 
 test("a demo member's session starts in org_demo, and the host token it mints carries norn.org = org_demo", async () => {
-  const { env, seed, auth } = stage()
+  const { env, seed, verify, auth } = stage()
   await signUp(env, "viewer@demo.norn.cloud")
-  seed()
+  verify("viewer@demo.norn.cloud")
+  await seed(["viewer@demo.norn.cloud=viewer"])
   const cookie = await signIn(env, "viewer@demo.norn.cloud")
   const me = await (await call(env, "/api/me", { headers: { cookie } })).json() as { organization: { id: string; role: string } }
   expect(me.organization).toMatchObject({ id: DEMO_ORG.id, role: "viewer" })
@@ -60,10 +68,11 @@ test("a demo member's session starts in org_demo, and the host token it mints ca
 })
 
 test("after switching into org_demo the token names it; someone who is not a member cannot switch in", async () => {
-  const { env, seed, auth } = stage()
+  const { env, seed, verify, auth } = stage()
   await signUp(env, "analyst@demo.norn.cloud")
   await signUp(env, "outsider@example.com")
-  seed()
+  verify("analyst@demo.norn.cloud")
+  await seed(["analyst@demo.norn.cloud=admin"])
   const analyst = await signIn(env, "analyst@demo.norn.cloud")
   expect((await post(env, "/api/auth/organization/set-active", { organizationId: DEMO_ORG.id }, analyst)).status).toBe(200)
   const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie: analyst } }), auth)
@@ -76,10 +85,11 @@ test("after switching into org_demo the token names it; someone who is not a mem
 })
 
 test("without a default organization a session starts in the earliest membership, as before", async () => {
-  const { db, seed } = stage()
+  const { db, seed, verify } = stage()
   const env: Env = { ...stage().env, AUTH_DB: db as unknown as D1Database, STUDIO_DEFAULT_ORG: undefined }
   await signUp(env, "viewer@demo.norn.cloud")
-  seed()
+  verify("viewer@demo.norn.cloud")
+  await seed(["viewer@demo.norn.cloud=viewer"])
   const me = await (await call(env, "/api/me", { headers: { cookie: await signIn(env, "viewer@demo.norn.cloud") } })).json() as { organization: { id: string } }
   expect(me.organization.id).not.toBe(DEMO_ORG.id)
 })
@@ -87,4 +97,22 @@ test("without a default organization a session starts in the earliest membership
 test("the seed refuses an owner role or a malformed member", () => {
   expect(() => parseMembers(["a@b.c=owner"])).toThrow("admin, member or viewer")
   expect(() => parseMembers(["nobody=viewer"])).toThrow("not an email")
+})
+
+
+test("provisioning refuses an unverified pre-registered account, including an existing membership", async () => {
+  const { db, env, seed, verify } = stage()
+  const email = "analyst@demo.norn.cloud"
+  await signUp(env, email)
+  await expect(seed([`${email}=admin`])).rejects.toThrow("email is not verified")
+  expect(db.query(`select * from "member" where "organizationId" = ?`).all(DEMO_ORG.id)).toEqual([])
+  verify(email)
+  await seed([`${email}=viewer`])
+  db.prepare(`update "user" set "emailVerified" = 0 where "email" = ?`).run(email)
+  await expect(seed([`${email}=admin`])).rejects.toThrow("email is not verified")
+  expect(db.query(`select "role" from "member" where "organizationId" = ?`).get(DEMO_ORG.id)).toEqual({ role: "viewer" })
+  // The SQL writes remain guarded even if verification changes after preflight.
+  const writes = seedStatements(parseMembers([`${email}=admin`]), new Date())
+  for (const statement of writes.slice(1)) db.prepare(statement.sql).run(...statement.params)
+  expect(db.query(`select "role" from "member" where "organizationId" = ?`).get(DEMO_ORG.id)).toEqual({ role: "viewer" })
 })
