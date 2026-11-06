@@ -3,7 +3,7 @@
 //! A run's turns dispatch perform commands into the cell's outbox. An
 //! ordinary perform is executed in FIFO order by the cell's performer; a parked
 //! one (`norn.decision@1`, PARKED-1) waits until the cell resolves it. Either
-//! way its recorded result is a pending delivery. [`deliver_result`] turns that
+//! way its recorded result is a pending delivery. [`crate::flow_driver::deliver_result`] turns that
 //! delivery into the flow's result turn and commits it with the delivery
 //! consumed, so the run advances exactly once per result. This is host code: it
 //! is called by the cell's performer loop and by the decide route after their
