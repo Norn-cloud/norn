@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test"
 
 const press = (page: Page, combo: string) => page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+${combo}`)
 async function session(page: Page) {
-  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" } } }))
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId: "analytics" } }))
 }
 
 test("question row: create, validate, sign, save, reopen, edit, undo, redo, remove and undo removal", async ({ page }) => {
@@ -87,4 +87,24 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await expect(page.getByRole("button", { name: "Undo removal" })).toBeVisible()
   await page.getByRole("button", { name: "Undo removal" }).click()
   await expect(page.getByText("Saved · version 3")).toBeVisible()
+})
+
+
+test("a workspace without a data cell cannot call definitions", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses a deterministic scope stand-in")
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u", name: "Member", email: "m@example.com" }, organization: { id: "unmapped", name: "Unmapped", role: "member" }, environmentId: null } }))
+  const window = { start: "2026-07-06T00:00:00Z", end: "2026-10-26T00:00:00Z" }
+  const catalog = { objectSet: "demo.Conversion", properties: [], metrics: [{ name: "demo.yield", label: "Yield", type: "decimal" }], grains: [], operators: [], example: { irVersion: "0.1", calendar: "utc", freshness: {} }, declarations: { metrics: [], objectType: null } }
+  const choice = { id: "demo.yield", label: "Yield", detail: "yield", recommended: true, value: {} }
+  const tree = { basis: "Catalogue", measures: [choice], groupBy: [], grains: {}, conditions: [], filterable: [], windows: [{ id: "cell", label: "This window", detail: "dates", recommended: true, value: { window } }] }
+  let requests = 0
+  await page.route("**/api/host/v1/definitions**", (route) => { requests += 1; return route.abort() })
+  await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
+  await page.route("**/api/questions/recommendations", (route) => route.fulfill({ json: tree }))
+  await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: null, restatement: { text: "The checked question.", sha256: "a".repeat(64) } } }))
+  await page.goto("/questions/build")
+  await expect(page.getByText("This workspace has no data cell yet.")).toBeVisible()
+  await page.getByRole("button", { name: "This is what I asked for" }).click()
+  await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
+  expect(requests).toBe(0)
 })

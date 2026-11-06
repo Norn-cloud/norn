@@ -10,6 +10,7 @@ import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 import { OPERATOR_WORDS, buildQuestion, draftOf, issuesOf, readCatalog, type Condition, type Draft, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 import { questionDefinitions, QuestionDefinitionError } from "./lib/question-definitions.ts"
+import { NO_DATA_CELL, useStudioScope } from "./lib/definitions.ts"
 import { z } from "zod"
 
 /** One option of a column, as GET /api/questions/recommendations serves it. */
@@ -103,7 +104,9 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [saveError, setSaveError] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [pageCursor, setPageCursor] = useState<string>()
-  const list = useQuery({ queryKey: ["saved-questions", refresh, pageCursor], queryFn: () => definitions.list(pageCursor), retry: false })
+  const scope = useStudioScope()
+  const cellAvailable = scope.isSuccess && scope.data !== null
+  const list = useQuery({ queryKey: ["saved-questions", scope.data?.orgId, scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable, retry: false })
   const revision = useRef(editor.revision)
   revision.current = editor.revision
   const question = buildQuestion(draft, catalog)
@@ -136,7 +139,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
   }
   const save = async () => {
-    if (!signed || !restated || !draft.title.trim() || saving) return
+    if (!cellAvailable || !signed || !restated || !draft.title.trim() || saving) return
     const at = editor.revision
     setSaving(true); setSaveError(undefined)
     try {
@@ -161,7 +164,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     } finally { setSaving(false) }
   }
   const remove = async () => {
-    if (!saved || saving || !signed || !restated || !verified || editor.dirty || !globalThis.confirm("Remove this saved question?")) return
+    if (!cellAvailable || !saved || saving || !signed || !restated || !verified || editor.dirty || !globalThis.confirm("Remove this saved question?")) return
     setSaving(true)
     try {
       const result = await definitions.retire(saved.id, saved.version)
@@ -171,7 +174,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     finally { setSaving(false) }
   }
   const undoRemove = async () => {
-    if (!removed || saving) return
+    if (!cellAvailable || !removed || saving) return
     setSaving(true)
     try {
       const result = await definitions.install(removed.id, removed.question, removed.sha256, removed.version)
@@ -268,19 +271,21 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       <div className="space-y-2" data-testid="question-save-controls">
         <div className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
-          <Button type="button" onClick={save} disabled={!signed || !draft.title.trim() || saving} aria-describedby={!signed ? "question-save-reason" : undefined}>{saving ? "Saving…" : "Save question"}</Button>
-          {saved && <Button type="button" variant="outline" disabled={saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
-          {removed && <Button type="button" variant="outline" disabled={saving} onClick={undoRemove}>Undo removal</Button>}
+          <Button type="button" onClick={save} disabled={!cellAvailable || !signed || !draft.title.trim() || saving} aria-describedby={!signed ? "question-save-reason" : undefined}>{saving ? "Saving…" : "Save question"}</Button>
+          {saved && <Button type="button" variant="outline" disabled={!cellAvailable || saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
+          {removed && <Button type="button" variant="outline" disabled={!cellAvailable || saving} onClick={undoRemove}>Undo removal</Button>}
         </div>
+        {scope.isSuccess && scope.data === null && <p role="status" className="text-sm text-muted-foreground">{NO_DATA_CELL}</p>}
+        {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
         {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
         {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
       </div>
       {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
       <Panel icon={ChartLine} label="Saved questions">
-        {list.isPending && <p>Loading saved questions…</p>}
+        {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
         {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
-        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
+        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
         {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
         {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
       </Panel>

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
-import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
+import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, draftOf, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 
@@ -45,9 +45,11 @@ const settled = (result: Installed) => {
 /** Every saved dashboard, with open, duplicate and delete. */
 export function DashboardsPage() {
   const store = useDefinitions()
+  const scope = useStudioScope()
+  const cellAvailable = scope.isSuccess && scope.data !== null
   const client = useQueryClient()
   const navigate = useNavigate()
-  const dashboards = useInfiniteQuery({ queryKey: ["dashboards"], queryFn: ({ pageParam }) => store.list(pageParam), initialPageParam: null as string | null, getNextPageParam: (page) => page.cursor, retry: false })
+  const dashboards = useInfiniteQuery({ queryKey: ["dashboards", scope.data?.orgId, scope.data?.environmentId], queryFn: ({ pageParam }) => store.list(pageParam), initialPageParam: null as string | null, getNextPageParam: (page) => page.cursor, enabled: cellAvailable, retry: false })
   const rows = dashboards.data?.pages.flatMap(({ items }) => items)
   const refresh = () => client.invalidateQueries({ queryKey: ["dashboards"] })
   const duplicate = useMutation({
@@ -65,9 +67,11 @@ export function DashboardsPage() {
       <div className="space-y-2">
         <h1 className="text-title font-medium">Dashboards</h1>
         <p className="max-w-2xl text-muted-foreground">Saved sets of questions. Each is a definition the cell checks before it is kept.</p>
-        <Button size="sm" onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>
+        <Button size="sm" disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>
       </div>
-      {dashboards.isPending && <p className="text-muted-foreground">Reading dashboards…</p>}
+      {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
+      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {cellAvailable && dashboards.isPending && <p className="text-muted-foreground">Reading dashboards…</p>}
       {dashboards.isError && <EmptyState icon={LayoutDashboard}>{failure(dashboards.error)}</EmptyState>}
       {(duplicate.isError || remove.isError) && <p role="alert" className="text-destructive">{failure(duplicate.error ?? remove.error)}</p>}
       {rows?.length === 0 && <EmptyState icon={LayoutDashboard}>No dashboards saved yet.</EmptyState>}
@@ -197,23 +201,27 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
 }
 
 export function DashboardEditorPage() {
+  const scope = useStudioScope()
+  const cellAvailable = scope.isSuccess && scope.data !== null
   const { id } = useParams({ strict: false }) as { id?: string }
   const store = useDefinitions()
   const navigate = useNavigate()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
-  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined, retry: false })
+  const stored = useQuery({ queryKey: ["dashboard", id], queryFn: async () => (id === undefined ? null : await store.get(id)) ?? null, enabled: id !== undefined && cellAvailable, retry: false })
   const fresh = id === undefined
   const [title, setTitle] = useState(id === undefined ? "New dashboard" : "Dashboard")
   useEffect(() => { if (stored.data) setTitle(stored.data.dashboard.title || "Untitled dashboard") }, [stored.data])
   return (
     <section className="space-y-6">
       <h1 className="text-title font-medium">{title}</h1>
-      {(catalog.isPending || (!fresh && stored.isPending)) && <p className="text-muted-foreground">Reading the dashboard…</p>}
+      {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
+      {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+      {cellAvailable && (catalog.isPending || (!fresh && stored.isPending)) && <p className="text-muted-foreground">Reading the dashboard…</p>}
       {catalog.isError && <EmptyState icon={LayoutDashboard}>{catalog.error.message}</EmptyState>}
       {stored.isError && <EmptyState icon={LayoutDashboard}>{failure(stored.error)}</EmptyState>}
       {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={LayoutDashboard}>No dashboard {id} is saved.</EmptyState>}
-      {catalog.data && (fresh || stored.data) && (
+      {cellAvailable && catalog.data && (fresh || stored.data) && (
         <DashboardEditor key={`${stored.data?.id ?? "new"}:${stored.data?.version ?? 0}`} store={store} catalog={catalog.data} stored={stored.data ?? undefined} guard={(dirty) => <DirtyGuard dirty={dirty} />}
           onReload={() => void stored.refetch()}
           onSaved={(saved) => { if (id === undefined) setTimeout(() => void navigate({ to: "/dashboards/$id", params: { id: saved.id }, replace: true })) }} />

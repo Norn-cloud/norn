@@ -1,7 +1,6 @@
 import { z } from "zod"
-import { CellUnavailable } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, scopedDefinitionsFetch, type ScopeProvider } from "./definitions.ts"
 
-const scope = { orgId: "org_demo", environmentId: "analytics" }
 const summary = z.object({ id: z.string(), title: z.string(), version: z.number(), lifecycle: z.string() })
 const page = z.object({ items: z.array(summary), cursor: z.string().nullable().optional() })
 const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown(), signoff: z.object({ restatementSha256: z.string() }).nullable().optional() })
@@ -15,14 +14,19 @@ export class QuestionDefinitionError extends Error {
 /** The cell owns authorization, validation, versions, and the sign-off record. */
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init)) {
+export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init), scope?: ScopeProvider) {
+  const scoped = scopedDefinitionsFetch(fetcher, "/api/host", scope)
   const call = async (path: string, query: Record<string, string> = {}, body?: unknown): Promise<unknown> => {
     let response: Response
     try {
-      response = await fetcher(`/api/host${path}?${new URLSearchParams({ ...scope, ...query })}`, body === undefined
+      response = await scoped(`${path}?${new URLSearchParams(query)}`, body === undefined
         ? { headers: { accept: "application/json" } }
         : { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
-    } catch { throw new CellUnavailable(0) }
+    } catch (error) {
+      if (error instanceof StudioScopeError) throw error
+      if (error instanceof CellUnavailable) throw error
+      throw new CellUnavailable(0)
+    }
     const raw: unknown = await response.json().catch(() => null)
     if (!response.ok) {
       const error = refusal.safeParse(raw)
