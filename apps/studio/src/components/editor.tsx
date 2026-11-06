@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, CircleAlert, Copy, Redo2, Save, Trash2, Undo2 } fro
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { history, modKey, type History, type Issue } from "@/lib/editor"
+import { history, modKey, sameValue, type History, type Issue } from "@/lib/editor"
 
 /**
  * One editor's state with undo and redo, and whether it differs from what was
@@ -37,7 +37,7 @@ export function useEditor<T>({ initial, onSave, onRun }: { readonly initial: T; 
     globalThis.addEventListener?.("keydown", onKey)
     return () => globalThis.removeEventListener?.("keydown", onKey)
   }, [undo, redo])
-  return { value, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: JSON.stringify(value) !== JSON.stringify(saved) }
+  return { value, revision: state, set, undo, redo, open, markSaved, canUndo: state.past.length > 0, canRedo: state.future.length > 0, dirty: !sameValue(value, saved) }
 }
 
 /** Asks before leaving an editor with unsaved changes, in the app and when closing the tab. */
