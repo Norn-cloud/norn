@@ -16,7 +16,7 @@ use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 
-use crate::principal::PrincipalResolver;
+use crate::principal::{PrincipalResolver, RequestScope};
 
 /// One finite HTTP response: a status and a JSON body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +68,8 @@ pub fn handle_with<E: SqlEngine>(
         authorization,
         now,
     } = *request;
+    // The verified principal lives exactly as long as this request.
+    let _request = RequestScope::new(principals);
     let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
     let question = path

@@ -117,7 +117,9 @@ impl CallerSlot {
         }
     }
 
-    fn current(&self) -> Option<Caller> {
+    /// The current request's verified principal, if any.
+    #[must_use]
+    pub fn current(&self) -> Option<Caller> {
         self.0.lock().ok().and_then(|slot| slot.clone())
     }
 }

@@ -31,6 +31,42 @@ pub const HOST_AUDIENCE: &str = "norn-host";
 pub trait PrincipalResolver {
     /// The verified subject, or `None`; every read then denies by default.
     fn resolve(&self, authorization: Option<&str>, now: u64) -> Option<String>;
+
+    /// Forget the request's principal. Required: the dispatch calls it when
+    /// a request ends, on every exit path ([`RequestScope`]).
+    fn end_request(&self);
+}
+
+/// The lifetime of one request's verified principal: it ends when this
+/// guard drops, on every return path and during unwinding.
+pub struct RequestScope<'a>(&'a dyn PrincipalResolver);
+
+impl<'a> RequestScope<'a> {
+    /// Begin a request on `principals`.
+    #[must_use]
+    pub const fn new(principals: &'a dyn PrincipalResolver) -> Self {
+        Self(principals)
+    }
+}
+
+impl Drop for RequestScope<'_> {
+    fn drop(&mut self) {
+        self.0.end_request();
+    }
+}
+
+/// A deployable cell without a configured resolver: nobody is verified.
+pub struct NoPrincipals(pub Arc<CallerSlot>);
+
+impl PrincipalResolver for NoPrincipals {
+    fn resolve(&self, _authorization: Option<&str>, _now: u64) -> Option<String> {
+        self.0.record(None);
+        None
+    }
+
+    fn end_request(&self) {
+        self.0.record(None);
+    }
 }
 
 /// Verifies signed host tokens for one cell.
@@ -133,6 +169,9 @@ impl PrincipalResolver for TokenPrincipals {
         self.slot.record(caller);
         subject
     }
+    fn end_request(&self) {
+        self.slot.record(None);
+    }
 }
 
 /// Synthetic principals for tests and local smoke builds, named as
@@ -169,5 +208,8 @@ impl PrincipalResolver for FixturePrincipals {
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
         subject
+    }
+    fn end_request(&self) {
+        self.slot.record(None);
     }
 }
