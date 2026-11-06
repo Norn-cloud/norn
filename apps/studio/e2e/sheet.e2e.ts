@@ -1,5 +1,8 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import { SHEET } from "../src/sheet-states.ts"
+
+/** Every canvas in the cell is shown (it fades in once framed; a transparent canvas still counts as visible). */
+const shown = async (cell: Locator) => { for (const canvas of await cell.locator("[data-canvas-surface]").all()) await expect(canvas).toHaveCSS("opacity", "1") }
 
 // The contact sheet: every listed state has a real specimen, and each is captured, light and dark, for the milestone report.
 for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) for (const state of SHEET) {
@@ -9,6 +12,7 @@ for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) for 
     const cell = page.locator(`[data-state="${state.id}"]`)
     await expect(cell).toBeVisible()
     await expect(cell).not.toContainText("MISSING specimen")
+    await shown(cell)
     await page.waitForTimeout(500)
     await cell.screenshot({ path: `test-results/sheet/${state.id.replace("/", "--")}${suffix}.png` })
   })
@@ -18,6 +22,7 @@ for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) test
   await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
   await page.goto("/sheet.html")
   await expect(page.locator("[data-state]")).toHaveCount(SHEET.length)
+  await shown(page.locator("main"))
   await page.waitForTimeout(800)
   // The sheet element, not a full-page capture: Chrome can refuse a very tall page capture under load.
   await page.locator("main").screenshot({ path: `test-results/sheet/all${suffix}.png` })
@@ -41,6 +46,7 @@ test.describe("at 75% zoom", () => {
     await page.goto(`/sheet.html?state=${encodeURIComponent(id)}`)
     const cell = page.locator(`[data-state="${id}"]`)
     await expect(cell).toBeVisible()
+    await shown(cell)
     await page.waitForTimeout(500)
     await cell.screenshot({ path: `test-results/sheet/zoom75-${id.replace("/", "--")}.png` })
   })

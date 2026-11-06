@@ -12,6 +12,8 @@ export async function open(page: Page, tab?: string) {
   await page.goto("/canvas")
   if (tab) await page.getByRole("button", { name: tab, exact: true }).click()
   await expect(page.getByText(/Checker: |Checker not loaded/).first()).toBeVisible({ timeout: 30_000 })
+  // The canvas fades in once it is framed; Playwright counts a transparent element as visible, so check it is shown.
+  await expect(page.locator("[data-canvas-surface]")).toHaveCSS("opacity", "1")
 }
 
 /** A point on the empty canvas (the pane itself, not a node, edge, toolbar or minimap), in page coordinates. */
@@ -65,11 +67,20 @@ export async function clear(page: Page) {
   await page.mouse.click(at.x, at.y)
 }
 
-/** Click on an edge's wide interaction path, which React Flow draws for hit-testing. */
+/**
+ * Click an edge where a person would: the middle of its wide interaction path, which React Flow draws for hit-testing.
+ * A straight level edge has a zero-height box, so the point comes from the path itself, not its bounding box.
+ */
 export async function clickEdge(page: Page, id: string) {
   const path = edge(page, id).locator(".react-flow__edge-interaction")
   await reveal(page, path)
-  await path.click({ force: true })
+  const at = await path.evaluate((element) => {
+    const shape = element as SVGGeometryElement
+    const point = shape.getPointAtLength(shape.getTotalLength() / 2)
+    const screen = new DOMPoint(point.x, point.y).matrixTransform(shape.getScreenCTM() ?? undefined)
+    return { x: screen.x, y: screen.y }
+  })
+  await page.mouse.click(at.x, at.y)
 }
 
 /** Drag from one handle to another, as a user draws a connection. */

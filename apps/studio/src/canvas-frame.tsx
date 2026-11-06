@@ -100,7 +100,8 @@ function Frame(props: CanvasFrameProps) {
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const surface = useRef<HTMLDivElement>(null)
-  const initialized = useNodesInitialized()
+  // Measured live from the node lookup: the default reading only updates when the nodes prop changes, which a mount alone does not.
+  const initialized = useNodesInitialized({ includeHiddenNodes: true })
   const [framed, setFramed] = useState(false)
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
@@ -203,10 +204,12 @@ function Frame(props: CanvasFrameProps) {
   useEffect(() => { setDrawer(selected) }, [selected, selection])
   // Open readable: fit the whole graph only when that keeps nodes at READABLE or larger; otherwise frame where it starts and let the user pan.
   useEffect(() => {
-    if (framed || !initialized) return
+    if (framed) return
+    if (graph.nodes.length === 0) { setFramed(true); return }
+    if (!initialized) return
     setFramed(true)
     const box = surface.current?.getBoundingClientRect()
-    if (!box || graph.nodes.length === 0) return
+    if (!box) return
     const bounds = flow.getNodesBounds(graph.nodes.map(({ id }) => id))
     const fits = Math.min(box.width / (bounds.width * (1 + 2 * PADDING)), box.height / (bounds.height * (1 + 2 * PADDING)))
     if (fits >= READABLE) { void flow.fitView({ padding: PADDING, minZoom: READABLE, maxZoom: 1 }); return }

@@ -17,7 +17,8 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await expect(node(page, "sleep")).toContainText("5000 ms")
   const before = await (await shown(page, "sleep")).boundingBox()
   await (await shown(page, "sleep")).hover()
-  await page.mouse.down(); await page.mouse.move((before?.x ?? 0) + 150, (before?.y ?? 0) + 60, { steps: 8 }); await page.mouse.up()
+  await page.mouse.down(); // From the grab point (the card's centre), 150px right.
+  await page.mouse.move((before?.x ?? 0) + (before?.width ?? 0) / 2 + 150, (before?.y ?? 0) + (before?.height ?? 0) / 2 + 60, { steps: 8 }); await page.mouse.up()
   expect((await node(page, "sleep").boundingBox())?.x).toBeGreaterThan((before?.x ?? 0) + 80)
   await (await shown(page, "sleep")).click()
   await press(page, "d")
