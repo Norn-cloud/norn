@@ -83,7 +83,13 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
         .install_definitions(model.clone(), input(&canonical, 10), Some(0), SCOPE)
         .expect("kernel definitions");
 
-    let first = change("studio.dashboard.a", 1, RetainedLifecycle::Active, "A", None);
+    let first = change(
+        "studio.dashboard.a",
+        1,
+        RetainedLifecycle::Active,
+        "A",
+        None,
+    );
     let installed = store
         .install_retained_definition(&input(&canonical, 20), Some(1), SCOPE, &first)
         .expect("first revision");
@@ -91,31 +97,73 @@ async fn revisions_install_atomically_compare_and_set_and_survive_restore() {
     assert_eq!(installed.canonical_set, canonical);
 
     // An unused id is required without an expected revision.
-    let again = change("studio.dashboard.a", 1, RetainedLifecycle::Active, "A2", None);
+    let again = change(
+        "studio.dashboard.a",
+        1,
+        RetainedLifecycle::Active,
+        "A2",
+        None,
+    );
     assert!(matches!(
         store.install_retained_definition(&input(&canonical, 21), Some(2), SCOPE, &again),
-        Err(CellError::RetainedDefinitionConflict { expected: None, actual: Some(1), .. })
+        Err(CellError::RetainedDefinitionConflict {
+            expected: None,
+            actual: Some(1),
+            ..
+        })
     ));
     // A stale expected revision conflicts and changes nothing.
-    let stale = change("studio.dashboard.a", 3, RetainedLifecycle::Active, "A3", Some(2));
+    let stale = change(
+        "studio.dashboard.a",
+        3,
+        RetainedLifecycle::Active,
+        "A3",
+        Some(2),
+    );
     assert!(matches!(
         store.install_retained_definition(&input(&canonical, 22), Some(2), SCOPE, &stale),
-        Err(CellError::RetainedDefinitionConflict { actual: Some(1), .. })
+        Err(CellError::RetainedDefinitionConflict {
+            actual: Some(1),
+            ..
+        })
     ));
     assert_eq!(
-        store.read().installed_definitions(None).expect("read").expect("active").version,
+        store
+            .read()
+            .installed_definitions(None)
+            .expect("read")
+            .expect("active")
+            .version,
         2
     );
 
-    let second = change("studio.dashboard.a", 2, RetainedLifecycle::Active, "A2", Some(1));
+    let second = change(
+        "studio.dashboard.a",
+        2,
+        RetainedLifecycle::Active,
+        "A2",
+        Some(1),
+    );
     store
         .install_retained_definition(&input(&canonical, 30), Some(2), SCOPE, &second)
         .expect("second revision");
-    let other = change("studio.dashboard.b", 1, RetainedLifecycle::Active, "B", None);
+    let other = change(
+        "studio.dashboard.b",
+        1,
+        RetainedLifecycle::Active,
+        "B",
+        None,
+    );
     store
         .install_retained_definition(&input(&canonical, 40), Some(3), SCOPE, &other)
         .expect("other id");
-    let retired = change("studio.dashboard.b", 2, RetainedLifecycle::Retired, "B", Some(1));
+    let retired = change(
+        "studio.dashboard.b",
+        2,
+        RetainedLifecycle::Retired,
+        "B",
+        Some(1),
+    );
     store
         .install_retained_definition(&input(&canonical, 50), Some(4), SCOPE, &retired)
         .expect("retire");

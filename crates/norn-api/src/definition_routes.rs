@@ -284,7 +284,9 @@ pub fn valid_id(id: &str) -> bool {
     let mut bytes = id.bytes();
     bytes.next().is_some_and(|first| first.is_ascii_lowercase())
         && id.len() <= 128
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-'))
+        && bytes.all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
 }
 
 /// Decide `operation` for `actor` and admit the explicit scope: the one
@@ -403,7 +405,10 @@ fn validate<E: SqlEngine>(
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
         "agent" => {
             let (check, context) = kinds.agent.as_ref().ok_or_else(|| kind_unknown(kind))?;
-            findings.extend(RefusalDiagnostic::from_checker(&check(&canonical, context), ""));
+            findings.extend(RefusalDiagnostic::from_checker(
+                &check(&canonical, context),
+                "",
+            ));
         }
         other => return Err(kind_unknown(other)),
     }
@@ -543,7 +548,8 @@ fn dashboard<E: SqlEngine>(
                     if let Err(question_findings) =
                         check_ad_hoc(host, scope, actor, &question, runtime)?
                     {
-                        findings.extend(RefusalDiagnostic::from_checker(&question_findings, &under));
+                        findings
+                            .extend(RefusalDiagnostic::from_checker(&question_findings, &under));
                     }
                 }
             },
@@ -554,7 +560,11 @@ fn dashboard<E: SqlEngine>(
 
 fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
     let Some(view) = value else {
-        findings.push(RefusalDiagnostic::error(codes::VIEW_INVALID, "a tile has a view", at));
+        findings.push(RefusalDiagnostic::error(
+            codes::VIEW_INVALID,
+            "a tile has a view",
+            at,
+        ));
         return;
     };
     let Some(object) = members(view, at, &["kind", "chart"], findings) else {
@@ -580,7 +590,11 @@ fn view(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) 
 
 fn layout(value: Option<&Value>, at: &str, findings: &mut Vec<RefusalDiagnostic>) {
     let Some(layout) = value else {
-        findings.push(RefusalDiagnostic::error(codes::LAYOUT_INVALID, "a tile has a layout", at));
+        findings.push(RefusalDiagnostic::error(
+            codes::LAYOUT_INVALID,
+            "a tile has a layout",
+            at,
+        ));
         return;
     };
     let Some(object) = members(layout, at, &["x", "y", "w", "h"], findings) else {
@@ -661,15 +675,17 @@ fn append<E: SqlEngine>(
     let _epoch = host.definition_write()?;
     let record = {
         let mut cell = host.cell()?;
-        let reader = cell.store().read();
-        let active = reader
-            .installed_definitions(None)
-            .map_err(Refusal::host)?
-            .ok_or_else(|| Refusal::host("the cell has no installed definitions"))?;
-        let current = reader
-            .retained_definition(&definition.id, None)
-            .map_err(Refusal::host)?;
-        drop(reader);
+        let (active, current) = {
+            let reader = cell.store().read();
+            let active = reader
+                .installed_definitions(None)
+                .map_err(Refusal::host)?
+                .ok_or_else(|| Refusal::host("the cell has no installed definitions"))?;
+            let current = reader
+                .retained_definition(&definition.id, None)
+                .map_err(Refusal::host)?;
+            (active, current)
+        };
         if current.as_ref().map(|current| current.definition.revision) != expected {
             return Err(version_conflict());
         }
@@ -708,14 +724,15 @@ fn append<E: SqlEngine>(
             definition,
             expected_revision: expected,
         };
-        let installed = match cell.install_retained_definition(&input, Some(active.version), &change) {
-            Ok(installed) => installed,
-            Err(
-                CellError::RetainedDefinitionConflict { .. }
-                | CellError::DefinitionVersionConflict { .. },
-            ) => return Err(version_conflict()),
-            Err(error) => return Err(Refusal::host(error)),
-        };
+        let installed =
+            match cell.install_retained_definition(&input, Some(active.version), &change) {
+                Ok(installed) => installed,
+                Err(
+                    CellError::RetainedDefinitionConflict { .. }
+                    | CellError::DefinitionVersionConflict { .. },
+                ) => return Err(version_conflict()),
+                Err(error) => return Err(Refusal::host(error)),
+            };
         RetainedDefinitionRecord {
             definition: change.definition,
             definitions_version: installed.version,
@@ -866,7 +883,11 @@ pub fn list_definitions<E: SqlEngine>(
     let include_retired = match query.include.as_deref() {
         None => false,
         Some("retired") => true,
-        Some(other) => return Err(Refusal::invalid(format!("include: unknown value {other:?}"))),
+        Some(other) => {
+            return Err(Refusal::invalid(format!(
+                "include: unknown value {other:?}"
+            )));
+        }
     };
     let limit = query.limit.unwrap_or(50);
     if !(1..=MAX_LIST_LIMIT).contains(&limit) {
@@ -876,8 +897,11 @@ pub fn list_definitions<E: SqlEngine>(
         .cursor
         .as_deref()
         .map(|cursor| {
-            let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| cursor_invalid())?;
-            let cursor: Cursor = serde_json::from_slice(&bytes).map_err(|_| cursor_invalid())?;
+            let bytes = URL_SAFE_NO_PAD
+                .decode(cursor)
+                .map_err(|_malformed| cursor_invalid())?;
+            let cursor: Cursor =
+                serde_json::from_slice(&bytes).map_err(|_malformed| cursor_invalid())?;
             if cursor.k != kind || cursor.r != include_retired {
                 return Err(cursor_invalid());
             }
@@ -889,7 +913,12 @@ pub fn list_definitions<E: SqlEngine>(
         let cell = host.cell()?;
         let reader = cell.store().read();
         reader
-            .retained_definitions(kind, include_retired, after.as_deref(), limit.saturating_add(1))
+            .retained_definitions(
+                kind,
+                include_retired,
+                after.as_deref(),
+                limit.saturating_add(1),
+            )
             .map_err(Refusal::host)?
     };
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);

@@ -84,12 +84,18 @@ fn call(
 
 fn post(cell: &Cell, path: &str, auth: Option<&str>, body: &Value) -> (u16, Value) {
     let response = call(cell, "POST", path, SCOPE, auth, &body.to_string());
-    (response.status, serde_json::from_str(&response.body).unwrap())
+    (
+        response.status,
+        serde_json::from_str(&response.body).unwrap(),
+    )
 }
 
 fn get(cell: &Cell, path: &str, query: &str, auth: Option<&str>) -> (u16, Value) {
     let response = call(cell, "GET", path, &format!("{SCOPE}{query}"), auth, "");
-    (response.status, serde_json::from_str(&response.body).unwrap())
+    (
+        response.status,
+        serde_json::from_str(&response.body).unwrap(),
+    )
 }
 
 /// An admitted ad-hoc question over the analytics cell (F2b's fixture shape).
@@ -214,14 +220,23 @@ fn admit_runs_the_dashboard_validator_without_side_effects() {
 #[test]
 fn writes_need_a_writer_grant_and_every_denial_is_the_same_document() {
     let cell = cell(DefinitionKinds::default());
-    let body = json!({ "kind": "dashboard", "id": "studio.dashboard.a", "payload": dashboard("A") });
+    let body =
+        json!({ "kind": "dashboard", "id": "studio.dashboard.a", "payload": dashboard("A") });
     let denied: Vec<Response> = [
         ("/v1/definitions:admit", VIEWER, SCOPE),
         ("/v1/definitions:install", VIEWER, SCOPE),
         ("/v1/definitions:install", None, SCOPE),
-        ("/v1/definitions:install", Some("Bearer fixture:nobody@demo"), SCOPE),
+        (
+            "/v1/definitions:install",
+            Some("Bearer fixture:nobody@demo"),
+            SCOPE,
+        ),
         // An out-of-scope request is the same denial, even for an admin.
-        ("/v1/definitions:install", ADMIN, "orgId=org_demo&environmentId=dev"),
+        (
+            "/v1/definitions:install",
+            ADMIN,
+            "orgId=org_demo&environmentId=dev",
+        ),
         ("/v1/definitions:install", ADMIN, ""),
         ("/v1/definitions/studio.dashboard.a:retire", VIEWER, SCOPE),
     ]
@@ -236,7 +251,14 @@ fn writes_need_a_writer_grant_and_every_denial_is_the_same_document() {
     let response = call(&cell, "POST", "/v1/definitions:install", SCOPE, VIEWER, "{");
     assert_eq!((response.status, &response.body), (403, &denied[0].body));
     // Reads are denied the same to anonymous callers.
-    let anonymous = call(&cell, "GET", "/v1/definitions:list", &format!("{SCOPE}&kind=dashboard"), None, "");
+    let anonymous = call(
+        &cell,
+        "GET",
+        "/v1/definitions:list",
+        &format!("{SCOPE}&kind=dashboard"),
+        None,
+        "",
+    );
     assert_eq!((anonymous.status, &anonymous.body), (403, &denied[0].body));
     // A viewer holds Population, so reads are open to it.
     let (status, page) = get(&cell, "/v1/definitions:list", "&kind=dashboard", VIEWER);
@@ -253,7 +275,10 @@ fn install_versions_compare_and_set_and_read_back() {
     assert_eq!(first["installed"], json!(true));
     assert_eq!(first["id"], json!(id));
     assert_eq!(first["version"], json!(1));
-    assert_eq!(first["receipt"]["recordedAtMs"], json!(1_800_000_000_000_u64));
+    assert_eq!(
+        first["receipt"]["recordedAtMs"],
+        json!(1_800_000_000_000_u64)
+    );
     assert_eq!(first["receipt"]["receiptHash"].as_str().unwrap().len(), 64);
     let commit = first["receipt"]["commitSeq"].as_u64().unwrap();
 
@@ -274,7 +299,10 @@ fn install_versions_compare_and_set_and_read_back() {
     assert_eq!(refused["code"], json!("definition.refused"));
     assert_eq!(
         pointers(&refused),
-        [("definition.tile_title_invalid".to_owned(), "/title".to_owned())]
+        [(
+            "definition.tile_title_invalid".to_owned(),
+            "/title".to_owned()
+        )]
     );
 
     let (status, current) = get(&cell, &format!("/v1/definitions/{id}"), "", VIEWER);
@@ -284,7 +312,12 @@ fn install_versions_compare_and_set_and_read_back() {
     assert_eq!(current["lifecycle"], json!("active"));
     assert_eq!(current["payload"], dashboard("Refinery v2"));
     assert_eq!(current["receipt"], second["receipt"]);
-    let (status, past) = get(&cell, &format!("/v1/definitions/{id}"), "&version=1", VIEWER);
+    let (status, past) = get(
+        &cell,
+        &format!("/v1/definitions/{id}"),
+        "&version=1",
+        VIEWER,
+    );
     assert_eq!(status, 200, "{past}");
     assert_eq!(past["payload"], dashboard("Refinery"));
     assert_eq!(past["receipt"], first["receipt"]);
@@ -303,10 +336,19 @@ fn install_versions_compare_and_set_and_read_back() {
 #[test]
 fn list_pages_by_id_with_a_bound_cursor_and_retire_keeps_history() {
     let cell = cell(DefinitionKinds::default());
-    for id in ["studio.dashboard.c", "studio.dashboard.a", "studio.dashboard.b"] {
+    for id in [
+        "studio.dashboard.c",
+        "studio.dashboard.a",
+        "studio.dashboard.b",
+    ] {
         assert_eq!(install(&cell, id, &dashboard(id), None).0, 200);
     }
-    let (status, page) = get(&cell, "/v1/definitions:list", "&kind=dashboard&limit=2", VIEWER);
+    let (status, page) = get(
+        &cell,
+        "/v1/definitions:list",
+        "&kind=dashboard&limit=2",
+        VIEWER,
+    );
     assert_eq!(status, 200, "{page}");
     let ids = |page: &Value| -> Vec<String> {
         page["items"]
@@ -340,8 +382,17 @@ fn list_pages_by_id_with_a_bound_cursor_and_retire_keeps_history() {
         assert_eq!(status, 400, "{refused}");
         assert_eq!(refused["code"], json!("definition.cursor_invalid"));
     }
-    for query in ["", "&kind=dashboard&limit=0", "&kind=dashboard&limit=101", "&kind=dashboard&include=all"] {
-        assert_eq!(get(&cell, "/v1/definitions:list", query, VIEWER).0, 400, "{query}");
+    for query in [
+        "",
+        "&kind=dashboard&limit=0",
+        "&kind=dashboard&limit=101",
+        "&kind=dashboard&include=all",
+    ] {
+        assert_eq!(
+            get(&cell, "/v1/definitions:list", query, VIEWER).0,
+            400,
+            "{query}"
+        );
     }
 
     let retire = |expected: u64| {
@@ -362,9 +413,19 @@ fn list_pages_by_id_with_a_bound_cursor_and_retire_keeps_history() {
     assert_eq!(pointers(&again)[0].0, "definition.already_retired");
     let (_, active) = get(&cell, "/v1/definitions:list", "&kind=dashboard", VIEWER);
     assert_eq!(ids(&active), ["studio.dashboard.a", "studio.dashboard.c"]);
-    let (_, all) = get(&cell, "/v1/definitions:list", "&kind=dashboard&include=retired", VIEWER);
+    let (_, all) = get(
+        &cell,
+        "/v1/definitions:list",
+        "&kind=dashboard&include=retired",
+        VIEWER,
+    );
     assert_eq!(all["items"][1]["lifecycle"], json!("retired"));
-    let (_, history) = get(&cell, "/v1/definitions/studio.dashboard.b", "&version=1", VIEWER);
+    let (_, history) = get(
+        &cell,
+        "/v1/definitions/studio.dashboard.b",
+        "&version=1",
+        VIEWER,
+    );
     assert_eq!(history["lifecycle"], json!("active"));
     let missing = post(
         &cell,
@@ -396,8 +457,14 @@ fn ids_kinds_and_methods_are_checked() {
         assert_eq!(status, 422, "{refused}");
         assert_eq!(refused["code"], json!("definition.kind_unknown"));
     }
-    assert_eq!(call(&cell, "GET", "/v1/definitions:install", SCOPE, ADMIN, "").status, 405);
-    assert_eq!(call(&cell, "POST", "/v1/definitions:list", SCOPE, ADMIN, "{}").status, 405);
+    assert_eq!(
+        call(&cell, "GET", "/v1/definitions:install", SCOPE, ADMIN, "").status,
+        405
+    );
+    assert_eq!(
+        call(&cell, "POST", "/v1/definitions:list", SCOPE, ADMIN, "{}").status,
+        405
+    );
     let malformed = call(&cell, "POST", "/v1/definitions:install", SCOPE, ADMIN, "{");
     assert_eq!(malformed.status, 400, "{}", malformed.body);
 }
@@ -437,9 +504,17 @@ fn agents_are_admitted_by_the_registered_checker_against_host_context() {
     assert_eq!(status, 422, "{refused}");
     assert_eq!(
         pointers(&refused),
-        [("agent.validation.unknown_model".to_owned(), "/model".to_owned())]
+        [(
+            "agent.validation.unknown_model".to_owned(),
+            "/model".to_owned()
+        )]
     );
-    let (status, installed) = post(&cell, "/v1/definitions:install", ADMIN, &agent("claude-opus-5-5"));
+    let (status, installed) = post(
+        &cell,
+        "/v1/definitions:install",
+        ADMIN,
+        &agent("claude-opus-5-5"),
+    );
     assert_eq!(status, 200, "{installed}");
     let (_, page) = get(&cell, "/v1/definitions:list", "&kind=agent", VIEWER);
     assert_eq!(page["items"][0]["title"], json!("Triage"));

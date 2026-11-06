@@ -139,7 +139,8 @@ pub(crate) fn preflight(
         });
     }
     if let Some(current) = actual.map(|revision| at(engine, &definition.id, revision)) {
-        let current = current?.ok_or_else(|| CellError::Engine("retained revision vanished".into()))?;
+        let current =
+            current?.ok_or_else(|| CellError::Engine("retained revision vanished".into()))?;
         if current.definition.kind != definition.kind {
             return Err(CellError::RetainedDefinitionConflict {
                 id: definition.id.clone(),
@@ -217,7 +218,18 @@ fn current_revision(engine: &impl SqlEngine, id: &str) -> Result<Option<u64>, Ce
 
 const COLUMNS: &str = "\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\"";
 
-type Row = (String, i64, String, String, String, String, String, i64, i64, i64);
+type Row = (
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+);
 
 fn record(row: Row) -> Result<RetainedDefinitionRecord, CellError> {
     let (id, revision, kind, lifecycle, title, payload, payload_sha256, version, seq, at) = row;

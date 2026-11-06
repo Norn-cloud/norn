@@ -12,14 +12,14 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
+use norn_api::authz::Operation;
+use norn_api::definition_routes::{
+    self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
+};
 use norn_api::host::DevHost;
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
     evaluate_question, get_answer, get_numeric_trace, trace_ad_hoc,
-};
-use norn_api::authz::Operation;
-use norn_api::definition_routes::{
-    self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
@@ -77,7 +77,13 @@ pub fn handle_with<E: SqlEngine>(
     questions: Option<&dyn AdHocQuestions<E>>,
     request: &Request<'_>,
 ) -> Response {
-    handle_all(host, principals, questions, &DefinitionKinds::default(), request)
+    handle_all(
+        host,
+        principals,
+        questions,
+        &DefinitionKinds::default(),
+        request,
+    )
 }
 
 /// Dispatch one request; `kinds` validates the retained definitions this
@@ -277,7 +283,14 @@ fn definitions<E: SqlEngine>(
         ));
     }
     let allowed: &[&'static str] = match route {
-        DefinitionsRoute::List => &["orgId", "environmentId", "kind", "include", "limit", "cursor"],
+        DefinitionsRoute::List => &[
+            "orgId",
+            "environmentId",
+            "kind",
+            "include",
+            "limit",
+            "cursor",
+        ],
         DefinitionsRoute::Get(_) => &["orgId", "environmentId", "version"],
         DefinitionsRoute::Admit | DefinitionsRoute::Install | DefinitionsRoute::Retire(_) => {
             &["orgId", "environmentId"]
@@ -306,13 +319,29 @@ fn definitions<E: SqlEngine>(
     };
     match route {
         DefinitionsRoute::Admit => document_json(&definition_routes::admit_definition(
-            host, &scope, actor, kinds, questions, &submission(request.body)?,
+            host,
+            &scope,
+            actor,
+            kinds,
+            questions,
+            &submission(request.body)?,
         )?),
         DefinitionsRoute::Install => document_json(&definition_routes::install_definition(
-            host, &scope, actor, kinds, questions, &submission(request.body)?, now_ms,
+            host,
+            &scope,
+            actor,
+            kinds,
+            questions,
+            &submission(request.body)?,
+            now_ms,
         )?),
         DefinitionsRoute::Retire(id) => document_json(&definition_routes::retire_definition(
-            host, &scope, actor, id, &submission(request.body)?, now_ms,
+            host,
+            &scope,
+            actor,
+            id,
+            &submission(request.body)?,
+            now_ms,
         )?),
         DefinitionsRoute::List => {
             let limit = number("limit", fields.remove("limit"))?
@@ -339,8 +368,11 @@ fn definitions<E: SqlEngine>(
 }
 
 fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> {
-    serde_json::from_str(body)
-        .map_err(|error| Refusal::invalid(format!("the request body is not a valid submission: {error}")))
+    serde_json::from_str(body).map_err(|error| {
+        Refusal::invalid(format!(
+            "the request body is not a valid submission: {error}"
+        ))
+    })
 }
 
 fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
