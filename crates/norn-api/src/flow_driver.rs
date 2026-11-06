@@ -36,26 +36,11 @@ fn malformed(what: &str) -> Refusal {
     Refusal::host(format!("flow perform command lacks {what}"))
 }
 
-/// Deliver the pending result of `command` at `generation` to its run's flow
-/// rule, and commit the result turn with the delivery consumed.
-///
-/// # Errors
-/// `run.result_not_pending` when there is no recorded, unconsumed result; the
-/// kernel's refusal when the turn is refused (the delivery stays pending); a
-/// host failure.
-pub fn deliver_result<E: SqlEngine>(
-    host: &DevHost<E>,
-    command: &CommandId,
-    generation: Generation,
-) -> Result<RunDocument, Refusal> {
-    let _epoch = host.definition_read()?;
-    let mut cell = host.cell()?;
-    let pending = cell
-        .store()
-        .read()
-        .pending_result(&command.0, generation.0)
-        .map_err(Refusal::host)?
-        .ok_or_else(not_pending)?;
+/// The run, step, attempt and result object a flow perform's pending
+/// delivery carries.
+fn step_result(
+    pending: norn_cell::read::PendingCommand,
+) -> Result<(String, String, RuntimeValue, RuntimeObject), Refusal> {
     let payload = pending
         .command
         .command
@@ -76,6 +61,30 @@ pub fn deliver_result<E: SqlEngine>(
     let Some(RuntimeValue::Object(result)) = pending.result else {
         return Err(malformed("an object result"));
     };
+    Ok((run_id, step, attempt, result))
+}
+
+/// Deliver the pending result of `command` at `generation` to its run's flow
+/// rule, and commit the result turn with the delivery consumed.
+///
+/// # Errors
+/// `run.result_not_pending` when there is no recorded, unconsumed result; the
+/// kernel's refusal when the turn is refused (the delivery stays pending); a
+/// host failure.
+pub fn deliver_result<E: SqlEngine>(
+    host: &DevHost<E>,
+    command: &CommandId,
+    generation: Generation,
+) -> Result<RunDocument, Refusal> {
+    let _epoch = host.definition_read()?;
+    let mut cell = host.cell()?;
+    let pending = cell
+        .store()
+        .read()
+        .pending_result(&command.0, generation.0)
+        .map_err(Refusal::host)?
+        .ok_or_else(not_pending)?;
+    let (run_id, step, attempt, result) = step_result(pending)?;
     let row = cell
         .store()
         .read()
