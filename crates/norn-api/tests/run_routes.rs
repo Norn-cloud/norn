@@ -124,10 +124,11 @@ fn host() -> DevHost<norn_cell::engine::NativeEngine> {
         .iter()
         .filter(|artifact| artifact["kind"] == "entity")
         .map(|artifact| {
-            match serde_json::from_value::<EntityRoot>(artifact["payload"].clone()).unwrap() {
-                EntityRoot::V2(root) => root.object_type,
-                _ => panic!("the flow's Run type is an entity root"),
-            }
+            let root = serde_json::from_value::<EntityRoot>(artifact["payload"].clone()).unwrap();
+            let EntityRoot::V2(root) = root else {
+                panic!("the flow's Run type is an entity root")
+            };
+            root.object_type
         })
         .collect::<Vec<_>>();
     let model = Model::from_definitions(&objects, &[]).unwrap();
@@ -301,7 +302,7 @@ fn runs_page_by_cursor_and_filter_by_flow_and_state() {
             .collect::<Vec<_>>(),
         ["a", "b"]
     );
-    let second = page(first.next_cursor.clone(), None, Some(FLOW));
+    let second = page(first.next_cursor, None, Some(FLOW));
     assert_eq!(
         second
             .runs
