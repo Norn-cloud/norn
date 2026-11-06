@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
 import { sessionId, verdictOf } from "../src/agent/verdict.ts"
 import { Chat } from "@ai-sdk/react"
+import type { UIMessage } from "ai"
 import { AgentPanel, type AgentState } from "../src/agent/panel.tsx"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
@@ -68,7 +69,7 @@ test("a tab keeps one session id when its storage throws", () => {
 })
 
 test("the panel renders the conversation and draft it is given, so reopening the sheet keeps them", () => {
-  const chat = new Chat({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
+  const chat = new Chat<UIMessage>({ messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Let Receive start from draft" }] }] })
   const state: AgentState = { chat, input: "half-typed draft", setInput: () => {}, stopped: new Set(), setStopped: () => {} }
   const html = renderToStaticMarkup(<AgentPanel state={state} />)
   expect(html).toContain("Let Receive start from draft")
