@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, useNodesInitialized, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
+import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, useStore, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -100,8 +100,9 @@ function Frame(props: CanvasFrameProps) {
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const surface = useRef<HTMLDivElement>(null)
-  // Measured live from the node lookup: the default reading only updates when the nodes prop changes, which a mount alone does not.
-  const initialized = useNodesInitialized({ includeHiddenNodes: true })
+  // Whether React Flow has measured every node. Its own nodes-initialized reading also asks the nodes we pass for sizes,
+  // which they never carry (they are rebuilt from the graph each render), so read the measured sizes it keeps itself.
+  const initialized = useStore((store) => store.nodeLookup.size > 0 && [...store.nodeLookup.values()].every(({ measured }) => measured.width !== undefined && measured.height !== undefined))
   const [framed, setFramed] = useState(false)
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
