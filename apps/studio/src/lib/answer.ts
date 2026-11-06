@@ -14,7 +14,8 @@ export interface Bucket {
     readonly id: string
     /** The object version the server counted. */
     readonly version: number
-    readonly amounts: readonly (string | null)[]
+    /** `null` when the server withholds this bucket's amounts: they are row values (DATA-VALUES-1). */
+    readonly amounts: readonly (string | null)[] | null
   }[]
 }
 
@@ -49,13 +50,13 @@ export function buckets({ question, metrics, objectType }: Declarations, { answe
       members: Object.entries(row.members).map(([id, { version, amounts }]) => ({
         id,
         version,
-        amounts: amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
+        amounts: amounts === null ? null : amounts.map((amount, index) => amount === null ? null : operand(`${path}/members/${member(id)}/amounts/${index}`, index)),
       })),
     }
   })
 }
 
-export const fraction = (totals: readonly (string | null)[]): string => totals.map((total) => total ?? "left out").join(" / ")
+export const fraction = (totals: readonly (string | null)[] | null): string => totals === null ? "Values withheld" : totals.map((total) => total ?? "left out").join(" / ")
 
 /** A ratio reads as a percentage at one precision everywhere; a sum stays the server's text. */
 export const shown = (bucket: Pick<Bucket, "value" | "totals">): string => bucket.totals.length > 1 ? percent(bucket.value) : bucket.value
