@@ -222,12 +222,12 @@
   --xy-controls-button-background-color-default: var(--card); --xy-controls-button-background-color-hover-default: var(--muted);
   --xy-controls-button-color-default: var(--muted-foreground); --xy-controls-button-color-hover-default: var(--foreground);
   --xy-controls-button-border-color-default: var(--node-border); --xy-controls-box-shadow-default: var(--elevation-float);
-  --xy-minimap-background-color-default: var(--card); --xy-minimap-mask-background-color-default: color-mix(in oklab, var(--canvas-surface) 72%, transparent);
+  --xy-minimap-background-color-default: color-mix(in oklab, var(--card) 70%, transparent); --xy-minimap-mask-background-color-default: color-mix(in oklab, var(--canvas-surface) 72%, transparent);
   --xy-minimap-mask-stroke-color-default: var(--edge-active); --xy-minimap-mask-stroke-width-default: 1;
   --xy-minimap-node-background-color-default: color-mix(in oklab, var(--foreground) 16%, transparent); --xy-minimap-node-stroke-color-default: transparent;
 }
 .canvas-controls { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); }
-.canvas-minimap { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); box-shadow: var(--elevation-float); }
+.canvas-minimap { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); box-shadow: var(--elevation-node); backdrop-filter: blur(6px); }
 .react-flow__edge-textbg { fill: var(--card); stroke: var(--node-border); stroke-width: 1px; }
 .react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-text { fill: var(--foreground); }

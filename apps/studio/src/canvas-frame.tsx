@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
-import { READABLE, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
+import { INSET, MINIMAP, READABLE, WITH_MINIMAP, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
 export interface Issue {
@@ -99,7 +99,8 @@ function Frame(props: CanvasFrameProps) {
     ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
   const flow = useReactFlow()
   const wide = useWide()
-  const [map, setMap] = useState(true)
+  // The minimap shows by default only when the graph is larger than the opening view; the toggle always works.
+  const [map, setMap] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const surface = useRef<HTMLDivElement>(null)
@@ -210,7 +211,10 @@ function Frame(props: CanvasFrameProps) {
     // Framed on where it starts: an automation's start, else a lifecycle's initial state.
     const start = graph.nodes.findIndex(({ kind }) => kind === "start")
     const at = start >= 0 ? start : graph.nodes.findIndex(({ config }) => config.initial === "yes")
-    setOpening(openingViewport(boxes, { width: box?.width ?? 0, height: box?.height ?? 0 }, boxes[at]))
+    const container = { width: box?.width ?? 0, height: box?.height ?? 0 }
+    const fits = fitsReadable(boxes, container)
+    setMap(!fits)
+    setOpening(openingViewport(boxes, container, boxes[at], fits ? INSET : WITH_MINIMAP))
   }, []) // Once, for the graph the canvas opened with.
   // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
@@ -275,7 +279,7 @@ function Frame(props: CanvasFrameProps) {
               }}>
               <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--canvas-dot)" />
               <Controls showInteractive={false} className="canvas-controls" fitViewOptions={{ padding: PADDING, minZoom: READABLE, maxZoom: 1 }} />
-              {map && <MiniMap pannable zoomable position="bottom-right" className="canvas-minimap" nodeBorderRadius={6} ariaLabel="Where you are on the canvas" />}
+              {map && <MiniMap pannable zoomable position="bottom-right" className="canvas-minimap" style={{ width: MINIMAP.width, height: MINIMAP.height }} nodeBorderRadius={6} ariaLabel="Where you are on the canvas" />}
               <FlowPanel position="top-left" className="!m-3">
                 <div role="toolbar" aria-label="Canvas actions" className="flex w-max flex-nowrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
                   {props.palette(editing)}

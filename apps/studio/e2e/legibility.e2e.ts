@@ -26,10 +26,16 @@ test("legibility: a wide lifecycle opens at the readable zoom on its initial sta
   await expect(page.getByLabel("Name")).toHaveValue("completed")
 })
 
-test("minimap: shown by default, and the toolbar toggles it", async ({ page }) => {
+test("minimap: shown when the graph is larger than the view, never over a node, and the toolbar toggles it", async ({ page }) => {
   await open(page)
   const minimap = page.locator(".react-flow__minimap")
   await expect(minimap).toBeVisible()
+  // The opening view keeps the minimap's corner clear: no node lies under it.
+  const map = (await minimap.boundingBox())!
+  for (const box of await page.locator(".react-flow__node").evaluateAll((nodes) => nodes.map((one) => one.getBoundingClientRect().toJSON() as DOMRect))) {
+    const overlaps = box.x < map.x + map.width && box.x + box.width > map.x && box.y < map.y + map.height && box.y + box.height > map.y
+    expect(overlaps).toBe(false)
+  }
   // It draws every node, not only the viewport frame.
   await expect(minimap.locator(".react-flow__minimap-node")).toHaveCount(await page.locator(".react-flow__node").count())
   await page.getByRole("button", { name: "Minimap" }).click()
@@ -60,4 +66,14 @@ test.describe("below 1440px", () => {
     await clear(page)
     await expect(drawer).toBeHidden()
   })
+})
+
+// A graph that fits whole has nothing off-view, so the minimap starts hidden; the toggle still shows it.
+test("minimap: hidden by default when the whole graph fits", async ({ page }) => {
+  await page.goto("/sheet.html?state=frame%2Fdefault")
+  await expect(page.locator("[data-canvas-surface]")).toHaveCSS("opacity", "1")
+  await expect(page.locator(".react-flow__minimap")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Minimap" })).toHaveAttribute("aria-pressed", "false")
+  await page.getByRole("button", { name: "Minimap" }).click()
+  await expect(page.locator(".react-flow__minimap")).toBeVisible()
 })
