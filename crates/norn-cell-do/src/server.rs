@@ -204,7 +204,8 @@ fn runs<E: SqlEngine>(
                 })
                 .transpose()?;
             let query = RunsQuery {
-                scope: scope_of(&mut fields),
+                org_id: fields.remove("orgId"),
+                environment_id: fields.remove("environmentId"),
                 flow: fields.remove("flow"),
                 state: fields.remove("state"),
                 cursor: fields.remove("cursor"),
