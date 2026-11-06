@@ -312,7 +312,23 @@ export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly Fo
   })
 }
 
-export const fieldLabel = (name: string) => name.replaceAll("_", " ")
+/** A field's id in words, sentence-cased: `cost_currency` → "Cost currency". Used only when the schema gives no title. */
+export const fieldLabel = (name: string) => { const words = name.replaceAll("_", " "); return words.charAt(0).toUpperCase() + words.slice(1) }
+
+/** "e.g. 12.500" for an exact decimal of scale 3: an example, never a value. */
+export const decimalExample = (scale: number | null) => scale === null || scale === 0 ? "e.g. 12" : `e.g. 12.${"5".padEnd(scale, "0")}`
+
+const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made", pay: "paid", set: "set", put: "put", run: "ran", take: "taken", give: "given", get: "got", hold: "held", sell: "sold", buy: "bought", split: "split", write: "written", begin: "begun", shut: "shut", cut: "cut", reset: "reset" }
+
+/** The past tense of an action's leading verb ("Open a holding" → "opened"), for the business sentence; null when it isn't a plain verb. */
+export function pastTense(title: string): string | null {
+  const verb = title.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
+  if (!/^[a-z]{2,}$/.test(verb)) return null
+  if (IRREGULAR[verb]) return IRREGULAR[verb]
+  if (verb.endsWith("e")) return `${verb}d`
+  if (/[^aeiou]y$/.test(verb)) return `${verb.slice(0, -1)}ied`
+  return `${verb}ed`
+}
 
 // ---- Sections (and wizard steps) from x-norn.groups ------------------------------------------
 
@@ -335,7 +351,7 @@ function index(fields: readonly FormField[], into = new Map<string, FormField>()
  * pointer may reach into a nested record: `/address/city`). The fields no group names come last,
  * untitled; a record with some grouped members is split, so each member appears exactly once.
  */
-export function sectionsOf(fields: readonly FormField[], groups: readonly Group[]): readonly Section[] {
+export function sectionsOf(fields: readonly FormField[], groups: readonly Group[], idField?: string): readonly Section[] {
   const known = index(fields)
   const named = groups.map((group) => ({ id: group.id, title: group.title, fields: group.fields.flatMap((p) => known.get(p) ?? []) }))
   const taken = new Set(named.flatMap((section) => section.fields.map((f) => f.pointer)))
@@ -348,8 +364,15 @@ export function sectionsOf(fields: readonly FormField[], groups: readonly Group[
     }
   }
   place(fields)
+  // The record's id leads the form when it is required and no group places it; declared groups are never regrouped.
+  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${idField}` && f.required)
+  const others = id === undefined ? rest : rest.filter((f) => f !== id)
   const sections: Section[] = named.filter((section) => section.fields.length > 0)
-  if (rest.length > 0) sections.push({ id: null, title: null, fields: rest })
+  if (others.length > 0) sections.push({ id: null, title: null, fields: others })
+  if (id !== undefined) {
+    const [first, ...tail] = sections
+    return first === undefined ? [{ id: null, title: null, fields: [id] }] : [{ ...first, fields: [id, ...first.fields] }, ...tail]
+  }
   return sections
 }
 

@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router"
 import { AlertTriangle, CheckCircle2, Minus, Plus } from "lucide-react"
 import { useId, useMemo, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
@@ -7,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, inputPointer, newIdempotencyKey, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type CallResult, type Diagnostic, type Draft, type FormField, type Spec,
 } from "../lib/actions.ts"
 
@@ -29,8 +28,14 @@ const control = "h-9 w-full rounded-lg border border-node-border bg-background p
  * decides; the form shows each refusal at the field its pointer names, and the receipt on success.
  * A draft keeps one idempotency key until it changes, so a retry after an outage never commits twice.
  */
-export function ActionForm({ action, prefill = {}, onDirty, onClose, call = callAction }: {
+export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, call = callAction }: {
   readonly action: ActionSummary
+  /** The object type in words ("Holding"), for the business sentence on success. */
+  readonly objectTitle: string
+  /** Technical view: receipt details open by default. */
+  readonly technical?: boolean
+  /** Open the committed record (its drawer in the grid). */
+  readonly onView?: (objectId: string) => void
   /** Values the entry point already knows (the record's id for a transition); shown, not editable. */
   readonly prefill?: Readonly<Record<string, string>>
   readonly onDirty?: (dirty: boolean) => void
@@ -38,7 +43,7 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
   readonly call?: Call
 }) {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
-  const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema)), [fields, action])
+  const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema), action.objectIdField), [fields, action])
   const blocked = useMemo(() => unsupported(fields), [fields])
   const initial = useMemo(() => Object.entries(prefill).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${name}`, value), emptyDraft(fields)), [fields, prefill])
   const [draft, setDraft] = useState<Draft>(initial)
@@ -69,7 +74,7 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
   }
 
   if (phase.kind === "done") {
-    return <Receipt action={action} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(emptyDraft(fields)); setKey(newKey()); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
+    return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} receipt={phase.receipt} onAgain={writesWhole(action) ? () => { setDraft(emptyDraft(fields)); setKey(newKey()); setPhase({ kind: "editing" }) } : undefined} onClose={onClose} />
   }
 
   const top = unplaced(diagnostics, fields)
@@ -91,15 +96,20 @@ export function ActionForm({ action, prefill = {}, onDirty, onClose, call = call
           <Button type="button" variant="outline" size="sm" onClick={() => void send()}>Retry</Button>
         </div>
       )}
-      {sections.map((section) => (
-        <fieldset key={section.id ?? "rest"} className="grid gap-4 rounded-node border border-node-border p-4">
-          {section.title !== null ? <legend className="px-1 text-sm font-medium">{section.title}</legend> : sections.length > 1 && <legend className="px-1 text-sm font-medium text-muted-foreground">More</legend>}
-          {section.fields.map((field) => (
-            <FieldRow key={field.pointer} field={field} label={sectionLabel(fields, field)} draft={draft} diagnostics={diagnostics}
-              locked={prefill[field.name] !== undefined && field.pointer === `/${field.name}`} onEdit={edit} />
-          ))}
-        </fieldset>
-      ))}
+      {sections.map((section) => {
+        const heading = section.title ?? (sections.length > 1 ? "More" : null)
+        const headingId = `section-${section.id ?? "rest"}`
+        return (
+          <section key={section.id ?? "rest"} aria-labelledby={heading === null ? undefined : headingId} aria-label={heading === null ? action.title : undefined}
+            className="grid min-w-0 gap-4 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+            {heading !== null && <h3 id={headingId} className={cn("text-sm font-medium", section.title === null && "text-muted-foreground")}>{heading}</h3>}
+            {section.fields.map((field) => (
+              <FieldRow key={field.pointer} field={field} label={sectionLabel(fields, field)} draft={draft} diagnostics={diagnostics}
+                locked={prefill[field.name] !== undefined && field.pointer === `/${field.name}`} onEdit={edit} />
+            ))}
+          </section>
+        )
+      })}
       {phase.kind === "confirm" && (
         <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
           <p id="confirm-title" className="flex items-center gap-2 font-medium text-destructive"><AlertTriangle className="size-4" aria-hidden />
@@ -133,8 +143,9 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
   return (
     <div className="grid gap-1.5" data-pointer={field.pointer}>
       <label htmlFor={id} className="flex items-center gap-1 text-sm font-medium">
-        {label}{field.required && <span aria-hidden className="text-destructive">*</span>}
+        {label}
         {field.spec.kind === "decimal" && field.spec.unit && <span className="text-meta font-normal text-muted-foreground">({field.spec.unit})</span>}
+        {field.required && <span aria-hidden className="text-destructive">*</span>}
       </label>
       {field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
       {locked
@@ -176,7 +187,7 @@ function Widget({ spec, pointer, value, root, diagnostics, onEdit, aria }: {
     case "number":
     case "decimal":
       return <Input {...aria} className="h-9 tabular-nums" inputMode={spec.kind === "integer" ? "numeric" : "decimal"} autoComplete="off"
-        placeholder={spec.kind === "decimal" && spec.scale !== null ? (spec.scale === 0 ? "0" : `0.${"0".repeat(spec.scale)}`) : undefined}
+        placeholder={spec.kind === "decimal" ? decimalExample(spec.scale) : spec.kind === "integer" ? decimalExample(0) : undefined}
         value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
     case "boolean":
       return (
@@ -221,23 +232,42 @@ function Widget({ spec, pointer, value, root, diagnostics, onEdit, aria }: {
   }
 }
 
-function Receipt({ action, receipt, onAgain, onClose }: { readonly action: ActionSummary; readonly receipt: ActionReceipt; readonly onAgain: (() => void) | undefined; readonly onClose: (() => void) | undefined }) {
-  const at = new Date(receipt.receipt.recordedAtMs).toISOString()
+/** "just now", "4 min ago", or the local date and time. */
+function when(ms: number, now = Date.now()): string {
+  const seconds = Math.round((now - ms) / 1000)
+  if (seconds >= 0 && seconds < 60) return "just now"
+  if (seconds >= 0 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+function Receipt({ action, objectTitle, technical, receipt, onView, onAgain, onClose }: {
+  readonly action: ActionSummary; readonly objectTitle: string; readonly technical: boolean; readonly receipt: ActionReceipt
+  readonly onView: ((objectId: string) => void) | undefined; readonly onAgain: (() => void) | undefined; readonly onClose: (() => void) | undefined
+}) {
+  const at = new Date(receipt.receipt.recordedAtMs)
+  const verb = pastTense(action.title) ?? "saved"
+  const sentence = `${objectTitle} ${receipt.objectId} ${verb} · ${when(receipt.receipt.recordedAtMs)}`
   return (
     <section aria-label="Receipt" className="grid gap-4">
-      <p role="status" className="flex items-center gap-2 text-sm font-medium">
-        <CheckCircle2 className="size-4 text-[var(--tint-outcome)]" aria-hidden />
-        {receipt.outcome === "replayed" ? `${action.title}: already done; the cell returned the first receipt.` : `${action.title}: done.`}
-      </p>
-      <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 rounded-node border border-node-border p-4 text-sm">
-        <dt className="text-muted-foreground">Record</dt><dd><Link to="/sources/$concept/$" params={{ concept: receipt.objectType, _splat: receipt.objectId }} className="underline-offset-4 hover:underline">{receipt.objectId}</Link></dd>
-        <dt className="text-muted-foreground">Version</dt><dd className="tabular-nums">{receipt.version}</dd>
-        <dt className="text-muted-foreground">Receipt</dt><dd className="min-w-0"><CopyId value={receipt.receipt.receiptHash} short={16} /></dd>
-        <dt className="text-muted-foreground">Commit</dt><dd className="tabular-nums">{receipt.receipt.commitSeq}</dd>
-        <dt className="text-muted-foreground">Recorded</dt><dd><time dateTime={at} className="font-mono text-xs">{at}</time></dd>
-      </dl>
-      <div className={cn("flex flex-wrap gap-2")}>
-        {onAgain && <Button type="button" variant="outline" onClick={onAgain}><Plus /> Another</Button>}
+      <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+        <p role="status" className="flex items-start gap-2 text-sm font-medium">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
+          <span>{sentence}{receipt.outcome === "replayed" && <span className="font-normal text-muted-foreground"> (already done: the cell returned the first receipt)</span>}</span>
+        </p>
+        {onView && <Button type="button" variant="outline" size="sm" className="justify-self-start border-node-border" onClick={() => onView(receipt.objectId)}>View record</Button>}
+        <details open={technical} className="group text-sm">
+          <summary className="cursor-pointer text-meta text-muted-foreground select-none hover:text-foreground">Details</summary>
+          <dl className="mt-3 grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2">
+            <dt className="text-muted-foreground">Receipt</dt><dd className="min-w-0"><CopyId value={receipt.receipt.receiptHash} short={16} /></dd>
+            <dt className="text-muted-foreground">Commit</dt><dd className="tabular-nums">{receipt.receipt.commitSeq}</dd>
+            <dt className="text-muted-foreground">Recorded</dt><dd><time dateTime={at.toISOString()} title={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</time></dd>
+            <dt className="text-muted-foreground">Version</dt><dd className="tabular-nums">{receipt.version}</dd>
+            <dt className="text-muted-foreground">Action</dt><dd><code className="text-xs">{action.actionId}</code></dd>
+          </dl>
+        </details>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {onAgain && <Button type="button" variant="outline" className="border-node-border" onClick={onAgain}><Plus /> Another</Button>}
         <span className="flex-1" />
         {onClose && <Button type="button" onClick={onClose}>Done</Button>}
       </div>

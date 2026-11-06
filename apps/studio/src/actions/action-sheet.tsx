@@ -3,6 +3,8 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useView } from "@/lib/view"
+import { conceptTitle } from "../lib/catalog.ts"
 import { listActions, type ActionSummary, type CatalogRead } from "../lib/actions.ts"
 import { ActionForm } from "./action-form.tsx"
 
@@ -17,7 +19,9 @@ export interface OpenAction { readonly action: ActionSummary; readonly prefill?:
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
  * leaving the page. After a commit the object type's records are read again.
  */
-export function ActionSheet({ open, onClose }: { readonly open: OpenAction | null; readonly onClose: () => void }) {
+export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
+  const { view } = useView()
+  const technical = view === "technical"
   const [dirty, setDirty] = useState(false)
   const [asking, setAsking] = useState(false)
   const client = useQueryClient()
@@ -36,14 +40,18 @@ export function ActionSheet({ open, onClose }: { readonly open: OpenAction | nul
   return (
     <>
       <Sheet open={open !== null} onOpenChange={(next) => { if (!next) request() }}>
-        <SheetContent className="w-[min(36rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-xl">
+        <SheetContent className="w-[min(36rem,100vw)] gap-0 overflow-y-auto border-node-border shadow-float sm:max-w-xl">
           {open !== null && <>
-            <SheetHeader>
+            <SheetHeader className="px-6 pt-6 pb-4">
               <SheetTitle>{open.action.title}</SheetTitle>
-              <SheetDescription className="font-mono text-xs">{open.action.actionId}</SheetDescription>
+              {technical
+                ? <SheetDescription className="font-mono text-xs">{open.action.actionId}</SheetDescription>
+                : <SheetDescription className="sr-only">{open.action.title}</SheetDescription>}
             </SheetHeader>
-            <div className="px-4 pb-6">
-              <ActionForm key={`${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`} action={open.action} prefill={open.prefill} onDirty={setDirty} onClose={close} />
+            <div className="px-6 pb-6">
+              <ActionForm key={`${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
+                technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
+                onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>
           </>}
         </SheetContent>

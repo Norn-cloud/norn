@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
@@ -72,6 +72,8 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [acting, setActing] = useState<OpenAction | null>(null)
+  const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
+  const navigate = useNavigate()
   const catalog = useActions(name)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
@@ -99,6 +101,16 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const lastServed = useRef(false)
   if (page !== undefined) lastServed.current = page.served !== null
   const canQuery = lastServed.current
+
+  // "View record" after a commit: once the page has been read again, open that record's drawer; off this page, its full page.
+  useEffect(() => {
+    // Only a page read after the commit can hold the record as committed.
+    if (viewing === null || result.isFetching || page === undefined || result.dataUpdatedAt < viewing.since) return
+    const row = page.read.document.records.findIndex((record) => record.id === viewing.id)
+    if (row >= 0) setOpened({ record: page.read.document.records[row]!, at: `/records/${row}`, numbers: page.read.numbers })
+    else void navigate({ to: "/sources/$concept/$", params: { concept: name, _splat: viewing.id } })
+    setViewing(null)
+  }, [viewing, result.isFetching, result.dataUpdatedAt, page, name, navigate])
 
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
   const columns = fields.filter(({ id }) => shown.has(id))
@@ -292,7 +304,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
       </div>
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
-      <ActionSheet open={acting} onClose={() => setActing(null)} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
     </Shell>
   )
 }

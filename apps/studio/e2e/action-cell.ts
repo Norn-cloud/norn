@@ -100,7 +100,7 @@ export async function actionCell(page: Page, objects: ObjectCell): Promise<Actio
     else objects.rows.push(row)
     objects.commit()
     seq += 1
-    const receipt = { outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: 1_762_430_400_000 + seq } }
+    const receipt = { outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: Date.now() } }
     keys.set(idempotencyKey, { actionId, input: inputText, receipt })
     return route.fulfill({ json: receipt })
   })

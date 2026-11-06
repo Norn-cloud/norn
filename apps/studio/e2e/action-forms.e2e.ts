@@ -55,11 +55,17 @@ test("view: the form is the action's admitted schema: titled fields, help, a cho
   await page.getByRole("button", { name: "New holding" }).click()
   await expect(page.getByRole("menuitem")).toHaveText(["Open a holding", "Restock holding"])
   await page.getByRole("menuitem", { name: "Open a holding" }).click()
-  await expect(form.locator("legend")).toHaveText(["What is held", "Where it is", "More"])
+  await expect(form.locator("section h3")).toHaveText(["What is held", "Where it is", "More"])
+  // The record's id, required and ungrouped, leads the first section.
+  await expect(form.locator("section").first().locator("label").first()).toHaveText(/^Holding id/)
   await expect(form.getByText("How the cost of stock is worked out when it leaves.")).toBeVisible()
   await expect(form.getByLabel("Valuation method").locator("option")).toHaveText(["Choose…", "fifo", "moving_average"])
   await expect(form.getByText("(g)")).toBeVisible()
-  await expect(form.getByLabel("Location › bin")).toBeVisible()
+  await expect(form.getByLabel("Location › Bin")).toBeVisible()
+  await expect(form.getByLabel("Note")).toBeVisible()
+  await expect(form.getByLabel("Quantity")).toHaveAttribute("placeholder", "e.g. 12.500")
+  // Business view: no action id under the title.
+  await expect(form.getByText("canon.holding.open")).toHaveCount(0)
   await shoot(page, "sections")
 })
 
@@ -68,16 +74,20 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await newRecord(page, "Open a holding")
   await fillHolding(page, "demo/holding/9001", "10.500")
   await sheet(page).getByRole("button", { name: "Open a holding" }).click()
-  await expect(sheet(page).getByRole("status")).toHaveText("Open a holding: done.")
-  await expect(sheet(page).getByRole("link", { name: "demo/holding/9001" })).toHaveAttribute("href", "/sources/canon.Holding/demo/holding/9001")
+  await expect(sheet(page).getByRole("status")).toHaveText("Holding demo/holding/9001 opened · just now")
+  // Receipt internals sit under Details, closed in the business view.
+  await expect(sheet(page).getByText("Commit")).toBeHidden()
+  await sheet(page).getByText("Details").click()
+  await expect(sheet(page).getByText("Commit")).toBeVisible()
   // The exact decimal went as typed, digit for digit.
   expect(actions.calls.at(-1)?.body).toContain('"quantity":10.500')
   await shoot(page, "receipt")
-  await sheet(page).getByRole("button", { name: "Done" }).click()
+  // View record: the sheet closes, the grid reads again, and the new record's drawer opens.
+  await sheet(page).getByRole("button", { name: "View record" }).click()
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "demo/holding/9001" })).toBeVisible()
+  await expect(page.getByRole("dialog")).toContainText("10.500")
+  await page.keyboard.press("Escape")
   await expect(page.getByText("41 records")).toBeVisible()
-  await page.getByRole("grid").focus()
-  await page.keyboard.press("End") // the new id sorts last; rows are virtualized
-  await expect(rowFor(page, "demo/holding/9001")).toContainText("10.500")
 })
 
 test("validate: the cell's refusal lands on each field it names; fixing them commits", async ({ page }) => {
@@ -94,7 +104,7 @@ test("validate: the cell's refusal lands on each field it names; fixing them com
   await shoot(page, "refused")
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Open a holding: done.")
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
 })
 
 test("edit: a transition from the record drawer carries the record's id and moves its version", async ({ page }) => {
@@ -107,8 +117,9 @@ test("edit: a transition from the record drawer carries the record's id and move
   await form.getByLabel("Counted quantity").fill("40.000")
   await form.getByLabel("Reason").fill("Recount")
   await form.getByRole("button", { name: "Adjust quantity" }).click()
-  await expect(form.getByRole("status")).toHaveText("Adjust quantity: done.")
-  await expect(form.locator("dd").nth(1)).toHaveText("2")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 adjusted · just now")
+  await form.getByText("Details").click()
+  await expect(form.locator("dd").nth(3)).toHaveText("2") // version
   await form.getByRole("button", { name: "Done" }).click()
   await expect(rowFor(page, "demo/holding/0001")).toContainText("40.000")
 })
@@ -125,7 +136,7 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await expect(form.getByRole("alertdialog")).toHaveCount(0)
   await form.getByRole("button", { name: "Retire holding" }).click()
   await form.getByRole("button", { name: "Yes, retire holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Retire holding: done.")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 retired · just now")
   await form.getByRole("button", { name: "Done" }).click()
   await rowFor(page, "demo/holding/0002").click()
   await page.getByRole("button", { name: "Adjust quantity" }).click()
@@ -152,7 +163,7 @@ test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; 
   await expect(sheet(page).getByRole("button", { name: "Retry" })).toBeVisible()
   await shoot(page, "outage")
   await sheet(page).getByRole("button", { name: "Retry" }).click()
-  await expect(sheet(page).getByRole("status")).toHaveText("Open a holding: done.")
+  await expect(sheet(page).getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
   const [failed, retried] = actions.calls.slice(-2).map((c) => JSON.parse(c.body).idempotencyKey)
   expect(retried).toBe(failed)
   await sheet(page).getByRole("button", { name: "Another" }).click()
@@ -175,12 +186,12 @@ test("create: a parent with owned rows takes a list of records, each refused at 
   await form.getByRole("button", { name: "Restock holding" }).click()
   await expect(form.locator('[data-pointer="/lots/1/lot"]')).toContainText("Lot is required.")
   await expect(form.locator('[data-pointer="/lots/1/quantity"]')).toContainText("must be an exact number")
+  await shoot(page, "rows")
   await form.getByLabel("Lot").nth(1).fill("L-2")
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Restock holding: done.")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")
   expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":1.250},{"lot":"L-2","quantity":2.000}]')
-  await shoot(page, "rows")
 })
 
 test("while the cell takes no actions, New and the drawer's actions say why", async ({ page }) => {

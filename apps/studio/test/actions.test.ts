@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, newIdempotencyKey, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { callAction, decimalExample, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -117,7 +117,7 @@ test("DEFS's dialect: titles label fields, descriptions help, a multi-value enum
   const method = fields.find((f) => f.name === "valuation_method")
   expect(method).toMatchObject({ label: "Valuation method", spec: { kind: "choice", values: ["fifo", "moving_average"] } })
   expect(method?.description).toContain("How the cost of stock is worked out")
-  expect(fields.find((f) => f.name === "note")?.label).toBe("note") // no title: the id in words
+  expect(fields.find((f) => f.name === "note")?.label).toBe("Note") // no title: the id in words, sentence-cased
 })
 
 test("groups become sections in their order, reaching into a record; the rest come last, untitled, each field once", () => {
@@ -129,7 +129,15 @@ test("groups become sections in their order, reaching into a record; the rest co
     [null, ["/id", "/location/bin", "/note"]],
   ])
   const bin = sections[2]?.fields.find((f) => f.pointer === "/location/bin")
-  expect(bin && sectionLabel(fields, bin)).toBe("Location › bin")
+  expect(bin && sectionLabel(fields, bin)).toBe("Location › Bin")
+  // The record's id, required and ungrouped, leads the first section; declared groups keep their fields.
+  expect(sectionsOf(fields, groupsOf(OPEN_HOLDING.inputSchema), "id").map((s) => [s.title, s.fields.map((f) => f.pointer)])).toEqual([
+    ["What is held", ["/id", "/resource_code", "/quantity", "/valuation_method"]],
+    ["Where it is", ["/location/site"]],
+    [null, ["/location/bin", "/note"]],
+  ])
+  const grouped = { ...OPEN_HOLDING.inputSchema, "x-norn": { groups: [{ id: "who", title: "Who", fields: ["/id"] }, ...OPEN_HOLDING.inputSchema["x-norn"].groups] } }
+  expect(sectionsOf(fieldsOf(grouped), groupsOf(grouped), "id")[0]).toMatchObject({ title: "Who", fields: [{ pointer: "/id" }] })
 })
 
 test("without groups the whole form is one untitled section", () => {
@@ -164,4 +172,11 @@ test("idempotency keys are ASCII UUIDs, far inside the cell's 256-byte bound, an
   expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   expect(new TextEncoder().encode(a).length).toBeLessThanOrEqual(256)
   expect(a).not.toBe(b)
+})
+
+test("the business sentence's verb and the decimal example", () => {
+  expect(["Open a holding", "Adjust quantity", "Retire holding", "Restock holding", "Send invoice", "Copy lines", "Recount"].map(pastTense))
+    .toEqual(["opened", "adjusted", "retired", "restocked", "sent", "copied", "recounted"])
+  expect(pastTense("3-way match")).toBeNull()
+  expect([decimalExample(3), decimalExample(0), decimalExample(null)]).toEqual(["e.g. 12.500", "e.g. 12", "e.g. 12"])
 })
