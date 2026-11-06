@@ -151,7 +151,7 @@ pub enum DecisionRefusal {
     UnknownChoice,
     /// The note is longer than [`MAX_TEXT_CHARS`].
     NoteTooLong,
-    /// The decision's deadline passed; only [`expire`] can resolve it now.
+    /// The decision's deadline was reached; only [`expire`] can resolve it now.
     Expired,
     /// The deadline has not passed, so it cannot expire yet.
     NotExpired,
@@ -255,6 +255,13 @@ pub fn parse_request(bytes: &[u8]) -> Result<DecisionRequest, DecisionRefusal> {
     Ok(request)
 }
 
+/// DECISION-TERMINAL-1: the command is open strictly before its deadline.
+/// Before it, a decision or a withdrawal may resolve the command; at or after
+/// it, only [`expire`] can. The two windows never overlap.
+const fn open(invocation: &FunctionInvocation, now_ms: u64) -> bool {
+    now_ms < invocation.deadline_millis
+}
+
 /// Check `invocation` is a dispatch of `manifest` carrying exactly `request`.
 fn bind(
     manifest: &FunctionManifest,
@@ -334,7 +341,7 @@ pub fn issue(
     now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
     let (request, manifest_digest) = bind(manifest, invocation, request)?;
-    if now_ms > invocation.deadline_millis {
+    if !open(invocation, now_ms) {
         return Err(DecisionRefusal::Expired);
     }
     if decider.actor.kind != AuthorityKind::Actor
@@ -405,7 +412,7 @@ pub fn expire(
     now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
     let (_request, manifest_digest) = bind(manifest, invocation, request)?;
-    if now_ms <= invocation.deadline_millis {
+    if open(invocation, now_ms) {
         return Err(DecisionRefusal::NotExpired);
     }
     receipt(
@@ -417,22 +424,40 @@ pub fn expire(
     )
 }
 
-/// Issue the `Withdrawn` receipt for `withdrawer`, whom the caller authorized.
+/// Issue the `Withdrawn` receipt before the deadline. The withdrawer is the
+/// run's own dispatching authority, or an Actor holding a decider role; the
+/// cell resolves either from the verified caller.
 ///
 /// # Errors
-/// The command does not bind.
+/// The command does not bind; the deadline passed (only [`expire`] resolves
+/// it now); the withdrawer is empty or neither of the above.
 pub fn withdraw(
     manifest: &FunctionManifest,
     invocation: &FunctionInvocation,
     request: &[u8],
-    withdrawer: &norn_ir::function::Authority,
+    withdrawer: &DeciderEvidence<'_>,
+    now_ms: u64,
 ) -> Result<IssuedReceipt, DecisionRefusal> {
-    let (_request, manifest_digest) = bind(manifest, invocation, request)?;
+    let (request, manifest_digest) = bind(manifest, invocation, request)?;
+    if !open(invocation, now_ms) {
+        return Err(DecisionRefusal::Expired);
+    }
+    let actor = withdrawer.actor;
+    let owner = actor == &invocation.authority;
+    let decider = actor.kind == AuthorityKind::Actor
+        && request
+            .decider
+            .roles
+            .iter()
+            .any(|role| withdrawer.roles.contains(role));
+    if actor.id.is_empty() || !(owner || decider) {
+        return Err(DecisionRefusal::NotADecider);
+    }
     receipt(
         manifest,
         manifest_digest,
         invocation,
-        &withdrawer.id,
+        &actor.id,
         failure("Withdrawn"),
     )
 }

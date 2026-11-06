@@ -206,9 +206,12 @@ route path then applies it, and the result's single consumption follows the
 ordinary delivery fence (Core 04). Issuing requires the verified caller to be an
 Actor holding one of `decider.roles`; when `decider.law` is set, the server must
 also have evaluated that law as satisfied. The receipt's `provenance.executor` is
-the deciding Actor and its placement is `norn.cell`. After the deadline only the
-`Expired` receipt can be issued; `Withdrawn` is issued for an authorized
-withdrawer. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
+the deciding Actor and its placement is `norn.cell`. DECISION-TERMINAL-1: the command is open strictly before its deadline. Before
+it, the cell may issue a decision or a `Withdrawn` receipt; at or after it, only
+`Expired`. The windows never overlap, so reconciliation accepts exactly one
+terminal receipt per decision: the first issued. A withdrawer is the run's own
+dispatching authority or an Actor holding a decider role; an empty or other
+withdrawer refuses `decision.not_a_decider`. DECISION-ISSUED-1: for this manifest, reconciliation accepts only
 receipts the cell issued and retained. A client-supplied result, even
 byte-identical to an issued receipt the cell has no record of, refuses
 `decision.receipt_not_cell_issued`. Refusals: `decision.not_a_decider`,
@@ -217,7 +220,9 @@ byte-identical to an issued receipt the cell has no record of, refuses
 bounds. An action-based decide route can instead consume the receipt through
 RECEIPT-CONSUME-1. Named scenarios (`crates/norn-builtins/tests/`):
 **DECISION-RESOLVE**, **DECISION-FORGED**, **DECISION-NON-DECIDER**,
-**DECISION-BOUNDS**, **DECISION-EXPIRE**, **BUILTIN-PIN-DRIFT**.
+**DECISION-BOUNDS**, **DECISION-EXPIRE**, **DECISION-WITHDRAW**,
+**DECISION-TERMINAL** (any interleaving accepts exactly one terminal receipt),
+**BUILTIN-PIN-DRIFT**.
 
 Host execution uses the existing unqualified `effectful` profile and cannot claim WASM qualification, container isolation or action caching. It runs only behind perform, with scoped capabilities, bounds and an authenticated recorded Function receipt. Its outputs remain proposals; action acceptance and publication retain Core 04/08 authority. This declaration does not supply a host implementation or native sandbox/resource supervisor.
 

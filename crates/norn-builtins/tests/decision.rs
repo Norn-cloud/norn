@@ -26,6 +26,7 @@ use norn_kernel::result_reconciliation::{
     ResultDenial, StateView, reconcile,
 };
 use norn_kernel::{CommandId, FactKey, FactVersion, Generation, LogicalTime};
+use norn_testkit::proptest::prelude::*;
 use serde_json::json;
 
 const TENANT: &str = "org_demo";
@@ -405,12 +406,19 @@ fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
     let manifest = manifest();
     let body = request(&json!({}));
     let invocation = invocation(&manifest, &body);
+    let owner = invocation.authority.clone();
+    let none = BTreeSet::new();
+    let by_owner = DeciderEvidence {
+        actor: &owner,
+        roles: &none,
+        satisfied_laws: &none,
+    };
     assert_eq!(
-        expire(&manifest, &invocation, &body, DEADLINE),
+        expire(&manifest, &invocation, &body, DEADLINE - 1),
         Err(DecisionRefusal::NotExpired)
     );
-    let expired = expire(&manifest, &invocation, &body, DEADLINE + 1).unwrap();
-    let withdrawn = withdraw(&manifest, &invocation, &body, &ada()).unwrap();
+    let expired = expire(&manifest, &invocation, &body, DEADLINE).unwrap();
+    let withdrawn = withdraw(&manifest, &invocation, &body, &by_owner, DEADLINE - 1).unwrap();
     for (issued, tag) in [(expired, "Expired"), (withdrawn, "Withdrawn")] {
         let FunctionOutcome::Failure(failure) = &issued.receipt().outcome else {
             panic!("{tag} is a typed failure")
@@ -420,5 +428,154 @@ fn expiry_and_withdrawal_are_typed_failures_the_cell_issues() {
             failure.detail.get("_tag"),
             Some(&norn_ir::RuntimeValue::String(tag.to_owned()))
         );
+    }
+}
+
+#[test]
+fn a_withdrawal_refuses_at_the_deadline_and_for_an_unknown_withdrawer() {
+    let manifest = manifest();
+    let body = request(&json!({}));
+    let invocation = invocation(&manifest, &body);
+    let none = BTreeSet::new();
+    let approver = roles(&["finance.approver"]);
+    let owner = invocation.authority.clone();
+    let empty = Authority {
+        kind: AuthorityKind::Actor,
+        id: String::new(),
+    };
+    let stranger = Authority {
+        kind: AuthorityKind::Service,
+        id: "agent:copilot".to_owned(),
+    };
+    let withdraw_as = |actor: &Authority, held: &BTreeSet<String>, now| {
+        withdraw(
+            &manifest,
+            &invocation,
+            &body,
+            &DeciderEvidence {
+                actor,
+                roles: held,
+                satisfied_laws: &none,
+            },
+            now,
+        )
+    };
+    // At or after the deadline only Expired resolves the decision.
+    for now in [DEADLINE, DEADLINE + 1] {
+        assert_eq!(
+            withdraw_as(&owner, &none, now),
+            Err(DecisionRefusal::Expired)
+        );
+    }
+    for (actor, held) in [
+        (&empty, &approver),
+        (&stranger, &none),
+        (&stranger, &approver),
+        (&ada(), &none),
+    ] {
+        assert_eq!(
+            withdraw_as(actor, held, 5_000),
+            Err(DecisionRefusal::NotADecider),
+            "{actor:?}"
+        );
+    }
+    // The run's own authority, or a decider, may withdraw before the deadline.
+    assert!(withdraw_as(&owner, &none, 5_000).is_ok());
+    assert!(withdraw_as(&ada(), &approver, 5_000).is_ok());
+}
+
+/// One cell-side attempt to resolve the decision at a logical time.
+#[derive(Debug, Clone)]
+enum Attempt {
+    Decide(usize),
+    Withdraw,
+    Expire,
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+    /// DECISION-TERMINAL-1: for any interleaving of decide, withdraw and
+    /// expire, delivered in order to reconciliation, exactly one terminal
+    /// receipt is accepted per decision: the first one issued.
+    #[test]
+    fn any_interleaving_accepts_exactly_one_terminal_receipt(
+        attempts in prop::collection::vec(
+            (
+                prop_oneof![
+                    (0_usize..3).prop_map(Attempt::Decide),
+                    Just(Attempt::Withdraw),
+                    Just(Attempt::Expire),
+                ],
+                0_u64..2 * DEADLINE,
+            ),
+            1..12,
+        ),
+    ) {
+        let manifest = manifest();
+        let body = request(&json!({}));
+        let invocation = invocation(&manifest, &body);
+        let held = roles(&["finance.approver"]);
+        let laws = roles(&["law.two_person"]);
+        let evidence = DeciderEvidence { actor: &ada(), roles: &held, satisfied_laws: &laws };
+        let choices = ["publish", "hold", "ship"];
+        let mut attempts = attempts;
+        attempts.sort_by_key(|(_, at)| *at);
+        // The cell's alarm always expires an unresolved decision eventually.
+        attempts.push((Attempt::Expire, 2 * DEADLINE));
+        let dispatched = DispatchedCommand::pin(
+            invocation.clone(),
+            manifest.execution_profile_digest().unwrap(),
+        )
+        .unwrap();
+        let digest = manifest.content_digest().unwrap();
+        let mut state = norn_kernel::result_reconciliation::CommandState::dispatched(&dispatched);
+        let mut ledger = BTreeSet::new();
+        let mut first_issued = None;
+        let mut accepted = Vec::new();
+        for (attempt, at) in attempts {
+            let issued = match attempt {
+                Attempt::Decide(choice) => issue(&manifest, &invocation, &body, &evidence, &decide(choices[choice]), at),
+                Attempt::Withdraw => withdraw(&manifest, &invocation, &body, &evidence, at),
+                Attempt::Expire => expire(&manifest, &invocation, &body, at),
+            };
+            let Ok(issued) = issued else { continue };
+            // The issuers' windows never overlap: before the deadline a
+            // decision or withdrawal, at or after it only expiry.
+            let expiry = matches!(&issued.receipt().outcome, FunctionOutcome::Failure(failure) if failure.code == "Expired");
+            prop_assert_eq!(expiry, at >= DEADLINE);
+            ledger.insert(issued.digest().clone());
+            first_issued.get_or_insert_with(|| issued.digest().clone());
+            let validator = IssuedOnly { manifest: &digest, issued: &ledger, inner: &Contract };
+            let outcome = reconcile(
+                &ReconcileContext {
+                    tenant: TENANT,
+                    world: "main",
+                    now: LogicalTime::from_millis(at),
+                    // The cell issues every decision receipt itself, so the
+                    // issuers, not the delivery time, enforce the deadline.
+                    policy: ReconcilePolicy { accept_late: true, ..ReconcilePolicy::DEFAULT },
+                },
+                &dispatched,
+                &state,
+                &Completion {
+                    receipt: issued.receipt(),
+                    command: &CommandId(invocation.command_id.clone()),
+                    generation: Generation(1),
+                    authenticated_executor: Some(issued.receipt().provenance.executor.as_str()),
+                },
+                &ResultChecks { authorizer: &Allow, validator: &validator },
+                &Unchanged,
+            )
+            .unwrap();
+            match outcome {
+                Reconciliation::Accepted(acceptance) => {
+                    accepted.push(acceptance.record.receipt.clone());
+                    state = acceptance.state;
+                }
+                Reconciliation::Refused(refused) => state = refused.state,
+            }
+        }
+        prop_assert_eq!(accepted.len(), 1, "exactly one terminal receipt");
+        prop_assert_eq!(Some(&accepted[0]), first_issued.as_ref());
     }
 }
