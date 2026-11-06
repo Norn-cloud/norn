@@ -46,8 +46,8 @@ test("view: one step per group, Back keeps what was typed, steps not reached are
   await expect(steps(page).nth(2)).toHaveAttribute("aria-disabled", "true")
   await steps(page).nth(2).click({ force: true })
   await expect(steps(page).nth(0)).toHaveAttribute("aria-current", "step") // a step not reached stays closed
-  // Hover (or focus) names a step; one not reached yet says so.
-  await steps(page).nth(3).hover()
+  // Focus (or hover) names a step; one not reached yet says so.
+  await steps(page).nth(3).focus()
   await expect(page.getByRole("tooltip").filter({ hasText: /^Review \(not reached yet\)$/ })).not.toHaveCount(0)
   await expect(form.getByLabel("Location › Site")).toHaveCount(0) // one step at a time
   await form.getByLabel("Holding id").fill("demo/holding/7001")
