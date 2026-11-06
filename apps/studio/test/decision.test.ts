@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { loadInvoice, notify } from "../../../tools/norn-ts/fixtures/flows/support/billing.builder.ts"
 import { lower } from "../src/lib/canvas/automation.ts"
-import { decisionView, nextOptionId, optionPort, setOptions, type DecisionOption } from "../src/lib/canvas/decision.ts"
+import { DECISION_FN as RUNS_DECISION } from "../../../tools/norn-ts/src/builder/index.ts"
+import { DECISION_FN, decisionView, nextOptionId, optionPort, setOptions, type DecisionOption } from "../src/lib/canvas/decision.ts"
 import type { CanvasEdge, CanvasNode, Graph } from "../src/lib/canvas/graph.ts"
 
 const tools = [loadInvoice, notify]
@@ -44,6 +45,16 @@ test("an ask step lowers to a wait for norn.decision and a route on the choice",
   // The relayed contract: decider {roles, law?}, options with effect {action} | {binding}, optional expiresInMs.
   for (const text of ["decider", "billing.reminder_needs_a_person", "expiresInMs", "14400000", "billing.leave_open"]) expect(rule).toContain(text)
   expect(rule).not.toContain("deciderRoles")
+})
+
+test("the canvas lowers decisions with RUNS' built-in handle, not a copy of it", () => {
+  expect(DECISION_FN).toBe(RUNS_DECISION)
+  expect(DECISION_FN).toMatchObject({ id: "norn.decision", version: "1" })
+})
+
+test("the canvas names the bounds the cell enforces: question length, option count, expiry", () => {
+  const long: Graph = { ...graph, nodes: graph.nodes.map((one) => one.id === "chase" ? { ...one, config: { ...one.config, question: "q".repeat(501), expiresInMs: String(8 * 24 * 3_600_000) } } : one) }
+  expect(lower(long, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.expiry_too_long", "canvas.decision.question_too_long"])
 })
 
 test("the decider's tree: question, options with the agent's pick and their tools, and the follow-up", () => {

@@ -68,6 +68,13 @@ const yes = (flag: boolean) => flag ? "yes" : ""
 /** A transition from several states is drawn as one edge per source, sharing its id. */
 export const edgeId = (transition: string, from: string) => `${transition}:${from}`
 
+/**
+ * Which edges are one step: the same step id, target, guards and description. Edges sharing an id but not the
+ * rest stay apart, so the checker names the clash instead of one silently winning; the inspector edits a step's
+ * edges by this same key, so editing one never overwrites the other.
+ */
+export const stepKey = (edge: CanvasEdge): string => JSON.stringify([edge.config.transition || edge.id, edge.target, edge.config.guards ?? "", edge.config.description ?? ""])
+
 /** The lifecycle as a graph: states are nodes, each transition's sources are edges into its target. */
 export function decompile(envelope: Envelope, ref: LifecycleRef): Graph {
   const lifecycle = objectTypeOf(envelope)?.lifecycles?.[ref.index]
@@ -128,7 +135,7 @@ export function compile(envelope: Envelope, ref: LifecycleRef, graph: Graph): { 
   const groups = new Map<string, CanvasEdge[]>()
   // Edges sharing an id but not a target, guards or description stay apart, so the checker names the clash instead of one silently winning.
   for (const edge of graph.edges) {
-    const key = JSON.stringify([edge.config.transition || edge.id, edge.target, edge.config.guards ?? "", edge.config.description ?? ""])
+    const key = stepKey(edge)
     groups.set(key, [...(groups.get(key) ?? []), edge])
   }
   const transitions: Transition[] = [...groups.values()].map((edges, position) => {

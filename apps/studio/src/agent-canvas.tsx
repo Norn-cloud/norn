@@ -119,9 +119,11 @@ const bindingsQuery = () => api<{ bindings: readonly Binding[] }>("/bindings").t
 /** One agent on the canvas: wire tools and laws, set its policy; the checker runs on every edit, the cell decides on save. */
 function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[]; readonly saveLive: boolean }) {
   const checker = useQuery({ queryKey: ["checker", "agent"], queryFn: () => loadAgentChecker(), staleTime: Infinity, retry: false })
-  const [cellIssues, setCellIssues] = useState<readonly Issue[]>([])
+  // The cell's refusal, and the exact drawing it refused: any edit makes it stale, so it cannot pin Save shut.
+  const [refused, setRefused] = useState<{ readonly drawing: string; readonly issues: readonly Issue[] } | null>(null)
   const initial = useMemo(() => agentGraph(stored?.payload ?? emptyAgent(id)), [stored, id])
   const issues = useCallback((graph: g.Graph) => {
+    const cellIssues = refused && refused.drawing === JSON.stringify(graph) ? refused.issues : []
     const agent = agentOf(graph)
     if (!agent) return { issues: [{ code: "canvas.agent.missing", message: "The agent node is missing" }], status: <Badge variant="destructive">1 finding</Badge> }
     if (checker.isError) return { issues: cellIssues, status: <span className="text-destructive" role="alert">{checker.error.message}: no live agent checks</span> }
@@ -135,7 +137,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: {
     const result = checker.data({ ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, { models: [...OFFERED_MODELS], bindings: pinned, laws })
     const found = [...notPinned, ...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, { ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, code, message, span?.pointer ?? null)), ...cellIssues]
     return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
-  }, [checker.isError, checker.error, checker.data, bindings, laws, cellIssues])
+  }, [checker.isError, checker.error, checker.data, bindings, laws, refused])
 
   const save = async (graph: g.Graph) => {
     const agent = agentOf(graph)
@@ -144,13 +146,13 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: {
     const result = await store.install(id, agent, stored && stored.version > 0 ? stored.version : undefined)
     if (result.installed) {
       const text = `Saved as version ${result.version} of ${id}; the cell checked and installed it (receipt ${result.receipt.receiptHash.slice(0, 12)}…).`
-      setCellIssues([])
+      setRefused(null)
       // The editor reopens on the new version, so the confirmation lives with the list.
       onSaved(text)
       return { tone: "info" as const, text }
     }
     if ("conflict" in result) return { tone: "refusal" as const, text: "Someone saved a newer version first. Reopen the agent to see it; your draft is kept." }
-    setCellIssues(result.findings.map(({ code, message, pointer, law }) => issueOf(graph, agent, code, law ? `${message} (law ${law})` : message, pointer)))
+    setRefused({ drawing: JSON.stringify(graph), issues: result.findings.map(({ code, message, pointer, law }) => issueOf(graph, agent, code, law ? `${message} (law ${law})` : message, pointer)) })
     return { tone: "refusal" as const, text: `The cell refused to install it: ${result.findings.map(({ law, code }) => law ?? code).join(", ")}.` }
   }
 

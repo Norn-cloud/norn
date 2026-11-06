@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type Node, type NodeTypes } from "@xyflow/react"
+import { Background, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -38,6 +38,8 @@ export interface CanvasFrameProps {
   readonly initial: g.Graph
   readonly kinds: g.Kinds
   readonly nodeTypes: NodeTypes
+  /** Custom edge renderers (an automation's exit labels), when a surface needs them. */
+  readonly edgeTypes?: EdgeTypes
   readonly issues: (graph: g.Graph) => { readonly issues: readonly Issue[]; readonly status: ReactNode }
   readonly toNode: (node: g.CanvasNode, issues: readonly Issue[], selected: boolean) => Node
   /** Draws one edge; the graph lets a label read its node (a route's condition, a decision's option). */
@@ -100,6 +102,17 @@ function Frame(props: CanvasFrameProps) {
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(props.initialNotice
     ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
   const flow = useReactFlow()
+  // Whether the last pointer-down was on the canvas: its shortcuts apply only then.
+  const canvasActive = useRef(false)
+  useEffect(() => {
+    const track = (event: PointerEvent) => {
+      canvasActive.current = event.target instanceof Element && event.target.closest("[data-canvas-surface]") !== null
+      // React Flow keeps the browser from clearing a page text selection on the canvas; clear it, so copy means the canvas.
+      if (canvasActive.current) window.getSelection()?.removeAllRanges()
+    }
+    window.addEventListener("pointerdown", track, true)
+    return () => window.removeEventListener("pointerdown", track, true)
+  }, [])
   const graph = state.present
   const dirty = JSON.stringify(graph) !== JSON.stringify(initial)
 
@@ -141,6 +154,7 @@ function Frame(props: CanvasFrameProps) {
   const [saving, setSaving] = useState(false)
   const saveServer = async () => {
     if (!props.save || saving) return
+    if (unresolved) { setNotice({ tone: "refusal", text: unresolved }); return }
     setSaving(true)
     try { setNotice(await props.save(graph)) } catch (error) { setNotice({ tone: "refusal", text: error instanceof Error ? error.message : String(error) }) } finally { setSaving(false) }
   }
@@ -159,7 +173,11 @@ function Frame(props: CanvasFrameProps) {
       const act = (run: () => void) => { event.preventDefault(); run() }
       if (key === "z" && !event.shiftKey) act(() => setState(g.undo))
       else if ((key === "z" && event.shiftKey) || key === "y") act(() => setState(g.redo))
+      // Copy, paste, duplicate and select-all belong to the canvas only while it is in use, and never take over
+      // copying text the reader has selected elsewhere (a finding's message in Problems).
+      else if (["c", "v", "d", "a"].includes(key) && (!canvasActive.current || (key === "c" && (window.getSelection()?.toString() ?? "") !== ""))) return
       else if (key === "d") act(() => duplicate(g.subgraph(graph, copyable(selection.nodes))))
+      else if (key === "c" && copyable(selection.nodes).length === 0) return
       else if (key === "c") act(() => { clipboard = g.subgraph(graph, copyable(selection.nodes)); setNotice({ tone: "info", text: `Copied ${clipboard.nodes.length} ${clipboard.nodes.length === 1 ? "item" : "items"}.` }) })
       else if (key === "v" && clipboard) act(() => clipboard && duplicate(clipboard))
       else if (key === "a") act(() => setSelection({ nodes: graph.nodes.map(({ id }) => id), edges: graph.edges.map(({ id }) => id) }))
@@ -170,6 +188,8 @@ function Frame(props: CanvasFrameProps) {
   })
 
   const { issues, status } = useMemo(() => props.issues(graph), [props.issues, graph])
+  // The UI offers a server save only for a drawing with no findings; the cell still checks and decides on its own.
+  const unresolved = issues.length === 0 ? null : `Fix ${issues.length} ${issues.length === 1 ? "problem" : "problems"} first`
   const on = (key: "node" | "edge", id: string) => issues.filter((issue) => issue[key] === id)
   const jump = (issue: Issue) => {
     if (issue.node) { setSelection({ nodes: [issue.node], edges: [] }); void flow.fitView({ nodes: [{ id: issue.node }], duration: 300, maxZoom: 1.2 }) }
@@ -190,19 +210,19 @@ function Frame(props: CanvasFrameProps) {
           <Button size="sm" variant="outline" aria-label="Undo" title="Undo (⌘Z)" disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
           <Button size="sm" variant="outline" aria-label="Redo" title="Redo (⌘⇧Z)" disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
           <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
-          {props.save
-            ? <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>
-            : <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>}
+          {!props.save ? <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+            : unresolved ? <Unavailable reason={unresolved}>Save to server</Unavailable>
+              : <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>}
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div className="relative h-[36rem] w-full">
+          <div data-canvas-surface className="relative h-[36rem] w-full">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
               edges={graph.edges.map((edge) => props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph))}
-              nodeTypes={props.nodeTypes} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
+              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}

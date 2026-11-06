@@ -3,7 +3,7 @@ import { node, open, press } from "./canvas.ts"
 
 /**
  * Locally there is no cell: an in-memory stand-in answers the definition routes (CELL-DO's contract) and
- * CONNECT's bindings, refusing any agent under the law `demo.refuse_me` the way the cell names a law.
+ * CONNECT's bindings, refusing any agent under the law `core.analytics.restatement_policy` the way the cell names a law.
  * Against a deployment (E2E_BASE) the real routes answer.
  */
 /** Whether this deployment's definition routes answer; the stand-in tests skip, with the reason, where they do not. */
@@ -28,7 +28,7 @@ async function cell(page: Page) {
     const body = route.request().postDataJSON() as { id?: string; payload?: { laws?: string[] }; expectedVersion?: number } | null
     if (url.pathname.endsWith("definitions:list")) return route.fulfill({ json: { items: [...saved].filter(([, one]) => !one.retired).map(([id, one]) => ({ id, title: (one.payload as { title: string }).title, version: one.version, lifecycle: "active" })), cursor: null } })
     if (url.pathname.endsWith("definitions:install") && body?.id) {
-      if (body.payload?.laws?.includes("demo.refuse_me")) return route.fulfill({ status: 422, json: { code: "definition.refused", diagnostics: [{ code: "law.refused", message: "agents may not run under this law", law: "demo.refuse_me", span: { pointer: "/laws/0" } }] } })
+      if (body.payload?.laws?.includes("core.analytics.restatement_policy")) return route.fulfill({ status: 422, json: { code: "definition.refused", diagnostics: [{ code: "law.refused", message: "agents may not run under this law", law: "core.analytics.restatement_policy", span: { pointer: "/laws/0" } }] } })
       const version = (saved.get(body.id)?.version ?? 0) + 1
       saved.set(body.id, { version, payload: body.payload, retired: false })
       return route.fulfill({ json: { installed: true, id: body.id, version, receipt: { receiptHash: "e2e0000000000000", commitSeq: version, recordedAtMs: 0 } } })
@@ -58,6 +58,10 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
   await page.getByLabel("Prompt").blur()
   await page.getByLabel("A person decides").selectOption("laws")
   await expect(node(page, "agent")).toContainText("asks when a law applies")
+  // "When a marked law applies" with no law marked is the checker's decision-policy finding, and Save waits for it.
+  await expect(page.getByText("agent.validation.invalid_decision_policy").first()).toBeVisible()
+  await expect(page.getByRole("button", { name: /Save to server/ })).toHaveAccessibleName(/Fix \d+ problems? first/)
+  await page.getByLabel("A person decides").selectOption("always")
   // wire a tool (create edge), then undo/redo it
   await page.getByRole("button", { name: "Tool", exact: true }).click()
   await expect(node(page, "tool:bind_tickets")).toContainText("Read tickets")
@@ -85,22 +89,32 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
   await expect(page.getByText("Retired studio.agent.support_triage_copy.")).toBeVisible()
 })
 
-test("agent refusal: the cell's refusal names the law and lands on the law node", async ({ page }) => {
+test("agent refusal: the cell's refusal names the law on the law node; Save waits for an edit, then is offered again", async ({ page }) => {
   await cell(page)
   await open(page)
   await page.getByRole("button", { name: "Agents", exact: true }).click()
   await page.getByLabel("New agent name").fill("Refused")
   await page.getByRole("button", { name: "New agent" }).click()
+  await node(page, "agent").click()
+  await page.getByLabel("Title").fill("Refused")
+  await page.getByLabel("Title").blur()
+  await page.getByLabel("Prompt").fill("Act under the restatement policy.")
+  await page.getByLabel("Prompt").blur()
+  // An admitted law, which the stand-in cell refuses agents to run under.
   await page.getByRole("button", { name: "Law", exact: true }).click()
-  // The admitted laws come from the definitions; point the new law node at the one the stand-in refuses.
-  await page.getByRole("combobox", { name: "Law" }).evaluate((select: HTMLSelectElement) => {
-    const option = document.createElement("option"); option.value = "demo.refuse_me"; option.text = "demo.refuse_me"; select.add(option)
-  })
-  await page.getByRole("combobox", { name: "Law" }).selectOption("demo.refuse_me")
+  await expect(page.getByText("Checker: admitted")).toBeVisible()
   await page.getByRole("button", { name: "Save to server" }).click()
-  await expect(page.getByText(/refused to install it: demo.refuse_me/)).toBeVisible()
-  await expect(page.getByText(/agents may not run under this law \(law demo.refuse_me\)/).first()).toBeVisible()
+  await expect(page.getByText(/refused to install it: core.analytics.restatement_policy/)).toBeVisible()
+  await expect(page.getByText(/agents may not run under this law \(law core.analytics.restatement_policy\)/).first()).toBeVisible()
   await expect(page.locator('.react-flow__node[data-id^="law:"]')).toContainText("problem")
+  // The refused drawing cannot be sent again as it is.
+  await expect(page.getByRole("button", { name: /Save to server/ })).toBeDisabled()
+  await expect(page.getByRole("button", { name: /Save to server/ })).toHaveAccessibleName(/Fix 1 problem first/)
+  // Any edit makes the refusal stale: Save is offered again, and the cell decides again.
+  await node(page, "agent").click()
+  await page.getByLabel("Title").fill("Refused, revised")
+  await page.getByLabel("Title").blur()
+  await expect(page.getByRole("button", { name: "Save to server" })).toBeEnabled()
 })
 
 test("agent, before the cell's definition routes are live: the panel says so, saving to the cell is unavailable, the draft stays", async ({ page }) => {
@@ -132,9 +146,11 @@ test("agent live check: the browser runs the checker's agent admission on every 
   await page.getByRole("button", { name: "Agents", exact: true }).click()
   await page.getByLabel("New agent name").fill("Live check")
   await page.getByRole("button", { name: "New agent" }).click()
-  // A new agent has no title or prompt yet: the checker says so on the agent, alongside everything else.
+  // A new agent has no title or prompt yet: the checker says so on the agent, alongside everything else,
+  // and Save to server waits until they are fixed.
   await expect(page.getByText("title must not be blank").first()).toBeVisible()
   await expect(page.getByText("prompt must not be blank").first()).toBeVisible()
+  await expect(page.getByRole("button", { name: /Save to server/ })).toHaveAccessibleName(/Fix 2 problems first/)
   await node(page, "agent").click()
   await page.getByLabel("Title").fill("Live check")
   await page.getByLabel("Title").blur()

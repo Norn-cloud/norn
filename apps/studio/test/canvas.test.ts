@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { introduced, place, type CheckResult, type Finding } from "../src/lib/canvas/diagnostics.ts"
 import * as g from "../src/lib/canvas/graph.ts"
-import { compile, decompile, lifecycleKinds, lifecyclesIn } from "../src/lib/canvas/lifecycle.ts"
+import { compile, decompile, lifecycleKinds, lifecyclesIn, stepKey } from "../src/lib/canvas/lifecycle.ts"
 import type { Envelope } from "../src/lib/transport.ts"
 
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
@@ -81,6 +81,14 @@ test("duplicating states copies them and the steps between them, with fresh ids 
   expect(copied.map(({ target, config }) => `${config.transition}->${target}`)).toEqual(["complete_copy->completed_copy"])
   expect(new Set(next.edges.map(({ id }) => id)).size).toBe(next.edges.length)
   expect(g.paste(next, g.subgraph(graph, ["invoiced"])).nodes).toEqual(["invoiced_copy_2"])
+})
+
+test("the edges one step owns are the edges compilation groups, so editing one step never rewrites another with the same id", () => {
+  const graph = g.configureEdges(g.configureEdges(decompile(orderEnvelope, order), ["hold:submitted"], { guards: "self.total > 0" }), ["hold:approved"], { guards: "self.total > 1" })
+  const held = graph.edges.filter(({ config }) => config.transition === "hold")
+  expect(new Set(held.map(stepKey)).size).toBe(2)
+  const cancel = graph.edges.filter(({ config }) => config.transition === "cancel")
+  expect(new Set(cancel.map(stepKey)).size).toBe(1)
 })
 
 test("renaming a state carries its steps; removing a state removes its steps", () => {
