@@ -106,7 +106,11 @@ fn a_question_that_is_not_question_ir_is_an_input_error() {
 fn a_world_with_an_invalid_artifact_is_refused_before_the_question() {
     let (artifacts, metrics, question) = world();
     let mut artifacts: Vec<Value> = serde_json::from_str(&artifacts).expect("artifacts");
-    let mut other = artifacts[0].clone();
+    let mut other = artifacts
+        .iter()
+        .find(|artifact| artifact["name"] == "demo.Conversion")
+        .expect("demo.Conversion")
+        .clone();
     other["artifactId"] = json!("demo.Other.entity.v2");
     other["name"] = json!("demo.Other");
     other["payload"]["objectType"]["name"] = json!("demo.Other");

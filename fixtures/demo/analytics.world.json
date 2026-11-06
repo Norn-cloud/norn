@@ -1,6 +1,690 @@
 {
-  "note": "The analytics world the demo cell answers demo.yield_week from (norn-cell-do analytics.rs): the demo.Conversion entity, its recorded metric definitions, and the admitted question as an example. Studio's assistant admits proposed questions against it.",
+  "note": "The analytics world the demo cell answers demo.yield_week from (norn-cell-do analytics.rs): the demo.Conversion entity (pinned to Norn Core's core.units catalog, copied from registry/core/artifacts so the world checks as a whole set), its recorded metric definitions, and the admitted question as an example. Studio's assistant admits proposed questions against it.",
   "artifacts": [
+    {
+      "irVersion": "0.1",
+      "artifactId": "core.units",
+      "kind": "entity",
+      "namespace": "core",
+      "name": "Bounded core units",
+      "version": "1.0.0",
+      "lifecycle": "active",
+      "scope": {},
+      "dependencies": [],
+      "provenance": {
+        "source": "system",
+        "sourcePath": "https://raw.githubusercontent.com/ucum-org/ucum/ef214f6da4e060690f1dca21873d535c35cd9793/ucum-essence.xml#version=2.2&sha256=dfccea1b5dc284245ebae97edd1dc03c45864da4e87df55bc9851797b4fd0b61"
+      },
+      "payload": {
+        "entityVersion": "2.0",
+        "propertyTypes": [
+          {
+            "name": "core.units.code",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "g"
+                },
+                {
+                  "value": "mg"
+                },
+                {
+                  "value": "kg"
+                },
+                {
+                  "value": "1"
+                },
+                {
+                  "value": "%"
+                },
+                {
+                  "value": "[ppth]"
+                },
+                {
+                  "value": "{each}"
+                },
+                {
+                  "value": "s"
+                },
+                {
+                  "value": "min"
+                },
+                {
+                  "value": "h"
+                },
+                {
+                  "value": "d"
+                },
+                {
+                  "value": "wk"
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.dimension",
+            "type": {
+              "kind": "enum",
+              "values": [
+                {
+                  "value": "mass"
+                },
+                {
+                  "value": "dimensionless"
+                },
+                {
+                  "value": "count"
+                },
+                {
+                  "value": "time"
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.g",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "g"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "mass"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.mg",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "mg"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "mass"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1000",
+                    "min": "1000"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.kg",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "kg"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "mass"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1000",
+                    "min": "1000"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.one",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "1"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "dimensionless"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.percent",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "%"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "dimensionless"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "100",
+                    "min": "100"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.per_mille",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "[ppth]"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "dimensionless"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1000",
+                    "min": "1000"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.each",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "{each}"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "count"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.s",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "s"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "time"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.min",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "min"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "time"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "60",
+                    "min": "60"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.h",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "h"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "time"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "3600",
+                    "min": "3600"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.d",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "d"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "time"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "86400",
+                    "min": "86400"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "core.units.wk",
+            "type": {
+              "kind": "record",
+              "members": [
+                {
+                  "id": "code",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "wk"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "dimension",
+                  "type": {
+                    "kind": "enum",
+                    "values": [
+                      {
+                        "value": "time"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "604800",
+                    "min": "604800"
+                  },
+                  "id": "numerator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                },
+                {
+                  "constraints": {
+                    "max": "1",
+                    "min": "1"
+                  },
+                  "id": "denominator",
+                  "type": {
+                    "kind": "integer"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
     {
       "irVersion": "0.1",
       "artifactId": "demo.Conversion.entity.v2",
@@ -10,7 +694,14 @@
       "version": "0.1.0",
       "lifecycle": "draft",
       "scope": {},
-      "dependencies": [],
+      "dependencies": [
+        {
+          "artifactId": "core.units",
+          "kind": "entity",
+          "required": true,
+          "version": "1.0.0"
+        }
+      ],
       "provenance": {
         "source": "import",
         "sourcePath": "synthetic:scrap-yield-k1.csv"
