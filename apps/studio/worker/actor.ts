@@ -1,0 +1,79 @@
+import { activeMembership, type Auth } from "./auth.ts"
+
+/**
+ * Who a request acts as, resolved on the server from the verified session or
+ * API key, never from anything the client asserts. The Norn host turns this
+ * into a principal through its declared role table (norn-api `principal`);
+ * Norn's AccessIR/Cedar policy decides what it may do.
+ */
+export interface NornActor {
+  readonly actorKind: "user" | "service"
+  /** The Better Auth user id, or the API key id for a service. */
+  readonly subjectId: string
+  /** The organization the request is scoped to. */
+  readonly orgId: string
+  /** The membership role in that organization (owner/admin/member/viewer). */
+  readonly role: string
+  readonly authMethod: "password" | "magic_link" | "api_key"
+}
+
+/** Roles an organization API key may act with; approving roles stay with people. */
+export const SERVICE_ROLES = ["viewer", "member"] as const
+/** Host tokens live five minutes, the most the host admits. */
+export const HOST_TOKEN_SECONDS = 300
+
+const USER_METHODS = new Set(["password", "magic_link"])
+
+/**
+ * The request's actor, or null when it has no usable identity: no session,
+ * a session without an organization or sign-in method, an invalid key, or a
+ * key that asks for a role a service may not hold.
+ */
+export async function resolveActor(request: Request, auth: Auth): Promise<NornActor | null> {
+  const key = request.headers.get("x-api-key")
+  if (key !== null) {
+    const verified = await auth.api.verifyApiKey({ body: { key } })
+    if (!verified.valid || verified.key === null) return null
+    const requested = (verified.key.metadata as { role?: unknown } | null)?.role ?? "viewer"
+    if (!SERVICE_ROLES.some((role) => role === requested)) return null
+    return { actorKind: "service", subjectId: verified.key.id, orgId: verified.key.referenceId, role: String(requested), authMethod: "api_key" }
+  }
+  const session = await auth.api.getSession({ headers: request.headers })
+  if (session === null) return null
+  const method = (session.session as { authMethod?: string | null }).authMethod
+  if (method == null || !USER_METHODS.has(method)) return null
+  const member = await activeMembership(auth, session.user.id, session.session.activeOrganizationId)
+  if (member === null) return null
+  return { actorKind: "user", subjectId: session.user.id, orgId: member.organizationId, role: member.role, authMethod: method as NornActor["authMethod"] }
+}
+
+/** A short-lived signed token for the Norn host carrying exactly this actor (audience `norn-host`). */
+export async function hostToken(auth: Auth, actor: NornActor, now = Math.floor(Date.now() / 1000)): Promise<string> {
+  const { token } = await auth.api.signJWT({
+    body: {
+      payload: {
+        sub: actor.subjectId,
+        iat: now,
+        exp: now + HOST_TOKEN_SECONDS,
+        norn: { kind: actor.actorKind, org: actor.orgId, role: actor.role, amr: actor.authMethod },
+      },
+    },
+  })
+  return token
+}
+
+/**
+ * Forward a request to the Norn host as its actor. Only the method, path,
+ * query, body and content headers travel; cookies, the API key and any
+ * client Authorization are replaced by the host token.
+ */
+export async function forwardToHost(request: Request, host: Fetcher, auth: Auth, actor: NornActor, path: string): Promise<Response> {
+  const url = new URL(request.url)
+  const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}` })
+  for (const name of ["content-type", "accept"]) {
+    const value = request.headers.get(name)
+    if (value !== null) headers.set(name, value)
+  }
+  const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer()
+  return host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body }))
+}
