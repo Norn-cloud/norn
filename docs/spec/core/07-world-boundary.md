@@ -165,15 +165,19 @@ named by its relative `/`-separated path, which is non-empty, relative, and has
 no empty, `.` or `..` component, backslash or control character. Each file
 contributes `{path, size, sha256}`, where `sha256` is the lower-case hex SHA-256 of
 its exact bytes, with no line-ending or encoding normalization. The entries are
-sorted by path bytes, and the digest is `sha256:` followed by the hex SHA-256 of
-`norn.function/source-tree/v1\0` and the canonical JSON of that array. An empty tree
+sorted by raw path bytes (UTF-8 bytes, which is code-point order), and the digest
+is `sha256:` followed by the hex SHA-256 of `norn.function/source-tree/v1\0` and the
+exact canonical JSON of that array: sorted keys, compact, strings kept byte for byte
+with no NFC normalization, so an NFC-equivalent rename is a different tree. An empty tree
 or a duplicate path refuses. `norn_ir::source_tree::source_tree_digest` is the
 pure implementation, and `norn source-digest <dir>` walks a clean checkout. The
 golden vector in `crates/norn-ir/tests/fixtures/source-tree.digest` was computed
 by an independent reimplementation (Python `hashlib` and `json.dumps` with sorted
 keys and compact separators). Any change to the algorithm needs a new domain
 version. Named scenarios (`crates/norn-ir/tests/source_tree.rs`):
-**HOST-TREE-PINNED**, **HOST-TREE-SENSITIVE** (an edit, rename, removal,
+**HOST-TREE-PINNED**, **HOST-TREE-UNICODE** (a precomposed and a decomposed
+spelling differ; a second golden vector pins raw-byte order),
+**HOST-TREE-SENSITIVE** (an edit, rename, removal,
 addition, CRLF or swap of bytes changes the digest), **HOST-TREE-ORDER**
 (listing order is irrelevant) and **HOST-TREE-REFUSE**.
 

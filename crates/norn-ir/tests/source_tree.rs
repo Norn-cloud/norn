@@ -86,3 +86,42 @@ proptest! {
         prop_assert_eq!(digest(&listed).unwrap(), forward);
     }
 }
+
+/// ST-1: paths are hashed by their exact bytes, never NFC-normalized, and
+/// sorted by raw bytes.
+const UNICODE_TREE: &[(&str, &[u8])] = &[
+    ("\u{e9}.rs", b"same\n"),
+    ("e\u{301}.rs", b"same\n"),
+    ("z.rs", b"z\n"),
+    ("Z.rs", b"Z\n"),
+    ("\u{ff61}.rs", b"half\n"),
+    ("\u{1f600}.rs", b"smile\n"),
+];
+
+#[test]
+fn unicode_paths_hash_by_their_exact_bytes() {
+    let precomposed: &[(&str, &[u8])] = &[("\u{e9}.rs", b"same\n")];
+    let decomposed: &[(&str, &[u8])] = &[("e\u{301}.rs", b"same\n")];
+    assert_ne!(
+        digest(precomposed).unwrap(),
+        digest(decomposed).unwrap(),
+        "an NFC-equivalent rename is a different tree"
+    );
+    // Both spellings in one tree are two files, not a duplicate path.
+    assert!(digest(&UNICODE_TREE[..2]).is_ok());
+}
+
+#[test]
+fn the_unicode_vector_is_pinned_and_sorted_by_raw_bytes() {
+    // The vector was computed independently: Python sorting entries by UTF-8
+    // path bytes (the decomposed `e\u{301}` sorts before `z`, while its NFC form
+    // sorts after it; U+FF61 sorts before U+1F600, unlike UTF-16 order) and
+    // encoding them with `json.dumps(sort_keys=True, ensure_ascii=False)`.
+    assert_eq!(
+        digest(UNICODE_TREE).unwrap(),
+        include_str!("fixtures/source-tree-unicode.digest").trim()
+    );
+    let mut reversed = UNICODE_TREE.to_vec();
+    reversed.reverse();
+    assert_eq!(digest(&reversed).unwrap(), digest(UNICODE_TREE).unwrap());
+}

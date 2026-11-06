@@ -4,8 +4,9 @@
 //! The tree is a set of regular files, each named by a relative `/`-separated
 //! UTF-8 path. Every file contributes its path, its byte length and the
 //! SHA-256 of its exact bytes (no line-ending or encoding normalization). The
-//! entries are sorted by path bytes and the digest is the Norn1 canonical-JSON
-//! hash of that list under [`SOURCE_TREE_DOMAIN`], so the same files always
+//! entries are sorted by raw path bytes and the digest is the SHA-256 of
+//! [`SOURCE_TREE_DOMAIN`] followed by the exact canonical JSON of that list
+//! (sorted keys, strings kept byte for byte, no NFC normalization), so the same files always
 //! give the same digest and any added, removed, renamed or edited file changes
 //! it. This module is pure; walking a directory belongs to the caller
 //! (`norn source-digest`).
@@ -103,7 +104,14 @@ pub fn source_tree_digest<'a>(
     }) {
         return Err(SourceTreeError::DuplicatePath(path.to_owned()));
     }
-    norn_canonical::domain_hash_hex(SOURCE_TREE_DOMAIN, &entries)
-        .map(|hex| Digest::from_hex(&hex))
-        .map_err(|_canonical| SourceTreeError::Canonical)
+    // Exact encoding: a path is hashed by its own bytes. Norn1's NFC string
+    // normalization would make `é` and `e\u{301}` one path (ST-1).
+    let mut bytes = SOURCE_TREE_DOMAIN.to_vec();
+    bytes.extend(
+        norn_canonical::canonical_json_exact_of(&entries)
+            .map_err(|_canonical| SourceTreeError::Canonical)?,
+    );
+    Ok(Digest::from_hex(
+        &norn_canonical::HashProfile::Legacy0.hash_canonical_bytes(&bytes),
+    ))
 }
