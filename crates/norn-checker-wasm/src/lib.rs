@@ -978,15 +978,15 @@ fn metric_declarations(metrics_json: &str) -> Result<Vec<norn_ir::MetricDefiniti
     serde_json::from_str(metrics_json).map_err(|error| invalid("metrics", error.to_string()))
 }
 
-fn restatement_document(text: String) -> String {
-    let sha256 = norn_checker::metric::restate::restatement_sha256(&text);
+fn restatement_document(text: &str) -> String {
+    let sha256 = norn_checker::metric::restate::restatement_sha256(text);
     json!({ "format": RESTATEMENT_FORMAT, "text": text, "sha256": sha256 }).to_string()
 }
 
 /// A question in plain words, for sign-off
 /// (`norn_checker::metric::restate::restate_question`).
 ///
-/// `question_json` is a QuestionIR; `metrics_json` is the array of metric
+/// `question_json` is a `QuestionIR`; `metrics_json` is the array of metric
 /// declarations it is read with. Returns `{"format", "text", "sha256"}`,
 /// `sha256` being lower-case hex SHA-256 of the text's UTF-8 bytes.
 ///
@@ -999,7 +999,7 @@ pub fn restate_question_json(question_json: &str, metrics_json: &str) -> Result<
     let metrics = metric_declarations(metrics_json)?;
     let text = norn_checker::metric::restate::restate_question(&question, &metrics)
         .map_err(|error| invalid("question", error.to_string()))?;
-    Ok(restatement_document(text))
+    Ok(restatement_document(&text))
 }
 
 /// A dashboard in plain words, for sign-off
@@ -1017,5 +1017,5 @@ pub fn restate_dashboard_json(payload_json: &str, metrics_json: &str) -> Result<
     let metrics = metric_declarations(metrics_json)?;
     let text = norn_checker::metric::restate::restate_dashboard(&payload, &metrics)
         .map_err(|error| invalid("payload", error.to_string()))?;
-    Ok(restatement_document(text))
+    Ok(restatement_document(&text))
 }
