@@ -37,7 +37,8 @@ pub struct NornQueryResult {
     pub known_as_of: u64,
     /// Root contribution identity type.
     pub grain: String,
-    /// Content-addressed membership and source lineage.
+    /// Opaque handle to this result's membership and source lineage, for its
+    /// trace: keyed by the cell (D53), never a content hash of the rows.
     pub lineage_ref: String,
     /// Output buckets, keyed by the canonical JSON of their grouping value.
     pub rows: BTreeMap<String, NornQueryRow>,
@@ -129,6 +130,12 @@ pub struct NornQueryRow {
     pub value: Option<String>,
     /// Exact aggregate membership: contributing object identity → its contribution.
     pub members: BTreeMap<String, NornQueryMember>,
+    /// DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
+    /// has fewer members than the server's declared minimum, so `totals` is
+    /// empty and `value` null; membership stays. Absent when false.
+    #[serde(default)]
+    #[schema(required = false)]
+    pub suppressed: bool,
 }
 
 /// One object version's contribution to a bucket.
@@ -214,12 +221,12 @@ fn decimal_list(nullable: bool, description: &str) -> Schema {
 fn value_schema() -> Schema {
     Schema::Object(decimal(
         true,
-        "The bucket's value; null means a zero-denominator ratio is unavailable. ",
+        "The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). ",
     ))
 }
 
 fn totals_schema() -> Schema {
-    decimal_list(false, "One sum, or numerator then denominator.")
+    decimal_list(false, "One sum, or numerator then denominator; empty when the bucket is `suppressed`.")
 }
 
 pub(crate) fn amounts_schema() -> Schema {

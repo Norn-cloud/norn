@@ -199,8 +199,9 @@ fn source_grants_apply_to_each_canonical_contribution_identity() {
     assert_eq!(trace.contributions.len(), 4);
     for contribution in trace.contributions {
         let selected = contribution.fact.key == "SYN-MELT-15-1";
-        assert_eq!(contribution.values.is_some(), selected);
-        assert_eq!(contribution.fact_digest.is_some(), selected);
+        // D53: the bucket mixes restricted and readable members, so no member's
+        // values or digest is disclosed; the restricted flag stays per member.
+        assert!(contribution.values.is_none() && contribution.fact_digest.is_none());
         assert_eq!(contribution.restricted, !selected);
         assert_eq!(
             matches!(contribution.source, ContributionSource::Restricted),
