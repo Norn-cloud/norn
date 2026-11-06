@@ -22,11 +22,17 @@ const call = (env: Env, path: string, init: RequestInit = {}) => {
 }
 const post = (env: Env, path: string, body: unknown, headers: HeadersInit = {}) =>
   call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, ...headers } })
+/** Sign up (no session is issued), then sign in with the password; the sign-in response carries the cookie. */
+const enroll = async (env: Env, email: string, name: string, headers: HeadersInit = {}) => {
+  const signUp = await post(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name }, headers)
+  if (signUp.status !== 200) return signUp
+  return post(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" }, headers)
+}
 const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
 
-test("sign-up sets an HTTP-only, secure, same-site session cookie and an owned organization", async () => {
+test("signing in after sign-up sets an HTTP-only, secure, same-site session cookie and an owned organization", async () => {
   const env = stage()
-  const signUp = await post(env, "/api/auth/sign-up/email", { email: "ada@example.com", password: "correct horse battery", name: "Ada" })
+  const signUp = await enroll(env, "ada@example.com", "Ada")
   expect(signUp.status).toBe(200)
   const session = signUp.headers.getSetCookie().find((line) => line.startsWith("__Secure-norn.session_token="))
   expect(session).toBeDefined()
@@ -44,7 +50,7 @@ test("sign-up sets an HTTP-only, secure, same-site session cookie and an owned o
 
 test("sign-out ends the session", async () => {
   const env = stage()
-  const signUp = await post(env, "/api/auth/sign-up/email", { email: "bo@example.com", password: "correct horse battery", name: "Bo" })
+  const signUp = await enroll(env, "bo@example.com", "Bo")
   const cookie = cookieOf(signUp)
   expect((await post(env, "/api/auth/sign-out", {}, { cookie })).status).toBe(200)
   expect((await call(env, "/api/me", { headers: { cookie } })).status).toBe(401)
@@ -83,7 +89,7 @@ test("a client-supplied actor header is refused and other APIs need a session", 
 test("sign-in always lands in the earliest of several organizations", async () => {
   const env = stage()
   const db = env.AUTH_DB as unknown as Database
-  const signUp = await post(env, "/api/auth/sign-up/email", { email: "fa@example.com", password: "correct horse battery", name: "Fa" })
+  const signUp = await enroll(env, "fa@example.com", "Fa")
   const own = (db.query("select organizationId from member").get() as { organizationId: string }).organizationId
   const user = (db.query("select id from user").get() as { id: string }).id
   db.run("insert into organization (id, name, slug, createdAt) values ('later', 'Later', 'later', ?)", [new Date(Date.now() + 60_000).toISOString()])
@@ -98,14 +104,31 @@ test("sign-in always lands in the earliest of several organizations", async () =
 
 test("an unverified account cannot accept an invitation sent to its address", async () => {
   const env = stage()
-  const owner = cookieOf(await post(env, "/api/auth/sign-up/email", { email: "ow@example.com", password: "correct horse battery", name: "Ow" }))
+  const owner = cookieOf(await enroll(env, "ow@example.com", "Ow"))
   const org = ((await (await call(env, "/api/me", { headers: { cookie: owner } })).json()) as { organization: { id: string } }).organization.id
   const invite = await post(env, "/api/auth/organization/invite-member", { email: "claim@example.com", role: "admin", organizationId: org }, { cookie: owner })
   expect(invite.status).toBe(200)
   const { id } = (await invite.json()) as { id: string }
-  const claimant = cookieOf(await post(env, "/api/auth/sign-up/email", { email: "claim@example.com", password: "correct horse battery", name: "Claim" }))
+  const claimant = cookieOf(await enroll(env, "claim@example.com", "Claim"))
   const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: claimant })
   expect(accept.status).toBe(403)
   const db = env.AUTH_DB as unknown as Database
   expect(db.query("select count(*) as n from member where organizationId = ?").get(org)).toEqual({ n: 1 })
+})
+
+test("sign-up answers a registered address exactly like a new one, with no session for either", async () => {
+  const env = stage()
+  await post(env, "/api/auth/sign-up/email", { email: "gi@example.com", password: "correct horse battery", name: "Gi" })
+  const shape = async (email: string) => {
+    const response = await post(env, "/api/auth/sign-up/email", { email, password: "another horse battery", name: "Gi" })
+    const body = (await response.json()) as { token: unknown; user: Record<string, unknown> }
+    return { status: response.status, cookies: response.headers.getSetCookie().filter((line) => line.includes("session_token")), token: body.token, keys: Object.keys(body.user).sort(), email: body.user.email, verified: body.user.emailVerified }
+  }
+  const existing = await shape("gi@example.com")
+  const fresh = await shape("ha@example.com")
+  expect(existing).toEqual({ ...fresh, email: "gi@example.com" })
+  expect(fresh).toMatchObject({ status: 200, cookies: [], token: null, verified: false })
+  // The registered account keeps its original password.
+  expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "another horse battery" })).status).toBe(401)
+  expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
 })

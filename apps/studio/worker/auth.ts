@@ -56,7 +56,9 @@ export function authOptions(config: AuthConfig) {
     basePath: "/api/auth",
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
     trustedOrigins: [config.baseURL],
-    emailAndPassword: { enabled: true, minPasswordLength: 12, maxPasswordLength: 128 },
+    // No sign-in on sign-up: Better Auth then answers a registered address exactly as a new one
+    // (no session either way), so sign-up does not reveal which emails have accounts.
+    emailAndPassword: { enabled: true, autoSignIn: false, minPasswordLength: 12, maxPasswordLength: 128 },
     session: {
       expiresIn: 7 * 24 * 60 * MINUTE,
       updateAge: 24 * 60 * MINUTE,
