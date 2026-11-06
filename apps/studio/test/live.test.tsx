@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
-import { amountTexts, hostRead, liveTrace, type Trace } from "../src/lib/live.ts"
+import { amountTexts, hostRead, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
 import * as answerLib from "../src/lib/answer.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
@@ -112,4 +112,40 @@ test("an answer whose members' amounts are withheld still reads, its totals inta
   const rows = buckets(declared, { answer: JSON.parse(source), numbers: readDocument(source, "live").numbers, at: "" })
   expect(rows.map(({ value, totals }) => ({ value, totals }))).toEqual(plain.map(({ value, totals }) => ({ value, totals })))
   expect(rows.every(({ members }) => members.every(({ amounts }) => amounts === null && contribution(amounts) === "Withheld"))).toBe(true)
+})
+
+test("a network failure or a 200 that is not JSON is no live read, so the page keeps its recording", async () => {
+  expect(await hostRead("/v1/x", async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
+  expect(await hostRead("/v1/x", respond(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a 200 that is JSON but not an answer document is no live read, so the page keeps its recording", async () => {
+  expect((await liveAnswer("demo.yield_week", respond(200, answerText))).kind).toBe("read")
+  expect(await liveAnswer("demo.yield_week", respond(200, "null"))).toEqual({ kind: "unavailable", status: 200 })
+  expect(await liveAnswer("demo.yield_week", respond(200, '{"error":"unavailable"}'))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a live answer with a malformed row, watermark or freshness is no live read, so the page keeps its recording", async () => {
+  const broken = (change: (doc: Record<string, unknown>) => void) => { const doc = JSON.parse(answerText) as Record<string, unknown>; change(doc); return JSON.stringify(doc) }
+  const first = (doc: Record<string, unknown>) => Object.keys(doc.rows as object)[0] ?? ""
+  for (const body of [
+    broken((doc) => { (doc.rows as Record<string, unknown>)[first(doc)] = null }),
+    broken((doc) => { delete ((doc.rows as Record<string, Record<string, unknown>>)[first(doc)] ?? {}).totals }),
+    broken((doc) => { ((doc.rows as Record<string, Record<string, unknown>>)[first(doc)] ?? {}).members = { x: { version: 1, amounts: "1" } } }),
+    broken((doc) => { doc.watermarks = { measurements: { observed: null } } }),
+    broken((doc) => { doc.freshness = "unheard-of" }),
+  ]) expect(await liveAnswer("demo.yield_week", respond(200, body))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a live trace that is not the drawer's document is no live read, so the drawer says it could not read the records", async () => {
+  expect((await liveTrace("demo.yield_week", answer.lineageRef, bucket, respond(200, traceText))).kind).toBe("read")
+  for (const body of ["null", '{"error":"unavailable"}', `{"bucket":${JSON.stringify(bucket)}}`, `{"bucket":${JSON.stringify(bucket)},"contributions":[null]}`, `{"bucket":${JSON.stringify(bucket)},"contributions":[{"fact":{"key":"k"},"amounts":[1]}]}`])
+    expect(await liveTrace("demo.yield_week", answer.lineageRef, bucket, respond(200, body))).toEqual({ kind: "unavailable", status: 200 })
+})
+
+test("a live answer and trace whose amounts the server withheld (amounts: null) still read live", async () => {
+  const withheld = JSON.parse(answerText) as { rows: Record<string, { members: Record<string, { amounts: unknown }> }> }
+  for (const row of Object.values(withheld.rows)) for (const member of Object.values(row.members)) member.amounts = null
+  expect((await liveAnswer("demo.yield_week", respond(200, JSON.stringify(withheld)))).kind).toBe("read")
+  expect((await liveTrace("demo.yield_week", answer.lineageRef, bucket, respond(200, withheldText('"amounts":null,')))).kind).toBe("read")
 })
