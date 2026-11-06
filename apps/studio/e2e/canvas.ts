@@ -9,7 +9,7 @@ export const edge = (page: Page, id: string) => page.locator(`.react-flow__edge[
 /** Against a local preview there is no Worker: the session read is answered as a signed-in viewer. */
 export async function session(page: Page) {
   if (process.env.E2E_BASE) return
-  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" } } }))
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId: "analytics" } }))
 }
 
 export async function open(page: Page, tab?: string) {
