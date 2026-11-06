@@ -414,7 +414,11 @@ export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readon
   const stored = reads.links.document.items.length
   const declared = concept.relationships.length + incomingOf(concept, concepts).length
   const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
-  const links = declared === 0 ? "Its type declares no relations." : stored === 0 ? (declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`) : `${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
+  // Only the first page of links may have been returned; then the count is a floor, not the whole.
+  const more = reads.links.document.hasMore
+  const links = declared === 0 ? "Its type declares no relations."
+    : stored === 0 ? (more ? "No stored link appears on the first page the server returned; more may exist." : declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`)
+    : `${more ? "At least " : ""}${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
   return `${recordName(reads.object.document)} is ${/^[aeiou]/i.test(concept.title) ? "an" : "a"} ${concept.title.toLowerCase()} record${from}. ${links}`
 }
 
