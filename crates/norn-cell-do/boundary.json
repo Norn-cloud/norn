@@ -1,0 +1,12 @@
+{
+  "name": "norn-cell-do",
+  "ring": "One",
+  "allowed_norn": [
+    "norn-api",
+    "norn-cell",
+    "norn-checker",
+    "norn-ir"
+  ],
+  "dev_only_norn": [],
+  "third_party": []
+}
