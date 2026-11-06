@@ -97,7 +97,7 @@ pub fn provision<E: SqlEngine>(engine: E, scope: &CellScope) -> Result<Analytics
     }
     Ok(Analytics {
         store,
-        plan: plan(object)?,
+        plan: plan(&object)?,
     })
 }
 
@@ -131,7 +131,7 @@ fn conversions() -> Result<Vec<FactWriteRow>, SeedError> {
 }
 
 /// Admit the weekly yield question: recovered over input, gold only, by week.
-fn plan(object: ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
+fn plan(object: &ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
     let mut artifact: Value = serde_json::from_str::<Vec<Value>>(include_str!(
         "../../../fixtures/ir/metrics/ontology.json"
     ))
