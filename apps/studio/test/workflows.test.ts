@@ -2,7 +2,8 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
-import { focusOf, guardedFields, layout, workflows } from "../src/lib/workflows.ts"
+import { anchorOf, backOf, pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
+import { guardedFields, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
@@ -24,17 +25,7 @@ test("a restatement's approval step is fired by its declared action and governed
   expect(restatement?.laws.map(({ id }) => id)).toEqual(["core.analytics.restatement_policy"])
 })
 
-test("states are laid out by their shortest declared path from the start", () => {
-  const order = named("commerce.SalesOrder")
-  expect(order && Object.fromEntries([...layout(order.lifecycle)].map(([state, { column }]) => [state, column]))).toEqual({
-    draft: 0, submitted: 1, cancelled: 1, approved: 2, on_hold: 2, invoiced: 3, completed: 4,
-  })
-})
 
-test("a state no step reaches still appears, after the reachable ones", () => {
-  const positions = layout({ property: "status", initial: ["a"], transitions: [{ id: "go", from: ["a"], to: "b" }, { id: "back", from: ["c"], to: "a" }] })
-  expect(positions.get("c")).toEqual({ column: 2, row: 0 })
-})
 
 test("a guard reads as the fields it requires, in words", () => {
   const approve = named("core.analytics.Restatement")?.steps.find(({ transition }) => transition.id === "approve")
@@ -42,9 +33,84 @@ test("a guard reads as the fields it requires, in words", () => {
   expect(guardedFields(["(self.candidate != '') and (self.candidate_digest != '')"])).toEqual(["candidate", "candidate digest"])
 })
 
-test("focusing a step brings its states and the steps that touch them into view", () => {
+test("the spine runs from the start to the furthest declared end, by its shortest path", () => {
+  const order = named("commerce.SalesOrder")
+  expect(order && spineOf(order.lifecycle)).toEqual(["draft", "submitted", "approved", "invoiced", "completed"])
   const restatement = named("core.analytics.Restatement")
-  const focus = restatement && focusOf(restatement, "approve")
-  expect([...focus?.states ?? []].sort()).toEqual(["approved", "ready"])
-  expect([...focus?.adjacent ?? []].sort()).toEqual(["activate", "stage"])
+  expect(restatement && spineOf(restatement.lifecycle)).toEqual(["building", "ready", "approved", "active"])
+})
+
+test("steps back to an earlier state become chips on their source, not arcs", () => {
+  const order = named("commerce.SalesOrder")
+  if (order === undefined) throw new Error("SalesOrder")
+  const tree = treeOf(order.lifecycle)
+  const backs = (state: string) => (tree.backs.get(state) ?? []).map(({ transition, to }) => `${transition.id}→${to}`).sort()
+  expect(backs("submitted")).toEqual(["amend→draft", "cancel→cancelled"])
+  expect(tree.nodes.filter((node) => node.kind === "state" && node.row === 0).map(({ id }) => id)).toEqual(["draft", "submitted", "approved", "invoiced", "completed"])
+  expect(new Set(tree.nodes.filter(({ kind }) => kind === "state").map(({ id }) => id))).toEqual(new Set(["draft", "submitted", "approved", "invoiced", "completed", "cancelled", "on_hold"]))
+})
+
+test("a pinned step lights its path from the start and the options after it", () => {
+  const order = named("commerce.SalesOrder")
+  if (order === undefined) throw new Error("SalesOrder")
+  const tree = treeOf(order.lifecycle)
+  const invoice = stepId({ id: "invoice", from: ["approved"], to: "invoiced" }, "approved")
+  const { path, next } = pathTo(tree, invoice)
+  expect(path).toEqual(["draft", stepId({ id: "submit", from: ["draft"], to: "submitted" }, "draft"), "submitted", stepId({ id: "approve", from: ["submitted"], to: "approved" }, "submitted"), "approved", invoice])
+  expect([...next]).toContain("invoiced")
+})
+
+test("a twenty-state lifecycle folds to the focused path and two hops on, and unfolds on request", () => {
+  const states = Array.from({ length: 20 }, (_, index) => `s${index}`)
+  const lifecycle = { property: "status", initial: ["s0"], terminal: ["s19"], transitions: [
+    ...states.slice(1).map((to, index) => ({ id: `next${index}`, from: [`s${index}`], to })),
+    ...states.slice(2).map((from, index) => ({ id: `cancel${index}`, from: [from], to: "s0" })),
+  ] }
+  const tree = treeOf(lifecycle)
+  expect(tree.spine).toHaveLength(20)
+  const folded = visibleOf(tree, "s5", false)
+  const shownStates = tree.nodes.filter(({ kind, id }) => kind === "state" && folded.shown.has(id)).map(({ id }) => id)
+  expect(shownStates).toEqual(["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"])
+  expect(folded.hidden).toBe(12)
+  expect(visibleOf(tree, "s5", true).hidden).toBe(0)
+  expect(visibleOf(treeOf(named("commerce.SalesOrder")?.lifecycle ?? lifecycle), undefined, false).hidden).toBe(0)
+})
+
+
+test("a step back is found by its id, so its chip can open the step itself", () => {
+  const order = named("commerce.SalesOrder")
+  if (order === undefined) throw new Error("SalesOrder")
+  const tree = treeOf(order.lifecycle)
+  const amend = backOf(tree, stepId({ id: "amend", from: ["submitted"], to: "draft" }, "submitted"))
+  expect(amend && { id: amend.transition.id, from: amend.from, to: amend.to }).toEqual({ id: "amend", from: "submitted", to: "draft" })
+  expect(backOf(tree, "draft")).toBeUndefined()
+})
+
+test("pinning a step back on a folded lifecycle keeps its source path in view", () => {
+  const states = Array.from({ length: 20 }, (_, index) => `s${index}`)
+  const lifecycle = { property: "status", initial: ["s0"], terminal: ["s19"], transitions: [
+    ...states.slice(1).map((to, index) => ({ id: `next${index}`, from: [`s${index}`], to })),
+    ...states.slice(2).map((from, index) => ({ id: `cancel${index}`, from: [from], to: "s0" })),
+  ] }
+  const tree = treeOf(lifecycle)
+  const back = stepId({ id: "cancel8", from: ["s10"], to: "s0" }, "s10")
+  expect(backOf(tree, back)?.from).toBe("s10")
+  expect(anchorOf(tree, back)).toBe("s10")
+  const { shown, hidden } = visibleOf(tree, back, false)
+  for (const state of ["s0", "s5", "s10", "s11", "s12"]) expect(shown.has(state)).toBe(true)
+  expect(hidden).toBe(7)
+})
+
+test("a component the start never reaches is placed once, and its steps trace back to it", () => {
+  const lifecycle = { property: "status", initial: ["a"], terminal: ["z"], transitions: [
+    { id: "go", from: ["a"], to: "z" },
+    { id: "b_to_c", from: ["b"], to: "c" },
+    { id: "c_to_a", from: ["c"], to: "a" },
+  ] }
+  const tree = treeOf(lifecycle)
+  const ids = tree.nodes.map(({ id }) => id)
+  expect(ids.length).toBe(new Set(ids).size)
+  expect(ids.filter((id) => id === "c")).toHaveLength(1)
+  const step = stepId({ id: "b_to_c", from: ["b"], to: "c" }, "b")
+  expect(pathTo(tree, step).path).toEqual(["b", step])
 })
