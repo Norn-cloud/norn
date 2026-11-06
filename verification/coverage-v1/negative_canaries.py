@@ -2130,12 +2130,13 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
       await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
       assert(virtualNow-before>=6000&&virtualNow-before<60000,'probe must retry with backoff, then stop');
     }
-    // What the probe observes is sticky. A failure verdict, or another run's newer checkpoint,
-    // that lists once and is omitted by later listings still refuses: a later, staler
-    // listing can never turn an observed change back into success.
+    // What the probe observes is sticky. While its own checkpoint has not listed yet (3 s
+    // lag), a failure verdict or another run's newer checkpoint lists once and is omitted by
+    // every later listing. The probe still refuses: a later, staler listing can never turn
+    // an observed change back into success.
     for(const kind of ['failure','newer']){
-      flickerArm=kind;const before=virtualNow;
-      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);
+      flickerArm=kind;lagMs=3000;const before=virtualNow;
+      await assert.rejects(()=>collect('group'),/Publication checkpoint changed/);lagMs=0;
       assert(!flickerArm&&!flicker,'the flicker must have been listed once');
       if(kind==='failure')assert.equal(virtualNow,before,'an observed failure-version change refuses at once');
     }
