@@ -1,6 +1,7 @@
 import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
-import { getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
+import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
+import { connectorString, connectorVersion, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, saveBinding, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -36,6 +37,8 @@ export interface ConnectorDeps {
   readonly db: D1Database
   readonly grant?: (auth: Auth, request: Request) => Promise<string | null>
   readonly fetch?: typeof fetch
+  /** The Norn cell host (NORN_HOST); bindings are installed there as definitions when it serves them. */
+  readonly host?: Fetcher
 }
 
 /** How the person fixes a refusal; the page renders one button per kind. */
@@ -92,11 +95,33 @@ const json = async (request: Request): Promise<Record<string, unknown> | null> =
   const body: unknown = await request.json().catch(() => null)
   return typeof body === "object" && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : null
 }
-const part = (match: RegExpExecArray, index: number) => decodeURIComponent(match[index] ?? "")
+/** A path segment that is not valid percent-encoding. */
+class BadPath extends Error {}
+const part = (match: RegExpExecArray, index: number) => {
+  try {
+    return decodeURIComponent(match[index] ?? "")
+  } catch {
+    throw new BadPath(match[index] ?? "")
+  }
+}
 const label = (value: unknown) => (typeof value === "string" && value.trim() !== "" && value.length <= 120 ? value.trim() : null)
 
-/** Route one `/api/connectors/*` request; `path` is what follows `/api/connectors`. */
+/** Route one `/api/connectors/*` request; `path` is what follows `/api/connectors`. Every answer is JSON. */
 export async function connectors(request: Request, env: ConnectorEnv, auth: Auth, path: string, deps: ConnectorDeps): Promise<Response> {
+  try {
+    return await route(request, env, auth, path, deps)
+  } catch (error) {
+    if (error instanceof BadPath) return refusal(400, "connectors.invalid_request", "The path is not valid percent-encoding.")
+    if (error instanceof GatewayError) return gatewayRefusal(error)
+    // Better Auth's own refusals (an expired session during link or unlink) carry an HTTP status.
+    const status = (error as { statusCode?: unknown } | null)?.statusCode
+    if (typeof status === "number" && status >= 400 && status < 500) return refusal(status, "connectors.auth_refused", error instanceof Error ? error.message : "The sign-in service refused.", status === 401 ? { kind: "sign_in_gateway" } : undefined)
+    console.error("connectors: unexpected failure", error)
+    return refusal(500, "connectors.internal", "Connectors failed unexpectedly; nothing was changed in the gateway.")
+  }
+}
+
+async function route(request: Request, env: ConnectorEnv, auth: Auth, path: string, deps: ConnectorDeps): Promise<Response> {
   const { db } = deps
   const actor = await resolveActor(request, auth)
   if (actor === null) return refusal(401, "connectors.sign_in", "Sign in first.")
@@ -109,11 +134,28 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
   const bindingRoute = /^\/bindings\/([^/]+)$/.exec(path)
 
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
-  if (route === "GET /bindings") return ok({ bindings: await listBindings(db, actor.orgId), manage })
+  const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
+  const cell = new BindingDefinitions(deps.host, auth, actor)
+  /** A definition write that did not land is a typed refusal; `null` when it landed or the stage keeps bindings locally. */
+  const cellRefusal = (outcome: Install) =>
+    outcome.kind === "refused" ? Response.json({ code: "connectors.binding_refused", error: "The cell refused this binding.", findings: outcome.findings }, { status: 422, headers: NO_STORE })
+      : outcome.kind === "conflict" ? refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
+        : null
+  if (route === "GET /bindings") return ok({ bindings: (await listBindings(db, actor.orgId)).map(shown), manage })
   if (request.method === "DELETE" && bindingRoute !== null) {
     if (!manage) return forbidden("Only an organization admin can remove a tool binding.")
     const id = part(bindingRoute, 1)
-    return (await removeBinding(db, actor.orgId, id)) ? ok({ removed: id }) : refusal(404, "connectors.binding_not_found", "No such tool binding.")
+    const existing = await getBinding(db, actor.orgId, id)
+    if (existing === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+    // Retire the cell definition first: agents must stop referencing it before the record goes.
+    if (existing.definition !== null) {
+      const retired = await cell.retire(existing.definition.id, existing.definition.version).catch((error: unknown) => { if (error instanceof CellUnavailable) return error; throw error })
+      if (retired instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", retired.message)
+      const refused = cellRefusal(retired)
+      if (refused !== null) return refused
+    }
+    await removeBinding(db, actor.orgId, id)
+    return ok({ removed: id, retired: existing.definition?.id ?? null })
   }
 
   const gatewayOrigin = env.TOOL_GATEWAY_URL
@@ -188,9 +230,22 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
       const tool = await gateway.tool(organization, target.app, target.tool)
       const draft = readDraft(body, tool.inputSchema, existing)
       if ("error" in draft) return refusal(400, "connectors.binding_invalid", draft.error, undefined, draft.field)
-      // Pinned to the tool as the gateway serves it now: the canvas and the host admit by this digest, never by name.
-      const pin = { manifestDigest: await manifestDigest(toolManifest(tool)), connector: { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: tool.version } }
-      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, pin, existing?.id) })
+      // Pinned to the tool as the gateway serves it now: the cell and the canvas admit by this digest, never by name.
+      const digest = await manifestDigest(toolManifest(tool))
+      const connector = { gateway: "executor" as const, origin: gatewayOrigin, app: tool.app, tool: tool.name, version: connectorVersion(tool.version, digest) }
+      const id = existing?.id ?? crypto.randomUUID()
+      // The cell installs the binding as a definition (it recomputes the digest); the local record follows it.
+      let outcome: Install
+      try {
+        outcome = await cell.install(existing?.definition?.id ?? bindingDefinitionId(id), { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest }, existing?.definition?.version)
+      } catch (error) {
+        if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
+        throw error
+      }
+      const refused = cellRefusal(outcome)
+      if (refused !== null) return refused
+      const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
+      return ok({ binding: shown(await saveBinding(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector, definition }, id)) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
