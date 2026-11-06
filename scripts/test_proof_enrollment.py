@@ -18,6 +18,19 @@ from test_migrate_registry_pr import MigrationTests
 from proof_enrollment import ROOT, discover_sources, validate
 
 
+KANI_CLAIM = "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"
+KANI_IMPLEMENTATION_FIELDS = {
+    "proof": "implementation_proved",
+    "correspondenceSource": "crates/norn-checker/src/exact_rational.rs",
+    "correspondenceMutations": [
+        {"name": "overflow-clamp", "before": "i64::try_from(numerator.checked_div(a)?).ok()?",
+         "after": "i64::try_from(numerator.checked_div(a)?).unwrap_or(i64::MAX)"},
+        {"name": "negation-sign", "before": "i128::from(self.numerator).checked_neg()?",
+         "after": "i128::from(self.numerator)"},
+    ],
+}
+
+
 class EnrollmentTests(unittest.TestCase):
     def setUp(self):
         self.coverage = coverage_manifest.load()
@@ -34,6 +47,16 @@ class EnrollmentTests(unittest.TestCase):
         """Return (subsystem, claim) for an actual manifest claim."""
         return next((s, c) for s in self.coverage["subsystems"] for c in s["obligationClaims"] if c["id"] == claim_id)
 
+    def _kani_claim(self):
+        """The actual Kani claim as it would read if promoted to implementation_proved.
+
+        D47 keeps it `partial` until Kani runs isolated (#969); the harness and
+        its gate stay, so the fixture restores only the typed correspondence fields.
+        """
+        subsystem, claim = self._claim(KANI_CLAIM)
+        self.assertEqual(claim["proof"], "partial")
+        return subsystem, copy.deepcopy(claim) | KANI_IMPLEMENTATION_FIELDS
+
     def test_lexical_implementation_classification_is_deleted(self):
         """D43: no command or script text decides an implementation claim's kind."""
         module = self._validator()
@@ -43,7 +66,7 @@ class EnrollmentTests(unittest.TestCase):
 
     def test_implementation_claims_carry_the_fields_their_wrapper_reads(self):
         module = self._validator()
-        kani_subsystem, kani = self._claim("INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        kani_subsystem, kani = self._kani_claim()
         extraction_subsystem, extraction = self._claim("INV-ART-DIRECT-WRITE-PREDICATE")
         module.validate_claim_evidence_shape(kani_subsystem["id"], kani["id"], kani)
         module.validate_claim_evidence_shape(extraction_subsystem["id"], extraction["id"], extraction)
@@ -71,12 +94,34 @@ class EnrollmentTests(unittest.TestCase):
         receipts = self._validator().implementation_receipts
         with tempfile.TemporaryDirectory() as directory:
             errors, _ = receipts.verify(ROOT, Path(directory), {}, None)
-        claims = sorted(receipts.implementation_claims(ROOT))
-        self.assertEqual(claims, ["INV-ART-DIRECT-WRITE-PREDICATE", "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE"])
-        self.assertEqual(errors[0], "INV-ART-DIRECT-WRITE-PREDICATE: no receipt from the base-owned wrapper")
-        # Kani runs on the candidate-influenced receipts runner: never admitted as implementation_proved.
-        self.assertRegex(errors[1], "^INV-CERT-INTEGER-NEGATION-CORRESPONDENCE: .*candidate-reported")
-        self.assertEqual(len(errors), 2)
+        actual = receipts.implementation_claims(ROOT)
+        self.assertEqual(sorted(actual), ["INV-ART-DIRECT-WRITE-PREDICATE"])
+        self.assertEqual(errors, ["INV-ART-DIRECT-WRITE-PREDICATE: no receipt from the base-owned wrapper"])
+        # D47: the Kani claim promoted to implementation_proved is refused even with
+        # a receipt slot, because Kani runs on the candidate-influenced receipts runner.
+        _, kani = self._kani_claim()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+                receipts, "implementation_claims", return_value=actual | {KANI_CLAIM: kani}):
+            (Path(directory) / KANI_CLAIM).mkdir()
+            errors, verdicts = receipts.verify(ROOT, Path(directory), {}, None, scoped=False)
+        self.assertEqual(len(errors), 1)
+        self.assertRegex(errors[0], f"^{KANI_CLAIM}: .*candidate-reported")
+        self.assertIn({"claim": KANI_CLAIM, "kind": "kani", "verdict": "candidate-reported", "rechecked": [],
+                       "candidateReported": ["kani-baseline", "kani-mutations"]}, verdicts)
+
+    def test_kani_claim_stays_partial_without_correspondence_fields(self):
+        """D47: until #969, the Kani claim is partial and carries no implementation fields."""
+        module = self._validator()
+        subsystem, claim = self._claim(KANI_CLAIM)
+        self.assertEqual(claim["proof"], "partial")
+        self.assertIn("harness:integer_negation_correspondence", claim["evidence"]["proof"][0]["selectors"])
+        module.validate_claim_evidence_shape(subsystem["id"], claim["id"], claim)
+        for field in ("correspondenceSource", "correspondenceMutations"):
+            self.assertNotIn(field, claim)
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    module.InvalidCoverage, "correspondence fields require an implementation proof"):
+                module.validate_claim_evidence_shape(
+                    subsystem["id"], claim["id"], claim | {field: KANI_IMPLEMENTATION_FIELDS[field]})
 
     def test_actual_absent_domain_tree(self):
         self.assertEqual(validate(ROOT, self.coverage, self.gates), set())
@@ -166,8 +211,7 @@ class EnrollmentTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
-        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        subsystem, original = self._kani_claim()
         module.validate_claim_evidence_shape(subsystem["id"], original["id"], original)
         for mutation in ("no-proof", "no-predicate", "not-annotated"):
             with self.subTest(mutation=mutation):
@@ -188,8 +232,7 @@ class EnrollmentTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
-        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        subsystem, original = self._kani_claim()
         for attributes in (
             "#[cfg(any())]\n#[kani::proof]",
             "#[kani::proof]\n#[cfg(any())]",
@@ -218,8 +261,7 @@ class EnrollmentTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
-        original = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        subsystem, original = self._kani_claim()
         proof = "#[kani::proof] fn integer_negation_correspondence() {}"
         for prefix, suffix in (
             ("macro_rules! unused { () => { ", " }; }"),
@@ -253,8 +295,7 @@ class EnrollmentTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("coverage_validator", ROOT / "verification/coverage-v1/validate.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        subsystem = next(s for s in self.coverage["subsystems"] if s["id"] == "assurance-certificates")
-        claim = next(c for c in subsystem["obligationClaims"] if c["id"] == "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE")
+        subsystem, claim = self._kani_claim()
         proof = "#[kani::proof] fn integer_negation_correspondence() {}\n"
         imported = '#[path = "../../crates/norn-checker/src/exact_rational.rs"] mod production;\n'
         local_copy = "struct Rational; impl Rational { fn checked_neg(self) -> Option<Self> { Some(self) } }\n"

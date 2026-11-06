@@ -1,8 +1,0 @@
-{
-  "order": 1,
-  "value": {
-    "name": "negation-sign",
-    "before": "i128::from(self.numerator).checked_neg()?",
-    "after": "i128::from(self.numerator)"
-  }
-}
