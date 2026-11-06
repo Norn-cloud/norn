@@ -344,6 +344,9 @@ test("a refused or conflicting definition saves nothing; a stage without the rou
   // An unknown-field refusal that also names something else is still a refusal.
   const mixed = cellHost(() => Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.unknown_field", message: "unknown field `label`", span: { pointer: "/payload/label" } }, { code: "binding.role_undeclared", message: "runRole names no declared role", span: { pointer: "/payload/runRole" } }] }, { status: 422 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: mixed.host })).body.code).toBe("connectors.binding_refused")
+  // The cell's authority says no: a typed denial with the admin fix, never a fallback and never "unavailable".
+  const denying = cellHost(() => Response.json({ format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized" }, { status: 403 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: denying.host })).body).toMatchObject({ code: "connectors.binding_denied", action: { kind: "ask_admin" } })
   const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
   expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })

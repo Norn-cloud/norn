@@ -51,6 +51,8 @@ export type Install =
   | { readonly kind: "installed"; readonly id: string; readonly version: number }
   | { readonly kind: "refused"; readonly findings: readonly Finding[] }
   | { readonly kind: "conflict" }
+  /** The cell's authority refused this actor (403): a decision, never a fallback. */
+  | { readonly kind: "denied"; readonly code: string; readonly message: string }
   /** The cell has no definition route (or no host is bound): keep the local record. */
   | { readonly kind: "local" }
 
@@ -95,6 +97,7 @@ export class BindingDefinitions {
       return refusedOnlyForNewerFields(findings) ? { kind: "local" } : { kind: "refused", findings }
     }
     if (status === 409 && b?.code === "definition.version_conflict") return { kind: "conflict" }
+    if (status === 403) return { kind: "denied", code: typeof b?.code === "string" ? b.code : "authz.denied", message: typeof (b as { message?: unknown } | null)?.message === "string" ? String((b as { message: string }).message) : "not authorized" }
     // No definition route on this stage yet, or the binding kind is not served: the local record stands.
     if (status === 404 && (b?.code === "route.not_found" || b?.code === "definition.kind_unknown")) return { kind: "local" }
     throw new CellUnavailable(`The cell answered ${status} (${typeof b?.code === "string" ? b.code : "no code"}); the binding was not saved.`)

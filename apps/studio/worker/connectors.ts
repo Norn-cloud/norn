@@ -140,6 +140,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   const cellRefusal = (outcome: Install) =>
     outcome.kind === "refused" ? Response.json({ code: "connectors.binding_refused", error: "The cell refused this binding.", findings: outcome.findings }, { status: 422, headers: NO_STORE })
       : outcome.kind === "conflict" ? refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
+        : outcome.kind === "denied" ? refusal(403, "connectors.binding_denied", `The cell does not let you save or remove tool bindings (${outcome.code}).`, { kind: "ask_admin" })
         : null
   if (route === "GET /bindings") return ok({ bindings: (await listBindings(db, actor.orgId)).map(shown), manage })
   if (request.method === "DELETE" && bindingRoute !== null) {
