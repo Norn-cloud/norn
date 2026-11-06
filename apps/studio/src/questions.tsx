@@ -27,7 +27,14 @@ export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-
 
 function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: QuestionAnswer; readonly heading?: "h1" | "h2" }) {
   // The live answer when the host serves one; otherwise the recording, labelled as such.
-  const live = useQuery({ queryKey: ["live-answer", recorded.question.document.name], queryFn: () => liveAnswer(recorded.question.document.name), retry: false, staleTime: 60_000 })
+  // A refused or unavailable live read is asked again every 30 s, so a policy change or a recovered host shows without a reload.
+  const live = useQuery({
+    queryKey: ["live-answer", recorded.question.document.name],
+    queryFn: () => liveAnswer(recorded.question.document.name),
+    retry: false,
+    staleTime: 60_000,
+    refetchInterval: (query) => query.state.data?.kind === "read" ? false : 30_000,
+  })
   const read: QuestionAnswer = live.data?.kind === "read" ? { ...recorded, answer: live.data.read } : recorded
   return <AnswerView read={read} heading={heading} link refusal={live.data?.kind === "refused" ? live.data.refusal : undefined} />
 }

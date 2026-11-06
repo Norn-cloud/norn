@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import { planWords } from "../src/agent/question.tsx"
-import { QuestionBuilder, buildQuestion, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
+import { planWords, questionVerdictOf } from "../src/agent/question.tsx"
+import { QuestionBuilder, buildQuestion, catalogOf, checkedFor, fieldOf, initialDraft, issuesOf, type Draft, type QuestionCatalog } from "../src/builder.tsx"
 
 const fixture = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo", path), "utf8"))
 // The catalogue as GET /api/questions/catalog serves it for the demo analytics world.
@@ -74,4 +74,27 @@ test("a world without measures shows the empty state, not an empty form", () => 
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={{ ...catalog, metrics: [] }} /></QueryClientProvider>)
   expect(html).toContain("declares no measures yet")
   expect(html).not.toContain("Check with the server")
+})
+
+test("a checker response with a malformed finding is not a verdict", () => {
+  const verdict = { kind: "question", question: {}, admitted: false, plan: null, findings: [{ code: "q.x", message: "m", pointer: "/questions/0/name" }] }
+  expect(questionVerdictOf(verdict)).toBe(verdict as never)
+  expect(questionVerdictOf({ ...verdict, findings: [{ code: "q.x", message: "m" }, { code: "q.y", message: "n", pointer: null }] })).toBeDefined()
+  for (const finding of [null, "q.x", { code: "q.x" }, { code: 1, message: "m" }, { code: "q.x", message: "m", pointer: 3 }])
+    expect(questionVerdictOf({ ...verdict, findings: [finding] })).toBeUndefined()
+})
+
+test("a catalogue response missing a field the builder reads is no catalogue", () => {
+  const valid = { objectSet: "demo.Melt", properties: [{ name: "at", kind: "timestamp", unit: null }], metrics: [{ name: "yield", label: "Yield", type: "ratio" }], grains: ["week"], operators: ["eq"], example: { irVersion: "1", calendar: "utc", freshness: null } }
+  expect(catalogOf(valid)).toBe(valid as never)
+  for (const broken of [null, [], { ...valid, properties: null }, { ...valid, metrics: [null] }, { ...valid, grains: "week" }, { ...valid, operators: [1] }, { ...valid, example: {} }, { ...valid, example: null }])
+    expect(catalogOf(broken)).toBeUndefined()
+})
+
+test("a check result shows only for the draft it was run on, so an edit or a late response for an older draft shows nothing", () => {
+  const first = { title: "a" }, edited = { title: "b" }
+  const result = { variables: first, data: "verdict", error: null }
+  expect(checkedFor(result, first)).toEqual({ data: "verdict", error: null })
+  expect(checkedFor(result, edited)).toEqual({ data: undefined, error: null })
+  expect(checkedFor({ variables: first, data: undefined, error: new Error("down") }, edited)).toEqual({ data: undefined, error: null })
 })
