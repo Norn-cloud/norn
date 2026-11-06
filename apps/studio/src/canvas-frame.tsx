@@ -137,6 +137,8 @@ function Frame(props: CanvasFrameProps) {
   const copyable = (ids: readonly string[]) => removable(ids)
   const duplicate = (piece: g.Graph) => {
     if (piece.nodes.length === 0) return
+    // The clipboard is shared across canvases; paste only what this canvas can hold.
+    if (piece.nodes.some(({ kind }) => !(kind in kinds))) { setNotice({ tone: "refusal", text: "Those items were copied from another kind of canvas and cannot be pasted here." }); return }
     const { graph: next, nodes } = g.paste(graph, piece, 40, props.copyEdgeConfig)
     edit(next)
     setSelection({ nodes, edges: [] })
@@ -224,7 +226,12 @@ function Frame(props: CanvasFrameProps) {
               onEdgesChange={(changes) => {
                 for (const change of changes) if (change.type === "select") setSelection((current) => ({ ...current, edges: change.selected ? [...new Set([...current.edges, change.id])] : current.edges.filter((id) => id !== change.id) }))
               }}
-              onDelete={({ nodes, edges }) => { edit(g.remove(graph, removable(nodes.map(({ id }) => id)), edges.map(({ id }) => id))); setSelection(NONE) }}>
+              onDelete={({ nodes, edges }) => {
+                // A fixed node (an automation's start) stays, and so do its connections unless they were selected themselves.
+                const kept = new Set(nodes.map(({ id }) => id).filter((id) => !removable([id]).length))
+                const cut = edges.filter(({ id, source, target }) => selection.edges.includes(id) || !(kept.has(source) || kept.has(target))).map(({ id }) => id)
+                edit(g.remove(graph, removable(nodes.map(({ id }) => id)), cut)); setSelection(NONE)
+              }}>
               <Background /><Controls showInteractive={false} />
             </ReactFlow>
           </div>
