@@ -204,9 +204,10 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
         Mode::Fresh => context.now_ms = context.now_ms.checked_add(1000).expect("fresh clock"),
         Mode::Stale => context.now_ms = context.now_ms.checked_add(6000).expect("stale clock"),
         Mode::Incomplete => {
-            context
-                .exclusions
-                .insert("SYN-MELT-15-1".into(), "fixture:finding".into());
+            // An incomplete source watermark, not a caller exclusion (DATA-QUARANTINE).
+            for watermark in context.watermarks.values_mut().flat_map(BTreeMap::values_mut) {
+                watermark.complete = false;
+            }
         }
         Mode::Live => {}
     }
