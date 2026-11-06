@@ -200,7 +200,7 @@ export function ToolBindings() {
           : (
             <>
               {bindings.data.bindings.length === 0
-                ? <EmptyState icon={Wrench}>No tool can run from Norn until an admin binds it.</EmptyState>
+                ? <EmptyState icon={Wrench} title="No tools bound yet">No tool can run from Norn until an admin binds it.</EmptyState>
                 : bindings.data.bindings.map((binding) => <BindingRow key={binding.id} binding={binding} manage={bindings.data.manage} />)}
               {bindings.data.manage && <AddBinding />}
             </>
