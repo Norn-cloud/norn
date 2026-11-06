@@ -27,9 +27,9 @@ for (const [scheme, suffix] of [["light", ""], ["dark", ".dark"]] as const) test
 for (const [motion, name] of [["no-preference", "canvas-flow"], ["reduce", "none"]] as const) test(`sheet: active path animation with motion ${motion}`, async ({ page }) => {
   await page.emulateMedia({ reducedMotion: motion })
   await page.goto("/sheet.html?state=automation%2Froute-selected")
-  const path = page.locator(".canvas-edge-active .react-flow__edge-path").first()
-  await expect(path).toBeVisible()
-  expect(await path.evaluate((element) => getComputedStyle(element).animationName)).toBe(name)
+  const path = page.locator(".react-flow__edge.canvas-edge-active path.react-flow__edge-path").first()
+  await path.waitFor({ state: "attached" })
+  await expect.poll(() => path.evaluate((element) => getComputedStyle(element).animationName)).toBe(name)
   await page.locator('[data-state="automation/route-selected"]').screenshot({ path: `test-results/sheet/motion-${motion}.png`, animations: "allow" })
 })
 

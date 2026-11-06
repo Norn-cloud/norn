@@ -27,7 +27,7 @@ const recordedDefinitions = async () => (await import("./lib/transport.ts")).rec
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (
     <div title={data.issues.map(({ message }) => message).join("\n")}>
-      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-40">
+      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-36">
         <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />
         <Handle className="canvas-pill" type="source" position={Position.Right} id="out" />
       </NodeCard>

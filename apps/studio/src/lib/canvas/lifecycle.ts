@@ -61,7 +61,7 @@ export function decompile(envelope: Envelope, ref: LifecycleRef): Graph {
     return {
       id: state,
       kind: "state",
-      position: { x: at.column * 220, y: at.row * 110 },
+      position: { x: at.column * 200, y: at.row * 110 },
       config: {
         initial: yes(lifecycle.initial.includes(state)),
         terminal: yes(lifecycle.terminal?.includes(state) ?? false),

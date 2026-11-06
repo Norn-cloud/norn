@@ -71,9 +71,11 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
 /** The inspector's head for one selected thing: its kind chip, kind and id, so the panel names what it edits. */
 export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; readonly kindLabel?: string; readonly id: string }) {
   return (
-    <div role="group" aria-label={`${kindLabel ?? NODE_KINDS[kind]?.label ?? kind} · ${id}`} className="flex items-center gap-2.5 border-b border-node-border pb-3">
+    <div className="flex items-center gap-2.5 border-b border-node-border pb-3">
       <KindChip kind={kind} />
-      <div className="min-w-0">
+      {/* One heading names what the inspector edits; the two visual lines carry the same words. */}
+      <h3 className="sr-only">{`${kindLabel ?? NODE_KINDS[kind]?.label ?? kind} · ${id}`}</h3>
+      <div aria-hidden className="min-w-0">
         <div className="text-[13px] leading-5 font-semibold">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</div>
         <div className="truncate font-mono text-[11px] leading-4 text-muted-foreground">{id}</div>
       </div>

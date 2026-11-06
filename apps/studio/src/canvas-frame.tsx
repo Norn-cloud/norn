@@ -202,7 +202,7 @@ function Frame(props: CanvasFrameProps) {
   const Sep = () => <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
 
   return (
-    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_20rem]">
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
