@@ -18,14 +18,14 @@ const edge = (source: string, sourcePort: string, target: string): CanvasEdge =>
 /** A first automation to edit: load an invoice, stop if it is settled, remind when it is overdue. */
 export const EXAMPLE: Graph = {
   nodes: [
-    node("start", "start", 0, 120),
-    node("load", "perform", 200, 120, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
-    node("settled", "route", 420, 120, { branches: JSON.stringify([[{ left: "invoice.status", op: "==", right: "paid" }], [{ left: "invoice.status", op: "==", right: "draft" }]]) }),
-    node("paid", "succeed", 640, 0, { outcome: "already-paid" }),
-    node("draft", "succeed", 640, 80, { outcome: "not-issued" }),
-    node("overdue", "route", 640, 200, { branches: JSON.stringify([[{ left: "invoice.overdue", op: "==", right: "true" }, { left: "invoice.amountMinor", op: ">", right: "0" }]]) }),
-    node("remind", "perform", 860, 160, { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
-    node("open", "succeed", 860, 280, { outcome: "open" }),
+    node("start", "start", 0, 140),
+    node("load", "perform", 230, 140, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
+    node("settled", "route", 470, 140, { branches: JSON.stringify([[{ left: "invoice.status", op: "==", right: "paid" }], [{ left: "invoice.status", op: "==", right: "draft" }]]) }),
+    node("paid", "succeed", 790, 0, { outcome: "already-paid" }),
+    node("draft", "succeed", 790, 110, { outcome: "not-issued" }),
+    node("overdue", "route", 790, 250, { branches: JSON.stringify([[{ left: "invoice.overdue", op: "==", right: "true" }, { left: "invoice.amountMinor", op: ">", right: "0" }]]) }),
+    node("remind", "perform", 1100, 200, { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
+    node("open", "succeed", 1100, 330, { outcome: "open" }),
   ],
   edges: [
     edge("start", "next", "load"), edge("load", "next", "settled"),
