@@ -86,7 +86,7 @@ fn fresh() -> Cell {
     .unwrap()
 }
 
-fn not_pending(result: Result<(), CommitError<CellError>>) -> bool {
+fn not_pending(result: &Result<(), CommitError<CellError>>) -> bool {
     matches!(
         result,
         Err(CommitError::NotPending { .. } | CommitError::Host(CellError::NotPending(_)))
@@ -138,7 +138,7 @@ fn non_parked_commands_keep_strict_fifo() {
             .is_none(),
         "an ordinary command is never completed as parked"
     );
-    assert!(not_pending(consume(&mut cell, "second")));
+    assert!(not_pending(&consume(&mut cell, "second")));
     assert_eq!(cell.perform().unwrap().unwrap().command.0, "first");
     consume(&mut cell, "first").unwrap();
     assert_eq!(cell.perform().unwrap().unwrap().command.0, "second");
@@ -173,7 +173,7 @@ fn concurrent_decide_and_expire_complete_a_parked_command_once() {
     );
     consume(&mut cell, "ask").unwrap();
     // Replay: the delivery is consumed exactly once.
-    assert!(not_pending(consume(&mut cell, "ask")));
+    assert!(not_pending(&consume(&mut cell, "ask")));
     assert!(
         cell.complete_parked(&ask, Generation(1), answer("approve"))
             .unwrap()
@@ -217,7 +217,7 @@ fn a_crash_between_commit_and_delivery_never_completes_twice() {
     }
     let mut cell = open();
     assert!(
-        not_pending(consume(&mut cell, "ask")),
+        not_pending(&consume(&mut cell, "ask")),
         "a retried delivery is refused"
     );
     assert!(cell.store().read().parked_commands().unwrap().is_empty());
@@ -279,7 +279,7 @@ proptest! {
                     }
                 }
                 Step::Resolve(at, first) => {
-                    if let Some(id) = parked.get(at % parked.len().max(1)) {
+                    if let Some(id) = parked.get(at.checked_rem(parked.len()).unwrap_or(0)) {
                         let choice = if first { "approve" } else { "reject" };
                         let done = cell.complete_parked(&CommandId((*id).clone()), Generation(1), answer(choice)).unwrap();
                         prop_assert_eq!(done.is_some(), !resolved.contains_key(*id));
@@ -287,7 +287,7 @@ proptest! {
                     }
                 }
                 Step::ConsumeParked(at) => {
-                    if let Some(id) = parked.get(at % parked.len().max(1)) {
+                    if let Some(id) = parked.get(at.checked_rem(parked.len()).unwrap_or(0)) {
                         let ok = consume(&mut cell, id).is_ok();
                         prop_assert_eq!(ok, resolved.contains_key(*id) && !consumed.contains(id));
                         if ok { consumed.push((*id).clone()); }
