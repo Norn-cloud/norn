@@ -100,6 +100,7 @@ test("the race: another decider got there first; the sheet says who and when, an
   cell.resolveElsewhere("dec_UmVsZWFzZS1nb2xk", "Mona Ali")
   await sheet(page).getByLabel("Keep holding").check()
   await sheet(page).getByRole("button", { name: "Decide: Keep holding" }).click()
+  await sheet(page).getByRole("button", { name: "Yes, keep holding" }).click() // high risk: every choice confirms
   await expect(sheet(page).getByRole("status")).toHaveText(/^Decided by Mona Ali at \d{2}:\d{2}/)
   await expect(sheet(page)).toContainText("Nothing you chose was sent.")
   await shoot(page, "race")
@@ -134,6 +135,7 @@ test("expiry: past the deadline the cell refuses, and the sheet says it expired"
   cell.advance(46 * 60_000)
   await sheet(page).getByLabel("Keep holding").check()
   await sheet(page).getByRole("button", { name: "Decide: Keep holding" }).click()
+  await sheet(page).getByRole("button", { name: "Yes, keep holding" }).click() // high risk: every choice confirms
   await expect(sheet(page).getByRole("status")).toHaveText("Expired")
   await shoot(page, "expired")
   await sheet(page).getByRole("button", { name: "Back to inbox" }).click()
