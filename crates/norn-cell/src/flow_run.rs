@@ -184,6 +184,43 @@ fn state_of<E: SqlEngine>(
     }
 }
 
+/// Before `batch`'s writes apply: every run it starts must be new. A run id
+/// already started in this world refuses `run.exists`; a run object that
+/// already exists (untracked, or written before the start) refuses
+/// `run.start_invalid`, so only a creating write starts a run.
+///
+/// # Errors
+/// `run.exists`, `run.start_invalid`, or SQL engine errors.
+pub(crate) fn check_starts<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+) -> Result<(), CellError> {
+    for start in starts(batch)? {
+        if reader.flow_run(&batch.world, &start.run_id)?.is_some() {
+            return Err(refused("run.exists"));
+        }
+        let declared = reader
+            .model()
+            .object_types()
+            .any(|declared| declared.name.as_str() == start.object_type);
+        if !declared
+            || reader
+                .object(&batch.world, &start.object_type, &start.run_id)?
+                .is_some()
+        {
+            return Err(refused("run.start_invalid"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a ledger event is a run start (host bookkeeping, not a domain
+/// event a typed commit reader decodes).
+#[must_use]
+pub fn is_run_start(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(RUN_STARTED)
+}
+
 /// Record the runs `batch` starts and refresh every run it writes, inside the
 /// commit's transaction (after its writes are applied).
 ///

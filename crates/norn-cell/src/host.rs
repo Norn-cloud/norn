@@ -1123,6 +1123,11 @@ where
         let reader = self.store.read();
         let mut events: BTreeMap<u64, Vec<E>> = BTreeMap::new();
         for entry in reader.ledger(0)? {
+            // A run start is the store's bookkeeping event (RUN-LEDGER-1); it
+            // stays in the hash-chained ledger but is not an `E` to decode.
+            if crate::flow_run::is_run_start(&entry.event) {
+                continue;
+            }
             events
                 .entry(entry.commit_seq)
                 .or_default()
