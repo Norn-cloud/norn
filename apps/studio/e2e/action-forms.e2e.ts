@@ -63,7 +63,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   // The exact decimal went as typed, digit for digit.
   expect(actions.calls.at(-1)?.body).toContain('"quantity":10.500')
   await shoot(page, "receipt")
-  await sheet(page).getByRole("button", { name: "Close" }).click()
+  await sheet(page).getByRole("button", { name: "Done" }).click()
   await expect(page.getByText("41 records")).toBeVisible()
   await page.getByRole("grid").focus()
   await page.keyboard.press("End") // the new id sorts last; rows are virtualized
@@ -99,7 +99,7 @@ test("edit: a transition from the record drawer carries the record's id and move
   await form.getByRole("button", { name: "Adjust quantity" }).click()
   await expect(form.getByRole("status")).toHaveText("Adjust quantity: done.")
   await expect(form.locator("dd").nth(1)).toHaveText("2")
-  await form.getByRole("button", { name: "Close" }).click()
+  await form.getByRole("button", { name: "Done" }).click()
   await expect(rowFor(page, "demo/holding/0001")).toContainText("40.000")
 })
 
@@ -116,7 +116,7 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await form.getByRole("button", { name: "Retire holding" }).click()
   await form.getByRole("button", { name: "Yes, retire holding" }).click()
   await expect(form.getByRole("status")).toHaveText("Retire holding: done.")
-  await form.getByRole("button", { name: "Close" }).click()
+  await form.getByRole("button", { name: "Done" }).click()
   await rowFor(page, "demo/holding/0002").click()
   await page.getByRole("button", { name: "Adjust quantity" }).click()
   await sheet(page).getByLabel("Counted quantity").fill("1.000")

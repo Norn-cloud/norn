@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router"
-import { AlertTriangle, CheckCircle2, Minus, Plus, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Minus, Plus } from "lucide-react"
 import { useId, useMemo, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -237,7 +237,7 @@ function Receipt({ action, receipt, onAgain, onClose }: { readonly action: Actio
       <div className={cn("flex flex-wrap gap-2")}>
         {onAgain && <Button type="button" variant="outline" onClick={onAgain}><Plus /> Another</Button>}
         <span className="flex-1" />
-        {onClose && <Button type="button" onClick={onClose}><X /> Close</Button>}
+        {onClose && <Button type="button" onClick={onClose}>Done</Button>}
       </div>
     </section>
   )

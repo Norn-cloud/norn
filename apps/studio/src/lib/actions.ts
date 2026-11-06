@@ -263,7 +263,8 @@ function encodeValue(spec: Spec, draft: Draft): string | undefined {
 /** The draft as the `input` object's JSON text. Fields left empty are omitted; the cell says which it requires. */
 export function encodeObject(fields: readonly FormField[], draft: { readonly [name: string]: Draft }): string {
   const members = fields.flatMap((field) => {
-    const value = encodeValue(field.spec, draft[field.name] ?? emptyFor(field.spec))
+    // An explicit null ("No value") is sent; only an absent member falls back to empty.
+    const value = encodeValue(field.spec, field.name in draft ? draft[field.name] as Draft : emptyFor(field.spec))
     return value === undefined ? [] : [`${JSON.stringify(field.name)}:${value}`]
   })
   return `{${members.join(",")}}`
