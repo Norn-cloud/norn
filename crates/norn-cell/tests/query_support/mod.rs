@@ -47,11 +47,7 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact).expect("typed artifact");
     let catalog = EffectiveCatalog::from_artifacts(&[artifact]);
-    let model = Model::new(&norn_projections::SqliteDdlInput {
-        object_types: &[object],
-        property_types: &[],
-    })
-    .expect("model");
+    let model = Model::from_definitions(&[object], &[]).expect("model");
     let mut out: MetricDefinition = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/net-sales.definition.json"
     ))
