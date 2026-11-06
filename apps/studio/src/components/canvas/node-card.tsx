@@ -23,7 +23,7 @@ export function KindChip({ kind, className }: { readonly kind: string; readonly 
   return (
     <span aria-hidden style={{ "--tint": `var(${entry.tint})` } as CSSProperties}
       className={cn("inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] text-[var(--tint)] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset", className)}>
-      <Icon className="size-3.5" strokeWidth={2.25} />
+      <Icon className="size-3.5" strokeWidth={2} />
     </span>
   )
 }
@@ -45,6 +45,8 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   readonly children?: ReactNode
   readonly testId?: string
 }) {
+  // The kind line names what the card is; it is left out when the title already says it (a start called Start).
+  const name = kindLabel ?? NODE_KINDS[kind]?.label ?? kind
   return (
     <div data-testid={testId} className={cn("canvas-node group relative w-52 rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
       selected && "canvas-node-selected", problems > 0 && "canvas-node-failing", className)}>
@@ -52,9 +54,9 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
       <div className="flex items-start gap-2.5">
         <KindChip kind={kind} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] leading-4 font-medium text-muted-foreground">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</div>
-          <div className="text-[13px] leading-5 font-semibold tracking-[-0.01em] break-words text-foreground">{title}</div>
-          {subtitle && <div className="truncate text-[12px] leading-4 text-muted-foreground">{subtitle}</div>}
+          {name !== title && <div className="truncate text-xs leading-4 font-medium text-muted-foreground">{name}</div>}
+          <div className="text-sm leading-5 font-semibold tracking-[-0.01em] break-words text-foreground">{title}</div>
+          {subtitle && <div className="truncate text-xs leading-4 text-muted-foreground">{subtitle}</div>}
           {problems > 0 && (
             <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-[11px] leading-4 font-medium text-destructive">
               <span className="size-1.5 rounded-full bg-destructive" />{problems} {problems === 1 ? "problem" : "problems"}
@@ -69,7 +71,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
 /** The inspector's head for one selected thing: its kind chip, kind and id, so the panel names what it edits. */
 export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; readonly kindLabel?: string; readonly id: string }) {
   return (
-    <div className="flex items-center gap-2.5 border-b border-node-border pb-3">
+    <div role="group" aria-label={`${kindLabel ?? NODE_KINDS[kind]?.label ?? kind} · ${id}`} className="flex items-center gap-2.5 border-b border-node-border pb-3">
       <KindChip kind={kind} />
       <div className="min-w-0">
         <div className="text-[13px] leading-5 font-semibold">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</div>

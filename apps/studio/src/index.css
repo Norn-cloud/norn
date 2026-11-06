@@ -64,7 +64,7 @@
   --node-ring: color-mix(in oklab, var(--ring) 55%, transparent);
   --canvas-surface: #fafafa;
   --canvas-dot: rgb(15 23 42 / 0.09);
-  --edge: #c3c8cf;
+  --edge: #8a929e;
   --edge-active: var(--ring);
   /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
   --tint-state: #64748b;
@@ -124,7 +124,7 @@
   --node-ring: color-mix(in oklab, var(--ring) 65%, transparent);
   --canvas-surface: #151517;
   --canvas-dot: rgb(255 255 255 / 0.08);
-  --edge: #4b4b53;
+  --edge: #73737d;
   --edge-active: var(--ring);
   --tint-state: #94a3b8;
   --tint-tool: #60a5fa;

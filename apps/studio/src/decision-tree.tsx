@@ -46,7 +46,7 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
               <li key={option.id} className="relative before:absolute before:top-1/2 before:-start-4 before:h-px before:w-4 before:bg-node-border">
                 <button type="button" aria-pressed={active} onClick={() => choose(depth, option.id)}
                   className={cn("canvas-node w-full rounded-node border border-node-border bg-card px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--node-ring)]",
-                    active && "canvas-node-selected", chosen && !active && "opacity-55")}>
+                    active && "canvas-node-selected", chosen && !active && "opacity-70")}>
                   <span className="flex items-start gap-2.5">
                     <OptionNumber n={index + 1} on={active} />
                     <span className="min-w-0 flex-1 space-y-1">
@@ -97,14 +97,14 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
         <div className="canvas-node w-72 shrink-0 rounded-node border border-node-border bg-card">
           <div className="space-y-3 p-4">
             <div className="flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-2"><KindChip kind={agent ? "agent" : "decide"} /><span className="truncate text-meta text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</span></span>
+              <span className="flex min-w-0 items-center gap-2"><KindChip kind={agent ? "agent" : "decide"} /><span className="text-meta leading-4 text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</span></span>
               <Badge className={cn("shrink-0 border-transparent", RISK_TONE[view.risk])}>{`${view.risk.charAt(0).toUpperCase()}${view.risk.slice(1)} risk`}</Badge>
             </div>
             <p className="text-[15px] leading-6 font-semibold tracking-[-0.01em] text-balance">{view.question || "No question yet"}</p>
             <p className="text-meta text-muted-foreground">Context numbers and money at risk come from the cell's admitted questions when it asks.</p>
           </div>
           <div className="space-y-1 border-t border-node-border px-4 py-2.5 text-meta text-muted-foreground">
-            <p className="flex items-center gap-1.5"><UserRound className="size-3.5" />Decided by: <span className="text-foreground">{view.deciderRoles.join(", ") || "no role named"}</span>{view.law ? <span>· under {view.law}</span> : null}</p>
+            <p className="flex items-start gap-1.5"><UserRound className="mt-0.5 size-3.5 shrink-0" /><span className="min-w-0 break-words">Decided by <span className="font-medium text-foreground">{view.deciderRoles.join(", ") || "no role named"}</span>{view.law ? <> under <span className="font-mono text-[11px]">{view.law}</span></> : null}</span></p>
             {view.expiresInMs !== undefined && <p className="flex items-start gap-1.5"><Clock className="mt-0.5 size-3.5 shrink-0" /><span>Expires {formatDuration(view.expiresInMs)} after it is asked; then it is withdrawn, not decided.</span></p>}
           </div>
         </div>

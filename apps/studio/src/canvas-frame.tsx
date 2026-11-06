@@ -206,12 +206,12 @@ function Frame(props: CanvasFrameProps) {
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div data-canvas-surface className="relative h-[38rem] w-full overflow-hidden rounded-[inherit]">
+          <div data-canvas-surface className="relative h-[38rem] w-full">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
               edges={graph.edges.map(look)} className="bg-canvas-surface"
-              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: { top: "72px", left: 0.08, right: 0.08, bottom: 0.08 }, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
+              nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} fitView fitViewOptions={{ padding: 0.14, maxZoom: 1 }} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
               onConnect={(connection) => edit(g.connect(graph, kinds, props.newEdge(connection, graph)))}
@@ -235,7 +235,7 @@ function Frame(props: CanvasFrameProps) {
               <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--canvas-dot)" />
               <Controls showInteractive={false} className="canvas-controls" />
               <FlowPanel position="top-left" className="!m-3">
-                <div role="toolbar" aria-label="Canvas tools" className="flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+                <div role="toolbar" aria-label="Canvas actions" className="flex w-max flex-nowrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
                   {props.palette(editing)}
                   <Sep />
                   <Button size="sm" variant="ghost" aria-label="Duplicate" title="Duplicate (⌘D)" disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>

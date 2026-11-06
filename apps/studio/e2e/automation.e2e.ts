@@ -153,5 +153,5 @@ test("selection and problems: multi-select, copy/paste, delete selected, jump to
   await expect(node(page, "draft_copy")).toBeVisible()
   await page.locator(".react-flow__pane").click({ position: { x: 10, y: 10 } })
   await page.getByTestId("problem").first().click()
-  await expect(page.getByText(/^Outcome · (paid|draft)_copy$/)).toBeVisible()
+  await expect(page.getByRole("group", { name: /^Outcome · (paid|draft)_copy$/ })).toBeVisible()
 })
