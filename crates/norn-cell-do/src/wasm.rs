@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::analytics::{self, DemoQuestions};
 use crate::policy::{DEMO_GRANTS, ReadPolicy};
-use crate::principal::DEMO_PRINCIPALS;
+use crate::principal::PrincipalResolver;
 use crate::{seed, server};
 
 /// One opened tenant cell.
@@ -21,6 +21,7 @@ pub struct NornCell {
     host: DevHost<WorkersEngine>,
     /// The cell's admitted questions, when it publishes any.
     questions: Option<DemoQuestions>,
+    principals: Box<dyn PrincipalResolver>,
 }
 
 fn rejected(error: impl std::fmt::Display) -> JsValue {
@@ -59,12 +60,27 @@ impl NornCell {
             return Err(JsValue::from_str("no cell is published for this scope"));
         };
         // Data reads are decided by the kernel PDP over this cell's own model.
-        let policy = ReadPolicy::compile(store.model().object_types(), &scope, DEMO_GRANTS)
+        let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS)
             .map_err(rejected)?;
+        // Fixture principals exist only in local smoke builds; a deployable
+        // build verifies nobody until host tokens are configured (#817).
+        #[cfg(feature = "fixtures")]
+        let principals: Box<dyn PrincipalResolver> =
+            Box::new(crate::principal::FixturePrincipals::new(
+                crate::principal::DEMO_FIXTURES,
+                policy.caller(),
+            ));
+        #[cfg(not(feature = "fixtures"))]
+        let principals: Box<dyn PrincipalResolver> =
+            Box::new(crate::principal::NoPrincipals(policy.caller()));
         let host = DevHost::from_store(store, scope, |command| command.payload.clone())
             .map_err(|refusal| JsValue::from_str(&refusal.code))?
             .with_authorizer(policy);
-        Ok(Self { host, questions })
+        Ok(Self {
+            host,
+            questions,
+            principals,
+        })
     }
 
     /// Serve one request; every outcome is a status and a JSON document.
@@ -84,15 +100,15 @@ impl NornCell {
             .questions
             .as_ref()
             .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
-        let response = server::handle_with(
-            &self.host,
-            &DEMO_PRINCIPALS,
-            questions,
+        let request = server::Request {
             method,
             path,
             query,
-            authorization.as_deref(),
-        );
+            authorization: authorization.as_deref(),
+            now: 0,
+        };
+        let response =
+            server::handle_with(&self.host, self.principals.as_ref(), questions, &request);
         Reply {
             status: response.status,
             body: response.body,
