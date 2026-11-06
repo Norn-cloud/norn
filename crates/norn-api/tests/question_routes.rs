@@ -230,23 +230,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             }
         }
         Mode::Singleton => {
-            let moved = include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
-                .lines()
-                .skip(1)
-                .map(|line| line.split(',').collect::<Vec<_>>())
-                .filter(|fields| {
-                    fields[8].starts_with("2026-10-23") && fields[3] == "gold" && fields[2] != "SYN-MELT-15-1"
-                })
-                .map(|fields| {
-                    put(
-                        fields[2],
-                        fields[4].parse().expect("input"),
-                        fields[5].parse().expect("recovered"),
-                        "2026-10-14T12:00:00Z",
-                        fields[3],
-                    )
-                })
-                .collect::<Vec<_>>();
+            let moved = singleton_moves();
             assert_eq!(moved.len(), 3, "WEEK has three other members");
             store
                 .commit(&CommitBatch {
@@ -275,6 +259,27 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
         },
     )
 }
+/// WEEK's members but SYN-MELT-15-1, moved a week earlier.
+fn singleton_moves() -> Vec<FactWriteRow> {
+    include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
+                .lines()
+                .skip(1)
+                .map(|line| line.split(',').collect::<Vec<_>>())
+                .filter(|fields| {
+                    fields[8].starts_with("2026-10-23") && fields[3] == "gold" && fields[2] != "SYN-MELT-15-1"
+                })
+                .map(|fields| {
+                    put(
+                        fields[2],
+                        fields[4].parse().expect("input"),
+                        fields[5].parse().expect("recovered"),
+                        "2026-10-14T12:00:00Z",
+                        fields[3],
+                    )
+                })
+                .collect()
+}
+
 fn trace_query(lineage: &str) -> TraceQuery {
     TraceQuery {
         org_id: Some("org_demo".into()),
@@ -969,12 +974,11 @@ fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
     };
     // The internal pin, recomputed from the same rows restored unredacted: an
     // identically seeded store, the reader's context, every row visible.
-    let (mut store, plan, mut context) = fixture();
-    context.scope = physical().key();
+    let (mut store, plan, _) = fixture();
     store
         .commit(&CommitBatch {
             world: WORLD.into(),
-            scope: context.scope.clone(),
+            scope: physical().key(),
             logical_time: CLOCK,
             writes: fixture_writes(),
             ..CommitBatch::default()
@@ -1001,9 +1005,9 @@ fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
 fn a_short_handle_key_refuses() {
     struct Short(Runtime);
     impl QuestionRuntime<NativeEngine> for Short {
-        fn plan(&self, q: &str) -> Result<QuestionPlan, Refusal> { self.0.plan(q) }
-        fn snapshot(&self, s: &CellStore, p: &QuestionPlan, a: &str) -> Result<QuestionSnapshot, Refusal> { self.0.snapshot(s, p, a) }
-        fn access(&self, s: &CellScope, a: &str, q: &str, c: ReadCapability, r: Option<&ObjectRecord>) -> Result<PdpRequest, Refusal> { self.0.access(s, a, q, c, r) }
+        fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal> { self.0.plan(question) }
+        fn snapshot(&self, store: &CellStore, plan: &QuestionPlan, a: &str) -> Result<QuestionSnapshot, Refusal> { self.0.snapshot(store, plan, actor) }
+        fn access(&self, scope: &CellScope, actor: &str, question: &str, capability: ReadCapability, r: Option<&ObjectRecord>) -> Result<PdpRequest, Refusal> { self.0.access(scope, actor, question, capability, row) }
         fn min_disclosed_bucket(&self) -> usize { 3 }
         fn handle_key(&self) -> &[u8] { &HANDLE_KEY[..31] }
     }
