@@ -113,9 +113,11 @@ test("when the deployment does not serve the question checker, the builder says 
   expect(checkerServedBy("unreachable")).toBe(false)
   expect(checkerServedBy(405)).toBe(true)
   const off = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} checkerServed={false} /></QueryClientProvider>)
-  expect(off).toContain(CHECKER_UNSERVED)
+  // Server rendering escapes the apostrophe.
+  const shown = CHECKER_UNSERVED.replaceAll("'", "&#x27;")
+  expect(off).toContain(shown)
   expect(off).toMatch(/<fieldset disabled=""/)
   const on = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} checkerServed={true} /></QueryClientProvider>)
-  expect(on).not.toContain(CHECKER_UNSERVED)
+  expect(on).not.toContain(shown)
   expect(on).not.toMatch(/<fieldset disabled=""/)
 })
