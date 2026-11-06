@@ -57,6 +57,10 @@ async function stage(page: Page, options: { mismatchOnce?: boolean; wordsOnAdmit
       return route.fulfill({ json: { items: [...cell.dashboards].filter(([, kept]) => !kept.retired).map(([id, kept]) => ({ id, kind: "dashboard", title: kept.payload.title, version: kept.version, lifecycle: "active", updatedAtMs: 0 })), cursor: null } })
     }
     if (url.pathname.endsWith(":admit")) {
+      if (body?.kind === "question") {
+        const text = "Yield of Conversion records, by week."
+        return route.fulfill({ json: { admitted: true, diagnostics: [], restatement: text, restatementSha256: sha(text) } })
+      }
       const title = body?.payload?.title ?? ""
       // DEFS: the check states the dashboard in the cell's own words; a cell before DEFS states none.
       const text = body?.payload ? words(body.payload) : ""
@@ -90,7 +94,7 @@ async function stage(page: Page, options: { mismatchOnce?: boolean; wordsOnAdmit
     const get = /definitions\/([^:]+)$/.exec(url.pathname)
     if (get?.[1]) {
       const id = decodeURIComponent(get[1])
-      if (id === "studio.gold_yield_weekly") return route.fulfill({ json: { id, kind: "question", version: 2, lifecycle: "active", payload: question, signoff: { restatementSha256: "c".repeat(64) } } })
+      if (id === "studio.gold_yield_weekly") return route.fulfill({ json: { id, kind: "question", version: 2, lifecycle: "active", payload: question, restatement: "Yield of Conversion records, by week.", restatementSha256: sha("Yield of Conversion records, by week."), signoff: null } })
       const kept = cell.dashboards.get(id)
       return kept && !kept.retired
         ? route.fulfill({ json: { id, kind: "dashboard", version: kept.version, lifecycle: "active", payload: kept.payload, signoff: kept.signoff ? { restatementSha256: kept.signoff } : null } })

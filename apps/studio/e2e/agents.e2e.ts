@@ -19,8 +19,8 @@ async function cell(page: Page) {
   }
   const saved = new Map<string, { version: number; payload: unknown; retired: boolean }>()
   await page.route("**/api/connectors/bindings", (route) => route.fulfill({ json: { manage: true, bindings: [
-    { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } },
-    { id: "bind_chat", app: "chat", tool: "post_message", label: "Post to #support", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"b".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "chat", tool: "post_message", version: "v1" } },
+    { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connectorRef: "executor:helpdesk/list_tickets@v1", connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } },
+    { id: "bind_chat", app: "chat", tool: "post_message", label: "Post to #support", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"b".repeat(64)}`, connectorRef: "executor:chat/post_message@v1", connector: { gateway: "executor", origin: "https://gateway.example", app: "chat", tool: "post_message", version: "v1" } },
     { id: "bind_legacy", app: "chat", tool: "old_post", label: "Saved before pinning", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0 },
   ] } }))
   await page.route("**/api/host/v1/definitions**", async (route) => {
