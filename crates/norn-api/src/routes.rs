@@ -393,10 +393,13 @@ mod tests {
             a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
         };
         let base: Vec<_> = artifacts.iter().filter(is_base).cloned().collect();
-        let candidates: Vec<_> = artifacts.iter().filter(|a| !is_base(a)).map(value).collect();
+        let candidates: Vec<_> = artifacts
+            .iter()
+            .filter(|a| !is_base(a))
+            .map(value)
+            .collect();
         let checked = check_artifact_set_with_receipt(
-            &ReceiptSources::new(&candidates, &base.iter().map(value).collect::<Vec<_>>())
-                .unwrap(),
+            &ReceiptSources::new(&candidates, &base.iter().map(value).collect::<Vec<_>>()).unwrap(),
             &EntityArtifactSetContext {
                 registry: &BTreeSet::new(),
                 base: &base,
