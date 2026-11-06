@@ -99,6 +99,29 @@ def _record_bytes(record: dict) -> bytes:
     return (json.dumps(record, indent=2) + "\n").encode("utf-8")
 
 
+def _inherit(path: str, recorded: set[str], record_of) -> tuple[dict | None, str]:
+    """The record a new file takes from the nearest directory that has records, or why it takes none.
+
+    The siblings that decide are those with the new file's suffix, or every sibling when none has
+    it. They must all be `authored` and agree on category and licence; otherwise (a vendored `.rs`
+    next to an authored `boundary.json`, say) the origin is a person's decision.
+    """
+    for directory in _ancestors(path):
+        siblings = sorted(p for p in recorded if PurePosixPath(p).parent.as_posix() == directory)
+        if not siblings:
+            continue
+        suffix = PurePosixPath(path).suffix
+        deciding = [p for p in siblings if PurePosixPath(p).suffix == suffix] or siblings
+        found = [record_of(p) for p in deciding]
+        origins = {str(r.get("origin")) for r in found}
+        if origins != {"authored"}:
+            return None, f"its {suffix or 'suffixless'} siblings in {directory} are not all authored ({', '.join(sorted(origins))})"
+        if len({(r.get("category"), r.get("license")) for r in found}) != 1:
+            return None, f"its siblings in {directory} declare different categories or licences"
+        return found[0], ""
+    return None, "no sibling record to inherit from"
+
+
 def provenance_updates(root: Path, files: set[str], read) -> dict[str, bytes | None]:
     """`files` is every repository path after enrollment, records excluded; `read(path)` returns its bytes then."""
     store = root / PROVENANCE
@@ -118,14 +141,9 @@ def provenance_updates(root: Path, files: set[str], read) -> dict[str, bytes | N
                 refused.append(f"{path}: changed, but its record is {record.get('origin')!r}; review its metadata by hand")
                 continue
         else:
-            record = None
-            for directory in _ancestors(path):
-                siblings = sorted(p for p in records & files if PurePosixPath(p).parent.as_posix() == directory)
-                record = next((r for r in map(record_of, siblings) if r.get("origin") == "authored"), None)
-                if record is not None:
-                    break
+            record, why = _inherit(path, records & files, record_of)
             if record is None:
-                refused.append(f"{path}: no authored sibling record to inherit from; write its record by hand")
+                refused.append(f"{path}: {why}; write its record by hand")
                 continue
         updates[(PROVENANCE / f"{path}.json").as_posix()] = _record_bytes({"sha256": digest, **{k: v for k, v in record.items() if k != "sha256"}})
     if refused:

@@ -37,6 +37,7 @@ class RecordNewFilesTests(unittest.TestCase):
         self.add("app/src/other.ts", "export {}\n", "app")
         self.add("lib/a.py", "pass\n", "lib")
         self.write(".github/ci/provenance/manifest.json", "{}\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"], check=True)  # the tree as a checkout holds it
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -122,6 +123,27 @@ class RecordNewFilesTests(unittest.TestCase):
         self.assertEqual(self.run_tool("--check"), 2)
         self.assertEqual(self.run_tool(), 2)
         self.assertFalse((self.root / PROVENANCE / "app/src/new.ts.json").exists())
+
+    def test_a_new_file_in_a_mixed_origin_directory_is_refused(self):
+        self.add("lib/vendored.py", "pass\n", "lib", origin="vendored")  # a .py beside the authored lib/a.py
+        self.write("lib/new.py", "pass\n")
+        self.assertEqual(self.run_tool(), 2)
+        self.assertFalse((self.root / PROVENANCE / "lib/new.py.json").exists())
+
+    def test_a_derived_file_of_another_kind_does_not_block_its_neighbours(self):
+        self.add("app/src/index.css", "body {}\n", "app", origin="derived")
+        self.write("app/src/page.ts", "export {}\n")
+        self.assertEqual(self.run_tool(), 0)
+        self.assertEqual(self.record("app/src/page.ts")["origin"], "authored")
+
+    def test_a_new_file_takes_the_category_of_siblings_with_its_suffix(self):
+        self.write("app/src/notes.md", "# notes\n")
+        self.write(f"{PROVENANCE}/app/src/notes.md.json", json.dumps({"sha256": sha("# notes\n"), **AUTHORED, "category": "documentation"}, indent=2) + "\n")
+        self.write("app/src/more.md", "# more\n")
+        self.write("app/src/new.ts", "export {}\n")
+        self.assertEqual(self.run_tool(), 0)
+        self.assertEqual(self.record("app/src/more.md")["category"], "documentation")
+        self.assertEqual(self.record("app/src/new.ts")["category"], "code")
 
     def test_the_provenance_directory_itself_gets_no_records(self):
         self.assertFalse((self.root / PROVENANCE / ".github/ci/provenance/manifest.json.json").exists())
