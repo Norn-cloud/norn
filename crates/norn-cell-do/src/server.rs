@@ -30,16 +30,28 @@ pub struct Response {
 /// Longest accepted query string, in bytes.
 pub const MAX_QUERY_BYTES: usize = 2048;
 
+/// One finite HTTP request as the transport delivers it.
+#[derive(Debug, Clone, Copy)]
+pub struct Request<'a> {
+    /// HTTP method.
+    pub method: &'a str,
+    /// Path, for example `/v1/definitions`.
+    pub path: &'a str,
+    /// Raw query string, without `?`.
+    pub query: &'a str,
+    /// The `Authorization` header, if any.
+    pub authorization: Option<&'a str>,
+    /// The host's clock (Unix seconds), used to check token lifetimes.
+    pub now: u64,
+}
+
 /// Dispatch one request against the opened cell.
 pub fn handle<E: SqlEngine>(
     host: &DevHost<E>,
     principals: &dyn PrincipalResolver,
-    method: &str,
-    path: &str,
-    query: &str,
-    authorization: Option<&str>,
+    request: &Request<'_>,
 ) -> Response {
-    handle_with(host, principals, None, method, path, query, authorization)
+    handle_with(host, principals, None, request)
 }
 
 /// Dispatch one request; `questions` serves the cell's admitted questions.
@@ -47,12 +59,16 @@ pub fn handle_with<E: SqlEngine>(
     host: &DevHost<E>,
     principals: &dyn PrincipalResolver,
     questions: Option<&dyn QuestionRuntime<E>>,
-    method: &str,
-    path: &str,
-    query: &str,
-    authorization: Option<&str>,
+    request: &Request<'_>,
 ) -> Response {
-    let actor = principals.resolve(authorization);
+    let Request {
+        method,
+        path,
+        query,
+        authorization,
+        now,
+    } = *request;
+    let actor = principals.resolve(authorization, now);
     let actor = actor.as_deref();
     let question = path
         .strip_prefix("/v1/questions/")

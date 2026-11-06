@@ -3,10 +3,15 @@
 //! Data reads (Population, Values, Sources) are decided by the kernel's Cedar
 //! PDP under its AND rule. The policy is an `AccessIR` read rule per object
 //! type, compiled against the Cedar schema projected from the cell's own
-//! model, and the capability grants are per fixture principal. Each capability
-//! has its own grant name, and the policy checks that the trusted request
-//! mapping asked for the capability being decided. Definition reads remain
-//! the host operation [`Operation::ReadDefinitions`].
+//! model. A request's capability grant comes from the declared, versioned
+//! [`GrantTable`] applied to the roles of the principal verified for that
+//! request ([`CallerSlot`]); no client claim becomes a grant, and an
+//! undeclared role grants nothing. Each capability has its own grant name, and
+//! the policy checks that the trusted request mapping asked for the capability
+//! being decided. Definition reads remain the host operation
+//! [`Operation::ReadDefinitions`], granted to any principal the table grants.
+
+use std::sync::{Arc, Mutex};
 
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest};
 use norn_api::refusal::Refusal;
@@ -30,40 +35,100 @@ pub const fn capability_name(capability: ReadCapability) -> &'static str {
     }
 }
 
-/// One principal's grants in one cell.
-#[derive(Debug, Clone, Copy)]
-pub struct Grant {
-    /// Principal subject id, as [`crate::principal::PrincipalResolver`] returns it.
-    pub subject: &'static str,
-    /// The read capabilities granted.
-    pub capabilities: &'static [ReadCapability],
-    /// Whether the principal may read the admitted definitions.
-    pub definitions: bool,
+/// Declared mapping from Norn roles to read capabilities; a change of
+/// mapping is a new version.
+#[derive(Debug)]
+pub struct GrantTable {
+    /// Identity of this table.
+    pub version: &'static str,
+    /// Norn role and the capabilities it grants.
+    pub entries: &'static [(&'static str, &'static [ReadCapability])],
 }
 
-/// The demo's grants: the viewer sees everything; the guest sees which
-/// members exist but no values or sources.
-pub const DEMO_GRANTS: &[Grant] = &[
-    Grant {
-        subject: "viewer@demo",
-        capabilities: &[
-            ReadCapability::Population,
-            ReadCapability::Values,
-            ReadCapability::Sources,
-        ],
-        definitions: true,
-    },
-    Grant {
-        subject: "guest@demo",
-        capabilities: &[ReadCapability::Population],
-        definitions: true,
-    },
-];
+impl GrantTable {
+    /// The capabilities `roles` hold together; undeclared roles add nothing.
+    #[must_use]
+    pub fn capabilities(&self, roles: &[String]) -> Vec<ReadCapability> {
+        let mut granted: Vec<ReadCapability> = Vec::new();
+        for (_, capabilities) in self
+            .entries
+            .iter()
+            .filter(|(role, _)| roles.iter().any(|held| held == role))
+        {
+            for capability in *capabilities {
+                if !granted.contains(capability) {
+                    granted.push(*capability);
+                }
+            }
+        }
+        granted
+    }
+}
+
+/// The demo cells' table over `studio-roles/1` Norn roles: a viewer sees which
+/// members exist, a member also their values, an admin or owner also sources.
+pub const DEMO_GRANTS: GrantTable = GrantTable {
+    version: "norn-cell-do-grants/1",
+    entries: &[
+        ("viewer", &[ReadCapability::Population]),
+        (
+            "member",
+            &[ReadCapability::Population, ReadCapability::Values],
+        ),
+        (
+            "admin",
+            &[
+                ReadCapability::Population,
+                ReadCapability::Values,
+                ReadCapability::Sources,
+            ],
+        ),
+        (
+            "owner",
+            &[
+                ReadCapability::Population,
+                ReadCapability::Values,
+                ReadCapability::Sources,
+            ],
+        ),
+    ],
+};
+
+/// The principal a resolver verified for the current request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caller {
+    /// Norn subject id; the request's actor.
+    pub subject_id: String,
+    /// Norn roles from the declared role table.
+    pub roles: Vec<String>,
+}
+
+/// Where the resolver records the current request's verified principal for
+/// the policy. Every request records first (possibly nobody), so a caller
+/// never outlives its request; the cell serves one request at a time.
+#[derive(Debug, Default)]
+pub struct CallerSlot(Mutex<Option<Caller>>);
+
+impl CallerSlot {
+    /// Record the request's verified principal, or nobody.
+    pub fn record(&self, caller: Option<Caller>) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = caller;
+        }
+    }
+
+    fn current(&self) -> Option<Caller> {
+        self.0.lock().ok().and_then(|slot| slot.clone())
+    }
+}
 
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
-    pdp: Pdp,
-    grants: &'static [Grant],
+    /// The compiled policy with no grant; each request adds its caller's.
+    base: Pdp,
+    key: ScopeKey,
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
 }
 
 /// The physical scope as the PDP's scope key.
@@ -86,7 +151,7 @@ impl ReadPolicy {
     pub fn compile<'a>(
         object_types: impl IntoIterator<Item = &'a ObjectTypeDef>,
         scope: &CellScope,
-        grants: &'static [Grant],
+        table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
         let types: Vec<ObjectTypeDef> = object_types.into_iter().cloned().collect();
         let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
@@ -112,39 +177,59 @@ impl ReadPolicy {
             generic_rules: vec![],
             extensions: None,
         };
-        let key = scope_key(scope);
-        let capability_grants: Vec<CapabilityGrant> = grants
-            .iter()
-            .filter(|grant| !grant.capabilities.is_empty())
-            .map(|grant| CapabilityGrant {
-                subject_id: grant.subject.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                scope: Some(key.clone()),
-                capabilities: grant
-                    .capabilities
-                    .iter()
-                    .map(|c| capability_name(*c).to_owned())
-                    .collect(),
-                binding: None,
-            })
-            .collect();
         let compiled =
             authz::compile(&schema, &policy).map_err(|e| SeedError(format!("read policy: {e}")))?;
-        let pdp = Pdp::new(compiled, &capability_grants)
-            .map_err(|e| SeedError(format!("read grants: {e}")))?;
-        Ok(Self { pdp, grants })
+        let base = Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("read policy: {e}")))?;
+        Ok(Self {
+            base,
+            key: scope_key(scope),
+            table,
+            caller: Arc::default(),
+        })
+    }
+
+    /// The slot this policy reads the request's verified principal from; the
+    /// cell's [`crate::principal::PrincipalResolver`] records into it.
+    #[must_use]
+    pub fn caller(&self) -> Arc<CallerSlot> {
+        Arc::clone(&self.caller)
+    }
+
+    /// The PDP for this request's verified caller, holding exactly the grant
+    /// the table gives its roles.
+    fn pdp_for(&self, subject: &str) -> Option<Pdp> {
+        let caller = self
+            .caller
+            .current()
+            .filter(|caller| caller.subject_id == subject)?;
+        let capabilities = self.table.capabilities(&caller.roles);
+        if capabilities.is_empty() {
+            return None;
+        }
+        Pdp::new(
+            self.base.policy_set().clone(),
+            &[CapabilityGrant {
+                subject_id: caller.subject_id,
+                actor_kind: ActorKind::User,
+                agent_session_id: None,
+                scope: Some(self.key.clone()),
+                capabilities: capabilities
+                    .into_iter()
+                    .map(|c| capability_name(c).to_owned())
+                    .collect(),
+                binding: None,
+            }],
+        )
+        .ok()
     }
 }
 
 impl Authorizer for ReadPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         let granted = matches!(request.operation, Operation::ReadDefinitions)
-            && request.actor.is_some_and(|actor| {
-                self.grants
-                    .iter()
-                    .any(|grant| grant.definitions && grant.subject == actor)
-            });
+            && request
+                .actor
+                .is_some_and(|actor| self.pdp_for(actor).is_some());
         if granted {
             Ok(())
         } else {
@@ -155,7 +240,11 @@ impl Authorizer for ReadPolicy {
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         let asked = request.access.capability == capability_name(request.capability)
             && request.access.action_id == READ_ACTION;
-        if asked && authz::authorize(&self.pdp, request.access).is_ok() {
+        let allowed = asked
+            && self
+                .pdp_for(&request.access.principal.subject_id)
+                .is_some_and(|pdp| authz::authorize(&pdp, request.access).is_ok());
+        if allowed {
             Ok(())
         } else {
             DenyAll.read(request)
