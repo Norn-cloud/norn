@@ -11,6 +11,8 @@ import { createRoot } from "react-dom/client"
 import { Badge } from "@/components/ui/badge"
 import { CanvasFrame, writeDraft, type Issue } from "./canvas-frame.tsx"
 import { CanvasPageView, StateBox, lifecycleFrame } from "./canvas.tsx"
+import { StepBox, automationFrame } from "./automation-canvas.tsx"
+import { EXAMPLE } from "./lib/canvas/tools.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { lifecyclesIn } from "./lib/canvas/lifecycle.ts"
 import type { Envelope } from "./lib/transport.ts"
@@ -25,6 +27,16 @@ function Box(data: { readonly label: string; readonly flags?: string; readonly i
   const node: Node = { id: "s", type: "state", position: { x: 20, y: 20 }, selected: data.selected ?? false, data: { label: data.label, flags: data.flags ?? "", issues: data.issues ?? [] } }
   return <div className="h-32 w-64"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ state: StateBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
 }
+
+function Step({ id, issues = [] }: { readonly id: string; readonly issues?: readonly Issue[] }) {
+  const step = EXAMPLE.nodes.find((one) => one.id === id)
+  if (!step) return null
+  const node: Node = automationFrame(() => ({ issues: [], status: null })).toNode({ ...step, position: { x: 20, y: 20 } }, issues, false)
+  return <div className="h-36 w-72"><ReactFlowProvider><ReactFlow nodes={[node]} edges={[]} nodeTypes={{ step: StepBox }} proOptions={{ hideAttribution: true }} panOnDrag={false} zoomOnScroll={false} /></ReactFlowProvider></div>
+}
+
+const automation = (id: string, extra: Partial<Parameters<typeof CanvasFrame>[0]> = {}) =>
+  <CanvasFrame {...automationFrame(() => ({ issues: [], status: <Badge variant="outline">Checker: no findings</Badge> }))} draftKey={`sheet:${id}`} {...extra} />
 
 const problem: Issue = { code: "lifecycle.validation.dead_end_state", message: 'state "invoiced" has no outgoing transition', node: "invoiced" }
 
@@ -55,6 +67,13 @@ const SPECIMENS: Record<string, () => ReactNode> = {
   },
   "frame/refusal": () => frame("refusal", [], <Badge variant="outline">Checker: no new findings</Badge>, { initialNotice: { tone: "refusal", text: "There is already a state named approved" } }),
   "frame/multi-select": () => frame("multi-select", [], <Badge variant="outline">Checker: no new findings</Badge>, { initialSelection: { nodes: ["invoiced", "completed"], edges: ["complete:invoiced"] } }),
+  "step/tool": () => <Step id="load" />,
+  "step/route": () => <Step id="settled" />,
+  "step/start": () => <Step id="start" />,
+  "step/problem": () => <Step id="paid" issues={[{ code: "canvas.flow.unreachable", message: "Nothing leads to this step, so it never runs", node: "paid" }]} />,
+  "automation/default": () => automation("default"),
+  "automation/route-selected": () => automation("route", { initialSelection: { nodes: ["settled"], edges: [] } }),
+  "automation/tool-selected": () => automation("tool", { initialSelection: { nodes: ["remind"], edges: [] } }),
   "page/loading": () => <CanvasPageView definitions={{ isPending: true, error: null, data: undefined }} />,
   "page/error": () => <CanvasPageView definitions={{ isPending: false, error: new Error("The cell did not answer (503)"), data: undefined }} />,
   "page/no-lifecycles": () => <CanvasPageView definitions={{ isPending: false, error: null, data: [] }} />,
