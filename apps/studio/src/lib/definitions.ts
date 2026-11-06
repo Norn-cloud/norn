@@ -69,7 +69,8 @@ const findingsOf = (body: unknown): readonly Finding[] => {
 /** Thrown when the cell answered with neither a decision nor a refusal it documents: nothing was saved. */
 export class CellUnavailable extends Error {
   constructor(status: number, message?: string) {
-    super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : `The cell did not answer (${status || "network"}); nothing was saved.`))
+    // A 404 is a cell without the definition route yet; anything else is a cell that did not answer. Neither saved nor read anything.
+    super(message ?? (status === 401 ? "Sign in again." : status === 403 ? "Your role may not read or change these definitions." : status === 404 ? "The cell's definition route isn't connected yet; nothing was read or saved." : `The cell did not answer (${status || "network"}); nothing was read or saved.`))
   }
 }
 
