@@ -1,23 +1,6 @@
 import { activeMembership, type Auth } from "./auth.ts"
 
 /**
- * The active Studio scope's cell environment: the `environmentId` in the active organization's
- * metadata (`{"environmentId": "analytics"}` for the demo organization). Null when the
- * organization names none; the caller refuses rather than guess, as the cell does.
- */
-export async function activeEnvironment(auth: Auth, orgId: string): Promise<string | null> {
-  const { adapter } = await auth.$context
-  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
-  const raw = org?.metadata
-  let metadata: unknown = raw
-  if (typeof raw === "string") {
-    try { metadata = JSON.parse(raw) } catch { return null }
-  }
-  const environmentId = (metadata as { environmentId?: unknown } | null)?.environmentId
-  return typeof environmentId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(environmentId) ? environmentId : null
-}
-
-/**
  * Who a request acts as, resolved on the server from the verified session or
  * API key, never from anything the client asserts. The Norn host turns this
  * into a principal through its declared role table (norn-api `principal`);

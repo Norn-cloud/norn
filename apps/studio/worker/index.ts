@@ -1,4 +1,5 @@
-import { forwardToHost, originAllowed, resolveActor, activeEnvironment } from "./actor.ts"
+import { cellScope } from "./scope.ts"
+import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
 import { activeMembership, createAuth, type Auth, type MagicLinkMail } from "./auth.ts"
 import type { AgentRequest } from "./agent.ts"
 import type { AgentBudget } from "./budget.ts"
@@ -79,7 +80,7 @@ async function me(request: Request, env: Env): Promise<Response> {
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : await activeEnvironment(auth(env), member.organizationId) },
+    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role }, environmentId: member === null ? null : (await cellScope(auth(env), member.organizationId)).environmentId },
     { headers: { "cache-control": "no-store" } },
   )
 }

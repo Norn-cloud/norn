@@ -1,6 +1,7 @@
 import { hostToken, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
+import { scopeQuery } from "./scope.ts"
 
 /**
  * Tool bindings as cell definitions (coordinator decision, 2026-11-06): Studio saves each binding
@@ -71,12 +72,12 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  /** `environmentId` is the cell environment of the actor's active organization (`activeEnvironment`). */
+  /** `environmentId` is the session's cell environment, from `cellScope` (scope.ts). */
   constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string) {}
 
-  /** DEFS's scope query: the actor's server-resolved organization and the environment. */
+  /** DEFS's scope query: the actor's server-resolved organization and its environment. */
   private scoped(path: string): string {
-    return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+    return `${path}?${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {

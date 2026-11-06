@@ -6,6 +6,7 @@ import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
 import { canonicalJson, connectorVersion, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
+import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
 
 const CONTEXT = { waitUntil: () => {}, passThroughOnException: () => {}, props: {} } as unknown as ExecutionContext
@@ -442,4 +443,18 @@ test("every definitions call carries the session's orgId and environmentId; no e
   const other = cellHost(() => Response.json({}))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: lone }, { host: other.host })).body).toMatchObject({ code: "connectors.no_environment", action: { kind: "ask_admin" } })
   expect(other.seen).toEqual([])
+})
+
+test("the cell scope is the organization's declared environment, or null", async () => {
+  const db = new Database(":memory:")
+  db.exec(migration("0001_better_auth.sql"))
+  const auth = createAuth({ database: db, secret: "t".repeat(40), baseURL: ORIGIN })
+  const add = (id: string, metadata: string | null) => db.query("INSERT INTO organization (id, name, slug, createdAt, metadata) VALUES (?, ?, ?, ?, ?)").run(id, id, id, Date.now(), metadata)
+  add("org_demo", '{"environmentId":"analytics"}')
+  add("org_none", null)
+  add("org_bad", '{"environmentId":"../x"}')
+  add("org_text", "not json")
+  expect(await cellScope(auth, "org_demo")).toEqual({ orgId: "org_demo", environmentId: "analytics" })
+  for (const id of ["org_none", "org_bad", "org_text", "org_missing"]) expect(await cellScope(auth, id)).toEqual({ orgId: id, environmentId: null })
+  expect(scopeQuery({ orgId: "org_demo", environmentId: "analytics" })).toBe("orgId=org_demo&environmentId=analytics")
 })
