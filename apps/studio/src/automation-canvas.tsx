@@ -41,7 +41,11 @@ export function StepBox({ data, selected }: NodeProps<StepNode>) {
 
 const NODE_TYPES = { step: StepBox }
 
-const short = (text: string, length = 30) => text.length > length ? `${text.slice(0, length - 1)}…` : text
+/** An edge label: the condition without its result prefix (`status == paid`), cut at 26 characters; the exit's hover has it in full. */
+const short = (text: string, length = 26) => {
+  const bare = text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\.(?=[A-Za-z_])/g, "")
+  return bare.length > length ? `${bare.slice(0, length - 1)}…` : bare
+}
 
 /** What an exit means in words: a route branch's own condition, a decision option's label, or otherwise. */
 export function exitLabel(node: g.CanvasNode | undefined, port: string): string | undefined {
