@@ -135,6 +135,18 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &self.store
     }
 
+    /// Capture pinned mapping evidence while the cell owns its store.
+    ///
+    /// # Errors
+    /// Invalid framing/pins or the existing atomic inbox capture failure.
+    pub fn inject_mapping_bundle(
+        &mut self,
+        raw: &Observed<Value>,
+        input: &crate::mapping_bundle::MappingInput,
+    ) -> Result<(String, bool), CellError> {
+        self.store.inject_mapping_bundle(raw, input)
+    }
+
     /// Begin a private rebuild in this native host's world and tenant scope.
     /// # Errors
     /// Refuses foreign scope, stale slot versions or invalid rebuild declarations.
@@ -559,7 +571,7 @@ fn link_state<S: SqlEngine>(
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
-struct GuardView<'r, 'c, S: SqlEngine>(&'r StoreReader<'c, S>);
+pub(crate) struct GuardView<'r, 'c, S: SqlEngine>(pub(crate) &'r StoreReader<'c, S>);
 
 impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
     type Error = CellError;
@@ -1482,6 +1494,14 @@ where
                     != Some(bundle.definitions_version)
                 {
                     return Err(CommitError::Host(CellError::MappingBundleMismatch));
+                }
+                if reader
+                    .mapping_link_plan(bundle, &commit)
+                    .map_err(CommitError::Host)?
+                    .links
+                    != commit.links
+                {
+                    return Err(CommitError::Host(CellError::SourceEvidenceChanged));
                 }
                 if reader
                     .mapping_conflict(bundle)

@@ -49,6 +49,23 @@ pub struct MappingBundle {
     pub diagnostics: Vec<RuntimeValue>,
 }
 
+impl MappingBundle {
+    /// OBS-LINK-CONTRIBUTION-1: bind claims to the existing capture identity namespace.
+    pub(crate) fn link_claims(
+        &self,
+    ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
+        let [connector, partition, source, row, _] =
+            crate::mapping_identity::keys(&self.raw, &self.input)?;
+        let scope = norn_ir::canonical::domain_hash_hex(
+            b"norn.link.scope.v1\0",
+            &(connector, partition, source, row),
+        )?;
+        let id = format!("mapping-bundle:{}", self.digest);
+        let claims = self.records.iter().flat_map(|r| r.link_claims(&id, &scope));
+        Ok(claims.collect())
+    }
+}
+
 /// Everything a bundle needs from one exact retained mapping, derived once.
 #[derive(Debug)]
 pub(crate) struct MappingPlan {
