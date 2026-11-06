@@ -65,11 +65,12 @@ export function VerdictCard({ verdict }: { readonly verdict: Verdict }) {
           {reasons(refusal.message).map((reason) => <div key={reason}>{reason}</div>)}
           <TechnicalDetails>
             <div>{refusal.code}</div>
-            <div>{where(verdict.proposal)}</div>
             {reasons(refusal.message)[0] !== refusal.message && <pre className="whitespace-pre-wrap">{refusal.message}</pre>}
           </TechnicalDetails>
         </div>
       ))}
+      {/* The proposal's location once per card, so a refusal with no findings still says what was checked. */}
+      <TechnicalDetails><div>{where(verdict.proposal)}</div></TechnicalDetails>
     </div>
   )
 }

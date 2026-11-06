@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChartLine, Plus } from "lucide-react"
-import { type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -78,11 +78,35 @@ export function fieldOf(pointer: string | null): string | null {
 export const issuesOf = (verdict: QuestionVerdict | undefined): readonly Issue[] =>
   verdict === undefined || verdict.admitted ? [] : verdict.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer ?? null) }))
 
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
+const isStrings = (value: unknown): boolean => Array.isArray(value) && value.every((item) => typeof item === "string")
+
+/** The response as a catalogue, if it has every field the builder reads; anything else is no catalogue. */
+export function catalogOf(value: unknown): QuestionCatalog | undefined {
+  if (!isObject(value) || !(value.objectSet === null || typeof value.objectSet === "string") || !isObject(value.example) || typeof value.example.irVersion !== "string" || typeof value.example.calendar !== "string") return undefined
+  const { properties, metrics, grains, operators } = value
+  if (!Array.isArray(properties) || !properties.every((p) => isObject(p) && typeof p.name === "string" && typeof p.kind === "string" && (p.unit === null || typeof p.unit === "string"))) return undefined
+  if (!Array.isArray(metrics) || !metrics.every((m) => isObject(m) && typeof m.name === "string" && typeof m.label === "string" && typeof m.type === "string")) return undefined
+  return isStrings(grains) && isStrings(operators) ? value as unknown as QuestionCatalog : undefined
+}
+
+const UNAVAILABLE = "The question catalogue is not available on this deployment."
+
 export async function readCatalog(): Promise<QuestionCatalog> {
   const response = await fetch("/api/questions/catalog", { headers: { accept: "application/json" } })
-  if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : "The question catalogue is not available on this deployment.")
-  return await response.json() as QuestionCatalog
+  if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : UNAVAILABLE)
+  const catalog = catalogOf(await response.json().catch(() => undefined))
+  if (catalog === undefined) throw new Error(UNAVAILABLE)
+  return catalog
 }
+
+/**
+ * A check's result belongs to the draft and editor revision it was run on:
+ * after any edit, undo or redo it is shown no longer (undo back to the same
+ * draft is a new revision), and a late response for an older draft is ignored.
+ */
+export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D, at?: { readonly ranAt: object | undefined; readonly revision: object }) =>
+  check.variables === draft && (at === undefined || at.ranAt === at.revision) ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
 async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
   const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
@@ -138,11 +162,15 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
   readonly onUse?: (question: QuestionIR, title: string) => void
 }) {
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
-  const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => check.mutate(draft) })
+  // The editor revision each check ran at: a check shows only while the editor is still at that revision.
+  const [ranAt, setRanAt] = useState<object>()
+  const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => run(draft) })
+  const run = (next: Draft) => { setRanAt(editor.revision); check.mutate(next) }
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
-  const issues = issuesOf(check.data)
+  const checked = checkedFor(check, draft, { ranAt, revision: editor.revision })
+  const issues = issuesOf(checked.data)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const property = catalog.properties.find(({ name }) => name === draft.by)
   const propertyOptions = catalog.properties.map(({ name }) => [name, words(name)] as const)
@@ -153,7 +181,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       {guard?.(editor.dirty)}
       <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
-        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); check.mutate(draft) }}>
+        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
           <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
@@ -191,16 +219,16 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         </form>
       </Panel>
       <div className="space-y-3">
-        {check.isIdle && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
-        {check.isError && <p role="alert" className="text-destructive">{check.error.message}</p>}
+        {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
+        {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
         {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
-        {check.data && !check.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{check.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
-        {check.data?.admitted && <QuestionCard verdict={check.data} />}
+        {checked.data && !checked.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{checked.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
+        {checked.data?.admitted && <QuestionCard verdict={checked.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
-        {check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
-        {onUse && check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
-        {onUse && check.data?.admitted && JSON.stringify(check.variables) !== JSON.stringify(draft) && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
+        {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
+        {onUse && checked.data?.admitted && check.variables && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
+        {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
     </div>
   )
