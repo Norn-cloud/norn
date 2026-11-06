@@ -50,7 +50,20 @@ pub fn run(root: &Path, base: &Path) -> Vec<String> {
 /// (see [`maintainer_approval`]). Every other check is unchanged.
 #[must_use]
 pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> Vec<String> {
-    let mut errors = provenance::check_against(root, base).errors();
+    policy_contract(
+        root,
+        base,
+        evidence,
+        provenance::check_against(root, base).errors(),
+    )
+}
+
+fn policy_contract(
+    root: &Path,
+    base: &Path,
+    evidence: Option<&Path>,
+    mut errors: Vec<String>,
+) -> Vec<String> {
     if !errors.is_empty() {
         return errors;
     }
@@ -738,4 +751,483 @@ mod tests {
             assert!(compare_artifact_variants(IR, &proof).is_err());
         }
     }
+}
+
+/// Base-owned admission: rights review and gate approval are independent authorities.
+#[must_use]
+pub fn run_with_rights(
+    root: &Path,
+    base: &Path,
+    head: &str,
+    repository: &str,
+    gate_evidence: Option<&Path>,
+    rights_evidence: &Path,
+) -> Vec<String> {
+    check_with_rights(root, base, head, repository, gate_evidence, rights_evidence).errors
+}
+
+/// Complete trusted gate result, retained outside tracked records.
+#[derive(serde::Serialize)]
+pub struct TrustedReport {
+    /// Exact bytes, rights record inventory and admission identity.
+    pub provenance: provenance::Report,
+    /// Policy and review refusals; an empty list is necessary for success.
+    pub errors: Vec<String>,
+}
+
+/// Check trusted review and contract policy, reporting the identity actually inspected.
+#[must_use]
+pub fn check_with_rights(
+    root: &Path,
+    base: &Path,
+    head: &str,
+    repository: &str,
+    gate_evidence: Option<&Path>,
+    rights_evidence: &Path,
+) -> TrustedReport {
+    let source = provenance::BoundSource {
+        source: root,
+        head,
+        base,
+        repository,
+    };
+    let provenance = provenance::check_bound(root, &source, false);
+    let mut errors = provenance.errors();
+    let rights = std::fs::read(rights_evidence)
+        .map_err(|e| e.to_string())
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string()))
+        .and_then(|doc| rights_admission(&doc, root, base, head));
+    if let Err(e) = rights {
+        errors.push(format!("rights acknowledgment: {e}"));
+    }
+    let errors = policy_contract(root, base, gate_evidence, errors);
+    TrustedReport { provenance, errors }
+}
+
+/// Validate one global rights ledger for an immutable head and tree.
+/// The latest recorded acknowledgment is never replaced by an older review
+/// when its source comment is removed. Every pending event blocks the target.
+///
+/// # Errors
+/// Refuses wrong identities, missing history, unreconciled or withdrawn reviews.
+pub fn rights_acknowledgment(
+    evidence: &serde_json::Value,
+    head: &str,
+    tree: &str,
+) -> Result<String, String> {
+    if evidence
+        .get("repository")
+        .and_then(serde_json::Value::as_str)
+        != Some(MAINTAINED_REPOSITORY)
+        || commit_sha(evidence, "head_sha").as_deref() != Some(head)
+        || evidence
+            .get("head_repository")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        || commit_sha(evidence, "base_sha").is_none()
+    {
+        return Err("wrong repository/base/head rights identity".into());
+    }
+    let entries = rights_entries(evidence, head, tree)?;
+    let mut ids = BTreeSet::new();
+    let mut boundary = None;
+    let mut latest: Option<(u64, bool, String, String)> = None;
+    for entry in entries {
+        let id = entry
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("missing rights receipt ID")?;
+        if !ids.insert(id) {
+            return Err("duplicate rights receipt ID".into());
+        }
+        let at = entry
+            .get("recorded_at")
+            .and_then(serde_json::Value::as_str)
+            .filter(|at| rights_timestamp(at))
+            .ok_or("invalid rights receipt timestamp")?;
+        match entry.get("kind").and_then(serde_json::Value::as_str) {
+            Some("revoke" | "withdraw") => {
+                boundary = Some(boundary.map_or(at, |prior: &str| prior.max(at)));
+            }
+            Some("ack") => {
+                let review = rights_review(entry, head)?;
+                if latest.as_ref().is_none_or(|prior| review.0 > prior.0) {
+                    latest = Some(review);
+                }
+            }
+            Some("ignore") => {}
+            _ => return Err("invalid rights ledger decision".into()),
+        }
+    }
+    match latest {
+        Some((_, true, reviewer, created)) if boundary.is_none_or(|at| created.as_str() > at) => {
+            Ok(reviewer)
+        }
+        _ => Err(format!(
+            "missing, edited, deleted or revoked /ack-rights {head}"
+        )),
+    }
+}
+
+/// Canonical digest used by the base-owned checkpoint and publisher.
+///
+/// # Errors
+/// Refuses numbers outside GitHub's safe integer range or oversized framing.
+pub fn rights_digest(value: &serde_json::Value) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    fn count(hash: &mut Sha256, value: usize) -> Result<(), String> {
+        hash.update(
+            u64::try_from(value)
+                .map_err(|error| format!("checkpoint length overflow: {error}"))?
+                .to_be_bytes(),
+        );
+        Ok(())
+    }
+    fn walk(hash: &mut Sha256, value: &serde_json::Value) -> Result<(), String> {
+        match value {
+            serde_json::Value::Null => hash.update([0]),
+            serde_json::Value::Bool(value) => hash.update([if *value { 2 } else { 1 }]),
+            serde_json::Value::Number(value) => {
+                let number = value
+                    .as_i64()
+                    .filter(|value| value.unsigned_abs() <= 9_007_199_254_740_991)
+                    .ok_or("unsafe checkpoint number")?
+                    .to_string();
+                hash.update([3]);
+                count(hash, number.len())?;
+                hash.update(number.as_bytes());
+            }
+            serde_json::Value::String(value) => {
+                hash.update([4]);
+                count(hash, value.len())?;
+                hash.update(value.as_bytes());
+            }
+            serde_json::Value::Array(values) => {
+                hash.update([5]);
+                count(hash, values.len())?;
+                for value in values {
+                    walk(hash, value)?;
+                }
+            }
+            serde_json::Value::Object(values) => {
+                let ordered: std::collections::BTreeMap<_, _> = values.iter().collect();
+                hash.update([6]);
+                count(hash, ordered.len())?;
+                for (key, value) in ordered {
+                    walk(hash, &serde_json::Value::String(key.clone()))?;
+                    walk(hash, value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"norn-rights-checkpoint-v4\0");
+    walk(&mut hash, value)?;
+    Ok(hex::encode(hash.finalize()))
+}
+
+fn rights_projection(value: &serde_json::Value, digest: Option<&str>) -> Result<(), String> {
+    let statuses = value
+        .get("verdicts")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing publication history")?;
+    let version = value
+        .get("failure_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing failure version")?;
+    let latest = statuses.iter().max_by_key(|status| {
+        status
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default()
+    });
+    let failure = statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status.get("state").and_then(serde_json::Value::as_str),
+                Some("failure" | "error")
+            )
+        })
+        .filter_map(|status| status.get("id").and_then(serde_json::Value::as_u64))
+        .max()
+        .unwrap_or_default();
+    if version != failure {
+        return Err("wrong failure version".into());
+    }
+    if let Some(status) = latest
+        .filter(|status| status.get("state").and_then(serde_json::Value::as_str) == Some("success"))
+    {
+        let row: serde_json::Value = serde_json::from_str(
+            status
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("missing success checkpoint")?,
+        )
+        .map_err(|error| format!("unbound success checkpoint: {error}"))?;
+        if row.get("v").and_then(serde_json::Value::as_u64) != Some(4)
+            || row.get("f").and_then(serde_json::Value::as_u64) != Some(failure)
+            || !row
+                .get("d")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+            || digest.is_some_and(|expected| {
+                row.get("d").and_then(serde_json::Value::as_str) != Some(expected)
+            })
+        {
+            return Err("stale success cannot override a newer failure or ledger".into());
+        }
+    }
+    Ok(())
+}
+
+fn rights_publication(evidence: &serde_json::Value, root: &Path, head: &str) -> Result<(), String> {
+    let publication = evidence
+        .get("publication")
+        .ok_or("missing publication checkpoint")?;
+    let tree = git::tree_oid(root, head)?;
+    if commit_sha(publication, "head_sha").as_deref() != Some(head)
+        || commit_sha(publication, "tree_sha").as_deref() != Some(tree.as_str())
+    {
+        return Err("wrong publication target".into());
+    }
+    let mut targets = serde_json::Map::new();
+    for (head, trees) in evidence
+        .get("rights")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("missing publication rights")?
+    {
+        let trees = trees
+            .as_object()
+            .filter(|trees| trees.len() == 1)
+            .ok_or("ambiguous publication tree")?;
+        let ledger = trees.values().next().ok_or("missing target checkpoint")?;
+        let digest = ledger
+            .get("checkpoint")
+            .and_then(|value| value.get("digest"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or("missing target digest")?;
+        targets.insert(head.clone(), digest.into());
+    }
+    if publication.get("targets") != Some(&serde_json::Value::Object(targets)) {
+        return Err("wrong publication coverage".into());
+    }
+    let data = serde_json::json!({"head_sha":head,"tree_sha":tree,"failure_version":publication.get("failure_version"),"targets":publication.get("targets")});
+    let digest = rights_digest(&data)?;
+    if publication
+        .get("digest")
+        .and_then(serde_json::Value::as_str)
+        != Some(digest.as_str())
+    {
+        return Err("publication digest mismatch".into());
+    }
+    rights_projection(publication, Some(&digest))
+}
+
+fn rights_entries<'a>(
+    evidence: &'a serde_json::Value,
+    head: &str,
+    tree: &str,
+) -> Result<&'a Vec<serde_json::Value>, String> {
+    let targets = evidence
+        .get("rights")
+        .and_then(|v| v.get(head))
+        .and_then(serde_json::Value::as_object)
+        .ok_or("missing target rights ledger")?;
+    let ledger = targets
+        .get(tree)
+        .filter(|_| targets.len() == 1)
+        .ok_or("wrong rights tree identity")?;
+    if commit_sha(ledger, "head_sha").as_deref() != Some(head)
+        || commit_sha(ledger, "tree_sha").as_deref() != Some(tree)
+    {
+        return Err("wrong rights ledger target".into());
+    }
+    let data = serde_json::json!({"head_sha":ledger.get("head_sha"),"tree_sha":ledger.get("tree_sha"),
+        "pending":ledger.get("pending"),"entries":ledger.get("entries"),"failure_version":ledger.get("failure_version")});
+    let digest = rights_digest(&data)?;
+    if ledger
+        .get("checkpoint")
+        .and_then(|value| value.get("digest"))
+        .and_then(serde_json::Value::as_str)
+        != Some(digest.as_str())
+    {
+        return Err("target checkpoint digest mismatch".into());
+    }
+    rights_projection(ledger, None)?;
+    let pending = ledger
+        .get("pending")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing pending rights history")?;
+    if !pending.is_empty() {
+        return Err("unreconciled target rights events".into());
+    }
+    ledger
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "missing rights ledger entries".into())
+}
+
+fn rights_review(
+    entry: &serde_json::Value,
+    head: &str,
+) -> Result<(u64, bool, String, String), String> {
+    let id = entry
+        .get("comment_id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("missing rights comment ID")?;
+    let created = entry
+        .get("created_at")
+        .and_then(serde_json::Value::as_str)
+        .filter(|at| rights_timestamp(at))
+        .ok_or("invalid rights review timestamp")?;
+    let comment = entry.get("comment").unwrap_or(&serde_json::Value::Null);
+    let valid = comment.get("id").and_then(serde_json::Value::as_u64) == Some(id)
+        && comment
+            .get("permission")
+            .and_then(serde_json::Value::as_str)
+            == Some("admin")
+        && comment
+            .get("created_at")
+            .and_then(serde_json::Value::as_str)
+            == Some(created)
+        && comment
+            .get("updated_at")
+            .and_then(serde_json::Value::as_str)
+            == Some(created)
+        && comment
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|body| body.trim() == format!("/ack-rights {head}"));
+    let user = comment
+        .get("user")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    Ok((
+        id,
+        valid && !user.is_empty(),
+        user.to_owned(),
+        created.to_owned(),
+    ))
+}
+
+// GitHub API timestamps use canonical UTC seconds, so lexical order is time order.
+fn rights_timestamp(at: &str) -> bool {
+    at.len() == 20
+        && at.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            10 => byte == b'T',
+            13 | 16 => byte == b':',
+            19 => byte == b'Z',
+            _ => byte.is_ascii_digit(),
+        })
+}
+
+/// Verify constituent reviews and independently recompute each clean merge.
+///
+/// # Errors
+/// Refuses uncovered heads and any integration-only content or metadata.
+pub fn rights_admission(
+    evidence: &serde_json::Value,
+    root: &Path,
+    base_root: &Path,
+    head: &str,
+) -> Result<(), String> {
+    if git::head(root)? != head {
+        return Err("candidate differs from rights head".into());
+    }
+    let base = git::head(base_root)?;
+    rights_publication(evidence, root, head)?;
+    if let Some(group) = evidence.get("merge_group") {
+        if evidence
+            .get("repository")
+            .and_then(serde_json::Value::as_str)
+            != Some(MAINTAINED_REPOSITORY)
+            || commit_sha(group, "head_sha").as_deref() != Some(head)
+            || commit_sha(group, "base_sha").as_deref() != Some(base.as_str())
+        {
+            return Err("wrong merge-group rights identity".into());
+        }
+        let pulls = evidence
+            .get("pull_requests")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("missing constituent rights evidence")?;
+        let mut current = head.to_owned();
+        let mut covered = BTreeSet::new();
+        for _ in 0..MAX_MERGE_GROUP {
+            if current == base {
+                break;
+            }
+            let [previous, pull] = <[String; 2]>::try_from(git::parents(root, &current)?)
+                .map_err(|_parents| "rights group requires two-parent merges")?;
+            let mut found = false;
+            for constituent in pulls
+                .iter()
+                .filter(|p| commit_sha(p, "head_sha").as_deref() == Some(pull.as_str()))
+            {
+                let mut doc = constituent.clone();
+                doc.as_object_mut()
+                    .ok_or("malformed constituent rights evidence")?
+                    .insert("repository".into(), MAINTAINED_REPOSITORY.into());
+                doc.as_object_mut()
+                    .ok_or("malformed rights evidence")?
+                    .insert(
+                        "rights".into(),
+                        evidence
+                            .get("rights")
+                            .cloned()
+                            .ok_or("missing global rights ledger")?,
+                    );
+                if rights_acknowledgment(&doc, &pull, &git::tree_oid(root, &pull)?).is_ok() {
+                    found = true;
+                }
+            }
+            if !found {
+                return Err(format!("unacknowledged constituent head {pull}"));
+            }
+            covered.insert(pull.clone());
+            git::clean_merge(root, &previous, &pull, &current)?;
+            current = previous;
+        }
+        if current != base
+            || pulls
+                .iter()
+                .any(|p| commit_sha(p, "head_sha").is_none_or(|h| !covered.contains(&h)))
+        {
+            return Err("unaccounted merge-group head or excessive group length".into());
+        }
+    } else {
+        if commit_sha(evidence, "base_sha").as_deref() != Some(base.as_str()) {
+            return Err("rights base differs from trusted base".into());
+        }
+        rights_acknowledgment(evidence, head, &git::tree_oid(root, head)?)?;
+    }
+    Ok(())
+}
+
+/// Candidate diagnostic gate. The trusted lane separately requires live rights evidence.
+#[must_use]
+pub fn run_local(root: &Path) -> Vec<String> {
+    let head = match git::head(root) {
+        Ok(h) => h,
+        Err(e) => return vec![e],
+    };
+    let source = provenance::BoundSource {
+        source: root,
+        head: &head,
+        base: root,
+        repository: MAINTAINED_REPOSITORY,
+    };
+    policy_contract(
+        root,
+        root,
+        None,
+        provenance::check_bound(root, &source, false).errors(),
+    )
 }

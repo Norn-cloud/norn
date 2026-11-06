@@ -29,7 +29,8 @@ pub struct Attempt<'a> {
 
 /// Pinned refusal report. No conversion to `Challenge`, `EvidencePins` or proof records.
 pub struct Report {
-    /// SHA-256 of exact attempted source, base and complete analysis profile.
+    /// SHA-256 of exact source, base and canonical profile; the last pin is empty
+    /// when profile encoding fails, and diagnosis is always Unknown in that case.
     pub digests: [String; 3],
     /// Diagnostic result only; no admission or proof verdict.
     /// Success requires the complete tree search and final checks to finish;
@@ -42,35 +43,14 @@ pub struct Report {
 /// Reproduce a diagnostic from exact inputs. Ordinary admission remains separate.
 #[must_use]
 pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
-    let digests = attempt_pins(attempt);
-    let predicates: Vec<_> = attempt.members.iter().map(|(_, p)| p.as_str()).collect();
-    let origins: BTreeSet<_> = attempt.members.iter().map(|(o, _)| o).collect();
-    let diagnosis = if origins.len() != attempt.members.len()
-        || attempt.members.iter().any(|(o, _)| {
-            o.artifact_id.as_deref().is_none_or(str::is_empty)
-                || (!o.pointer.is_empty() && !o.pointer.starts_with('/'))
-        }) {
-        Err(super::diagnosis::Unknown::Oracle(Unknown::Expression(
-            "source member identities are incomplete or duplicated".into(),
-        )))
-    } else if !attempt.editable.is_disjoint(attempt.protected)
-        || attempt
-            .protected
-            .iter()
-            .any(|i| *i >= attempt.members.len())
-    {
-        Err(super::diagnosis::Unknown::InvalidEditable)
-    } else {
-        FiniteOracle::new(attempt.schema, &predicates)
-            .map_err(super::diagnosis::Unknown::Oracle)
-            .and_then(|mut oracle| {
-                super::diagnosis::diagnose(
-                    &mut oracle,
-                    predicates.len(),
-                    attempt.editable,
-                    attempt.max_calls,
-                )
-            })
+    let (digests, diagnosis) = match attempt_pins(attempt) {
+        Ok(digests) => (digests, diagnose_constraints(attempt)),
+        Err(error) => (
+            [hash(attempt.source), hash(attempt.base), String::new()],
+            Err(super::diagnosis::Unknown::Oracle(Unknown::Expression(
+                format!("diagnosis profile cannot be canonicalized: {error}"),
+            ))),
+        ),
     };
     let mut diagnostics = Vec::new();
     let mut emit = |code, message: String, origin: Option<&super::RuleOrigin>| {
@@ -140,9 +120,47 @@ pub fn diagnose_attempt(attempt: &Attempt<'_>) -> Report {
     }
 }
 
-fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
+fn diagnose_constraints(
+    attempt: &Attempt<'_>,
+) -> Result<super::diagnosis::Diagnosis, super::diagnosis::Unknown<Unknown>> {
+    let predicates: Vec<_> = attempt.members.iter().map(|(_, p)| p.as_str()).collect();
+    let origins: BTreeSet<_> = attempt.members.iter().map(|(o, _)| o).collect();
+    if origins.len() != attempt.members.len()
+        || attempt.members.iter().any(|(o, _)| {
+            o.artifact_id.as_deref().is_none_or(str::is_empty)
+                || (!o.pointer.is_empty() && !o.pointer.starts_with('/'))
+        })
+    {
+        Err(super::diagnosis::Unknown::Oracle(Unknown::Expression(
+            "source member identities are incomplete or duplicated".into(),
+        )))
+    } else if !attempt.editable.is_disjoint(attempt.protected)
+        || attempt
+            .protected
+            .iter()
+            .any(|i| *i >= attempt.members.len())
+    {
+        Err(super::diagnosis::Unknown::InvalidEditable)
+    } else {
+        FiniteOracle::new(attempt.schema, &predicates)
+            .map_err(super::diagnosis::Unknown::Oracle)
+            .and_then(|mut oracle| {
+                super::diagnosis::diagnose(
+                    &mut oracle,
+                    predicates.len(),
+                    attempt.editable,
+                    attempt.max_calls,
+                )
+            })
+    }
+}
+
+fn hash(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn attempt_pins(attempt: &Attempt<'_>) -> Result<[String; 3], norn_canonical::CanonicalJsonError> {
     let members: Vec<_> = attempt
         .members
         .iter()
@@ -161,13 +179,9 @@ fn attempt_pins(attempt: &Attempt<'_>) -> [String; 3] {
         attempt.max_calls,
         super::diagnosis::MAX_DECLARATIONS,
         FiniteOracle::bounds()
-    ])
-    .to_string();
-    [
-        hash(attempt.source),
-        hash(attempt.base),
-        hash(profile.as_bytes()),
-    ]
+    ]);
+    let profile = norn_canonical::canonical_json_exact_of(&profile)?;
+    Ok([hash(attempt.source), hash(attempt.base), hash(&profile)])
 }
 
 fn correction_message(
