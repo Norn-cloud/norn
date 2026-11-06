@@ -5,7 +5,7 @@
 //! issuer's published JWKS (signature, `iss`, `aud`, `exp`, `nbf`) and maps
 //! it to a Norn principal. The token says who the subject is, which
 //! organization the request is scoped to and the subject's membership role
-//! there; Norn roles come only from the declared, versioned [`RoleTable`], so an
+//! there; Norn roles come only from the declared, versioned [`RoleTable`](crate::principal::RoleTable), so an
 //! undeclared role grants nothing. A service (API key) can never hold an
 //! approving role. Every failure is the same indistinguishable denial, before
 //! any data access; authorization itself stays with the kernel PDP.
