@@ -998,9 +998,12 @@ pub fn tool_edge_json(
     let target = parse_json("targetSchemaJson", target_schema_json)?;
     let lowered = |schema: &Value, side: &str| {
         ports_from_schema(schema).map_err(|unsupported| {
-            let mut refusal = unsupported_json(&unsupported);
-            refusal["side"] = json!(side);
-            refusal
+            json!({
+                "code": unsupported.reason.code(),
+                "path": unsupported.path,
+                "message": unsupported.reason.to_string(),
+                "side": side,
+            })
         })
     };
     let body = match (lowered(&source, "source"), lowered(&target, "target")) {
