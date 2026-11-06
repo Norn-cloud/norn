@@ -2432,7 +2432,7 @@ where
 ///
 /// # Errors
 /// The [`DecisionRefusal`] of preparation.
-pub fn decision_commit<E, C, T, X>(
+pub fn decision_cell_commit<E, C, T, X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
     turn: &DecisionTurn,
