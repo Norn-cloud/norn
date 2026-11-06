@@ -158,5 +158,5 @@ test("the assistant answers only a signed-in user, from the Studio's own origin,
   const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
   const refused = await post({ "x-api-key": key.key })
   expect(refused.status).toBe(403)
-  expect(await refused.json()).toEqual({ error: "The assistant is for signed-in users, not API keys." })
+  expect(await refused.json() as unknown).toEqual({ error: "The assistant is for signed-in users, not API keys." })
 })
