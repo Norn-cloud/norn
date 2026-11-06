@@ -32,13 +32,13 @@ const tree = {
   filterable: [], windows: [{ id: "cell", label: "This window", detail: "dates", recommended: true, value: { window } }],
 }
 
-/** The words the stand-in server states a dashboard in: title, then each tile by number. */
+/** The words the stand-in cell states a dashboard in (its restater): title, then each tile by number. */
 const words = (dashboard: { title: string; tiles: { title: string }[] }) => [dashboard.title.trim(), ...dashboard.tiles.map((tile, index) => `${index + 1}. ${tile.title.trim() || "Untitled question"}: the tile's question`)].join("\n")
 
 interface Kept { version: number; payload: { title: string; tiles: { title: string }[] }; retired: boolean; signoff: string | null }
 
 /** The stand-in cell and server; `cell.installs` records every install body, `cell.evaluations` every run. */
-async function stage(page: Page, options: { mismatchOnce?: boolean } = {}) {
+async function stage(page: Page, options: { mismatchOnce?: boolean; wordsOnAdmit?: boolean } = {}) {
   test.skip(Boolean(process.env.E2E_BASE), "these rows use a deterministic stand-in cell; the deployed suite runs against next")
   page.on("dialog", (dialog) => void dialog.accept())
   const cell = { dashboards: new Map<string, Kept>(), installs: [] as Record<string, unknown>[], evaluations: 0, mismatchOnce: options.mismatchOnce ?? false }
@@ -46,11 +46,6 @@ async function stage(page: Page, options: { mismatchOnce?: boolean } = {}) {
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/questions/recommendations", (route) => route.fulfill({ json: tree }))
   await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: null, restatement: { text: "Yield of Conversion records, by week.", sha256: "c".repeat(64) } } }))
-  await page.route("**/api/dashboards/check", (route) => {
-    const { dashboard } = route.request().postDataJSON() as { dashboard: Kept["payload"] }
-    const text = words(dashboard)
-    return route.fulfill({ json: { restatement: { text, sha256: sha(text) } } })
-  })
   await page.route("**/api/host/v1/questions:evaluate**", (route) => { cell.evaluations += 1; return route.fulfill({ status: 200, contentType: "application/json", body: answerText }) })
   await page.route("**/api/host/v1/definitions**", async (route) => {
     const url = new URL(route.request().url())
@@ -63,9 +58,12 @@ async function stage(page: Page, options: { mismatchOnce?: boolean } = {}) {
     }
     if (url.pathname.endsWith(":admit")) {
       const title = body?.payload?.title ?? ""
+      // DEFS: the check states the dashboard in the cell's own words; a cell before DEFS states none.
+      const text = body?.payload ? words(body.payload) : ""
+      const stated = options.wordsOnAdmit === false ? {} : { restatement: text, restatementSha256: sha(text) }
       return route.fulfill({ json: title.length > 40
-        ? { admitted: false, diagnostics: [{ code: "definition.tile_title_invalid", severity: "error", message: "A title is 1 to 40 characters here.", span: { pointer: "/title" } }] }
-        : { admitted: true, diagnostics: [] } })
+        ? { admitted: false, diagnostics: [{ code: "definition.tile_title_invalid", severity: "error", message: "A title is 1 to 40 characters here.", span: { pointer: "/title" } }], ...stated }
+        : { admitted: true, diagnostics: [], ...stated } })
     }
     if (url.pathname.endsWith(":install") && body?.id && body.payload) {
       cell.installs.push(body as Record<string, unknown>)
@@ -75,7 +73,7 @@ async function stage(page: Page, options: { mismatchOnce?: boolean } = {}) {
         const theirs = `${text}\n(as the cell reads it)`
         return route.fulfill({ status: 422, json: { code: "definition.signoff_mismatch", restatement: theirs, restatementSha256: sha(theirs) } })
       }
-      if (body.signoff?.restatementSha256 !== sha(text)) return route.fulfill({ status: 422, json: { code: "definition.signoff_mismatch" } })
+      if (body.signoff?.restatementSha256 !== sha(text)) return route.fulfill({ status: 422, json: { code: "definition.signoff_mismatch", restatement: text, restatementSha256: sha(text) } })
       const kept = cell.dashboards.get(body.id)
       if ((kept?.version ?? undefined) !== body.expectedVersion) return route.fulfill({ status: 409, json: { code: "definition.version_conflict" } })
       const version = (kept?.version ?? 0) + 1
@@ -246,4 +244,38 @@ test("sign-off: when the cell reads the dashboard differently it shows its own w
   await expect(page.getByTestId("dashboard-restatement")).toContainText("(as the cell reads it)")
   await expect(page.getByRole("button", { name: /^Save/ })).toBeDisabled()
   expect(cell.installs).toHaveLength(1)
+})
+
+test("tile: editing its question opens the tree on its picks; sign off and the tile updates in place", async ({ page }) => {
+  await stage(page)
+  await build(page)
+  await tile(page, 2).getByRole("button", { name: "Edit question" }).click()
+  const sheet = page.getByRole("dialog")
+  await expect(sheet.getByTestId("question-tree")).toBeVisible()
+  // No other editor: the form builder is not reachable from a dashboard.
+  await expect(sheet.getByRole("button", { name: "Use this question" })).toHaveCount(0)
+  await expect(sheet.getByLabel("Tile title")).toHaveValue("Yield by week")
+  await sheet.getByLabel("Tile title").fill("Weekly yield, all metals")
+  await expect(sheet.getByRole("button", { name: "Update tile" })).toBeDisabled()
+  await sheet.getByRole("button", { name: "This is what I asked for" }).click()
+  await sheet.getByRole("button", { name: "Update tile" }).click()
+  await expect(tile(page, 2)).toContainText("Weekly yield, all metals")
+  await expect(page.getByTestId(/^tile-\d+$/)).toHaveCount(2)
+  // One undo puts the tile's question back.
+  await page.getByRole("button", { name: "Undo" }).click()
+  await expect(tile(page, 2)).toContainText("Yield by week")
+})
+
+test("sign-off, before the cell states words on its check: Save asks the cell for its words, then they are signed and kept", async ({ page }) => {
+  const cell = await stage(page, { wordsOnAdmit: false })
+  await build(page)
+  await expect(page.getByText("This cell does not state dashboards in plain words on its check yet.")).toBeVisible()
+  await page.getByRole("button", { name: /^Save/ }).click()
+  // The cell refused the placeholder digest and stated its own words; nothing was kept.
+  await expect(page.getByText("The cell reads your dashboard as:")).toBeVisible()
+  expect(cell.dashboards.size).toBe(0)
+  await page.getByRole("button", { name: "This is what I asked for" }).click()
+  await page.getByRole("button", { name: /^Save/ }).click()
+  await expect(page.getByText("Saved · version 1")).toBeVisible()
+  expect(cell.installs.at(-1)).toMatchObject({ signoff: { restatementSha256: sha("Refinery weekly\n1. Gold yield, weekly: the tile's question\n2. Yield by week: the tile's question") } })
 })

@@ -87,15 +87,17 @@ const savedQuestion = z.object({
   filter: z.array(z.object({ path: z.object({ property: z.string() }).strict(), operator: z.string(), value: z.union([z.string(), z.number()]) }).strict()),
   window: z.object({ start: z.string(), end: z.string() }).strict(), calendar: z.string(), freshness: z.unknown(),
 }).strict()
-const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
+export const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
 const definitions = questionDefinitions()
 
-export function QuestionTree({ tree, catalog, guard, onUse }: {
+export function QuestionTree({ tree, catalog, guard, onUse, initial }: {
   readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode
   /** Building a question for somewhere else (a dashboard tile): once signed off, it is handed over instead of saved. */
   readonly onUse?: (question: ReturnType<typeof buildQuestion>, title: string) => void
+  /** Open on this draft's picks (a tile's current question) instead of the recommended ones; onUse then updates in place. */
+  readonly initial?: Draft
 }) {
-  const editor = useEditor<Draft>({ initial: recommendedDraft(tree) })
+  const editor = useEditor<Draft>({ initial: initial ?? recommendedDraft(tree) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const [checked, setChecked] = useState<CheckedQuestion>()
@@ -279,7 +281,7 @@ export function QuestionTree({ tree, catalog, guard, onUse }: {
         <div className="space-y-2" data-testid="question-use-controls">
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid gap-1.5 text-sm">Tile title<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
-            <Button type="button" disabled={!signed || !draft.title.trim()} aria-describedby={!signed ? "question-use-reason" : undefined} onClick={() => onUse(question, draft.title.trim())}>Add to dashboard</Button>
+            <Button type="button" disabled={!signed || !draft.title.trim()} aria-describedby={!signed ? "question-use-reason" : undefined} onClick={() => onUse(question, draft.title.trim())}>{initial ? "Update tile" : "Add to dashboard"}</Button>
           </div>
           {!signed && <p id="question-use-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
         </div>

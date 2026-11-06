@@ -10,10 +10,10 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { list, type Issue } from "@/lib/editor"
 import { cn } from "@/lib/utils"
 import { KindChip } from "@/components/canvas/node-card"
-import { dashboardField, dashboardId, duplicateDashboard, restateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type Restatement, type StoredDashboard, type Tile } from "@/lib/definitions"
+import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type Restatement, type StoredDashboard, type Tile } from "@/lib/definitions"
 import { questionDefinitions } from "@/lib/question-definitions"
-import { QuestionBuilder, draftOf, readCatalog, type QuestionCatalog } from "./builder.tsx"
-import { QuestionTree, readRecommendations } from "./question-tree.tsx"
+import { buildQuestion, draftOf, readCatalog, type QuestionCatalog } from "./builder.tsx"
+import { QuestionTree, readRecommendations, stable } from "./question-tree.tsx"
 import { RunQuestion } from "./run.tsx"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
@@ -194,6 +194,29 @@ function AddTile({ catalog, onUse }: { readonly catalog: QuestionCatalog; readon
 }
 
 const SAVED_QUESTIONS = questionDefinitions()
+/** A digest no text has: offered only to ask a cell without words on admit for its own (it refuses, stating them). */
+const NO_WORDS = "0".repeat(64)
+
+/**
+ * A tile's question in the tree, opened on its current picks. A question the tree cannot express without changing
+ * it is said so, and the tree offers a replacement instead; no other editor is reachable from a dashboard.
+ */
+function EditTile({ tile, catalog, onUse }: { readonly tile: Tile; readonly catalog: QuestionCatalog; readonly onUse: (question: Tile["question"], title: string) => void }) {
+  const tree = useQuery({ queryKey: ["question-tree"], queryFn: readRecommendations, retry: false, staleTime: 60_000 })
+  const draft = draftOf(tile.question, tile.title)
+  const { name: _built, ...rebuilt } = buildQuestion(draft, catalog)
+  const { name: _saved, ...current } = tile.question
+  const fits = stable(rebuilt) === stable(current)
+  if (tree.isLoading) return <p role="status" className="text-sm text-muted-foreground">Reading the question tree…</p>
+  if (tree.isError) return <p role="alert" className="text-destructive">{failure(tree.error)}</p>
+  if (!tree.data) return null
+  return (
+    <div className="space-y-4">
+      {!fits && <p role="status" className="rounded-node border border-node-border bg-card p-3 text-sm shadow-node">This question uses choices the tree does not offer, so it cannot be edited here without changing it. Build its replacement below; the tile keeps its place.</p>}
+      <QuestionTree tree={tree.data} catalog={catalog} {...fits ? { initial: draft } : {}} onUse={(question, title) => onUse(question as Tile["question"], title)} />
+    </div>
+  )
+}
 
 /** One dashboard: title and tiles, each an admitted question with its view. The cell admits and keeps it. */
 export function DashboardEditor({ store, catalog, stored, initial, guard, onSaved, onReload, cellAvailable = true }: {
@@ -212,7 +235,6 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
   // D59 sign-off: the person reads the dashboard in plain words and signs off on exactly those words (by their hash).
   const [words, setWords] = useState<{ readonly key: string; readonly value: Restatement }>()
   const [serverWords, setServerWords] = useState<{ readonly key: string; readonly value: Restatement }>()
-  const [wordsError, setWordsError] = useState<string>()
   const [signOff, setSignOff] = useState<string>()
   const [signoffNote, setSignoffNote] = useState<string>()
   const save = useMutation({
@@ -220,14 +242,18 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
       const id = at?.id ?? dashboardId(dashboard.title)
       return { dashboard, result: await saveDashboard(store, id, dashboard, overwrite ? undefined : at?.version, signed) }
     },
-    onSuccess: ({ dashboard, result }) => {
+    onSuccess: ({ dashboard, result }, { signed: offered }) => {
       setConflict("conflict" in result)
       setFindings("findings" in result ? result.findings : [])
       setSignoffNote(undefined)
       if ("signoff" in result) {
         setSignOff(undefined)
         if (result.signoff === "unavailable") setSignoffNote("The cell cannot verify a sign-off yet. Your dashboard has not been saved.")
-        else if (result.restatement) { setServerWords({ key: JSON.stringify(dashboard), value: result.restatement }); setSignoffNote("The cell reads this dashboard differently. Review its words and sign off again.") }
+        else if (result.restatement) {
+          setServerWords({ key: JSON.stringify(dashboard), value: result.restatement })
+          // Asked for its words (the placeholder digest), the cell stated them: nothing differs, nothing was kept.
+          setSignoffNote(offered === NO_WORDS ? undefined : "The cell reads this dashboard differently. Review its words and sign off again.")
+        }
         else setSignoffNote("The cell rejected these words and sent none of its own. Your dashboard was not saved.")
       }
       if ("saved" in result) { setAt(result.saved); editor.markSaved(dashboard); onSaved?.(result.saved) }
@@ -239,32 +265,37 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
   useEffect(() => { if (initial) set(initial) }, [])
   const key = JSON.stringify(dashboard)
   const complete = dashboard.title.trim() !== "" && dashboard.tiles.length > 0
-  useEffect(() => {
-    if (!complete) return
-    let current = true
-    const timer = setTimeout(() => {
-      restateDashboard(dashboard).then((value) => { if (current) { setWords({ key, value }); setWordsError(undefined) } }, (error: unknown) => { if (current) setWordsError(failure(error)) })
-    }, 300)
-    return () => { current = false; clearTimeout(timer) }
-  }, [key, complete])
   const restated = serverWords?.key === key ? serverWords.value : words?.key === key ? words.value : undefined
   const signedFor = (value: Dashboard) => signOff !== undefined && restated?.sha256 === signOff && JSON.stringify(value) === key
   const signed = signedFor(dashboard)
   // Any edit changes the words, and a sign-off holds only for the exact words signed.
   useEffect(() => { if (signOff !== undefined && restated !== undefined && restated.sha256 !== signOff) setSignOff(undefined) }, [signOff, restated?.sha256])
   // Live validation: the cell's admit is side-effect free, so it runs on every edit (after a pause).
+  // Live validation and the plain words: the cell's admit is side-effect free and, with DEFS' restater, states the
+  // dashboard in its own words. One source: the person signs off on exactly what the cell will recompute.
+  const [checkedKey, setCheckedKey] = useState<string>()
   useEffect(() => {
     if (!cellAvailable || (dashboard.title.trim() === "" && dashboard.tiles.length === 0)) return
+    let current = true
+    const at_ = key
     const timer = setTimeout(() => {
-      store.admit(at?.id ?? dashboardId(dashboard.title), dashboard).then((admission) => setFindings(admission.admitted ? [] : admission.findings), () => {})
+      store.admit(at?.id ?? dashboardId(dashboard.title), dashboard).then((admission) => {
+        if (!current) return
+        setFindings(admission.admitted ? [] : admission.findings)
+        setCheckedKey(at_)
+        if (admission.restatement) setWords({ key: at_, value: admission.restatement })
+      }, () => {})
     }, 400)
-    return () => clearTimeout(timer)
-  }, [store, at?.id, dashboard, cellAvailable])
+    return () => { current = false; clearTimeout(timer) }
+  }, [store, at?.id, key, cellAvailable])
   const tiles = (next: readonly Tile[]) => set((current) => ({ ...current, tiles: layoutTiles(next) }))
   const issues = issuesOfFindings(findings)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const admitted = issues.length === 0
-  const saveBlocked = !complete ? "Give the dashboard a title and at least one question first" : !signed ? "Sign off on the dashboard in plain words first" : undefined
+  // Until the cell states words on admit (DEFS), Save asks for them: it offers a digest no words have, the cell
+  // refuses it as a mismatch and answers with its own words, and those are what the person then signs off on.
+  const askCell = complete && admitted && checkedKey === key && restated === undefined
+  const saveBlocked = !complete ? "Give the dashboard a title and at least one question first" : !signed && !askCell ? "Sign off on the dashboard in plain words first" : undefined
   const use = (question: Tile["question"], title: string) => {
     if (editing === "new") tiles([...dashboard.tiles, { id: crypto.randomUUID(), title, question, view: { kind: "chart", chart: "line" }, layout: { x: 0, y: 0, w: 2, h: 1 } }])
     else if (editing !== undefined) tiles(dashboard.tiles.map((tile, index) => index === editing ? { ...tile, title, question } : tile))
@@ -275,7 +306,7 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
     <div className="space-y-4">
       {guard?.(editor.dirty)}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-node-border bg-card/95 p-1.5 shadow-float">
-        <EditorToolbar editor={editor} onSave={() => signOff && save.mutate({ dashboard, signed: signOff })} saving={save.isPending || !cellAvailable} saveBlocked={saveBlocked} version={at?.version}>
+        <EditorToolbar editor={editor} onSave={() => signed && signOff ? save.mutate({ dashboard, signed: signOff }) : askCell && save.mutate({ dashboard, signed: NO_WORDS })} saving={save.isPending || !cellAvailable} saveBlocked={saveBlocked} version={at?.version}>
           <Button type="button" size="sm" variant="ghost" disabled={dashboard.tiles.length === 0} title="Run every tile's question in the cell" onClick={() => setRuns((n) => n + 1)}><Play />Run all</Button>
         </EditorToolbar>
       </div>
@@ -307,12 +338,12 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
       {complete && (
         <Panel icon={ShieldCheck} className="rounded-node border-node-border shadow-node" label="In plain words" action={restated && <span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span>}>
           <div className="space-y-3 p-2">
-            {wordsError && <p role="alert" className="text-destructive">{wordsError}</p>}
-            {!restated && !wordsError && <p role="status" className="text-sm text-muted-foreground">Stating the dashboard in plain words…</p>}
+            {!restated && !askCell && <p role="status" className="text-sm text-muted-foreground">The cell is checking the dashboard…</p>}
+            {askCell && <p role="status" className="text-sm text-muted-foreground">This cell does not state dashboards in plain words on its check yet. Save asks it for its words; nothing is kept until you sign off on them.</p>}
             {restated && <>
               {serverWords?.key === key && <p className="font-medium">The cell reads your dashboard as:</p>}
               <p className="text-base whitespace-pre-line" data-testid="dashboard-restatement">{restated.text}</p>
-              <p className="text-meta text-muted-foreground">Written from the dashboard's questions by the server, not by the assistant. The cell checks these exact words again when it keeps the dashboard.</p>
+              <p className="text-meta text-muted-foreground">Written by the cell from the dashboard's questions, not by the assistant. It checks these exact words again when it keeps the dashboard.</p>
               <div className="flex flex-wrap items-center gap-3">
                 {signed
                   ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />Signed off: this is the dashboard you mean</span>
@@ -327,9 +358,9 @@ export function DashboardEditor({ store, catalog, stored, initial, guard, onSave
         <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
           <SheetHeader>
             <SheetTitle>{open ? `Edit "${questionTitle(open)}"` : "Add a question"}</SheetTitle>
-            <SheetDescription>{open ? "The server's checker must admit the question before it joins the dashboard." : "Add one you have saved, or build one here; either way the checker admits it and you sign off on its words."}</SheetDescription>
+            <SheetDescription>{open ? "The tree opens on this tile's picks; change them, sign off on the new words and update the tile." : "Add one you have saved, or build one here; either way the checker admits it and you sign off on its words."}</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{editing === "new" ? <AddTile catalog={catalog} onUse={use} /> : editing !== undefined && <QuestionBuilder key={String(editing)} catalog={catalog} initial={open ? draftOf(open.question, open.title) : undefined} onUse={use} />}</div>
+          <div className="p-4">{editing === "new" ? <AddTile catalog={catalog} onUse={use} /> : open && <EditTile key={String(editing)} tile={open} catalog={catalog} onUse={use} />}</div>
         </SheetContent>
       </Sheet>
     </div>

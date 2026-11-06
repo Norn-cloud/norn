@@ -12,7 +12,7 @@ type Admit = (artifactsJson: string, metricsJson: string, questionJson: string) 
 
 interface Property { readonly name: string; readonly kind: string; readonly unit: string | null; readonly values?: readonly string[] }
 interface Metric { readonly name: string; readonly label: string; readonly type: string; readonly type_params?: { readonly expr?: string; readonly numerator?: string; readonly denominator?: string } }
-export interface Question {
+interface Question {
   readonly name?: string
   readonly objectSet?: string | null
   readonly aggregate?: readonly { readonly metric: string }[]

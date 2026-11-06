@@ -1,29 +1,6 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { ANALYTICS } from "../worker/questions.ts"
-import { restate } from "../worker/question-tree.ts"
-import { dashboardsRoute, restateDashboard } from "../worker/dashboards.ts"
 import { cellDefinitions, saveDashboard, sha256, type Dashboard } from "../src/lib/definitions.ts"
-
-const question = ANALYTICS.example as never
-const dashboard = { title: " Refinery weekly ", tiles: [{ title: "Gold yield", question }, { title: "  ", question }] }
-const call = (body: string, method = "POST") => dashboardsRoute(new Request("https://studio.test/api/dashboards/check", method === "POST" ? { method, body } : { method }))
-
-test("a dashboard reads as its title, then each tile by number with its question's words; an untitled tile says so", () => {
-  expect(restateDashboard(dashboard)).toBe(`Refinery weekly\n1. Gold yield: ${restate(question)}\n2. Untitled question: ${restate(question)}`)
-})
-
-test("the check route states the words and their SHA-256, and refuses what is not a dashboard", async () => {
-  const response = await call(JSON.stringify({ dashboard }))
-  expect(response.status).toBe(200)
-  const { restatement } = await response.json() as { restatement: { text: string; sha256: string } }
-  expect(restatement.text).toBe(restateDashboard(dashboard))
-  expect(restatement.sha256).toBe(createHash("sha256").update(restatement.text).digest("hex"))
-  expect((await call("not json")).status).toBe(400)
-  expect((await call(JSON.stringify({ dashboard: { title: "x", tiles: [{ title: "t" }] } }))).status).toBe(400)
-  expect((await call("", "GET")).status).toBe(405)
-  expect((await call(JSON.stringify({ dashboard: { title: "x".repeat(300_000), tiles: [] } }))).status).toBe(413)
-})
 
 const scope = async () => ({ orgId: "org_demo", environmentId: "analytics" })
 const payload: Dashboard = { title: "Refinery weekly", tiles: [] }
@@ -55,3 +32,15 @@ test("reopening reads the sign-off the cell recorded", async () => {
 
 // The digest the stand-in cell sends for its own words.
 function digest(text: string) { return createHash("sha256").update(text).digest("hex") }
+
+test("the cell's check states the dashboard in its own words; words that do not hash as it says are dropped", async () => {
+  const text = "Refinery weekly\n1. Gold yield: the question"
+  let reply: Record<string, unknown> = { admitted: true, diagnostics: [], restatement: text, restatementSha256: digest(text) }
+  const store = cellDefinitions(async () => Response.json(reply), "/api/host", scope)
+  expect(await store.admit("d", payload)).toEqual({ admitted: true, restatement: { text, sha256: digest(text) } })
+  reply = { admitted: true, diagnostics: [], restatement: text, restatementSha256: "e".repeat(64) }
+  expect(await store.admit("d", payload)).toEqual({ admitted: true })
+  // A cell without the restater yet: no words, and the editor asks for them on save instead.
+  reply = { admitted: false, diagnostics: [{ code: "definition.tile_title_invalid", message: "too long", span: { pointer: "/title" } }] }
+  expect(await store.admit("d", payload)).toEqual({ admitted: false, findings: [{ code: "definition.tile_title_invalid", message: "too long", law: null, pointer: "/title" }] })
+})
