@@ -975,8 +975,8 @@ def workflow_context_canaries(source: str) -> None:
                       "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
                       runner.replace("github.event_name == 'pull_request' && ", ""),
-                      runner.replace("vars.NORN_MERGE_RUNNER == 'boat' && ", ""),
-                      runner.replace("vars.NORN_PR_RUNNER == 'boat' && ", ""),
+                      runner.replace(" && vars.NORN_MERGE_RUNNER == 'boat'", ""),
+                      runner.replace(" && vars.NORN_PR_RUNNER == 'boat'", ""),
                       # Fork pull requests must never reach a Boat VM.
                       runner.replace(same_repo, ""),
                       runner.replace(same_repo, "github.event.pull_request.head.repo.fork == false && "),
@@ -994,6 +994,8 @@ def workflow_context_canaries(source: str) -> None:
                 # Rights authority and control jobs stay on hosted runners in every form.
                 unsafe += [runner, merge_only]
             for value in unsafe:
+                if value == workflow["jobs"][name]["runs-on"]:
+                    raise AssertionError(f"{name}: runner mutation is a no-op: {value}")
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)

@@ -546,10 +546,10 @@ mod tests {
             ));
             for removed in [
                 "github.event_name == 'merge_group' && ",
-                "vars.NORN_MERGE_RUNNER == 'boat' && ",
+                " && vars.NORN_MERGE_RUNNER == 'boat'",
                 "github.event_name == 'pull_request' && ",
                 "github.event.pull_request.head.repo.full_name == github.repository && ",
-                "vars.NORN_PR_RUNNER == 'boat' && ",
+                " && vars.NORN_PR_RUNNER == 'boat'",
             ] {
                 let changed = super::BOAT_RUNNER.replace(removed, "");
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
