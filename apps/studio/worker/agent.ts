@@ -10,12 +10,13 @@ export function gatewayModel(gatewayUrl: string, gatewayToken: string, model: st
   const anthropic = createAnthropic({
     baseURL: `${gatewayUrl.replace(/\/compat\/?$/, "")}/anthropic/v1`,
     apiKey: "unused",
-    fetch: (input, init) => {
+    // Typed as the runtime's fetch: with bun's types also loaded (the Worker tests), fetch carries extras this wrapper does not need.
+    fetch: ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const headers = new Headers(init?.headers)
       headers.delete("x-api-key")
       headers.set("cf-aig-authorization", `Bearer ${gatewayToken}`)
       return fetch(input, { ...init, headers })
-    },
+    }) as typeof fetch,
   })
   return anthropic(model)
 }

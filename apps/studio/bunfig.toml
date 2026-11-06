@@ -1,0 +1,3 @@
+[test]
+# Worker modules import the Workers runtime, which bun lacks.
+preload = ["./test/preload.ts"]
