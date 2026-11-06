@@ -47,9 +47,11 @@ jobs:
       # `/approve-gates` comments; the base-owned gate walks the same path in
       # git and decides.
       # Transient GitHub API failures (5xx) are retried with backoff by github-script;
-      # 400, 401, 403, 404 and 422 are never retried. The publication probe re-reads its
-      # own checkpoint up to three times, since a status just written can list late.
-      # Every refusal (policy, ledger, deadline, changed checkpoint) still fails closed.
+      # 400, 401, 403, 404 and 422 are never retried. The publication probe re-reads only
+      # while its own checkpoint has not listed yet (a status just written can list late),
+      # at most three times. Anything it observes is sticky: a changed failure version, its
+      # own row with another digest, or another run's newer row refuses at once, even if a
+      # later listing omits it. Every refusal still fails closed.
       - name: Record admin approvals of the queued heads
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -87,11 +89,17 @@ jobs:
                   if (!row||row.state!=='success'||JSON.parse(row.description).d!==ledger.checkpoint.digest||failure(rows)!==ledger.failure_version)
                     throw new Error('Rights checkpoint changed before publication');
                 }
-                const p=probe.publication;
+                const p=probe.publication, own=`rights-checkpoint/publication/${p.tree_sha}/${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`.toLowerCase();
+                let other=0;
                 for(let read=1;;read++){
                   if(Date.now()>probe.authority_deadline)throw new Error('Rights publication expired');
                   const rows=await statusRows(p.head_sha), row=checkpointRow(rows,p.tree_sha,'publication');
-                  if(row&&row.state==='success'&&JSON.parse(row.description).d===p.digest&&failure(rows)===p.failure_version)return probe;
+                  if(failure(rows)!==p.failure_version)throw new Error('Publication checkpoint changed');
+                  if(row?.context.toLowerCase()===own){
+                    if(row.id>other&&row.state==='success'&&JSON.parse(row.description).d===p.digest)return probe;
+                    throw new Error('Publication checkpoint changed');
+                  }
+                  if(row)other=Math.max(other,row.id);
                   if(read>=3)throw new Error('Publication checkpoint changed');
                   await new Promise(resolve=>setTimeout(resolve,2000*read));
                 }
