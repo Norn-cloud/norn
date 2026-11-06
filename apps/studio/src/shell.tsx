@@ -92,7 +92,7 @@ export function Submenu({ section }: { readonly section: Section }) {
             <SidebarGroupContent>
               <SidebarMenu>
                 {entries.filter((entry) => (entry.group ?? section.label) === group).map((entry) => (
-                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname}><Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
+                  <SidebarMenuItem key={entry.href}><SidebarMenuButton asChild isActive={entry.href === pathname || pathname.startsWith(`${entry.href}/`)}><Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{entry.label}</Link></SidebarMenuButton></SidebarMenuItem>
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
