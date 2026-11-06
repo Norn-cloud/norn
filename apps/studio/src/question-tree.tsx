@@ -99,7 +99,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [saved, setSaved] = useState<{ readonly id: string; readonly version: number }>()
   const [saving, setSaving] = useState(false)
   const [verified, setVerified] = useState(false)
-  const [removed, setRemoved] = useState<{ readonly id: string; readonly version: number; readonly draft: Draft; readonly question: ReturnType<typeof buildQuestion>; readonly sha256: string; readonly revision: object }>()
+  const [removed, setRemoved] = useState<{ readonly id: string; readonly version: number; readonly draft: Draft; readonly question: ReturnType<typeof buildQuestion>; readonly sha256: string }>()
   const [saveError, setSaveError] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [pageCursor, setPageCursor] = useState<string>()
@@ -156,7 +156,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     setSaving(true)
     try {
       const result = await definitions.retire(saved.id, saved.version)
-      setRemoved({ id: saved.id, version: result.version, draft, question, sha256: restated.sha256, revision: editor.revision })
+      setRemoved({ id: saved.id, version: result.version, draft, question, sha256: restated.sha256 })
       setSaved(undefined); setVerified(false); setRefresh((n) => n + 1); setSaveError(undefined)
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
     finally { setSaving(false) }
@@ -203,7 +203,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
         {list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
         {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
-        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" onClick={() => openSaved(item.id)}>Open</Button></div>)}
+        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span>{item.title || item.id} · version {item.version}</span><Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
         {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
         {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
       </Panel>
