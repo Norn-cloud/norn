@@ -12,7 +12,7 @@ export const live = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
+  "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -24,31 +24,23 @@ export const live = {
       "members": {
         "SYN-MELT-00-0": {
           "version": 1,
-          "amounts": [
-            49,
-            50
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-1": {
           "version": 1,
-          "amounts": [
-            55.917,
-            57.071
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-2": {
           "version": 1,
-          "amounts": [
-            62.834,
-            64.142
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-3": {
           "version": 1,
-          "amounts": [
-            69.75,
-            71.213
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -62,31 +54,23 @@ export const live = {
       "members": {
         "SYN-MELT-01-0": {
           "version": 1,
-          "amounts": [
-            49.173,
-            50.193
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-1": {
           "version": 1,
-          "amounts": [
-            56.089,
-            57.264
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-2": {
           "version": 1,
-          "amounts": [
-            63.006,
-            64.335
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-3": {
           "version": 1,
-          "amounts": [
-            69.922,
-            71.406
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -100,31 +84,23 @@ export const live = {
       "members": {
         "SYN-MELT-02-0": {
           "version": 1,
-          "amounts": [
-            49.345,
-            50.386
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-1": {
           "version": 1,
-          "amounts": [
-            56.261,
-            57.457
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-2": {
           "version": 1,
-          "amounts": [
-            63.178,
-            64.528
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-3": {
           "version": 1,
-          "amounts": [
-            70.095,
-            71.599
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -138,31 +114,23 @@ export const live = {
       "members": {
         "SYN-MELT-03-0": {
           "version": 1,
-          "amounts": [
-            49.517,
-            50.579
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-1": {
           "version": 1,
-          "amounts": [
-            56.433,
-            57.65
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-2": {
           "version": 1,
-          "amounts": [
-            63.35,
-            64.721
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-3": {
           "version": 1,
-          "amounts": [
-            70.267,
-            71.792
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -176,31 +144,23 @@ export const live = {
       "members": {
         "SYN-MELT-04-0": {
           "version": 1,
-          "amounts": [
-            49.689,
-            50.772
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-1": {
           "version": 1,
-          "amounts": [
-            56.606,
-            57.843
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-2": {
           "version": 1,
-          "amounts": [
-            63.522,
-            64.914
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-3": {
           "version": 1,
-          "amounts": [
-            70.542,
-            71.985
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -214,31 +174,23 @@ export const live = {
       "members": {
         "SYN-MELT-05-0": {
           "version": 1,
-          "amounts": [
-            49.861,
-            50.965
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-1": {
           "version": 1,
-          "amounts": [
-            55.801,
-            57.039
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-2": {
           "version": 1,
-          "amounts": [
-            62.82,
-            64.11
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-3": {
           "version": 1,
-          "amounts": [
-            69.737,
-            71.181
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -252,31 +204,23 @@ export const live = {
       "members": {
         "SYN-MELT-06-0": {
           "version": 1,
-          "amounts": [
-            49.056,
-            50.161
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-1": {
           "version": 1,
-          "amounts": [
-            56.076,
-            57.232
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-2": {
           "version": 1,
-          "amounts": [
-            62.992,
-            64.303
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-3": {
           "version": 1,
-          "amounts": [
-            69.909,
-            71.374
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -290,31 +234,23 @@ export const live = {
       "members": {
         "SYN-MELT-07-0": {
           "version": 1,
-          "amounts": [
-            49.331,
-            50.354
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-1": {
           "version": 1,
-          "amounts": [
-            56.248,
-            57.425
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-2": {
           "version": 1,
-          "amounts": [
-            63.165,
-            64.496
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-3": {
           "version": 1,
-          "amounts": [
-            70.081,
-            71.567
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -328,31 +264,23 @@ export const live = {
       "members": {
         "SYN-MELT-08-0": {
           "version": 1,
-          "amounts": [
-            49.504,
-            50.547
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-1": {
           "version": 1,
-          "amounts": [
-            56.42,
-            57.618
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-2": {
           "version": 1,
-          "amounts": [
-            63.337,
-            64.689
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-3": {
           "version": 1,
-          "amounts": [
-            70.253,
-            71.76
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -366,31 +294,23 @@ export const live = {
       "members": {
         "SYN-MELT-09-0": {
           "version": 1,
-          "amounts": [
-            49.676,
-            50.74
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-1": {
           "version": 1,
-          "amounts": [
-            56.592,
-            57.811
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-2": {
           "version": 1,
-          "amounts": [
-            63.509,
-            64.882
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-3": {
           "version": 1,
-          "amounts": [
-            70.425,
-            71.953
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -404,31 +324,23 @@ export const live = {
       "members": {
         "SYN-MELT-10-0": {
           "version": 1,
-          "amounts": [
-            49.848,
-            50.933
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-1": {
           "version": 1,
-          "amounts": [
-            55.787,
-            57.007
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-2": {
           "version": 1,
-          "amounts": [
-            62.704,
-            64.078
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-3": {
           "version": 1,
-          "amounts": [
-            69.724,
-            71.149
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -442,31 +354,23 @@ export const live = {
       "members": {
         "SYN-MELT-11-0": {
           "version": 1,
-          "amounts": [
-            49.043,
-            50.129
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-1": {
           "version": 1,
-          "amounts": [
-            55.959,
-            57.2
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-2": {
           "version": 1,
-          "amounts": [
-            62.979,
-            64.271
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-3": {
           "version": 1,
-          "amounts": [
-            69.896,
-            71.342
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -480,31 +384,23 @@ export const live = {
       "members": {
         "SYN-MELT-12-0": {
           "version": 1,
-          "amounts": [
-            49.215,
-            50.322
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-1": {
           "version": 1,
-          "amounts": [
-            56.235,
-            57.393
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-2": {
           "version": 1,
-          "amounts": [
-            63.151,
-            64.464
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-3": {
           "version": 1,
-          "amounts": [
-            70.068,
-            71.535
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -518,31 +414,23 @@ export const live = {
       "members": {
         "SYN-MELT-13-0": {
           "version": 1,
-          "amounts": [
-            49.49,
-            50.515
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-1": {
           "version": 1,
-          "amounts": [
-            56.407,
-            57.586
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-2": {
           "version": 1,
-          "amounts": [
-            63.323,
-            64.657
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-3": {
           "version": 1,
-          "amounts": [
-            70.24,
-            71.728
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -556,31 +444,23 @@ export const live = {
       "members": {
         "SYN-MELT-14-0": {
           "version": 1,
-          "amounts": [
-            49.662,
-            50.708
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-1": {
           "version": 1,
-          "amounts": [
-            56.579,
-            57.779
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-2": {
           "version": 1,
-          "amounts": [
-            63.495,
-            64.85
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-3": {
           "version": 1,
-          "amounts": [
-            70.412,
-            71.921
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -594,31 +474,23 @@ export const live = {
       "members": {
         "SYN-MELT-15-0": {
           "version": 1,
-          "amounts": [
-            58.8,
-            60
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-1": {
           "version": 1,
-          "amounts": [
-            73.5,
-            75
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-2": {
           "version": 1,
-          "amounts": [
-            78.4,
-            80
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-3": {
           "version": 1,
-          "amounts": [
-            83.3,
-            85
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     }
@@ -659,7 +531,7 @@ export const fresh = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "645c52fdff038aabb52662030ad90c6b357a2012242bdd33537bb4ec236b7298",
+  "lineageRef": "c371dfcfdfebbc2fde11abf5854c6227fd72ec579af9253437cf7e9e84fa826a",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -671,31 +543,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-00-0": {
           "version": 1,
-          "amounts": [
-            49,
-            50
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-1": {
           "version": 1,
-          "amounts": [
-            55.917,
-            57.071
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-2": {
           "version": 1,
-          "amounts": [
-            62.834,
-            64.142
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-3": {
           "version": 1,
-          "amounts": [
-            69.75,
-            71.213
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -709,31 +573,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-01-0": {
           "version": 1,
-          "amounts": [
-            49.173,
-            50.193
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-1": {
           "version": 1,
-          "amounts": [
-            56.089,
-            57.264
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-2": {
           "version": 1,
-          "amounts": [
-            63.006,
-            64.335
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-3": {
           "version": 1,
-          "amounts": [
-            69.922,
-            71.406
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -747,31 +603,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-02-0": {
           "version": 1,
-          "amounts": [
-            49.345,
-            50.386
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-1": {
           "version": 1,
-          "amounts": [
-            56.261,
-            57.457
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-2": {
           "version": 1,
-          "amounts": [
-            63.178,
-            64.528
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-3": {
           "version": 1,
-          "amounts": [
-            70.095,
-            71.599
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -785,31 +633,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-03-0": {
           "version": 1,
-          "amounts": [
-            49.517,
-            50.579
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-1": {
           "version": 1,
-          "amounts": [
-            56.433,
-            57.65
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-2": {
           "version": 1,
-          "amounts": [
-            63.35,
-            64.721
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-3": {
           "version": 1,
-          "amounts": [
-            70.267,
-            71.792
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -823,31 +663,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-04-0": {
           "version": 1,
-          "amounts": [
-            49.689,
-            50.772
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-1": {
           "version": 1,
-          "amounts": [
-            56.606,
-            57.843
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-2": {
           "version": 1,
-          "amounts": [
-            63.522,
-            64.914
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-3": {
           "version": 1,
-          "amounts": [
-            70.542,
-            71.985
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -861,31 +693,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-05-0": {
           "version": 1,
-          "amounts": [
-            49.861,
-            50.965
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-1": {
           "version": 1,
-          "amounts": [
-            55.801,
-            57.039
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-2": {
           "version": 1,
-          "amounts": [
-            62.82,
-            64.11
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-3": {
           "version": 1,
-          "amounts": [
-            69.737,
-            71.181
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -899,31 +723,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-06-0": {
           "version": 1,
-          "amounts": [
-            49.056,
-            50.161
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-1": {
           "version": 1,
-          "amounts": [
-            56.076,
-            57.232
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-2": {
           "version": 1,
-          "amounts": [
-            62.992,
-            64.303
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-3": {
           "version": 1,
-          "amounts": [
-            69.909,
-            71.374
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -937,31 +753,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-07-0": {
           "version": 1,
-          "amounts": [
-            49.331,
-            50.354
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-1": {
           "version": 1,
-          "amounts": [
-            56.248,
-            57.425
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-2": {
           "version": 1,
-          "amounts": [
-            63.165,
-            64.496
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-3": {
           "version": 1,
-          "amounts": [
-            70.081,
-            71.567
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -975,31 +783,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-08-0": {
           "version": 1,
-          "amounts": [
-            49.504,
-            50.547
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-1": {
           "version": 1,
-          "amounts": [
-            56.42,
-            57.618
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-2": {
           "version": 1,
-          "amounts": [
-            63.337,
-            64.689
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-3": {
           "version": 1,
-          "amounts": [
-            70.253,
-            71.76
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1013,31 +813,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-09-0": {
           "version": 1,
-          "amounts": [
-            49.676,
-            50.74
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-1": {
           "version": 1,
-          "amounts": [
-            56.592,
-            57.811
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-2": {
           "version": 1,
-          "amounts": [
-            63.509,
-            64.882
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-3": {
           "version": 1,
-          "amounts": [
-            70.425,
-            71.953
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1051,31 +843,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-10-0": {
           "version": 1,
-          "amounts": [
-            49.848,
-            50.933
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-1": {
           "version": 1,
-          "amounts": [
-            55.787,
-            57.007
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-2": {
           "version": 1,
-          "amounts": [
-            62.704,
-            64.078
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-3": {
           "version": 1,
-          "amounts": [
-            69.724,
-            71.149
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1089,31 +873,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-11-0": {
           "version": 1,
-          "amounts": [
-            49.043,
-            50.129
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-1": {
           "version": 1,
-          "amounts": [
-            55.959,
-            57.2
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-2": {
           "version": 1,
-          "amounts": [
-            62.979,
-            64.271
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-3": {
           "version": 1,
-          "amounts": [
-            69.896,
-            71.342
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1127,31 +903,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-12-0": {
           "version": 1,
-          "amounts": [
-            49.215,
-            50.322
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-1": {
           "version": 1,
-          "amounts": [
-            56.235,
-            57.393
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-2": {
           "version": 1,
-          "amounts": [
-            63.151,
-            64.464
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-3": {
           "version": 1,
-          "amounts": [
-            70.068,
-            71.535
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1165,31 +933,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-13-0": {
           "version": 1,
-          "amounts": [
-            49.49,
-            50.515
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-1": {
           "version": 1,
-          "amounts": [
-            56.407,
-            57.586
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-2": {
           "version": 1,
-          "amounts": [
-            63.323,
-            64.657
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-3": {
           "version": 1,
-          "amounts": [
-            70.24,
-            71.728
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1203,31 +963,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-14-0": {
           "version": 1,
-          "amounts": [
-            49.662,
-            50.708
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-1": {
           "version": 1,
-          "amounts": [
-            56.579,
-            57.779
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-2": {
           "version": 1,
-          "amounts": [
-            63.495,
-            64.85
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-3": {
           "version": 1,
-          "amounts": [
-            70.412,
-            71.921
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1241,31 +993,23 @@ export const fresh = {
       "members": {
         "SYN-MELT-15-0": {
           "version": 1,
-          "amounts": [
-            58.8,
-            60
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-1": {
           "version": 1,
-          "amounts": [
-            73.5,
-            75
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-2": {
           "version": 1,
-          "amounts": [
-            78.4,
-            80
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-3": {
           "version": 1,
-          "amounts": [
-            83.3,
-            85
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     }
@@ -1306,7 +1050,7 @@ export const stale = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "8809478ef359d407386bb00a53eb7bdeb5aa03f4c35eb1df0305324210a94693",
+  "lineageRef": "09f9f082602182b351b6145a9d1a9c274a1edf50e69ff886d9a13a6cec5d360a",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1318,31 +1062,23 @@ export const stale = {
       "members": {
         "SYN-MELT-00-0": {
           "version": 1,
-          "amounts": [
-            49,
-            50
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-1": {
           "version": 1,
-          "amounts": [
-            55.917,
-            57.071
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-2": {
           "version": 1,
-          "amounts": [
-            62.834,
-            64.142
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-3": {
           "version": 1,
-          "amounts": [
-            69.75,
-            71.213
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1356,31 +1092,23 @@ export const stale = {
       "members": {
         "SYN-MELT-01-0": {
           "version": 1,
-          "amounts": [
-            49.173,
-            50.193
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-1": {
           "version": 1,
-          "amounts": [
-            56.089,
-            57.264
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-2": {
           "version": 1,
-          "amounts": [
-            63.006,
-            64.335
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-3": {
           "version": 1,
-          "amounts": [
-            69.922,
-            71.406
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1394,31 +1122,23 @@ export const stale = {
       "members": {
         "SYN-MELT-02-0": {
           "version": 1,
-          "amounts": [
-            49.345,
-            50.386
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-1": {
           "version": 1,
-          "amounts": [
-            56.261,
-            57.457
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-2": {
           "version": 1,
-          "amounts": [
-            63.178,
-            64.528
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-3": {
           "version": 1,
-          "amounts": [
-            70.095,
-            71.599
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1432,31 +1152,23 @@ export const stale = {
       "members": {
         "SYN-MELT-03-0": {
           "version": 1,
-          "amounts": [
-            49.517,
-            50.579
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-1": {
           "version": 1,
-          "amounts": [
-            56.433,
-            57.65
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-2": {
           "version": 1,
-          "amounts": [
-            63.35,
-            64.721
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-3": {
           "version": 1,
-          "amounts": [
-            70.267,
-            71.792
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1470,31 +1182,23 @@ export const stale = {
       "members": {
         "SYN-MELT-04-0": {
           "version": 1,
-          "amounts": [
-            49.689,
-            50.772
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-1": {
           "version": 1,
-          "amounts": [
-            56.606,
-            57.843
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-2": {
           "version": 1,
-          "amounts": [
-            63.522,
-            64.914
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-3": {
           "version": 1,
-          "amounts": [
-            70.542,
-            71.985
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1508,31 +1212,23 @@ export const stale = {
       "members": {
         "SYN-MELT-05-0": {
           "version": 1,
-          "amounts": [
-            49.861,
-            50.965
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-1": {
           "version": 1,
-          "amounts": [
-            55.801,
-            57.039
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-2": {
           "version": 1,
-          "amounts": [
-            62.82,
-            64.11
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-3": {
           "version": 1,
-          "amounts": [
-            69.737,
-            71.181
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1546,31 +1242,23 @@ export const stale = {
       "members": {
         "SYN-MELT-06-0": {
           "version": 1,
-          "amounts": [
-            49.056,
-            50.161
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-1": {
           "version": 1,
-          "amounts": [
-            56.076,
-            57.232
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-2": {
           "version": 1,
-          "amounts": [
-            62.992,
-            64.303
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-3": {
           "version": 1,
-          "amounts": [
-            69.909,
-            71.374
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1584,31 +1272,23 @@ export const stale = {
       "members": {
         "SYN-MELT-07-0": {
           "version": 1,
-          "amounts": [
-            49.331,
-            50.354
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-1": {
           "version": 1,
-          "amounts": [
-            56.248,
-            57.425
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-2": {
           "version": 1,
-          "amounts": [
-            63.165,
-            64.496
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-3": {
           "version": 1,
-          "amounts": [
-            70.081,
-            71.567
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1622,31 +1302,23 @@ export const stale = {
       "members": {
         "SYN-MELT-08-0": {
           "version": 1,
-          "amounts": [
-            49.504,
-            50.547
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-1": {
           "version": 1,
-          "amounts": [
-            56.42,
-            57.618
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-2": {
           "version": 1,
-          "amounts": [
-            63.337,
-            64.689
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-3": {
           "version": 1,
-          "amounts": [
-            70.253,
-            71.76
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1660,31 +1332,23 @@ export const stale = {
       "members": {
         "SYN-MELT-09-0": {
           "version": 1,
-          "amounts": [
-            49.676,
-            50.74
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-1": {
           "version": 1,
-          "amounts": [
-            56.592,
-            57.811
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-2": {
           "version": 1,
-          "amounts": [
-            63.509,
-            64.882
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-3": {
           "version": 1,
-          "amounts": [
-            70.425,
-            71.953
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1698,31 +1362,23 @@ export const stale = {
       "members": {
         "SYN-MELT-10-0": {
           "version": 1,
-          "amounts": [
-            49.848,
-            50.933
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-1": {
           "version": 1,
-          "amounts": [
-            55.787,
-            57.007
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-2": {
           "version": 1,
-          "amounts": [
-            62.704,
-            64.078
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-3": {
           "version": 1,
-          "amounts": [
-            69.724,
-            71.149
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1736,31 +1392,23 @@ export const stale = {
       "members": {
         "SYN-MELT-11-0": {
           "version": 1,
-          "amounts": [
-            49.043,
-            50.129
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-1": {
           "version": 1,
-          "amounts": [
-            55.959,
-            57.2
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-2": {
           "version": 1,
-          "amounts": [
-            62.979,
-            64.271
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-3": {
           "version": 1,
-          "amounts": [
-            69.896,
-            71.342
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1774,31 +1422,23 @@ export const stale = {
       "members": {
         "SYN-MELT-12-0": {
           "version": 1,
-          "amounts": [
-            49.215,
-            50.322
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-1": {
           "version": 1,
-          "amounts": [
-            56.235,
-            57.393
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-2": {
           "version": 1,
-          "amounts": [
-            63.151,
-            64.464
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-3": {
           "version": 1,
-          "amounts": [
-            70.068,
-            71.535
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1812,31 +1452,23 @@ export const stale = {
       "members": {
         "SYN-MELT-13-0": {
           "version": 1,
-          "amounts": [
-            49.49,
-            50.515
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-1": {
           "version": 1,
-          "amounts": [
-            56.407,
-            57.586
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-2": {
           "version": 1,
-          "amounts": [
-            63.323,
-            64.657
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-3": {
           "version": 1,
-          "amounts": [
-            70.24,
-            71.728
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1850,31 +1482,23 @@ export const stale = {
       "members": {
         "SYN-MELT-14-0": {
           "version": 1,
-          "amounts": [
-            49.662,
-            50.708
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-1": {
           "version": 1,
-          "amounts": [
-            56.579,
-            57.779
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-2": {
           "version": 1,
-          "amounts": [
-            63.495,
-            64.85
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-3": {
           "version": 1,
-          "amounts": [
-            70.412,
-            71.921
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -1888,31 +1512,23 @@ export const stale = {
       "members": {
         "SYN-MELT-15-0": {
           "version": 1,
-          "amounts": [
-            58.8,
-            60
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-1": {
           "version": 1,
-          "amounts": [
-            73.5,
-            75
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-2": {
           "version": 1,
-          "amounts": [
-            78.4,
-            80
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-3": {
           "version": 1,
-          "amounts": [
-            83.3,
-            85
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     }
@@ -1953,7 +1569,7 @@ export const incomplete = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "8b93ec88129f67afd054b3df19b836c28a511773bf9698a80f416f12cd758fdd",
+  "lineageRef": "1fd7dab408a988ab73cdb6a6ccd959ff7c4ad9b402cdc82e3e0ea8c6c2cd1e88",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1965,31 +1581,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-00-0": {
           "version": 1,
-          "amounts": [
-            49,
-            50
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-1": {
           "version": 1,
-          "amounts": [
-            55.917,
-            57.071
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-2": {
           "version": 1,
-          "amounts": [
-            62.834,
-            64.142
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-00-3": {
           "version": 1,
-          "amounts": [
-            69.75,
-            71.213
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2003,31 +1611,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-01-0": {
           "version": 1,
-          "amounts": [
-            49.173,
-            50.193
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-1": {
           "version": 1,
-          "amounts": [
-            56.089,
-            57.264
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-2": {
           "version": 1,
-          "amounts": [
-            63.006,
-            64.335
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-01-3": {
           "version": 1,
-          "amounts": [
-            69.922,
-            71.406
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2041,31 +1641,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-02-0": {
           "version": 1,
-          "amounts": [
-            49.345,
-            50.386
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-1": {
           "version": 1,
-          "amounts": [
-            56.261,
-            57.457
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-2": {
           "version": 1,
-          "amounts": [
-            63.178,
-            64.528
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-02-3": {
           "version": 1,
-          "amounts": [
-            70.095,
-            71.599
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2079,31 +1671,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-03-0": {
           "version": 1,
-          "amounts": [
-            49.517,
-            50.579
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-1": {
           "version": 1,
-          "amounts": [
-            56.433,
-            57.65
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-2": {
           "version": 1,
-          "amounts": [
-            63.35,
-            64.721
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-03-3": {
           "version": 1,
-          "amounts": [
-            70.267,
-            71.792
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2117,31 +1701,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-04-0": {
           "version": 1,
-          "amounts": [
-            49.689,
-            50.772
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-1": {
           "version": 1,
-          "amounts": [
-            56.606,
-            57.843
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-2": {
           "version": 1,
-          "amounts": [
-            63.522,
-            64.914
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-04-3": {
           "version": 1,
-          "amounts": [
-            70.542,
-            71.985
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2155,31 +1731,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-05-0": {
           "version": 1,
-          "amounts": [
-            49.861,
-            50.965
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-1": {
           "version": 1,
-          "amounts": [
-            55.801,
-            57.039
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-2": {
           "version": 1,
-          "amounts": [
-            62.82,
-            64.11
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-05-3": {
           "version": 1,
-          "amounts": [
-            69.737,
-            71.181
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2193,31 +1761,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-06-0": {
           "version": 1,
-          "amounts": [
-            49.056,
-            50.161
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-1": {
           "version": 1,
-          "amounts": [
-            56.076,
-            57.232
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-2": {
           "version": 1,
-          "amounts": [
-            62.992,
-            64.303
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-06-3": {
           "version": 1,
-          "amounts": [
-            69.909,
-            71.374
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2231,31 +1791,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-07-0": {
           "version": 1,
-          "amounts": [
-            49.331,
-            50.354
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-1": {
           "version": 1,
-          "amounts": [
-            56.248,
-            57.425
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-2": {
           "version": 1,
-          "amounts": [
-            63.165,
-            64.496
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-07-3": {
           "version": 1,
-          "amounts": [
-            70.081,
-            71.567
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2269,31 +1821,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-08-0": {
           "version": 1,
-          "amounts": [
-            49.504,
-            50.547
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-1": {
           "version": 1,
-          "amounts": [
-            56.42,
-            57.618
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-2": {
           "version": 1,
-          "amounts": [
-            63.337,
-            64.689
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-08-3": {
           "version": 1,
-          "amounts": [
-            70.253,
-            71.76
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2307,31 +1851,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-09-0": {
           "version": 1,
-          "amounts": [
-            49.676,
-            50.74
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-1": {
           "version": 1,
-          "amounts": [
-            56.592,
-            57.811
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-2": {
           "version": 1,
-          "amounts": [
-            63.509,
-            64.882
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-09-3": {
           "version": 1,
-          "amounts": [
-            70.425,
-            71.953
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2345,31 +1881,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-10-0": {
           "version": 1,
-          "amounts": [
-            49.848,
-            50.933
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-1": {
           "version": 1,
-          "amounts": [
-            55.787,
-            57.007
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-2": {
           "version": 1,
-          "amounts": [
-            62.704,
-            64.078
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-10-3": {
           "version": 1,
-          "amounts": [
-            69.724,
-            71.149
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2383,31 +1911,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-11-0": {
           "version": 1,
-          "amounts": [
-            49.043,
-            50.129
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-1": {
           "version": 1,
-          "amounts": [
-            55.959,
-            57.2
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-2": {
           "version": 1,
-          "amounts": [
-            62.979,
-            64.271
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-11-3": {
           "version": 1,
-          "amounts": [
-            69.896,
-            71.342
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2421,31 +1941,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-12-0": {
           "version": 1,
-          "amounts": [
-            49.215,
-            50.322
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-1": {
           "version": 1,
-          "amounts": [
-            56.235,
-            57.393
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-2": {
           "version": 1,
-          "amounts": [
-            63.151,
-            64.464
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-12-3": {
           "version": 1,
-          "amounts": [
-            70.068,
-            71.535
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2459,31 +1971,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-13-0": {
           "version": 1,
-          "amounts": [
-            49.49,
-            50.515
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-1": {
           "version": 1,
-          "amounts": [
-            56.407,
-            57.586
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-2": {
           "version": 1,
-          "amounts": [
-            63.323,
-            64.657
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-13-3": {
           "version": 1,
-          "amounts": [
-            70.24,
-            71.728
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2497,31 +2001,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-14-0": {
           "version": 1,
-          "amounts": [
-            49.662,
-            50.708
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-1": {
           "version": 1,
-          "amounts": [
-            56.579,
-            57.779
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-2": {
           "version": 1,
-          "amounts": [
-            63.495,
-            64.85
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-14-3": {
           "version": 1,
-          "amounts": [
-            70.412,
-            71.921
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     },
@@ -2535,31 +2031,23 @@ export const incomplete = {
       "members": {
         "SYN-MELT-15-0": {
           "version": 1,
-          "amounts": [
-            58.8,
-            60
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-1": {
           "version": 1,
-          "amounts": [
-            73.5,
-            75
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-2": {
           "version": 1,
-          "amounts": [
-            78.4,
-            80
-          ]
+          "amounts": null,
+          "restricted": true
         },
         "SYN-MELT-15-3": {
           "version": 1,
-          "amounts": [
-            83.3,
-            85
-          ]
+          "amounts": null,
+          "restricted": true
         }
       }
     }
@@ -2607,7 +2095,7 @@ export const historical = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "44bd6ceb2a9f22654caaab35a4b15b53a56c8bc13905ac923015631b4bddae9f",
+    "lineageRef": "6d034fdd2ce30f4590c791e72524f47ee0e562c2ee0b1b57548a3fefdc0f5916",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -2619,31 +2107,23 @@ export const historical = {
         "members": {
           "SYN-MELT-00-0": {
             "version": 1,
-            "amounts": [
-              49,
-              50
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-1": {
             "version": 1,
-            "amounts": [
-              55.917,
-              57.071
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-2": {
             "version": 1,
-            "amounts": [
-              62.834,
-              64.142
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-3": {
             "version": 1,
-            "amounts": [
-              69.75,
-              71.213
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2657,31 +2137,23 @@ export const historical = {
         "members": {
           "SYN-MELT-01-0": {
             "version": 1,
-            "amounts": [
-              49.173,
-              50.193
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-1": {
             "version": 1,
-            "amounts": [
-              56.089,
-              57.264
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-2": {
             "version": 1,
-            "amounts": [
-              63.006,
-              64.335
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-3": {
             "version": 1,
-            "amounts": [
-              69.922,
-              71.406
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2695,31 +2167,23 @@ export const historical = {
         "members": {
           "SYN-MELT-02-0": {
             "version": 1,
-            "amounts": [
-              49.345,
-              50.386
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-1": {
             "version": 1,
-            "amounts": [
-              56.261,
-              57.457
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-2": {
             "version": 1,
-            "amounts": [
-              63.178,
-              64.528
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-3": {
             "version": 1,
-            "amounts": [
-              70.095,
-              71.599
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2733,31 +2197,23 @@ export const historical = {
         "members": {
           "SYN-MELT-03-0": {
             "version": 1,
-            "amounts": [
-              49.517,
-              50.579
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-1": {
             "version": 1,
-            "amounts": [
-              56.433,
-              57.65
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-2": {
             "version": 1,
-            "amounts": [
-              63.35,
-              64.721
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-3": {
             "version": 1,
-            "amounts": [
-              70.267,
-              71.792
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2771,31 +2227,23 @@ export const historical = {
         "members": {
           "SYN-MELT-04-0": {
             "version": 1,
-            "amounts": [
-              49.689,
-              50.772
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-1": {
             "version": 1,
-            "amounts": [
-              56.606,
-              57.843
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-2": {
             "version": 1,
-            "amounts": [
-              63.522,
-              64.914
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-3": {
             "version": 1,
-            "amounts": [
-              70.542,
-              71.985
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2809,31 +2257,23 @@ export const historical = {
         "members": {
           "SYN-MELT-05-0": {
             "version": 1,
-            "amounts": [
-              49.861,
-              50.965
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-1": {
             "version": 1,
-            "amounts": [
-              55.801,
-              57.039
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-2": {
             "version": 1,
-            "amounts": [
-              62.82,
-              64.11
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-3": {
             "version": 1,
-            "amounts": [
-              69.737,
-              71.181
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2847,31 +2287,23 @@ export const historical = {
         "members": {
           "SYN-MELT-06-0": {
             "version": 1,
-            "amounts": [
-              49.056,
-              50.161
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-1": {
             "version": 1,
-            "amounts": [
-              56.076,
-              57.232
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-2": {
             "version": 1,
-            "amounts": [
-              62.992,
-              64.303
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-3": {
             "version": 1,
-            "amounts": [
-              69.909,
-              71.374
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2885,31 +2317,23 @@ export const historical = {
         "members": {
           "SYN-MELT-07-0": {
             "version": 1,
-            "amounts": [
-              49.331,
-              50.354
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-1": {
             "version": 1,
-            "amounts": [
-              56.248,
-              57.425
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-2": {
             "version": 1,
-            "amounts": [
-              63.165,
-              64.496
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-3": {
             "version": 1,
-            "amounts": [
-              70.081,
-              71.567
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2923,31 +2347,23 @@ export const historical = {
         "members": {
           "SYN-MELT-08-0": {
             "version": 1,
-            "amounts": [
-              49.504,
-              50.547
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-1": {
             "version": 1,
-            "amounts": [
-              56.42,
-              57.618
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-2": {
             "version": 1,
-            "amounts": [
-              63.337,
-              64.689
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-3": {
             "version": 1,
-            "amounts": [
-              70.253,
-              71.76
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2961,31 +2377,23 @@ export const historical = {
         "members": {
           "SYN-MELT-09-0": {
             "version": 1,
-            "amounts": [
-              49.676,
-              50.74
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-1": {
             "version": 1,
-            "amounts": [
-              56.592,
-              57.811
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-2": {
             "version": 1,
-            "amounts": [
-              63.509,
-              64.882
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-3": {
             "version": 1,
-            "amounts": [
-              70.425,
-              71.953
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -2999,31 +2407,23 @@ export const historical = {
         "members": {
           "SYN-MELT-10-0": {
             "version": 1,
-            "amounts": [
-              49.848,
-              50.933
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-1": {
             "version": 1,
-            "amounts": [
-              55.787,
-              57.007
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-2": {
             "version": 1,
-            "amounts": [
-              62.704,
-              64.078
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-3": {
             "version": 1,
-            "amounts": [
-              69.724,
-              71.149
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3037,31 +2437,23 @@ export const historical = {
         "members": {
           "SYN-MELT-11-0": {
             "version": 1,
-            "amounts": [
-              49.043,
-              50.129
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-1": {
             "version": 1,
-            "amounts": [
-              55.959,
-              57.2
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-2": {
             "version": 1,
-            "amounts": [
-              62.979,
-              64.271
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-3": {
             "version": 1,
-            "amounts": [
-              69.896,
-              71.342
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3075,31 +2467,23 @@ export const historical = {
         "members": {
           "SYN-MELT-12-0": {
             "version": 1,
-            "amounts": [
-              49.215,
-              50.322
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-1": {
             "version": 1,
-            "amounts": [
-              56.235,
-              57.393
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-2": {
             "version": 1,
-            "amounts": [
-              63.151,
-              64.464
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-3": {
             "version": 1,
-            "amounts": [
-              70.068,
-              71.535
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3113,31 +2497,23 @@ export const historical = {
         "members": {
           "SYN-MELT-13-0": {
             "version": 1,
-            "amounts": [
-              49.49,
-              50.515
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-1": {
             "version": 1,
-            "amounts": [
-              56.407,
-              57.586
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-2": {
             "version": 1,
-            "amounts": [
-              63.323,
-              64.657
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-3": {
             "version": 1,
-            "amounts": [
-              70.24,
-              71.728
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3151,31 +2527,23 @@ export const historical = {
         "members": {
           "SYN-MELT-14-0": {
             "version": 1,
-            "amounts": [
-              49.662,
-              50.708
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-1": {
             "version": 1,
-            "amounts": [
-              56.579,
-              57.779
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-2": {
             "version": 1,
-            "amounts": [
-              63.495,
-              64.85
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-3": {
             "version": 1,
-            "amounts": [
-              70.412,
-              71.921
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3189,31 +2557,23 @@ export const historical = {
         "members": {
           "SYN-MELT-15-0": {
             "version": 1,
-            "amounts": [
-              58.8,
-              60
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-1": {
             "version": 1,
-            "amounts": [
-              73.5,
-              75
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-2": {
             "version": 1,
-            "amounts": [
-              78.4,
-              80
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-3": {
             "version": 1,
-            "amounts": [
-              83.3,
-              85
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       }
@@ -3256,7 +2616,7 @@ export const restricted_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "61546e44902c55d5c9b430daf06409f1ac25375cf37a347306be669d76b92767",
+    "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3268,31 +2628,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-00-0": {
             "version": 1,
-            "amounts": [
-              49,
-              50
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-1": {
             "version": 1,
-            "amounts": [
-              55.917,
-              57.071
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-2": {
             "version": 1,
-            "amounts": [
-              62.834,
-              64.142
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-00-3": {
             "version": 1,
-            "amounts": [
-              69.75,
-              71.213
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3306,31 +2658,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-01-0": {
             "version": 1,
-            "amounts": [
-              49.173,
-              50.193
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-1": {
             "version": 1,
-            "amounts": [
-              56.089,
-              57.264
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-2": {
             "version": 1,
-            "amounts": [
-              63.006,
-              64.335
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-01-3": {
             "version": 1,
-            "amounts": [
-              69.922,
-              71.406
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3344,31 +2688,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-02-0": {
             "version": 1,
-            "amounts": [
-              49.345,
-              50.386
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-1": {
             "version": 1,
-            "amounts": [
-              56.261,
-              57.457
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-2": {
             "version": 1,
-            "amounts": [
-              63.178,
-              64.528
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-02-3": {
             "version": 1,
-            "amounts": [
-              70.095,
-              71.599
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3382,31 +2718,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-03-0": {
             "version": 1,
-            "amounts": [
-              49.517,
-              50.579
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-1": {
             "version": 1,
-            "amounts": [
-              56.433,
-              57.65
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-2": {
             "version": 1,
-            "amounts": [
-              63.35,
-              64.721
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-03-3": {
             "version": 1,
-            "amounts": [
-              70.267,
-              71.792
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3420,31 +2748,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-04-0": {
             "version": 1,
-            "amounts": [
-              49.689,
-              50.772
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-1": {
             "version": 1,
-            "amounts": [
-              56.606,
-              57.843
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-2": {
             "version": 1,
-            "amounts": [
-              63.522,
-              64.914
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-04-3": {
             "version": 1,
-            "amounts": [
-              70.542,
-              71.985
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3458,31 +2778,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-05-0": {
             "version": 1,
-            "amounts": [
-              49.861,
-              50.965
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-1": {
             "version": 1,
-            "amounts": [
-              55.801,
-              57.039
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-2": {
             "version": 1,
-            "amounts": [
-              62.82,
-              64.11
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-05-3": {
             "version": 1,
-            "amounts": [
-              69.737,
-              71.181
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3496,31 +2808,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-06-0": {
             "version": 1,
-            "amounts": [
-              49.056,
-              50.161
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-1": {
             "version": 1,
-            "amounts": [
-              56.076,
-              57.232
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-2": {
             "version": 1,
-            "amounts": [
-              62.992,
-              64.303
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-06-3": {
             "version": 1,
-            "amounts": [
-              69.909,
-              71.374
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3534,31 +2838,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-07-0": {
             "version": 1,
-            "amounts": [
-              49.331,
-              50.354
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-1": {
             "version": 1,
-            "amounts": [
-              56.248,
-              57.425
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-2": {
             "version": 1,
-            "amounts": [
-              63.165,
-              64.496
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-07-3": {
             "version": 1,
-            "amounts": [
-              70.081,
-              71.567
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3572,31 +2868,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-08-0": {
             "version": 1,
-            "amounts": [
-              49.504,
-              50.547
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-1": {
             "version": 1,
-            "amounts": [
-              56.42,
-              57.618
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-2": {
             "version": 1,
-            "amounts": [
-              63.337,
-              64.689
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-08-3": {
             "version": 1,
-            "amounts": [
-              70.253,
-              71.76
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3610,31 +2898,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-09-0": {
             "version": 1,
-            "amounts": [
-              49.676,
-              50.74
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-1": {
             "version": 1,
-            "amounts": [
-              56.592,
-              57.811
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-2": {
             "version": 1,
-            "amounts": [
-              63.509,
-              64.882
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-09-3": {
             "version": 1,
-            "amounts": [
-              70.425,
-              71.953
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3648,31 +2928,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-10-0": {
             "version": 1,
-            "amounts": [
-              49.848,
-              50.933
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-1": {
             "version": 1,
-            "amounts": [
-              55.787,
-              57.007
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-2": {
             "version": 1,
-            "amounts": [
-              62.704,
-              64.078
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-10-3": {
             "version": 1,
-            "amounts": [
-              69.724,
-              71.149
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3686,31 +2958,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-11-0": {
             "version": 1,
-            "amounts": [
-              49.043,
-              50.129
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-1": {
             "version": 1,
-            "amounts": [
-              55.959,
-              57.2
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-2": {
             "version": 1,
-            "amounts": [
-              62.979,
-              64.271
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-11-3": {
             "version": 1,
-            "amounts": [
-              69.896,
-              71.342
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3724,31 +2988,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-12-0": {
             "version": 1,
-            "amounts": [
-              49.215,
-              50.322
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-1": {
             "version": 1,
-            "amounts": [
-              56.235,
-              57.393
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-2": {
             "version": 1,
-            "amounts": [
-              63.151,
-              64.464
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-12-3": {
             "version": 1,
-            "amounts": [
-              70.068,
-              71.535
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3762,31 +3018,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-13-0": {
             "version": 1,
-            "amounts": [
-              49.49,
-              50.515
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-1": {
             "version": 1,
-            "amounts": [
-              56.407,
-              57.586
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-2": {
             "version": 1,
-            "amounts": [
-              63.323,
-              64.657
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-13-3": {
             "version": 1,
-            "amounts": [
-              70.24,
-              71.728
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3800,31 +3048,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-14-0": {
             "version": 1,
-            "amounts": [
-              49.662,
-              50.708
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-1": {
             "version": 1,
-            "amounts": [
-              56.579,
-              57.779
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-2": {
             "version": 1,
-            "amounts": [
-              63.495,
-              64.85
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-14-3": {
             "version": 1,
-            "amounts": [
-              70.412,
-              71.921
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       },
@@ -3838,31 +3078,23 @@ export const restricted_trace = {
         "members": {
           "SYN-MELT-15-0": {
             "version": 1,
-            "amounts": [
-              58.8,
-              60
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-1": {
             "version": 1,
-            "amounts": [
-              73.5,
-              75
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-2": {
             "version": 1,
-            "amounts": [
-              78.4,
-              80
-            ]
+            "amounts": null,
+            "restricted": true
           },
           "SYN-MELT-15-3": {
             "version": 1,
-            "amounts": [
-              83.3,
-              85
-            ]
+            "amounts": null,
+            "restricted": true
           }
         }
       }
@@ -3899,10 +3131,7 @@ export const restricted_trace = {
         "key": "SYN-MELT-15-0",
         "version": 1
       },
-      "amounts": [
-        58.8,
-        60
-      ],
+      "amounts": null,
       "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
@@ -3919,10 +3148,7 @@ export const restricted_trace = {
         "key": "SYN-MELT-15-1",
         "version": 1
       },
-      "amounts": [
-        73.5,
-        75
-      ],
+      "amounts": null,
       "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
@@ -3939,10 +3165,7 @@ export const restricted_trace = {
         "key": "SYN-MELT-15-2",
         "version": 1
       },
-      "amounts": [
-        78.4,
-        80
-      ],
+      "amounts": null,
       "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
@@ -3959,10 +3182,7 @@ export const restricted_trace = {
         "key": "SYN-MELT-15-3",
         "version": 1
       },
-      "amounts": [
-        83.3,
-        85
-      ],
+      "amounts": null,
       "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
       "factDigest": null,
       "source": {
@@ -3988,7 +3208,7 @@ export const unavailable_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "b51e58c78efc9a950acd95c02b294c2aca45640379d1ef86c111560d1a166b53",
+    "lineageRef": "bf0102def47098fb26545da87a73d33981ce368c37b3efd75c9e2426c173adce",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -4744,7 +3964,7 @@ export const resolved_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 81,
     "grain": "demo.Conversion",
-    "lineageRef": "33b715933c9584d0a998aff02013c91c0010e0e59f974c624044f0c6983b2788",
+    "lineageRef": "b50b29ac912d921927c2900409cf5546a696ff7d095290ceffd2847108af4d7d",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",

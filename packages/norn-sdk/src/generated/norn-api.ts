@@ -7661,8 +7661,8 @@ export interface components {
         };
         /** @description One original numeric member; enrichment does not enter this list. */
         NornNumericContribution: {
-            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
-            amounts: (number | null)[];
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
             /**
              * Format: int64
              * @description Writer's immutable commit position.
@@ -7751,8 +7751,10 @@ export interface components {
         NornQueryFreshness: "fresh" | "exact" | "stale" | "incomplete";
         /** @description One object version's contribution to a bucket. */
         NornQueryMember: {
-            /** @description Operand contributions, in `totals` order; null means a predicate excluded the operand. */
-            amounts: (number | null)[];
+            /** @description Operand contributions, in `totals` order; a null operand means a predicate excluded it. The whole list is null when the reader may not see the values of every member of the bucket (DATA-VALUES-1): amounts are row values. */
+            amounts: (number | null)[] | null;
+            /** @description The reader holds no Values grant on this member; absent when false. */
+            restricted?: boolean;
             /**
              * Format: int64
              * @description Original cell object version.
@@ -7787,7 +7789,10 @@ export interface components {
              * @description Actual knowledge revision (commit count), not a historical timestamp.
              */
             knownAsOf: number;
-            /** @description Content-addressed membership and source lineage. */
+            /**
+             * @description Opaque handle to this result's membership and source lineage, for its
+             *     trace: keyed by the cell (D53), never a content hash of the rows.
+             */
             lineageRef: string;
             /** @description Admitted mapping version/digest. */
             mappingPin: string;
@@ -7831,9 +7836,15 @@ export interface components {
             members: {
                 [key: string]: components["schemas"]["NornQueryMember"];
             };
-            /** @description One sum, or numerator then denominator. */
+            /**
+             * @description DATA-VALUES-1 (D53): the reader lacks Values on a member and the bucket
+             *     has fewer members than the server's declared minimum, so `totals` is
+             *     empty and `value` null; membership stays. Absent when false.
+             */
+            suppressed?: boolean;
+            /** @description One sum, or numerator then denominator; empty when the bucket is `suppressed`. */
             totals: number[];
-            /** @description The bucket's value; null means a zero-denominator ratio is unavailable. An exact decimal as a raw JSON number token; read its text, not a binary float. */
+            /** @description The bucket's value; null means a zero-denominator ratio is unavailable, or the bucket is `suppressed` (DATA-VALUES-1). An exact decimal as a raw JSON number token; read its text, not a binary float. */
             value: number | null;
         };
         /** @description A source partition's observed watermark. */
@@ -7981,7 +7992,7 @@ export interface operations {
                 orgId: string;
                 /** @description Environment, matched against physical scope. */
                 environmentId: string;
-                /** @description Previously returned complete exact result pin. */
+                /** @description The `lineageRef` handle a complete exact answer returned (keyed, D53). */
                 lineageRef: string;
                 /** @description Canonical bucket key from that result. */
                 bucket: string;

@@ -26,9 +26,10 @@ pub struct NornNumericContribution {
     /// Original object key/type/version.
     #[schema(schema_with = fact_schema)]
     pub fact: serde_json::Value,
-    /// Sum or numerator/denominator; raw exact JSON numbers.
-    #[schema(schema_with = crate::answers::amounts_schema)]
-    pub amounts: Vec<Option<String>>,
+    /// Sum or numerator/denominator; raw exact JSON numbers. Null when any
+    /// member of the bucket is restricted (DATA-VALUES-1).
+    #[schema(required = true, schema_with = crate::answers::amounts_schema)]
+    pub amounts: Option<Vec<Option<String>>>,
     /// Emitting receipt identity; no export capability.
     pub receipt_hash: String,
     /// Full incarnation digest, disclosed with canonical values.

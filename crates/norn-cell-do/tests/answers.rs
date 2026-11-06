@@ -17,6 +17,8 @@ use serde_json::Value;
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
+/// The test stage's lineage key (the `NORN_LINEAGE_KEY` Worker secret in a deploy).
+const SECRET: [u8; 32] = [5; 32];
 
 fn cell(engine: NativeEngine) -> (DevHost<NativeEngine>, DemoQuestions) {
     let scope = analytics::analytics_scope();
@@ -28,7 +30,10 @@ fn cell(engine: NativeEngine) -> (DevHost<NativeEngine>, DemoQuestions) {
     })
     .unwrap()
     .with_authorizer(policy);
-    (host, DemoQuestions::new(opened.plan, scope))
+    (
+        host,
+        DemoQuestions::new(opened.plan, scope).with_handle_key(&SECRET),
+    )
 }
 
 fn get(
@@ -77,7 +82,40 @@ fn granted_principals_get_the_exact_live_answer() {
     // Population alone answers the question; the pin names the population.
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
     assert_eq!(guest.status, 200, "{}", guest.body);
-    assert_eq!(json(&guest)["rows"], answer["rows"]);
+    // The same aggregate and membership; the guest's member amounts are
+    // withheld (DATA-VALUES-1), every bucket meeting the minimum of three.
+    let guest = json(&guest);
+    let (ours, theirs) = (
+        answer["rows"].as_object().unwrap(),
+        guest["rows"].as_object().unwrap(),
+    );
+    assert_eq!(
+        ours.keys().collect::<Vec<_>>(),
+        theirs.keys().collect::<Vec<_>>()
+    );
+    for (bucket, row) in ours {
+        let other = &theirs[bucket];
+        assert_eq!(row["totals"], other["totals"], "{bucket}");
+        assert_eq!(row["value"], other["value"], "{bucket}");
+        let members = |row: &Value| {
+            row["members"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(members(row), members(other), "{bucket}");
+        assert!(
+            other["members"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|m| m["amounts"].is_null()),
+            "{bucket}"
+        );
+        assert!(other.get("suppressed").is_none(), "{bucket}");
+    }
 }
 
 #[test]
@@ -187,4 +225,62 @@ fn a_restarted_analytics_cell_answers_identically_without_reloading() {
         first
     );
     std::fs::remove_dir_all(&directory).unwrap();
+}
+
+/// The analytics cell with its runtime keyed by `secret`, or unkeyed.
+fn cell_keyed(secret: Option<&[u8]>) -> (DevHost<NativeEngine>, DemoQuestions) {
+    let (host, _) = cell(NativeEngine::open_in_memory().unwrap());
+    let scope = analytics::analytics_scope();
+    let plan = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope)
+        .unwrap()
+        .plan;
+    let runtime = DemoQuestions::new(plan, scope);
+    (
+        host,
+        match secret {
+            Some(secret) => runtime.with_handle_key(secret),
+            None => runtime,
+        },
+    )
+}
+
+/// D53: without a stage lineage key the cell publishes no answer, a secret
+/// under 32 bytes is no key, and another stage's secret gives another handle
+/// that does not open this cell's traces.
+#[test]
+fn answers_need_the_stage_lineage_key_and_handles_are_per_secret() {
+    assert_eq!(
+        get(&cell_keyed(None), &answer_path(), SCOPE, VIEWER).status,
+        500
+    );
+    assert_eq!(
+        get(&cell_keyed(Some(&[5; 16])), &answer_path(), SCOPE, VIEWER).status,
+        500
+    );
+    let (ours, theirs) = (cell_keyed(Some(&SECRET)), cell_keyed(Some(&[6; 32])));
+    let first = json(&get(&ours, &answer_path(), SCOPE, VIEWER));
+    let second = json(&get(&theirs, &answer_path(), SCOPE, VIEWER));
+    assert_eq!(first["rows"], second["rows"], "the same answer");
+    assert_ne!(first["lineageRef"], second["lineageRef"]);
+    let trace = format!("/v1/questions/{QUESTION}/trace");
+    assert_eq!(
+        get(
+            &ours,
+            &trace,
+            &trace_query(&first, "\"2026-10-19\""),
+            VIEWER
+        )
+        .status,
+        200
+    );
+    assert_ne!(
+        get(
+            &ours,
+            &trace,
+            &trace_query(&second, "\"2026-10-19\""),
+            VIEWER
+        )
+        .status,
+        200
+    );
 }

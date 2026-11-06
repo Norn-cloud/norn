@@ -217,13 +217,33 @@ fn plan(object: &ObjectTypeDef) -> Result<QuestionPlan, SeedError> {
 pub struct DemoQuestions {
     plan: QuestionPlan,
     scope: CellScope,
+    handle_key: Vec<u8>,
 }
 
 impl DemoQuestions {
-    /// The runtime for one opened analytics cell.
+    /// The runtime for one opened analytics cell. Until a lineage handle key
+    /// is set ([`Self::with_handle_key`]) every answer and trace refuses.
     #[must_use]
     pub const fn new(plan: QuestionPlan, scope: CellScope) -> Self {
-        Self { plan, scope }
+        Self {
+            plan,
+            scope,
+            handle_key: Vec::new(),
+        }
+    }
+
+    /// D53: key this cell's lineage handles with the host's secret (the
+    /// `NORN_LINEAGE_KEY` Worker secret, one per stage). The cell's own scope
+    /// is mixed in, so two cells under one secret never share a handle.
+    #[must_use]
+    pub fn with_handle_key(mut self, secret: &[u8]) -> Self {
+        self.handle_key = if secret.len() < 32 {
+            Vec::new()
+        } else {
+            norn_cell::compute::lineage::keyed_lineage_handle(secret, &self.scope.key())
+                .into_bytes()
+        };
+        self
     }
 }
 
@@ -271,6 +291,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
             },
             cutoff: None,
         })
+    }
+
+    fn min_disclosed_bucket(&self) -> usize {
+        norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET
+    }
+
+    fn handle_key(&self) -> &[u8] {
+        &self.handle_key
     }
 
     fn access(
