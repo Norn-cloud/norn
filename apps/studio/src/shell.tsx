@@ -86,7 +86,8 @@ export function Submenu({ section }: { readonly section: Section }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const toggle = (set: ReadonlySet<string>, group: string) => { const next = new Set(set); if (!next.delete(group)) next.add(group); return next }
   return (
-    <Sidebar collapsible="none" className="min-w-0 flex-1 rounded-2xl bg-background shadow-sm">
+    // Hidden with the collapsed desktop sidebar: inert, so none of its links or controls take focus. The phone sheet keeps it live.
+    <Sidebar collapsible="none" inert={submenuInert(state, isMobile)} className="min-w-0 flex-1 rounded-2xl bg-background shadow-sm">
       <SidebarHeader className="gap-2 px-5 pt-6 pb-3">
         <div className="text-[1.75rem] leading-tight font-semibold tracking-tight">{section.label}</div>
         <DropdownMenu>
@@ -150,6 +151,9 @@ export function Submenu({ section }: { readonly section: Section }) {
 
 /** A group shows its entries unless the user closed it; a search opens every group so its matches stay visible. */
 /** A collapsed desktop sidebar fades its group labels out; their buttons leave the tab order with them. The phone sheet always shows them. */
+/** The submenu card is out of view while the desktop sidebar is collapsed; on the phone it lives in the sheet. */
+export const submenuInert = (state: "expanded" | "collapsed", isMobile: boolean): boolean => state === "collapsed" && !isMobile
+
 export const hiddenLabelTabIndex = (state: "expanded" | "collapsed", isMobile: boolean): -1 | undefined => state === "collapsed" && !isMobile ? -1 : undefined
 
 export const groupOpen = (closed: ReadonlySet<string>, group: string, query: string) => query !== "" || !closed.has(group)
