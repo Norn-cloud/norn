@@ -141,3 +141,29 @@ test("a member removed from the organization, or switched to one they left, reac
   expect(setActive.status).toBe(403)
   expect(seen).toHaveLength(0)
 })
+
+test("an authorized definition read resolves its signer inside the active organization", async () => {
+  let signer = ""
+  let status = 200
+  const { env, db, auth } = stage(() => Response.json({ signoff: { signer, signedAtMs: 1, restatementSha256: "a".repeat(64) } }, { status }))
+  const cookie = await signUp(env, "reader@example.com")
+  const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!reader) throw new Error("no reader")
+  const read = () => call(env, "/api/host/v1/definitions/studio.question?orgId=x&environmentId=y", { headers: { cookie } })
+  signer = `user:${reader.subjectId}`
+  expect((await (await read()).json() as { signoff: { displayName: string } }).signoff.displayName).toBe("you")
+  await signUp(env, "signer@example.com")
+  const other = db.query("select id from user where email = ?").get("signer@example.com") as { id: string }
+  db.run("update user set name = ? where id = ?", ["Pat Example", other.id])
+  signer = `user:${other.id}`
+  expect((await (await read()).json() as { signoff: { displayName: string } }).signoff.displayName).toBe("a removed user")
+  db.run("update member set organizationId = ? where userId = ?", [reader.orgId, other.id])
+  const displayed = await (await read()).json() as { signoff: { signer: string; displayName: string } }
+  expect(displayed.signoff).toMatchObject({ signer, displayName: "Pat Example" })
+  db.run("delete from member where userId = ?", [other.id])
+  expect((await (await read()).json() as { signoff: { displayName: string } }).signoff.displayName).toBe("a removed user")
+  status = 403
+  const refused = await read()
+  expect(refused.status).toBe(403)
+  expect((await refused.json() as { signoff: { displayName?: string } }).signoff.displayName).toBeUndefined()
+})
