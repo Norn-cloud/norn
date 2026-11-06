@@ -1962,7 +1962,7 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     [runs[0],runs[1]]=[runs[1],runs[0]];
     const swapped=runs.find(r=>r.id===swapA);
     runs=runs.filter(r=>r!==swapped);
-    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
     runs.splice(0,0,swapped);
     await snapshot(prefix+'inverted');
     // A run numbered above the cursor can also list after the cursor run itself.
