@@ -5,7 +5,7 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { api, ConnectorError, fixLabel, type AccountDetail, type FixAction, type Inventory, type Requirement, type Status } from "./lib/connectors.ts"
+import { api, ConnectorError, fixLabel, offersButton, startFix, type AccountDetail, type Inventory, type Requirement, type Status } from "./lib/connectors.ts"
 
 /**
  * Connections (#772): the person's sign-in to the tool gateway and the accounts they connected
@@ -16,18 +16,6 @@ import { api, ConnectorError, fixLabel, type AccountDetail, type FixAction, type
 const Note = ({ children }: { children: ReactNode }) => <p className="px-4 py-3 text-sm text-muted-foreground">{children}</p>
 const go = ({ url }: { url: string }) => window.location.assign(url)
 
-/** Start the fix a refusal names: each one ends in the gateway's sign-in or connection form. */
-async function fix(action: FixAction): Promise<void> {
-  if (action.kind === "sign_in_gateway") return go(await api<{ url: string }>("/link", { method: "POST" }))
-  if (action.kind === "connect_account") return go(await api<{ url: string }>(`/apps/${encodeURIComponent(action.app)}/accounts/${encodeURIComponent(action.requirement)}/connect`, { method: "POST", body: {} }))
-  if (action.kind === "reconnect_account" && action.app !== null) {
-    const { requirements } = await api<{ requirements: readonly Requirement[] }>(`/apps/${encodeURIComponent(action.app)}/accounts`)
-    const requirement = requirements.find((entry) => entry.account === action.account)?.requirement
-    if (requirement !== undefined) return go(await api<{ url: string }>(`/apps/${encodeURIComponent(action.app)}/accounts/${encodeURIComponent(requirement)}/connect`, { method: "POST", body: { account: action.account } }))
-  }
-  throw new ConnectorError(409, "connectors.fix_unavailable", "Reconnect this account from its app below.")
-}
-
 /** A refusal: what went wrong, its code, and the button that fixes it when there is one. */
 export function ConnectorProblem({ error }: { readonly error: unknown }) {
   const [failed, setFailed] = useState<string | null>(null)
@@ -37,8 +25,8 @@ export function ConnectorProblem({ error }: { readonly error: unknown }) {
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
       <TriangleAlert aria-hidden className="size-4 text-destructive" />
       <span className="min-w-0 flex-1">{error instanceof Error ? error.message : String(error)} {typed && <code className="text-meta text-muted-foreground">{typed.code}</code>}</span>
-      {action !== null && action.kind !== "ask_admin" && <Button size="sm" variant="outline" onClick={() => fix(action).catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
-      {action?.kind === "ask_admin" && <span className="text-muted-foreground">{fixLabel(action)}.</span>}
+      {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => startFix(action).then((url) => window.location.assign(url), (e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
+      {action !== null && !offersButton(action) && <span className="text-muted-foreground">{fixLabel(action)}.</span>}
       {failed && <span className="w-full text-destructive">{failed}</span>}
     </div>
   )
