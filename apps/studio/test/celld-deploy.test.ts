@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { join } from "node:path"
-import { appDir, pinnedCommit } from "../scripts/celld-deploy.ts"
+import { appDir, appInCheckout, pinnedCommit } from "../scripts/celld-deploy.ts"
 import { awaitServed, entryChunk } from "../scripts/served-build.ts"
 
 const HEAD = "93dfdc450d".padEnd(40, "a")
@@ -50,4 +50,18 @@ test("a stalled origin is a mismatch by the deadline, not a hang", async () => {
   const started = Date.now()
   expect(await awaitServed("https://demo.norn.cloud", "/assets/index-B4eJ2Gv7.js", 300, stalled)).toEqual({ served: undefined, matched: false })
   expect(Date.now() - started).toBeLessThan(2000)
+})
+
+test("--app must resolve to the checkout's own apps/studio, never a copy or a link to one", async () => {
+  const { mkdirSync, mkdtempSync, symlinkSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const top = mkdtempSync(join(tmpdir(), "celld-checkout-"))
+  const own = join(top, "apps", "studio")
+  const copy = join(top, ".worktrees", "copy", "apps", "studio")
+  mkdirSync(own, { recursive: true })
+  mkdirSync(copy, { recursive: true })
+  symlinkSync(copy, join(top, "linked"))
+  expect(appInCheckout(own, top)).toBe(appInCheckout(join(top, "apps", ".", "studio"), top))
+  expect(() => appInCheckout(copy, top)).toThrow("not this checkout's apps/studio")
+  expect(() => appInCheckout(join(top, "linked"), top)).toThrow("not this checkout's apps/studio")
 })

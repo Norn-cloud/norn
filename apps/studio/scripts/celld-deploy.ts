@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { cpSync, existsSync, readFileSync, rmSync } from "node:fs"
+import { cpSync, existsSync, readFileSync, realpathSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { celldConfig, celldStudio, writeSecretConfig } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
@@ -28,6 +28,19 @@ export function appDir(argv: readonly string[], own: string): string {
   return resolve(dir)
 }
 
+/**
+ * The app must be the checkout's own `apps/studio`, after resolving links:
+ * a copy elsewhere (for example under an ignored directory) would pass the
+ * clean-tree check while STUDIO_BUILD named a commit it was not built from.
+ * A real worktree is its own checkout, so it qualifies.
+ */
+export function appInCheckout(app: string, toplevel: string): string {
+  const real = realpathSync(app)
+  const own = join(realpathSync(toplevel), "apps", "studio")
+  if (real !== own) throw new Error(`${app} is not this checkout's apps/studio (${own}); deploy only a checkout's own app`)
+  return real
+}
+
 /** The commit to deploy: given, equal to HEAD, and with a clean tree. */
 export function pinnedCommit(argv: readonly string[], head: string, status: string): string {
   const at = argv.indexOf("--commit")
@@ -39,7 +52,8 @@ export function pinnedCommit(argv: readonly string[], head: string, status: stri
 }
 
 async function main(argv: readonly string[]) {
-  const app = appDir(argv, join(import.meta.dir, ".."))
+  const asked = appDir(argv, join(import.meta.dir, ".."))
+  const app = appInCheckout(asked, execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: asked, encoding: "utf8" }).trim())
   const git = (...args: string[]) => execFileSync("git", args, { cwd: app, encoding: "utf8" }).trim()
   const commit = pinnedCommit(argv, git("rev-parse", "HEAD"), git("status", "--porcelain"))
   const studio = celldStudio({ ...process.env, STUDIO_BUILD: commit })
