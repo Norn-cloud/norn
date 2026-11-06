@@ -52,6 +52,7 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
     list: async (cursor) => {
       const { status, body } = await call(`/v1/definitions:list?${new URLSearchParams({ kind, limit: "50", ...cursor ? { cursor } : {} })}`)
       const b = body as { items?: unknown; cursor?: unknown } | null
+      if (status === 404) throw new NotConnected(`The cell's definition routes aren't live yet, so ${kind} definitions can't be listed or saved there.`)
       if (status !== 200 || !Array.isArray(b?.items)) throw new CellUnavailable(status)
       return {
         items: b.items.map((row: { id: string; title?: string; version: number; lifecycle?: string; updatedAtMs?: number }) => ({ id: row.id, title: row.title ?? "", version: row.version, lifecycle: row.lifecycle ?? "", updatedAtMs: row.updatedAtMs ?? 0 })),

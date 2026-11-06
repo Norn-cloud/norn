@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
-import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
-import { SAVE_BLOCKED } from "./canvas.tsx"
+import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
+import { NotConnected } from "./lib/definitions.ts"
 import { api, type Binding } from "./lib/connectors.ts"
 import { AGENT_NODE, OFFERED_MODELS, agentGraph, agentKinds, agentOf, emptyAgent, lawNodeId, toolNodeId, wiredParts, type AgentDefinition } from "./lib/canvas/agent.ts"
 import { loadAgentChecker } from "./lib/canvas/checker.ts"
@@ -17,6 +17,7 @@ import * as g from "./lib/canvas/graph.ts"
 import { kindStore, type KindStore } from "./lib/canvas/store.ts"
 import { words } from "./lib/format.ts"
 
+export const AGENT_SAVE_BLOCKED = "Saving agents needs the cell's definition routes, which aren't live yet (queued after F2b). Your agent is kept as a draft in this browser until then."
 export const AGENT_RUN_BLOCKED = "An agent's runs are flow runs in the cell, with a receipt for every tool call; the run route is not live yet."
 
 type AgentPartNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[] }, "part">
@@ -110,7 +111,7 @@ function Inspector({ editing, issues, bindings, laws }: { readonly editing: Edit
 const bindingsQuery = () => api<{ bindings: readonly Binding[] }>("/bindings").then(({ bindings }) => bindings)
 
 /** One agent on the canvas: wire tools and laws, set its policy; the checker runs on every edit, the cell decides on save. */
-function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[] }) {
+function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[]; readonly saveLive: boolean }) {
   const checker = useQuery({ queryKey: ["checker", "agent"], queryFn: () => loadAgentChecker(), staleTime: Infinity, retry: false })
   const [cellIssues, setCellIssues] = useState<readonly Issue[]>([])
   const initial = useMemo(() => agentGraph(stored?.payload ?? emptyAgent(id)), [stored, id])
@@ -150,7 +151,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
   }
 
   const props: CanvasFrameProps = {
-    draftKey: `agent:${id}:${stored?.version ?? "new"}`, label: `Agent: ${id}`, initial, kinds: agentKinds, nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED, save,
+    draftKey: `agent:${id}:${stored?.version ?? "new"}`, label: `Agent: ${id}`, initial, kinds: agentKinds, nodeTypes: NODE_TYPES, issues, saveBlocked: AGENT_SAVE_BLOCKED, ...saveLive ? { save } : {},
     empty: "The agent node is missing; undo to bring it back.", fixed: (node) => node.id === AGENT_NODE,
     toNode: (node, found, selected): AgentPartNode => ({
       id: node.id, type: "part", position: node.position, selected,
@@ -177,7 +178,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
   return (
     <div className="space-y-2">
       <CanvasFrame {...props} />
-      <div className="flex justify-end"><Button size="sm" disabled title={AGENT_RUN_BLOCKED}>Run the agent</Button></div>
+      <div className="flex justify-end"><Unavailable reason={AGENT_RUN_BLOCKED}>Run the agent</Unavailable></div>
     </div>
   )
 }
@@ -194,6 +195,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
   const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], // A query may not resolve to undefined: a definition the cell does not have yet is null (a new agent).
     queryFn: async () => (await store.get(open?.copyOf ?? open?.id ?? "")) ?? null, enabled: open !== null, retry: false })
   const [newName, setNewName] = useState("")
+  // Until the cell's definition routes answer, agents are drafts in this browser: say so, and offer no server save.
+  const routesDown = list.error instanceof NotConnected
   const [notice, setNotice] = useState<string | null>(null)
   const refresh = () => void client.invalidateQueries({ queryKey: ["definitions", "agent"] })
   const retire = async (id: string, version: number) => {
@@ -209,7 +212,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
       <Panel icon={Bot} label="Agents" action={list.data ? `${list.data.items.length}` : undefined}>
         <Well className="space-y-2 p-3 text-sm">
           {list.isPending && <p role="status" className="text-muted-foreground">Reading agents…</p>}
-          {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
+          {routesDown && <p role="status" className="text-muted-foreground">{AGENT_SAVE_BLOCKED}</p>}
+          {list.isError && !routesDown && <p role="alert" className="text-destructive">{list.error.message}</p>}
           {list.data?.items.length === 0 && <EmptyState icon={Bot}>No agents yet. Name one below to start.</EmptyState>}
           {list.data?.items.map((item) => (
             <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border bg-background p-2">
@@ -231,7 +235,7 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
       </Panel>
       {open && (stored.isPending ? <p role="status" className="text-muted-foreground">Opening {open.id}…</p>
         : stored.isError ? <p role="alert" className="text-destructive">{stored.error.message}</p>
-          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} />)}
+          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} saveLive={!routesDown} />)}
     </div>
   )
 }
