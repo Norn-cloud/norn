@@ -13,7 +13,9 @@ export class QuestionDefinitionError extends Error {
 }
 
 /** The cell owns authorization, validation, versions, and the sign-off record. */
-export function questionDefinitions(fetcher: typeof fetch = fetch) {
+type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+
+export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init)) {
   const call = async (path: string, query: Record<string, string> = {}, body?: unknown): Promise<unknown> => {
     let response: Response
     try {
