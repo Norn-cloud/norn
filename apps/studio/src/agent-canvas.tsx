@@ -16,11 +16,13 @@ import { loadAgentChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
 import { kindStore, type KindStore } from "./lib/canvas/store.ts"
 import { words } from "./lib/format.ts"
-import { recordedTransport } from "./lib/transport.ts"
 
 export const AGENT_RUN_BLOCKED = "An agent's runs are flow runs in the cell, with a receipt for every tool call; the run route is not live yet."
 
 type AgentPartNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[] }, "part">
+
+/** The recorded definitions, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
+const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
 
 export function AgentPart({ data, selected }: NodeProps<AgentPartNode>) {
   const failing = data.issues.length > 0
@@ -187,7 +189,7 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
   const client = useQueryClient()
   const list = useQuery({ queryKey: ["definitions", "agent"], queryFn: () => store.list(), retry: false })
   const bindings = useQuery({ queryKey: ["connectors", "bindings", "agent"], queryFn: bindingsQuery, retry: false })
-  const laws = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions, select: (reads) => reads.map(({ document }) => document).filter(({ kind }) => kind === "law").map(({ payload }) => (payload as { id: string }).id) })
+  const laws = useQuery({ queryKey: ["definitions"], queryFn: recordedDefinitions, select: (reads) => reads.map(({ document }) => document).filter(({ kind }) => kind === "law").map(({ payload }) => (payload as { id: string }).id) })
   const [open, setOpen] = useState<{ readonly id: string; readonly copyOf?: string } | null>(null)
   const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], // A query may not resolve to undefined: a definition the cell does not have yet is null (a new agent).
     queryFn: async () => (await store.get(open?.copyOf ?? open?.id ?? "")) ?? null, enabled: open !== null, retry: false })
