@@ -77,6 +77,10 @@ export default {
     const { pathname } = new URL(request.url)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
+    if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
+      const host = new URL(request.url).host
+      if ([request.headers.get("host"), request.headers.get("x-forwarded-host")].some((value) => value !== null && value.toLowerCase() !== host.toLowerCase())) return refuse(403, "Magic link host does not match this origin.")
+    }
     if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)

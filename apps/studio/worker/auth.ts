@@ -56,12 +56,22 @@ async function originProof(secret: string, token: string, origin: string): Promi
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
+/** Callback URLs must stay on the origin that will receive the session cookie. */
+function callbackOnOrigin(value: string, origin: string): string | null {
+  try { const callback = new URL(value, origin); return callback.origin === origin && !callback.username && !callback.password ? callback.href : null } catch { return null }
+}
+
 /** Refuse a verification URL moved to another host before Better Auth consumes its token. */
 export async function verifyMagicLinkOrigin(request: Request, secret: string, trustedOrigins: readonly string[]): Promise<boolean> {
   const url = new URL(request.url)
   const token = url.searchParams.get("token")
   const proof = url.searchParams.get("studioOriginProof")
   if (!trustedOrigins.includes(url.origin) || !token || !proof || !/^[0-9a-f]{64}$/.test(proof)) return false
+  if (!url.searchParams.has("callbackURL")) return false
+  for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+    const values = url.searchParams.getAll(name)
+    if (values.length > 1 || (values[0] !== undefined && callbackOnOrigin(values[0], url.origin) === null)) return false
+  }
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"])
   const bytes = Uint8Array.from(proof.match(/../g) ?? [], (hex) => Number.parseInt(hex, 16))
@@ -143,6 +153,13 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           const link = new URL(url)
           const requested = new URL(origin)
           link.protocol = requested.protocol; link.host = requested.host
+          for (const name of ["callbackURL", "newUserCallbackURL", "errorCallbackURL"]) {
+            const value = link.searchParams.get(name)
+            if (value === null) continue
+            const callback = callbackOnOrigin(value, origin)
+            if (callback === null) throw new APIError("FORBIDDEN", { message: "Untrusted magic-link callback." })
+            link.searchParams.set(name, callback)
+          }
           link.searchParams.set("studioOriginProof", await originProof(config.secret, token, origin))
           await config.sendMagicLink({ to: email, url: link.toString() })
         },
