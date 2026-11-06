@@ -12,10 +12,11 @@ interface CheckerModule {
 // place before `vite build` and not committed: worker/checker/ where the Studio
 // Worker's deploy puts it, or src/checker/ for a build without the Worker.
 // A glob, so a build without it still succeeds and the canvas says the checker is absent.
-const PACKAGE = import.meta.glob<CheckerModule>(["../../../worker/checker/norn_checker_wasm.js", "../../checker/norn_checker_wasm.js"])
+// Called, not evaluated at import: only Vite provides import.meta.glob, and tests import this module through the router.
+const PACKAGE = () => import.meta.glob<CheckerModule>(["../../../worker/checker/norn_checker_wasm.js", "../../checker/norn_checker_wasm.js"])
 
 /** Load the checker; rejects when the package is absent, so an edit is never shown as clean unchecked. */
-export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE): Promise<Checker> {
+export async function loadChecker(packages: Record<string, () => Promise<CheckerModule>> = PACKAGE()): Promise<Checker> {
   const load = Object.values(packages)[0]
   if (!load) throw new Error("The checker is not part of this build")
   const module = await load()
@@ -34,7 +35,7 @@ export interface AgentContext {
 export type AgentChecker = (agent: unknown, context: AgentContext) => { readonly admitted: boolean; readonly diagnostics: CheckResult["diagnostics"] }
 
 /** Load the agent check; rejects when the build's checker predates it, so an agent is never shown as clean unchecked. */
-export async function loadAgentChecker(packages: Record<string, () => Promise<CheckerModule & { readonly checkAgent?: (agentJson: string, contextJson: string) => string }>> = PACKAGE): Promise<AgentChecker> {
+export async function loadAgentChecker(packages: Record<string, () => Promise<CheckerModule & { readonly checkAgent?: (agentJson: string, contextJson: string) => string }>> = PACKAGE()): Promise<AgentChecker> {
   const load = Object.values(packages)[0]
   if (!load) throw new Error("The checker is not part of this build")
   const module = await load()

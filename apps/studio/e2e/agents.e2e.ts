@@ -33,7 +33,8 @@ async function cell(page: Page) {
 
 test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law named), save, reopen, duplicate, retire", async ({ page }) => {
   await cell(page)
-  await open(page, "Agents")
+  await open(page)
+  await page.getByRole("button", { name: "Agents", exact: true }).click()
   await expect(page.getByText("No agents yet")).toBeVisible()
   // create
   await page.getByLabel("New agent name").fill("Support triage")
@@ -76,7 +77,8 @@ test("agent: create, view, edit, wire tools and laws, undo/redo, validate (law n
 
 test("agent refusal: the cell's refusal names the law and lands on the law node", async ({ page }) => {
   await cell(page)
-  await open(page, "Agents")
+  await open(page)
+  await page.getByRole("button", { name: "Agents", exact: true }).click()
   await page.getByLabel("New agent name").fill("Refused")
   await page.getByRole("button", { name: "New agent" }).click()
   await page.getByRole("button", { name: "Law", exact: true }).click()
