@@ -57,10 +57,13 @@ function stage(gatewayClient = false) {
     expect(text).not.toContain(TOKEN)
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown> }
   }
-  const signUp = async (email: string, role = "owner") => {
+  /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
+  const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
     const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
     const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
     await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
+    const member = "(SELECT id FROM user WHERE email = ?)"
+    if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
     const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
@@ -139,7 +142,7 @@ test("tool bindings: an admin adds, edits and removes them; the mapping is check
   for (const [mapping, field] of [[{ nope: { fixed: 1 } }, "inputMapping.nope"], [{ limit: { fixed: "ten" } }, "inputMapping.limit"], [{ state: { fixed: "merged" } }, "inputMapping.state"]] as const) {
     expect((await send(`/bindings/${binding.id}`, { ...body("PATCH", { inputMapping: mapping }), cookie: owner })).body).toMatchObject({ code: "connectors.binding_invalid", field })
   }
-  const member = await signUp("member@example.com", "member")
+  const member = await signUp("member@example.com", "member", "owner@example.com")
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: member })).body).toMatchObject({ code: "connectors.forbidden", action: { kind: "ask_admin" } })
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: member })).status).toBe(403)
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body).toEqual({ removed: binding.id })
@@ -157,7 +160,7 @@ test("tools list with their schemas and the bindings that let them run", async (
   ])
 })
 
-test("a test run goes through its binding: fixed fields win, a person cannot override them, roles are checked", async () => {
+test("a test run goes through its binding: fixed fields win, no override, other organizations see nothing, roles are checked", async () => {
   const { send, signUp, calls, answer } = stage()
   const owner = await signUp("ada@example.com")
   const { body: added } = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner })
@@ -167,7 +170,12 @@ test("a test run goes through its binding: fixed fields win, a person cannot ove
   expect((await calls.at(-1)?.json()) as unknown).toEqual({ tool: "list_issues", input: { state: "open", repo: "norn" } })
   expect((await send(`/bindings/${id}/run`, { ...body("POST", { input: { repo: "other" } }), cookie: owner })).body).toMatchObject({ code: "connectors.binding_invalid", field: "input.repo" })
   expect((await send("/bindings/missing/run", { ...body("POST", { input: {} }), cookie: owner })).body.code).toBe("connectors.binding_not_found")
-  const viewer = await signUp("viewer@example.com", "viewer")
+  const stranger = await signUp("stranger@example.com")
+  expect((await send(`/bindings/${id}/run`, { ...body("POST", { input: {} }), cookie: stranger })).body.code).toBe("connectors.binding_not_found")
+  await send(`/bindings/${id}`, { ...body("PATCH", { runRole: "admin" }), cookie: owner })
+  const member = await signUp("member@example.com", "member", "ada@example.com")
+  expect((await send(`/bindings/${id}/run`, { ...body("POST", { input: {} }), cookie: member })).body).toMatchObject({ code: "connectors.forbidden", action: { kind: "ask_admin" } })
+  const viewer = await signUp("viewer@example.com", "viewer", "ada@example.com")
   expect((await send(`/bindings/${id}/run`, { ...body("POST", { input: {} }), cookie: viewer })).body.code).toBe("connectors.forbidden")
 })
 
