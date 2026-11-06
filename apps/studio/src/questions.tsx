@@ -66,7 +66,7 @@ export function QuestionsPage() {
       <div className="space-y-2">
         <h1 className="text-title font-medium">Questions</h1>
         <p className="max-w-2xl text-muted-foreground">Business questions answered exactly by the server. Every number opens to the records it was added up from.</p>
-        <Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question</Link></Button>
+        <div className="flex flex-wrap gap-2"><Button asChild size="sm"><Link to="/questions/build"><Plus />Build a question</Link></Button><Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question (form)</Link></Button></div>
       </div>
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}

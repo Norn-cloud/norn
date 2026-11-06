@@ -1,5 +1,6 @@
 import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
+import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
@@ -16,6 +17,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/sources/$concept/$": SourcesItemPage,
   "/questions": QuestionsPage,
   "/questions/new": QuestionBuilderPage,
+  "/questions/build": QuestionTreePage,
   "/questions/$name": QuestionPage,
   "/dashboards": DashboardsPage,
   "/dashboards/new": DashboardEditorPage,
