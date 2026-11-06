@@ -18,6 +18,7 @@ use norn_cell::{
 };
 use norn_checker::metric::compute::QuestionPlan;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use utoipa::IntoParams;
 
 /// Trusted per-request source frontier and authenticated history selection.
@@ -116,8 +117,9 @@ pub fn get_answer<E: SqlEngine>(
         return Err(read_denied());
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    let visible = |row: &ObjectRecord| permits(row, Population);
-    match snapshot.cutoff {
+    let mut withheld = BTreeSet::new();
+    let visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
+    let mut answer = match snapshot.cutoff {
         Some(cutoff) => cell
             .store()
             .evaluate_question_known_at(&plan, snapshot.context, cutoff, visible)
@@ -127,7 +129,36 @@ pub fn get_answer<E: SqlEngine>(
             .evaluate_question(&plan, snapshot.context, visible)
             .map(QuestionAnswer::Live),
     }
-    .map_err(Refusal::from_compute)
+    .map_err(Refusal::from_compute)?;
+    let result = match &mut answer {
+        QuestionAnswer::Live(result) => result,
+        QuestionAnswer::Historical(historical) => &mut historical.result,
+    };
+    withhold_values(result, &withheld);
+    Ok(answer)
+}
+
+/// Population decides membership; a member without Values is recorded so its
+/// bucket's amounts are withheld (DATA-VALUES-1).
+fn visible_recording(
+    row: &ObjectRecord,
+    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
+    withheld: &mut BTreeSet<String>,
+) -> Result<bool, CellError> {
+    let member = permits(row, Population)?;
+    if member && !permits(row, Values)? {
+        withheld.insert(row.id.clone());
+    }
+    Ok(member)
+}
+
+/// DATA-VALUES-1: per-member amounts are row values. A bucket with any
+/// member the reader may not see the values of withholds every amount; the
+/// bucket's totals and value are the answer's aggregate and stay.
+fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>) {
+    for row in result.rows.values_mut() {
+        row.withhold(|id| withheld.contains(id));
+    }
 }
 
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
@@ -177,19 +208,23 @@ pub fn get_numeric_trace<E: SqlEngine>(
         )));
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    cell.store()
+    let mut withheld = BTreeSet::new();
+    let mut trace = cell
+        .store()
         .trace_question(
             &plan,
             snapshot.context,
             lineage,
             bucket,
-            |row| permits(row, Population),
+            |row| visible_recording(row, &permits, &mut withheld),
             LineageDisclosure {
                 values: &mut |row| permits(row, Values),
                 source: &mut |row| permits(row, Sources),
             },
         )
-        .map_err(Refusal::from_compute)
+        .map_err(Refusal::from_compute)?;
+    withhold_values(&mut trace.result, &withheld);
+    Ok(trace)
 }
 
 fn mapped<E: SqlEngine>(

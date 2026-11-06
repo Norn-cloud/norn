@@ -71,10 +71,15 @@ impl Authorizer for Policy {
         let actor = request.access.principal.subject_id.as_str();
         let allowed = match request.capability {
             ReadCapability::Population => {
-                ["reader", "auditor", "partial"].contains(&actor)
+                ["reader", "auditor", "partial", "mixed"].contains(&actor)
                     && !(actor == "partial" && request.access.resource.id == "SYN-MELT-15-1")
             }
-            ReadCapability::Values | ReadCapability::Sources => actor == "auditor",
+            // `mixed` sees every member's values but one.
+            ReadCapability::Values => {
+                actor == "auditor"
+                    || (actor == "mixed" && request.access.resource.id != "SYN-MELT-15-1")
+            }
+            ReadCapability::Sources => actor == "auditor",
         };
         if allowed {
             Ok(())
@@ -642,4 +647,171 @@ fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> Str
         .expect("format fixture");
     }
     typescript
+}
+
+fn amounts_on_the_wire(document: &impl serde::Serialize) -> Vec<serde_json::Value> {
+    let wire = serde_json::to_value(document).expect("wire");
+    let mut found = Vec::new();
+    let mut stack = vec![&wire];
+    while let Some(value) = stack.pop() {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(amounts) = map.get("amounts") {
+                    found.push(amounts.clone());
+                }
+                stack.extend(map.values());
+            }
+            serde_json::Value::Array(items) => stack.extend(items),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+    found
+}
+
+/// DATA-VALUES-1: per-member amounts are row values. Population alone shows
+/// who is counted and the bucket's aggregate, never a member's amounts, in the
+/// answer or the trace; Values on every member shows them, and they sum to the
+/// totals the answer already discloses.
+#[test]
+fn member_amounts_are_values_and_follow_the_values_grant() {
+    let (host, runtime) = configured(Mode::Live);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let trace = |actor, answer: &norn_cell::compute::QueryResult| {
+        get_numeric_trace(
+            &host,
+            &trace_query(&answer.lineage_ref),
+            Some(actor),
+            QUESTION,
+            &runtime,
+        )
+        .expect("trace")
+    };
+    let (reader, auditor) = (live("reader"), live("auditor"));
+    // The aggregate is the answer's grant and is the same for both.
+    for (bucket, row) in &auditor.rows {
+        assert_eq!(reader.rows[bucket].totals, row.totals, "{bucket}");
+        assert_eq!(reader.rows[bucket].value, row.value, "{bucket}");
+        assert_eq!(
+            reader.rows[bucket].members.keys().collect::<Vec<_>>(),
+            row.members.keys().collect::<Vec<_>>()
+        );
+    }
+    // Population only: members are listed and restricted, with no amounts anywhere.
+    let viewer_trace = trace("reader", &reader);
+    assert!(
+        reader
+            .rows
+            .values()
+            .flat_map(|row| row.members.values())
+            .all(|m| m.restricted && m.amounts.is_none())
+    );
+    assert!(
+        viewer_trace
+            .contributions
+            .iter()
+            .all(|c| c.restricted && c.amounts.is_none() && c.values.is_none())
+    );
+    for document in [
+        amounts_on_the_wire(&reader),
+        amounts_on_the_wire(&viewer_trace),
+    ] {
+        assert!(
+            !document.is_empty() && document.iter().all(serde_json::Value::is_null),
+            "{document:?}"
+        );
+    }
+    // Values on every member: amounts are present and sum to the disclosed totals.
+    let audited_trace = trace("auditor", &auditor);
+    assert!(
+        auditor
+            .rows
+            .values()
+            .flat_map(|row| row.members.values())
+            .all(|m| !m.restricted && m.amounts.is_some())
+    );
+    assert!(
+        audited_trace
+            .contributions
+            .iter()
+            .all(|c| !c.restricted && c.amounts.is_some())
+    );
+    // The trace's amounts are the answer's member amounts, member by member.
+    for contribution in &audited_trace.contributions {
+        assert_eq!(
+            contribution.amounts,
+            auditor.rows[WEEK].members[&contribution.fact.key].amounts
+        );
+    }
+    for contribution in &viewer_trace.contributions {
+        assert_eq!(
+            contribution.amounts,
+            reader.rows[WEEK].members[&contribution.fact.key].amounts
+        );
+    }
+}
+
+/// One restricted member withholds every amount in its bucket, so it does not
+/// follow from the totals minus the others; buckets without one keep theirs.
+#[test]
+fn one_restricted_member_withholds_its_whole_bucket() {
+    let (host, runtime) = configured(Mode::Live);
+    let QuestionAnswer::Live(mixed) =
+        get_answer(&host, &scope(), Some("mixed"), QUESTION, &runtime).expect("answer")
+    else {
+        panic!("live")
+    };
+    let (hidden, open): (Vec<_>, Vec<_>) = mixed
+        .rows
+        .values()
+        .partition(|row| row.members.contains_key("SYN-MELT-15-1"));
+    assert_eq!(hidden.len(), 1);
+    let bucket = hidden[0];
+    assert!(bucket.members.values().all(|m| m.amounts.is_none()));
+    assert!(
+        bucket
+            .members
+            .iter()
+            .all(|(id, m)| m.restricted == (id == "SYN-MELT-15-1"))
+    );
+    assert!(
+        open.iter()
+            .flat_map(|row| row.members.values())
+            .all(|m| !m.restricted && m.amounts.is_some())
+    );
+    let trace = get_numeric_trace(
+        &host,
+        &trace_query(&mixed.lineage_ref),
+        Some("mixed"),
+        QUESTION,
+        &runtime,
+    )
+    .expect("trace");
+    assert!(trace.contributions.iter().all(|c| c.amounts.is_none()));
+    assert_eq!(
+        trace.contributions.iter().filter(|c| c.restricted).count(),
+        1
+    );
+    // In the trace's embedded answer too, only the hidden member's bucket is withheld.
+    assert!(
+        trace.result.rows[WEEK]
+            .members
+            .values()
+            .all(|m| m.amounts.is_none())
+    );
+    assert!(
+        trace
+            .result
+            .rows
+            .iter()
+            .filter(|(key, _)| key.as_str() != WEEK)
+            .all(|(_, row)| row.members.values().all(|m| m.amounts.is_some()))
+    );
 }

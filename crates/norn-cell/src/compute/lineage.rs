@@ -38,7 +38,9 @@ pub struct NumericContribution {
     /// Stable versioned fact identity; never a catalog-enrichment edge.
     pub fact: FactRef,
     /// Sum operand, or numerator then denominator; no ratio attribution is invented.
-    pub amounts: Vec<Option<Decimal>>,
+    /// `None` when any member of the bucket is restricted (DATA-VALUES-1):
+    /// amounts are row values, and one withheld amount would follow from the totals.
+    pub amounts: Option<Vec<Option<Decimal>>>,
     /// Emitting receipt identity; a reference, not an independently verifiable proof.
     pub receipt_hash: String,
     /// Full-incarnation digest, disclosed only with the canonical property values.
@@ -166,6 +168,16 @@ impl<E: SqlEngine> CellStore<E> {
                 .collect::<Result<Vec<_>, _>>()?;
             if sums != row.totals {
                 return Err(incomplete());
+            }
+            // DATA-VALUES-1: one restricted member withholds every amount in the
+            // bucket, so no hidden amount follows from the totals.
+            if contributions
+                .iter()
+                .any(|contribution| contribution.restricted)
+            {
+                for contribution in &mut contributions {
+                    contribution.amounts = None;
+                }
             }
             Ok(NumericTrace {
                 result,

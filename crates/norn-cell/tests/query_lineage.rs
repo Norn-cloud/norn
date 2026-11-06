@@ -43,10 +43,14 @@ fn data_lineage_reconciles_294_over_300_with_exact_fact_versions_and_restricted_
             member.fact.version,
             result.rows[WEEK].members[&member.fact.key].version
         );
-        assert_eq!(
-            member.amounts,
-            result.rows[WEEK].members[&member.fact.key].amounts
-        );
+        // DATA-VALUES-1: a restricted bucket withholds every amount; the
+        // engine's own answer (no reader) keeps them.
+        let expected = if trace.contributions.iter().any(|c| c.restricted) {
+            None
+        } else {
+            result.rows[WEEK].members[&member.fact.key].amounts.clone()
+        };
+        assert_eq!(member.amounts, expected);
         assert!(member.fact.stable_id().starts_with("fact:demo.Conversion/"));
         let receipt = store
             .read()
@@ -148,7 +152,7 @@ fn changed_generation_frontier_epoch_and_nonexact_inputs_refuse_without_revealin
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
-    fn generated_members_reconcile_and_disclosure_never_changes_numeric_evidence(
+    fn generated_members_reconcile_and_hidden_values_withhold_amounts(
         amounts in proptest::collection::vec((1i64..100_000,0i64..100_000),1..8), hide in proptest::bool::ANY, hide_source in proptest::bool::ANY
     ) {
         let (mut store, plan, context) = fixture();
@@ -164,7 +168,9 @@ proptest::proptest! {
             norn_ir::Decimal::parse(&format!("{recovered}e-3")).expect("numerator"),
             norn_ir::Decimal::parse(&format!("{input}e-3")).expect("denominator")]);
         for member in trace.contributions {
-            proptest::prop_assert_eq!(&member.amounts,&result.rows[WEEK].members[&member.fact.key].amounts);
+            // DATA-VALUES-1: hidden values withhold every amount in the bucket.
+            let expected = if hide { None } else { result.rows[WEEK].members[&member.fact.key].amounts.clone() };
+            proptest::prop_assert_eq!(&member.amounts,&expected);
             proptest::prop_assert_eq!(member.values.is_none(),hide);
             proptest::prop_assert_eq!(member.fact_digest.is_none(),hide);
             proptest::prop_assert_eq!(member.restricted,hide);

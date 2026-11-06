@@ -112,8 +112,43 @@ pub enum Freshness {
 pub struct Member {
     /// Original cell object version.
     pub version: u64,
-    /// Operand contributions; none means its predicate excluded this identity.
-    pub amounts: Vec<Option<Decimal>>,
+    /// Operand contributions; a null operand means its predicate excluded this
+    /// identity. `None` (wire `null`) when the reader may not see every member
+    /// of the bucket's values (DATA-VALUES-1): amounts are row values, and
+    /// one withheld member among visible ones would follow from the totals.
+    pub amounts: Option<Vec<Option<Decimal>>>,
+    /// The reader holds no Values grant on this member.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restricted: bool,
+}
+
+impl Member {
+    /// A member whose amounts the evaluation discloses.
+    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+        Self {
+            version,
+            amounts: Some(amounts),
+            restricted: false,
+        }
+    }
+}
+
+impl QueryRow {
+    /// DATA-VALUES-1: mark `restricted` members and, if any, withhold every
+    /// member's amounts in this bucket. Totals and the value are the answer's
+    /// aggregate and stay.
+    pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool) {
+        let mut any = false;
+        for (id, member) in &mut self.members {
+            member.restricted = restricted(id);
+            any |= member.restricted;
+        }
+        if any {
+            for member in self.members.values_mut() {
+                member.amounts = None;
+            }
+        }
+    }
 }
 /// One output bucket, retaining exact sums beside its ratio.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,13 +516,9 @@ pub(crate) fn finish(
             .iter()
             .map(|n| n.map(|v| decimal(i128::from(v))).transpose())
             .collect::<Result<_, _>>()?;
-        bucket.2.insert(
-            id.clone(),
-            Member {
-                version: *version,
-                amounts,
-            },
-        );
+        bucket
+            .2
+            .insert(id.clone(), Member::visible(*version, amounts));
     }
     let rows = grouped
         .into_iter()
