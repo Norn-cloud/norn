@@ -3,6 +3,7 @@
 // every read. Nothing here inspects data or grants access.
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
+import { boundedText } from "./body.mjs";
 initSync({ module });
 
 // Published cells, as [orgId, environmentId].
@@ -11,7 +12,7 @@ const PUBLISHED = [["org_demo", "dev"], ["org_demo", "analytics"]];
 const escape = (part) => part.replaceAll("%", "%25").replaceAll("/", "%2F");
 const key = ([org, env]) => `${escape(org)}/${escape(env)}`;
 const CELL_HEADER = "x-norn-cell";
-/** The largest submission a cell accepts (an ad-hoc QuestionIR), in UTF-16 units. */
+/** The largest submission a cell accepts (an ad-hoc QuestionIR), in bytes. */
 const MAX_BODY = 65536;
 
 export class Cell {
@@ -48,8 +49,9 @@ export class Cell {
   }
   async fetch(request) {
     // A submission (an ad-hoc question) is read once, bounded, before the cell sees it.
-    const body = request.method === "POST" ? await request.text() : undefined;
-    if (body !== undefined && body.length > MAX_BODY) {
+    // Read under the bound, never buffered past it: a larger body is cancelled mid-stream.
+    const body = request.method === "POST" ? await boundedText(request, MAX_BODY) : undefined;
+    if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${MAX_BODY} bytes` }, { status: 413 });
     }
     await this.open(request);

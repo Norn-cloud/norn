@@ -119,7 +119,10 @@ fn access(
 }
 
 fn host() -> DevHost<norn_cell::engine::NativeEngine> {
-    let artifacts = artifacts();
+    host_with(artifacts())
+}
+
+fn host_with(artifacts: Vec<serde_json::Value>) -> DevHost<norn_cell::engine::NativeEngine> {
     let objects = artifacts
         .iter()
         .filter(|artifact| artifact["kind"] == "entity")
@@ -364,5 +367,25 @@ fn runs_page_by_cursor_and_filter_by_flow_and_state() {
         .unwrap_err()
         .code,
         "request.invalid"
+    );
+}
+
+#[test]
+fn a_retired_flow_starts_no_new_runs() {
+    let mut artifacts = artifacts();
+    for artifact in &mut artifacts {
+        if artifact["kind"] == "rule" {
+            artifact["lifecycle"] = serde_json::json!("retired");
+        }
+    }
+    let host = host_with(artifacts);
+    let refused = start(&host, "run-1").unwrap_err();
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (409, "run.flow_retired")
+    );
+    assert!(
+        get_run(&host, &query(), "run-1", &access("user:ada")).is_err(),
+        "nothing started"
     );
 }

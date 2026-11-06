@@ -171,6 +171,8 @@ pub(crate) struct InstalledFlow {
     pub(crate) object_type: String,
     pub(crate) state_property: String,
     pub(crate) environment_hash: String,
+    /// The flow's definition is retired: its live runs advance, new ones refuse.
+    pub(crate) retired: bool,
 }
 
 fn text<'v>(value: &'v serde_json::Value, pointer: &str) -> Option<&'v str> {
@@ -237,6 +239,7 @@ pub(crate) fn installed_flow<E: SqlEngine>(
             .ok_or_else(flow_not_found)?
             .to_owned(),
         environment_hash: active.receipt_sha256,
+        retired: text(rule, "/lifecycle") == Some("retired"),
     })
 }
 
@@ -299,6 +302,14 @@ fn commit_start<E: SqlEngine>(
     body: &StartRunRequest,
 ) -> Result<(), Refusal> {
     let flow = installed_flow(cell.store(), &body.flow)?;
+    if flow.retired {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            "run.flow_retired",
+            "the flow is retired",
+            "a retired flow starts no new runs; its live runs still finish",
+        ));
+    }
     let output =
         norn_kernel::flow_start::flow_start(&flow.rule, &flow.environment_hash, &body.run_id)
             .map_err(|error| {
