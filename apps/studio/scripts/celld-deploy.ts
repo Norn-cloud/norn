@@ -1,11 +1,11 @@
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { celldConfig, celldStudio } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
 
-// Deploy the self-hosted Studio to a celld fleet from exactly one commit, then prove the
-// fleet serves that build. Refuses before building when the commit is not given, HEAD is
+// Deploy the self-hosted Studio to a celld fleet from exactly one commit, apply its pending D1
+// migrations, then prove the fleet serves that build. Refuses before building when the commit is not given, HEAD is
 // not that commit, or the tree has any change; the commit is recorded as STUDIO_BUILD.
 //
 //   bun scripts/celld-deploy.ts --commit <sha> [--app <checkout>/apps/studio]
@@ -38,6 +38,23 @@ export function pinnedCommit(argv: readonly string[], head: string, status: stri
   return head
 }
 
+/** Runs a command in the app directory and returns its combined output; throws on a non-zero exit. */
+export type Run = (command: string, args: readonly string[]) => string
+
+/**
+ * Apply the stage's pending D1 migrations (`worker/migrations`, the `d1_databases` entry of
+ * wrangler.json) through `celld d1 migrations apply`. celld records applied files in
+ * `d1_migrations`, so a second run applies nothing. Any failure fails the deploy: a Worker that
+ * needs a table its database lacks must not be reported as deployed (#772, a missing
+ * 0002_connector_binding.sql shipped once).
+ */
+export function applyMigrations(run: Run, database: string, bucket: string | undefined): string {
+  if (bucket === undefined || bucket === "") throw new Error("CELLD_BUCKET is required to apply the stage's D1 migrations")
+  const output = run("celld", ["d1", "migrations", "apply", database, ".", "--bucket", bucket])
+  if (!/Applied |No migrations to apply/.test(output)) throw new Error(`celld d1 migrations apply ${database} gave no result:\n${output}`)
+  return output
+}
+
 async function main(argv: readonly string[]) {
   const app = appDir(argv, join(import.meta.dir, ".."))
   const git = (...args: string[]) => execFileSync("git", args, { cwd: app, encoding: "utf8" }).trim()
@@ -54,8 +71,18 @@ async function main(argv: readonly string[]) {
   // The config carries secrets: written mode 0600, ignored by git, removed after the deploy.
   const config = join(app, "wrangler.json")
   writeFileSync(config, `${JSON.stringify(celldConfig(studio), null, 2)}\n`, { mode: 0o600 })
+  // celld d1 prints its messages on stderr; both streams are the result.
+  const run: Run = (command, args) => {
+    const done = spawnSync(command, args, { cwd: app, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    const output = `${done.stdout ?? ""}${done.stderr ?? ""}`
+    if (done.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (exit ${done.status ?? done.signal}):\n${output}`)
+    return output
+  }
   try {
     execFileSync("celld", ["deploy", ".", "--json"], { cwd: app, stdio: ["ignore", "inherit", "inherit"] })
+    // Migrations are additive (expand first), so the schema may lead the code nodes adopt next.
+    const database = `norn-studio-auth-${studio.stage}`
+    console.log(`${database}: ${applyMigrations(run, database, process.env.CELLD_BUCKET).trim().split("\n").join("; ")}`)
   } finally {
     rmSync(config, { force: true })
   }

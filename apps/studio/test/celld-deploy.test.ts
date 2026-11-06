@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { join } from "node:path"
-import { appDir, pinnedCommit } from "../scripts/celld-deploy.ts"
+import { appDir, applyMigrations, pinnedCommit, type Run } from "../scripts/celld-deploy.ts"
 import { awaitServed, entryChunk } from "../scripts/served-build.ts"
 
 const HEAD = "93dfdc450d".padEnd(40, "a")
@@ -40,4 +40,17 @@ test("--app names another Studio checkout to build; anything else refuses", () =
   expect(() => appDir(["--app"], own)).toThrow("--app needs a directory")
   expect(() => appDir(["--app", "--commit"], own)).toThrow("--app needs a directory")
   expect(() => appDir(["--app", import.meta.dir], own)).toThrow("not a Studio app directory")
+})
+
+test("pending D1 migrations are applied through celld, idempotently, and a failure fails the deploy", () => {
+  const calls: string[] = []
+  const answering = (output: string): Run => (command, args) => { calls.push([command, ...args].join(" ")); return output }
+  expect(applyMigrations(answering("Applied 0002_connector_binding.sql\n"), "norn-studio-auth-next", "s3://norn-next-celld")).toContain("Applied 0002")
+  expect(calls[0]).toBe("celld d1 migrations apply norn-studio-auth-next . --bucket s3://norn-next-celld")
+  // A second deploy applies nothing and still passes.
+  expect(applyMigrations(answering("No migrations to apply.\n"), "norn-studio-auth-next", "s3://norn-next-celld")).toContain("No migrations")
+  const failing: Run = () => { throw new Error("Command failed: celld d1 migrations apply (exit 1): near \"ALTR\": syntax error") }
+  expect(() => applyMigrations(failing, "norn-studio-auth-next", "s3://norn-next-celld")).toThrow("syntax error")
+  expect(() => applyMigrations(answering(""), "norn-studio-auth-next", "s3://norn-next-celld")).toThrow("gave no result")
+  expect(() => applyMigrations(answering("Applied x"), "norn-studio-auth-next", undefined)).toThrow("CELLD_BUCKET")
 })
