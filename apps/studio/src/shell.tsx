@@ -1,14 +1,15 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { ChevronsUpDown, Search, type LucideIcon } from "lucide-react"
+import { ChevronsUpDown, LogOut, Search, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { Account } from "@/lib/session"
 
 export interface Section {
   readonly path: string
@@ -135,8 +136,38 @@ export const target = (section: Pick<Section, "path">, href: string) =>
 export const sectionOf = (sections: readonly Section[], pathname: string) =>
   sections.find(({ path }) => pathname === path || pathname.startsWith(`${path}/`))
 
+export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
+
+/** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
+export function AccountMenu({ account, onSignOut }: { readonly account: Account; readonly onSignOut: () => void }) {
+  const { user, organization } = account
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip={{ children: `${user.name} · ${organization?.name ?? "No organization"}`, hidden: false }} className="md:h-8 md:p-0">
+          <span className="flex aspect-square size-8 items-center justify-center rounded-full bg-muted text-xs font-medium">{initials(user.name || user.email)}</span>
+          <span className="sr-only">Account</span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="end" className="min-w-56">
+        <DropdownMenuLabel className="grid">
+          <span className="font-medium">{user.name}</span>
+          <span className="text-meta font-normal text-muted-foreground">{user.email}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="grid font-normal">
+          <span>{organization?.name ?? "No organization"}</span>
+          {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onSignOut}><LogOut />Sign out</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 /** A thin icon rail, the active section's submenu beside it, and the page card. */
-export function Shell({ sections }: { sections: readonly Section[] }) {
+export function Shell({ sections, account, onSignOut }: { sections: readonly Section[]; account: Account; onSignOut: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
   return (
@@ -159,11 +190,7 @@ export function Shell({ sections }: { sections: readonly Section[] }) {
               </SidebarGroupContent></SidebarGroup>
             </SidebarContent>
             <SidebarFooter>
-              <SidebarMenu><SidebarMenuItem>
-                <SidebarMenuButton tooltip={{ children: "Not signed in: recorded demo", hidden: false }} className="md:h-8 md:p-0">
-                  <span className="flex aspect-square size-8 items-center justify-center rounded-full bg-muted text-xs font-medium">RD</span><span className="sr-only">Recorded demo</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem></SidebarMenu>
+              <SidebarMenu><SidebarMenuItem><AccountMenu account={account} onSignOut={onSignOut} /></SidebarMenuItem></SidebarMenu>
             </SidebarFooter>
           </Sidebar>
           {current && <Submenu key={current.path} section={current} />}

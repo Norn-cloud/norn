@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router"
 import { ChartLine, Database, Gauge, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
+import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
+import { LoginPage } from "./login.tsx"
 import { createRoot } from "react-dom/client"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { QuestionsPage, useQuestionsMenu } from "./questions.tsx"
@@ -35,7 +37,17 @@ function NotYet({ label, summary, icon }: Section) {
   )
 }
 
-const root = createRootRoute({ component: () => <Shell sections={SECTIONS} /> })
+/** Signed out, a visitor sees only the sign-in page; signed in, the Studio. */
+function Root() {
+  const account = useAccount()
+  const refresh = useRefreshAccount()
+  if (account.isPending) return null
+  if (account.isError) return <main className="p-8 text-muted-foreground">Studio could not reach its server. Reload to try again.</main>
+  if (account.data === null) return <LoginPage />
+  return <Shell sections={SECTIONS} account={account.data} onSignOut={() => void authApi.signOut().finally(refresh)} />
+}
+
+const root = createRootRoute({ component: Root })
 const router = createRouter({
   routeTree: root.addChildren([
     createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ to: "/questions" }) } }),
