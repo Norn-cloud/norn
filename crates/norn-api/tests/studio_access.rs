@@ -1,4 +1,4 @@
-//! The hosted Studio role policy (#817), decided by the real AccessIR → Cedar
+//! The hosted Studio role policy (#817), decided by the real `AccessIR` → Cedar
 //! PDP: a viewer reads, a member also proposes, an admin or owner also
 //! approves. Everything else, including another organization's workspace, an
 //! unknown role or a missing capability grant, denies.
