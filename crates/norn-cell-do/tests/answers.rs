@@ -85,10 +85,41 @@ fn granted_principals_get_the_exact_live_answer() {
     assert_eq!(answer["freshness"], "exact");
     assert_eq!(answer["complete"], true);
     assert!(!answer["rows"].as_object().unwrap().is_empty());
-    // Population alone answers the question; the pin names the population.
+    // Population alone answers the question with the same aggregate and
+    // membership; member amounts are row values and are withheld (DATA-VALUES-1).
     let guest = get(&cell, &answer_path(), SCOPE, GUEST);
     assert_eq!(guest.status, 200, "{}", guest.body);
-    assert_eq!(json(&guest)["rows"], answer["rows"]);
+    let guest = json(&guest);
+    for (bucket, row) in answer["rows"].as_object().unwrap() {
+        let seen = &guest["rows"][bucket];
+        assert_eq!(
+            (&seen["totals"], &seen["value"]),
+            (&row["totals"], &row["value"]),
+            "{bucket}"
+        );
+        let members = seen["members"].as_object().unwrap();
+        assert_eq!(
+            members.keys().collect::<Vec<_>>(),
+            row["members"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            members
+                .values()
+                .all(|m| m["amounts"].is_null() && m["restricted"] == true),
+            "{bucket}"
+        );
+        assert!(
+            row["members"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|m| m["amounts"].is_array())
+        );
+    }
 }
 
 #[test]
