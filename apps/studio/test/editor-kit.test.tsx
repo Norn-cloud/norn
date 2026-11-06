@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { EditorToolbar, RowActions, ValidationPanel, shortcutOf } from "../src/components/editor.tsx"
-import { VERBS, history, list, modKey, verbTable } from "../src/lib/editor.ts"
+import { VERBS, history, list, modKey, sameValue, verbTable } from "../src/lib/editor.ts"
 import { SUITES } from "./e2e/suites.ts"
 import { defineVerbs, exitStatus, supported } from "./e2e/verbs.ts"
 
@@ -100,4 +100,19 @@ test("undo and redo shortcuts go to the editor that owns them; save and run only
   const covered = { ...owner, shortcuts: false }
   expect(shortcutOf(key("z"), covered)).toBeUndefined()
   expect(shortcutOf(key("y"), covered)).toBeUndefined()
+  expect(shortcutOf(key("s"), covered)).toBeUndefined()
+})
+
+test("the dirty check compares maps, sets, dates and cycles, not their JSON", () => {
+  expect(sameValue({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] })).toBe(true)
+  expect(sameValue({ a: 1 }, { a: 1, b: undefined })).toBe(false)
+  expect(sameValue(new Map([["k", 1]]), new Map([["k", 2]]))).toBe(false)
+  expect(sameValue(new Map([["k", { v: 1 }]]), new Map([["k", { v: 1 }]]))).toBe(true)
+  expect(sameValue(new Set([1, 2]), new Set([1, 3]))).toBe(false)
+  expect(sameValue(new Date(1), new Date(2))).toBe(false)
+  const a: { self?: unknown; n: number } = { n: 1 }; a.self = a
+  const b: { self?: unknown; n: number } = { n: 1 }; b.self = b
+  const c: { self?: unknown; n: number } = { n: 2 }; c.self = c
+  expect(sameValue(a, b)).toBe(true)
+  expect(sameValue(a, c)).toBe(false)
 })

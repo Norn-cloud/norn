@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { ChartLine, Plus } from "lucide-react"
-import { type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -100,9 +100,13 @@ export async function readCatalog(): Promise<QuestionCatalog> {
   return catalog
 }
 
-/** A check's result belongs to the draft it was run on; after any edit, undo or redo it is shown no longer, and a late response for an older draft is ignored. */
-export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D) =>
-  check.variables === draft ? { data: check.data, error: check.error } : { data: undefined, error: null }
+/**
+ * A check's result belongs to the draft and editor revision it was run on:
+ * after any edit, undo or redo it is shown no longer (undo back to the same
+ * draft is a new revision), and a late response for an older draft is ignored.
+ */
+export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D, at?: { readonly ranAt: object | undefined; readonly revision: object }) =>
+  check.variables === draft && (at === undefined || at.ranAt === at.revision) ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
 async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
   const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
@@ -158,11 +162,14 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
   readonly onUse?: (question: QuestionIR, title: string) => void
 }) {
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
-  const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => check.mutate(draft) })
+  // The editor revision each check ran at: a check shows only while the editor is still at that revision.
+  const [ranAt, setRanAt] = useState<object>()
+  const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => run(draft) })
+  const run = (next: Draft) => { setRanAt(editor.revision); check.mutate(next) }
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const setFilter = (index: number, next: Partial<Condition>) => patch({ filters: draft.filters.map((filter, at) => at === index ? { ...filter, ...next } : filter) })
-  const checked = checkedFor(check, draft)
+  const checked = checkedFor(check, draft, { ranAt, revision: editor.revision })
   const issues = issuesOf(checked.data)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const property = catalog.properties.find(({ name }) => name === draft.by)
@@ -174,7 +181,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       {guard?.(editor.dirty)}
       <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
-        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); check.mutate(draft) }}>
+        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
           <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
@@ -219,9 +226,9 @@ export function QuestionBuilder({ catalog, guard, initial, onUse }: {
         {checked.data?.admitted && <QuestionCard verdict={checked.data} />}
         {/* Only the question the checker admitted, and only while the form still shows it. */}
         {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
-        {check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
-        {onUse && check.data?.admitted && check.variables && JSON.stringify(check.variables) === JSON.stringify(draft) && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
-        {onUse && check.data?.admitted && JSON.stringify(check.variables) !== JSON.stringify(draft) && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
+        {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
+        {onUse && checked.data?.admitted && check.variables && <Button type="button" onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
+        {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
     </div>
   )
