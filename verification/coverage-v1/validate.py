@@ -636,8 +636,7 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
     # Bundles may drop only the cargo target dir, between tasks and when disk is low.
-    prune = ("      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then\n"
-             '        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"\n')
+    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        rm -rf -- "${CARGO_TARGET_DIR:-$PWD/target}"\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
     require(runner.count(prune) == 1 and runner.count("rm -rf") == 2,
             "bundle may prune only the cargo target dir, between tasks and when disk is low")
     require("scripts/verify-promoted-subsystems.sh full" in runner, "full generic proof/model gates must run")
