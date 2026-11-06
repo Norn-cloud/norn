@@ -158,7 +158,7 @@ test("tool bindings: an admin adds, edits and removes them; the mapping is check
   const member = await signUp("member@example.com", "member", "owner@example.com")
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: member })).body).toMatchObject({ code: "connectors.forbidden", action: { kind: "ask_admin" } })
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: member })).status).toBe(403)
-  expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body).toEqual({ removed: binding.id })
+  expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body).toEqual({ removed: binding.id, retired: null })
   expect((await send(`/bindings/${binding.id}`, { method: "DELETE", cookie: owner })).body.code).toBe("connectors.binding_not_found")
 })
 
