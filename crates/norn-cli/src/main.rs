@@ -61,6 +61,14 @@ enum Command {
     },
     /// Print generated core IR and checker `OpenAPI` components.
     Openapi,
+    /// Print the HOST-TREE-1 source-tree digest of a directory.
+    #[command(
+        long_about = "Print the HOST-TREE-1 source-tree digest of a directory (FUNCTION-HOST-1's implementation.digest for a built-in crate). Every regular file below the directory counts, except entries whose name starts with '.' and directories named 'target'. Symlinks and non-UTF-8 names refuse. Run it on a clean checkout."
+    )]
+    SourceDigest {
+        /// The source tree's root directory (for a built-in, its crate directory).
+        dir: PathBuf,
+    },
 }
 
 fn run(command: Command) -> Result<(String, bool), String> {
@@ -138,6 +146,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
             }
             Ok((String::new(), true))
         }
+        Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
         Command::Check { artifacts, context } => {
             let artifacts =
                 std::fs::read_to_string(artifacts).map_err(|error| error.to_string())?;
@@ -152,6 +161,61 @@ fn run(command: Command) -> Result<(String, bool), String> {
             ))
         }
     }
+}
+
+/// HOST-TREE-1: read every counted file below `root` and digest the tree.
+fn source_digest(root: &std::path::Path) -> Result<String, String> {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut Vec<(String, Vec<u8>)>,
+    ) -> Result<(), String> {
+        let mut entries = std::fs::read_dir(dir)
+            .map_err(|error| format!("{}: {error}", dir.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name
+                .to_str()
+                .ok_or_else(|| format!("non-UTF-8 name under {}", dir.display()))?;
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if name.starts_with('.') || (kind.is_dir() && name == "target") {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_symlink() {
+                return Err(format!("{}: symlinks are refused", path.display()));
+            }
+            if kind.is_dir() {
+                walk(root, &path, files)?;
+            } else if kind.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|error| error.to_string())?
+                    .components()
+                    .map(|part| part.as_os_str().to_str().unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let bytes =
+                    std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+                files.push((relative, bytes));
+            } else {
+                return Err(format!("{}: not a regular file", path.display()));
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(root, root, &mut files)?;
+    let digest = norn_ir::source_tree::source_tree_digest(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "digest": digest.0, "files": files.len() }).to_string())
 }
 
 fn main() -> ExitCode {
