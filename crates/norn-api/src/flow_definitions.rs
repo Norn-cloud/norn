@@ -37,6 +37,10 @@ pub mod codes {
     pub const FUNCTION_UNKNOWN: &str = "definition.flow_function_unknown";
     /// An artifact scoped outside the cell.
     pub const SCOPE_CONFLICT: &str = "definition.flow_scope_conflict";
+    /// A `commands` output that could construct a record without fixed literals.
+    pub const COMMAND_UNVERIFIABLE: &str = "definition.flow_command_unverifiable";
+    /// An artifact id another definition already owns.
+    pub const ARTIFACT_CONFLICT: &str = "definition.flow_artifact_conflict";
     /// Retiring a flow while a run may still be live.
     pub const RUNS_LIVE: &str = "definition.flow_runs_live";
 }
@@ -103,6 +107,11 @@ pub struct Flow {
     pub artifacts: Vec<ArtifactEnvelope>,
     /// Their indices in the submitted `artifacts`, in the same order.
     pub indices: [usize; 2],
+    /// Every perform as `(pointer, function, functionVersion)`, re-resolved
+    /// under the write lock before the commit.
+    pub performs: Vec<(String, String, String)>,
+    /// The built-in resolver the performs were checked against.
+    pub builtins: Option<Builtins>,
     /// What the install reports.
     pub summary: FlowSummary,
 }
@@ -286,34 +295,33 @@ pub fn check(
             format!("/artifacts/{entity_index}/payload/objectType/lifecycles"),
         ));
     }
+    let mut resolved_performs = Vec::new();
     match norn_checker::flow_performs::perform_refs(&rule_payload) {
-        Err((pointer, message)) => findings.push(error(
-            codes::SHAPE_INVALID,
-            format!("expression does not parse: {message}"),
-            format!("{rule_at}/payload{pointer}"),
+        Err(refused) => findings.push(error(
+            codes::COMMAND_UNVERIFIABLE,
+            refused.message,
+            format!("{rule_at}/payload{}", refused.pointer),
         )),
         Ok(performs) => {
             for perform in performs {
                 let at = format!("{rule_at}/payload{}", perform.pointer);
-                let resolved = perform.name.as_ref().is_some_and(|(function, version)| {
-                    let builtin = version.parse::<u32>().is_ok_and(|number| {
-                        builtins.is_some_and(|resolve| resolve(function, number))
-                    });
-                    builtin
-                        || bindings
-                            .get(function)
-                            .is_some_and(|bound| bound.to_string() == *version)
-                });
-                if !resolved {
-                    let named = perform.name.map_or_else(
-                        || "a function that is not a literal".to_owned(),
-                        |(f, v)| format!("{f}@{v}"),
-                    );
-                    findings.push(error(
-                        codes::FUNCTION_UNKNOWN,
-                        format!("this step performs {named}: neither a registered built-in nor an installed binding at that version"),
-                        at,
-                    ));
+                match perform.name {
+                    Some((function, version))
+                        if resolves(&function, &version, builtins, bindings) =>
+                    {
+                        resolved_performs.push((at, function, version));
+                    }
+                    name => {
+                        let named = name.map_or_else(
+                            || "a function that is not a literal".to_owned(),
+                            |(f, v)| format!("{f}@{v}"),
+                        );
+                        findings.push(error(
+                            codes::FUNCTION_UNKNOWN,
+                            format!("this step performs {named}: neither a registered built-in nor an installed binding at that version"),
+                            at,
+                        ));
+                    }
                 }
             }
         }
@@ -321,6 +329,8 @@ pub fn check(
     let flow = Flow {
         artifacts: vec![entity.clone(), rule.clone()],
         indices: [entity_index, rule_index],
+        performs: resolved_performs,
+        builtins,
         summary: FlowSummary {
             flow_id: flow_id.to_owned(),
             version: version.to_owned(),
@@ -329,6 +339,49 @@ pub fn check(
         },
     };
     (findings, Some(flow))
+}
+
+/// Whether `(function, version)` is a registered built-in or an installed,
+/// active binding at exactly that version.
+fn resolves(
+    function: &str,
+    version: &str,
+    builtins: Option<Builtins>,
+    bindings: &BTreeMap<String, u64>,
+) -> bool {
+    let builtin = version
+        .parse::<u32>()
+        .is_ok_and(|number| builtins.is_some_and(|resolve| resolve(function, number)));
+    builtin
+        || bindings
+            .get(function)
+            .is_some_and(|bound| bound.to_string() == version)
+}
+
+/// Re-resolve every perform of `flow` against the bindings active now,
+/// under the write lock: a binding retired or revised since validation
+/// refuses the install instead of committing a stale pin.
+///
+/// # Errors
+/// `definition.refused` naming each perform that no longer resolves.
+pub fn recheck(flow: &Flow, bindings: &BTreeMap<String, u64>) -> Result<(), Refusal> {
+    let stale: Vec<RefusalDiagnostic> = flow
+        .performs
+        .iter()
+        .filter(|(_, function, version)| !resolves(function, version, flow.builtins, bindings))
+        .map(|(at, function, version)| {
+            error(
+                codes::FUNCTION_UNKNOWN,
+                format!("this step performs {function}@{version}, which is no longer installed at that version"),
+                at.clone(),
+            )
+        })
+        .collect();
+    if stale.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::definition_routes::refused_with(stale))
+    }
 }
 
 /// The binding version a flow's performs pin `binding_id` to, if any.
@@ -360,19 +413,49 @@ pub fn pinned_version(canonical: &str, binding_id: &str) -> Option<String> {
 ///
 /// # Errors
 /// The checker's refusal, as `definition.refused` diagnostics.
-pub fn rebuild(active_set: &str, flow: &Flow) -> Result<AdmittedSet, Refusal> {
+pub fn rebuild(
+    active_set: &str,
+    active_receipt: Option<&str>,
+    flow: &Flow,
+    previously_owned: &[String],
+) -> Result<AdmittedSet, Refusal> {
     let owned: Vec<&str> = flow
         .artifacts
         .iter()
         .map(|artifact| artifact.artifact_id.as_str())
         .collect();
-    let mut artifacts: Vec<ArtifactEnvelope> = kernel_set::retained_artifacts(active_set)
-        .map_err(Refusal::host)?
+    let active = kernel_set::retained_artifacts(active_set).map_err(Refusal::host)?;
+    // An id already in the set belongs to whoever installed it; only this
+    // flow's own previous revision may be replaced.
+    let conflicts: Vec<RefusalDiagnostic> = active
+        .iter()
+        .filter(|artifact| owned.contains(&artifact.artifact_id.as_str()))
+        .filter(|artifact| !previously_owned.contains(&artifact.artifact_id))
+        .filter_map(|artifact| {
+            let at = owned.iter().position(|id| *id == artifact.artifact_id)?;
+            let index = flow.indices.get(at)?;
+            Some(error(
+                codes::ARTIFACT_CONFLICT,
+                format!(
+                    "{} is already installed by another definition",
+                    artifact.artifact_id
+                ),
+                format!("/artifacts/{index}/artifactId"),
+            ))
+        })
+        .collect();
+    if !conflicts.is_empty() {
+        return Err(crate::definition_routes::refused_with(conflicts));
+    }
+    // The trusted base is what the retained receipt recorded, never what a
+    // submitted id claims.
+    let base = kernel_set::base_ids(active_receipt).map_err(Refusal::host)?;
+    let mut artifacts: Vec<ArtifactEnvelope> = active
         .into_iter()
         .filter(|artifact| !owned.contains(&artifact.artifact_id.as_str()))
         .collect();
     artifacts.extend(flow.artifacts.iter().cloned());
-    kernel_set::admit_kernel_set(&artifacts).map_err(|refusal| {
+    kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(|refusal| {
         let diagnostics = match refusal {
             KernelRefusal::Refused(findings) => findings
                 .iter()

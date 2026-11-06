@@ -35,17 +35,59 @@ fn invalid(context: &str) -> impl Fn(&dyn std::fmt::Display) -> KernelRefusal + 
     move |error| KernelRefusal::Invalid(format!("{context}: {error}"))
 }
 
-/// Whether `artifact_id` is part of the trusted base a set is checked over.
+/// Whether `artifact_id` names a trusted-base artifact by its reserved
+/// namespace. Only trusted provisioning code partitions a set by name; a
+/// submitted id never makes an artifact trusted (see [`base_ids`]).
 #[must_use]
-pub fn is_base(artifact_id: &str) -> bool {
+pub fn is_reserved(artifact_id: &str) -> bool {
     artifact_id.starts_with("core.") || artifact_id.starts_with("std.")
 }
 
-/// Admit the full set `artifacts`.
+/// The ids the retained admission receipt recorded as the trusted base: the
+/// only source of base membership for a set built from requests.
+///
+/// # Errors
+/// The receipt is not JSON.
+pub fn base_ids(receipt: Option<&str>) -> Result<BTreeSet<String>, String> {
+    let Some(receipt) = receipt else {
+        return Ok(BTreeSet::new());
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(receipt).map_err(|error| error.to_string())?;
+    Ok(value
+        .pointer("/artifactSet/base")
+        .and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter_map(|entry| entry.get("artifactId").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Admit the full set `artifacts` from trusted provisioning code, its base
+/// partitioned by reserved namespace.
 ///
 /// # Errors
 /// The checker's findings, or a set that cannot be encoded or projected.
 pub fn admit_kernel_set(artifacts: &[ArtifactEnvelope]) -> Result<AdmittedSet, KernelRefusal> {
+    admit_with(artifacts, |artifact| is_reserved(&artifact.artifact_id))
+}
+
+/// Admit the full set `artifacts` with exactly `base` as the trusted base.
+///
+/// # Errors
+/// The checker's findings, or a set that cannot be encoded or projected.
+pub fn admit_kernel_set_with_base(
+    artifacts: &[ArtifactEnvelope],
+    base: &BTreeSet<String>,
+) -> Result<AdmittedSet, KernelRefusal> {
+    admit_with(artifacts, |artifact| base.contains(&artifact.artifact_id))
+}
+
+fn admit_with(
+    artifacts: &[ArtifactEnvelope],
+    is_base: impl Fn(&ArtifactEnvelope) -> bool,
+) -> Result<AdmittedSet, KernelRefusal> {
     let value = |artifact: &ArtifactEnvelope| {
         serde_json::to_value(artifact)
             .map_err(|e| invalid("artifact wire")(&e))
@@ -53,10 +95,7 @@ pub fn admit_kernel_set(artifacts: &[ArtifactEnvelope]) -> Result<AdmittedSet, K
                 RuntimeValue::from_json(wire).map_err(|e| invalid("artifact value")(&e))
             })
     };
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts
-        .iter()
-        .cloned()
-        .partition(|artifact| is_base(&artifact.artifact_id));
+    let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
     let candidate_values = candidates
         .iter()
         .map(value)

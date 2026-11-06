@@ -56,6 +56,8 @@ pub mod codes {
     pub const NOT_FOUND: &str = "definition.not_found";
     /// The kind has no validator in this cell (422).
     pub const KIND_UNKNOWN: &str = "definition.kind_unknown";
+    /// The id is in the reserved `core.` or `std.` namespace (400).
+    pub const ID_RESERVED: &str = "definition.id_reserved";
     /// The id does not match `^[a-z][a-z0-9._-]{0,127}$` (400).
     pub const ID_INVALID: &str = "definition.id_invalid";
     /// The list cursor is malformed or bound to another listing (400).
@@ -473,6 +475,14 @@ pub fn authorize<E: SqlEngine>(
 }
 
 fn check_id(id: &str) -> Result<(), Refusal> {
+    if crate::kernel_set::is_reserved(id) {
+        return Err(Refusal::new(
+            StatusCode::BAD_REQUEST,
+            codes::ID_RESERVED,
+            "the definition id is in a reserved namespace",
+            "core. and std. name the trusted base; choose another namespace",
+        ));
+    }
     if valid_id(id) {
         return Ok(());
     }
@@ -661,7 +671,13 @@ fn active_binding_versions<E: SqlEngine>(
     host: &DevHost<E>,
 ) -> Result<std::collections::BTreeMap<String, u64>, Refusal> {
     let cell = host.cell()?;
-    let reader = cell.store().read();
+    binding_versions(&cell.store().read())
+}
+
+/// As [`active_binding_versions`], from a reader the caller already holds.
+fn binding_versions<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+) -> Result<std::collections::BTreeMap<String, u64>, Refusal> {
     let mut versions = std::collections::BTreeMap::new();
     let mut after: Option<String> = None;
     loop {
@@ -1015,7 +1031,7 @@ fn append<E: SqlEngine>(
     let _epoch = host.definition_write()?;
     let record = {
         let mut cell = host.cell()?;
-        let (active, current) = {
+        let (active, current, bindings) = {
             let reader = cell.store().read();
             let active = reader
                 .installed_definitions(None)
@@ -1024,7 +1040,11 @@ fn append<E: SqlEngine>(
             let current = reader
                 .retained_definition(&definition.id, None)
                 .map_err(Refusal::host)?;
-            (active, current)
+            let bindings = match flow {
+                Some(_) => binding_versions(&reader)?,
+                None => std::collections::BTreeMap::new(),
+            };
+            (active, current, bindings)
         };
         if current.as_ref().map(|current| current.definition.revision) != expected {
             return Err(version_conflict());
@@ -1051,7 +1071,23 @@ fn append<E: SqlEngine>(
         // carries the active set, receipt and model unchanged.
         let (model, canonical_set, receipt_sha256, admission_receipt) = match flow {
             Some(flow) => {
-                let admitted = crate::flow_definitions::rebuild(&active.canonical_set, flow)?;
+                // Re-resolved under the lock: a binding retired or revised
+                // since validation refuses instead of committing a stale pin.
+                crate::flow_definitions::recheck(flow, &bindings)?;
+                // Only this flow's own previous revision may be replaced.
+                let previously_owned: Vec<String> = match &current {
+                    Some(_) => {
+                        let (entity, rule) = crate::flow_definitions::owned_ids(&definition.id);
+                        vec![entity, rule]
+                    }
+                    None => Vec::new(),
+                };
+                let admitted = crate::flow_definitions::rebuild(
+                    &active.canonical_set,
+                    active.admission_receipt.as_deref(),
+                    flow,
+                    &previously_owned,
+                )?;
                 (
                     admitted.model,
                     admitted.canonical_set,

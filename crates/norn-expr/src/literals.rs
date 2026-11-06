@@ -62,6 +62,94 @@ pub fn object_literals(source: &str) -> Result<Vec<ObjectLiteral>, ExprError> {
         })
 }
 
+/// The records a command-producing expression yields, when its shape fixes
+/// them: an array literal of plain object literals with literal keys, or a
+/// conditional (or parenthesized expression) whose every branch has that
+/// shape. Anything that could construct a record any other way (a variable,
+/// a call such as `merge`, a member read, a computed key) is `None`.
+///
+/// # Errors
+/// [`ExprError::Compile`] when the source is malformed or over its bounds.
+pub fn command_records(source: &str) -> Result<Option<Vec<ObjectLiteral>>, ExprError> {
+    validate_evaluation_source(source, &ResourceLimitProfile::norn_limits_v1()).map_err(
+        |diagnostics| ExprError::Compile {
+            message: diagnostics
+                .into_iter()
+                .map(|diagnostic| diagnostic.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+        },
+    )?;
+    IntelliSense::new()
+        .with_strict(true)
+        .with_ast(source, false, |ast, _metadata| {
+            let mut records = Vec::new();
+            records_of(ast, &mut records).then_some(records)
+        })
+        .ok_or_else(|| ExprError::Compile {
+            message: "expression does not parse".to_owned(),
+        })
+}
+
+/// Whether `node` has the fixed record shape, collecting its records.
+fn records_of(node: &Node<'_>, records: &mut Vec<ObjectLiteral>) -> bool {
+    match node {
+        Node::Parenthesized(inner) => records_of(inner, records),
+        Node::Conditional {
+            on_true, on_false, ..
+        } => records_of(on_true, records) && records_of(on_false, records),
+        Node::Array(items) => items.iter().all(|item| match item {
+            Node::Object(entries) => {
+                let record = literal(entries);
+                let fixed = !record.computed_keys
+                    && matches!(record.fields.get("kind"), Some(FieldValue::String(_)));
+                records.push(record);
+                fixed
+            }
+            Node::Null
+            | Node::Bool(_)
+            | Node::Number(_)
+            | Node::String(_)
+            | Node::TemplateString(_)
+            | Node::Pointer
+            | Node::Array(_)
+            | Node::Assignments { .. }
+            | Node::Closure { .. }
+            | Node::Root
+            | Node::Identifier(_)
+            | Node::Parenthesized(_)
+            | Node::Member { .. }
+            | Node::Slice { .. }
+            | Node::Interval { .. }
+            | Node::Conditional { .. }
+            | Node::Unary { .. }
+            | Node::Binary { .. }
+            | Node::FunctionCall { .. }
+            | Node::MethodCall { .. }
+            | Node::Error { .. } => false,
+        }),
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::TemplateString(_)
+        | Node::Pointer
+        | Node::Object(_)
+        | Node::Assignments { .. }
+        | Node::Closure { .. }
+        | Node::Root
+        | Node::Identifier(_)
+        | Node::Member { .. }
+        | Node::Slice { .. }
+        | Node::Interval { .. }
+        | Node::Unary { .. }
+        | Node::Binary { .. }
+        | Node::FunctionCall { .. }
+        | Node::MethodCall { .. }
+        | Node::Error { .. } => false,
+    }
+}
+
 fn literal(entries: &[(&Node<'_>, &Node<'_>)]) -> ObjectLiteral {
     let mut object = ObjectLiteral::default();
     for (key, value) in entries {
@@ -146,5 +234,32 @@ mod tests {
             FieldValue::String("2".into())
         );
         assert!(object_literals("{").is_err());
+    }
+
+    #[test]
+    fn only_fixed_shapes_yield_command_records() {
+        let fixed = command_records(
+            "x ? [{kind: 'perform', function: 'a', functionVersion: '1', input: {n: merge([{}])}}] : []",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(fixed.len(), 1);
+        assert_eq!(command_records("[]").unwrap(), Some(vec![]));
+        for constructed in [
+            "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
+            "merge([{kind: 'perform'}], [])",
+            "[{['kind']: 'perform', function: 'a', functionVersion: '1'}]",
+            "[event.command]",
+            "event.commands",
+            "[{kind: input.kind, function: 'a', functionVersion: '1'}]",
+            "map([1], {kind: 'perform', function: 'a', functionVersion: '1'})",
+            "x ? [{kind: 'perform', function: 'a', functionVersion: '1'}] : event.more",
+        ] {
+            // Refused either way: no fixed records (or the source does not parse).
+            assert!(
+                !matches!(command_records(constructed), Ok(Some(_))),
+                "{constructed}"
+            );
+        }
     }
 }

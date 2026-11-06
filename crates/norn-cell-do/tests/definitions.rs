@@ -1234,3 +1234,156 @@ fn a_flow_owns_exactly_its_two_lowered_artifacts() {
         "{found}"
     );
 }
+
+/// The decide rule of `artifacts`, with its every `commands` cell replaced.
+fn with_commands(mut artifacts: Vec<Value>, cell: &str) -> Vec<Value> {
+    for artifact in &mut artifacts {
+        if artifact["kind"] != json!("rule") {
+            continue;
+        }
+        for node in artifact["payload"]["graph"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+        {
+            if node["type"] != json!("decisionTableNode") {
+                continue;
+            }
+            for rule in node["content"]["rules"].as_array_mut().unwrap() {
+                if rule.get("o_commands").is_some() {
+                    rule["o_commands"] = json!(cell);
+                }
+            }
+        }
+    }
+    artifacts
+}
+
+/// Sol S1: a command record constructed without fixed literals is refused,
+/// so neither the install check nor `uses=` can miss the call it makes.
+#[test]
+fn constructed_command_records_are_refused() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    for constructed in [
+        "[merge([{kind: 'timer', function: 'uninstalled', functionVersion: '1'}, {['ki' + 'nd']: 'perform'}])]",
+        "[{['kind']: 'perform', function: 'norn.classify.whatsapp-intent', functionVersion: '1'}]",
+        "[event.command]",
+        "event.commands",
+    ] {
+        let (status, refused) = install_flow(
+            &cell,
+            &flow_body(FLOW_ID, &with_commands(lowered(), constructed), None),
+        );
+        assert_eq!(status, 422, "{constructed}: {refused}");
+        assert!(
+            codes_of(&refused).contains(&"definition.flow_command_unverifiable".to_owned()),
+            "{constructed}: {refused}"
+        );
+    }
+}
+
+/// Sol S2: the performs are re-resolved under the write lock, so a function
+/// that resolved at validation but not at commit refuses the install. The
+/// route validates and commits in one call, so the change in between is
+/// simulated by a resolver that stops resolving after the validation pass.
+#[test]
+fn performs_are_re_resolved_under_the_write_lock() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static VALIDATION_CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn vanishing(function: &str, version: u32) -> bool {
+        function == TOOL
+            && version == 1
+            && CALLS.fetch_add(1, Ordering::SeqCst) < VALIDATION_CALLS.load(Ordering::SeqCst)
+    }
+    let rule = lowered()
+        .into_iter()
+        .find(|a| a["kind"] == json!("rule"))
+        .unwrap();
+    let performs = norn_checker::flow_performs::perform_refs(&rule["payload"])
+        .unwrap()
+        .len();
+    VALIDATION_CALLS.store(performs, Ordering::SeqCst);
+    let cell = cell(DefinitionKinds::default().with_builtins(vanishing));
+    let (status, refused) = install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None));
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        codes_of(&refused)
+            .iter()
+            .all(|code| code == "definition.flow_function_unknown"),
+        "{refused}"
+    );
+    assert!(
+        refused["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no longer installed"),
+        "{refused}"
+    );
+    // Nothing was installed.
+    assert_eq!(
+        get(&cell, &format!("/v1/definitions/{FLOW_ID}"), "", VIEWER).0,
+        404
+    );
+}
+
+/// Sol S3: an id in the trusted base's reserved namespace is refused for
+/// every kind, so no submitted artifact can be classified as trusted.
+#[test]
+fn reserved_namespaces_are_refused() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let mut core = flow_body("core.example", &lowered(), None);
+    core["payload"]["flow"]["id"] = json!("core.example");
+    for body in [
+        core,
+        json!({ "kind": "binding", "id": "std.tool", "payload": binding("T", "member", &json!({})) }),
+        json!({ "kind": "dashboard", "id": "core.dashboard", "payload": dashboard("A") }),
+    ] {
+        let (status, refused) = install_flow(&cell, &body);
+        assert_eq!(
+            (status, refused["code"].clone()),
+            (400, json!("definition.id_reserved")),
+            "{refused}"
+        );
+    }
+}
+
+/// Sol S4: two flow ids that derive the same Run type cannot overwrite each
+/// other's artifacts; only a flow's own previous revision is replaced.
+#[test]
+fn colliding_flow_artifacts_are_refused() {
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    assert_eq!(
+        install_binding(&cell, TOOL, &binding("Intent", "member", &json!({})), None).0,
+        200
+    );
+    assert_eq!(
+        install_flow(&cell, &flow_body(FLOW_ID, &lowered(), None)).0,
+        200
+    );
+    // `crm.route__message` derives the same `crm.RouteMessageRun.entity`.
+    let twin = "crm.route__message";
+    let mut artifacts = lowered();
+    for artifact in &mut artifacts {
+        if artifact["kind"] == json!("rule") {
+            artifact["artifactId"] = json!(format!("{twin}.flow.rule"));
+        }
+    }
+    let mut body = flow_body(twin, &artifacts, None);
+    body["payload"]["flow"]["id"] = json!(twin);
+    let (status, refused) = install_flow(&cell, &body);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(
+        codes_of(&refused),
+        ["definition.flow_artifact_conflict"],
+        "{refused}"
+    );
+    // The first flow's own reinstall still replaces its artifacts.
+    assert_eq!(
+        install_flow(&cell, &flow_body(FLOW_ID, &lowered(), Some(1))).0,
+        200
+    );
+}
