@@ -74,7 +74,9 @@ export function writeDraft(key: string, draft: Draft | undefined): boolean {
   } catch { return false }
 }
 
-const typing = (target: EventTarget | null) => target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+// Text fields keep their own undo and copy; a checkbox or a button does not.
+const TEXT = new Set(["text", "search", "number", "email", "url", "tel", "password"])
+const typing = (target: EventTarget | null) => (target instanceof HTMLInputElement && TEXT.has(target.type)) || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
 
 let clipboard: g.Graph | undefined
 
@@ -96,14 +98,11 @@ function Frame(props: CanvasFrameProps) {
     setState((current) => g.commit(current, next))
   }, [])
 
-  // Autosave: every change is kept as a draft in this browser until it is discarded or saved.
+  // Autosave: every change is written at once (a debounce loses the last edit when the tab closes) and kept until discarded or saved.
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (!dirty) { writeDraft(draftKey, undefined); setDraftAt(undefined); return }
-      const at = new Date().toISOString()
-      if (writeDraft(draftKey, { graph, at })) setDraftAt(at)
-    }, 400)
-    return () => window.clearTimeout(timer)
+    if (!dirty) { writeDraft(draftKey, undefined); setDraftAt(undefined); return }
+    const at = new Date().toISOString()
+    if (writeDraft(draftKey, { graph, at })) setDraftAt(at)
   }, [graph, dirty, draftKey])
 
   useEffect(() => {
