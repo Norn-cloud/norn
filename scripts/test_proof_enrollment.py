@@ -134,14 +134,16 @@ class EnrollmentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             errors, _ = receipts.verify(ROOT, Path(directory), {}, None)
         self.assertEqual((receipts.implementation_claims(ROOT), errors), ({}, []))
-        # Both claims promoted back are refused, with their labels, even unchanged.
+        # The verifier prints the claims' labels; both promoted claims are refused even unchanged.
+        self.assertEqual({"kani": LABELS[KANI_CLAIM], "extraction": LABELS[EXTRACTION_CLAIM]}, receipts.LABELS)
         promoted = {KANI_CLAIM: self._kani_claim()[1], EXTRACTION_CLAIM: self._extraction_claim()[1]}
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
                 receipts, "implementation_claims", return_value=promoted):
             errors, verdicts = receipts.verify(ROOT, Path(directory), {}, None, scoped=False)
-        self.assertEqual(errors, [f"{EXTRACTION_CLAIM}: {LABELS[EXTRACTION_CLAIM]}; {receipts.NOT_ADMITTED}",
+        self.assertEqual(errors, [f"{EXTRACTION_CLAIM}: {receipts.UNCHANGED_LABEL}; {receipts.NOT_ADMITTED}",
                                   f"{KANI_CLAIM}: {LABELS[KANI_CLAIM]}; {receipts.NOT_ADMITTED}"])
-        self.assertEqual({v["claim"]: v["label"] for v in verdicts}, LABELS)
+        self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
+                         {EXTRACTION_CLAIM: "unchanged", KANI_CLAIM: "candidate-reported"})
 
     def test_downgraded_claims_stay_partial_with_evidence_and_label(self):
         """D47(c): until #969, both claims are partial, labelled, and carry no implementation fields."""
