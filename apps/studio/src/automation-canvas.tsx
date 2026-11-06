@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 import { automationKinds, branchesOf, inputsOf, lower, type Condition, type Problem } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import * as g from "./lib/canvas/graph.ts"
-import { EXAMPLE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
+import { EXAMPLE, RECORDED_SCOPE, RECORDED_TOOLS } from "./lib/canvas/tools.ts"
 import { words } from "./lib/format.ts"
 
 const META = { id: "studio.automation", version: "0.1.0" }
@@ -56,7 +56,7 @@ export function AutomationEditor() {
   const edit = (next: g.Graph) => { setRefusal(null); setState((current) => g.commit(current, next)) }
 
   const problems = useMemo((): readonly Problem[] => {
-    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META)
+    const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
     if (!lowered || !checker.data) return problems
     // The checker's findings name generated states; each state belongs to the step that lowered to it.
     const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]

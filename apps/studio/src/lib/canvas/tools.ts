@@ -9,6 +9,9 @@ import type { CanvasEdge, CanvasNode, Graph } from "./graph.ts"
  */
 export const RECORDED_TOOLS: readonly FnRef[] = [loadInvoice, notify]
 
+/** The workspace an automation is lowered in: the recorded world's, until Studio reads the session's scope. The server scopes it again on save. */
+export const RECORDED_SCOPE = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "apps/studio/canvas" } as const
+
 const node = (id: string, kind: string, x: number, y: number, config: Record<string, string> = {}): CanvasNode => ({ id, kind, position: { x, y }, config })
 const edge = (source: string, sourcePort: string, target: string): CanvasEdge => ({ id: `${source}.${sourcePort}`, source, sourcePort, target, targetPort: "in", config: {} })
 
