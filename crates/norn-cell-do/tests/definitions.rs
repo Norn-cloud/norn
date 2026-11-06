@@ -736,7 +736,7 @@ fn manifest_digests_match_the_shared_jcs_vectors() {
     }
 }
 
-fn binding(label: &str, run_role: &str, mapping: Value) -> Value {
+fn binding(label: &str, run_role: &str, mapping: &Value) -> Value {
     let input = json!({ "type": "object", "properties": {
         "repo": { "type": "string" }, "limit": { "type": "integer" }, "state": { "enum": ["open", "closed"] } } });
     let output = json!({ "type": "object" });
@@ -770,7 +770,7 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
     let good = binding(
         "Open issues",
         "member",
-        json!({ "repo": { "fixed": "norn/norn" }, "state": { "fixed": "open" } }),
+        &json!({ "repo": { "fixed": "norn/norn" }, "state": { "fixed": "open" } }),
     );
     let (status, installed) = install_binding(&cell, "studio.binding.issues", &good, None);
     assert_eq!(status, 200, "{installed}");
@@ -793,36 +793,36 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
             ("definition.binding_version_mismatch", "/connector/version"),
         ),
         (
-            binding("  ", "member", json!({})),
+            binding("  ", "member", &json!({})),
             ("definition.binding_label_invalid", "/label"),
         ),
         (
-            binding("L", "root", json!({})),
+            binding("L", "root", &json!({})),
             ("definition.binding_role_unknown", "/runRole"),
         ),
         (
-            binding("L", "member", json!({ "nope": { "fixed": 1 } })),
+            binding("L", "member", &json!({ "nope": { "fixed": 1 } })),
             (
                 "definition.binding_mapping_unknown_field",
                 "/inputMapping/nope",
             ),
         ),
         (
-            binding("L", "member", json!({ "limit": { "fixed": "ten" } })),
+            binding("L", "member", &json!({ "limit": { "fixed": "ten" } })),
             (
                 "definition.binding_mapping_invalid",
                 "/inputMapping/limit/fixed",
             ),
         ),
         (
-            binding("L", "member", json!({ "state": { "fixed": "merged" } })),
+            binding("L", "member", &json!({ "state": { "fixed": "merged" } })),
             (
                 "definition.binding_mapping_invalid",
                 "/inputMapping/state/fixed",
             ),
         ),
         (
-            binding("L", "member", json!({ "repo": "norn/norn" })),
+            binding("L", "member", &json!({ "repo": "norn/norn" })),
             ("definition.binding_mapping_invalid", "/inputMapping/repo"),
         ),
         (unknown, ("definition.binding_invalid_payload", "/extra")),
@@ -899,7 +899,7 @@ fn agents_see_installed_active_bindings_only() {
         install_binding(
             &cell,
             "studio.binding.issues",
-            &binding("Issues", "member", json!({})),
+            &binding("Issues", "member", &json!({})),
             None
         )
         .0,
