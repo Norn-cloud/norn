@@ -5411,7 +5411,9 @@ export interface components {
         };
         /** @description Exact pinned calendar identity. */
         NornIrRequirementCalendarPin: {
+            /** @description Calendar artifact identity. */
             id: string;
+            /** @description Exact calendar version. */
             version: string;
         };
         /**

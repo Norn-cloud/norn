@@ -26,9 +26,11 @@
       "type": "object",
       "properties": {
         "id": {
+          "description": "Calendar artifact identity.",
           "type": "string"
         },
         "version": {
+          "description": "Exact calendar version.",
           "type": "string"
         }
       },

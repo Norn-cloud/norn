@@ -13606,10 +13606,12 @@
         ],
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Calendar artifact identity."
           },
           "version": {
-            "type": "string"
+            "type": "string",
+            "description": "Exact calendar version."
           }
         },
         "additionalProperties": false
