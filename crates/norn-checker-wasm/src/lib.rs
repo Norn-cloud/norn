@@ -23,7 +23,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use norn_checker::agent::{AgentContext, check_agent};
+use norn_checker::agent::{AgentContext, agent_payload_syntax, check_agent};
 use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
@@ -991,7 +991,9 @@ struct AgentContextInput {
 /// [`AbiError::InvalidInput`] when `agent_json` is not JSON or `context_json`
 /// is not a context object. An invalid agent is a finding, never an error.
 pub fn check_agent_json(agent_json: &str, context_json: &str) -> Result<String, AbiError> {
-    parse_json("agent", agent_json)?;
+    // Not `serde_json::Value`: its depth limit would refuse valid, deeply
+    // nested payloads that are findings.
+    agent_payload_syntax(agent_json).map_err(|detail| invalid("agent", detail))?;
     let context: AgentContextInput = serde_json::from_value(parse_json("context", context_json)?)
         .map_err(|error| invalid("context", error.to_string()))?;
     let context = AgentContext {

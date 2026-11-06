@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_canonical::JsonValue;
+use norn_canonical::{CanonicalJsonError, JsonValue};
 use norn_ir::{Decimal, ResourceLimitProfile};
 
 use crate::property_types::error;
@@ -269,6 +269,34 @@ fn decode_policy(value: &JsonValue, findings: &mut Vec<Diagnostic>) -> Option<De
         laws,
         decider_roles,
     })
+}
+
+/// Whether `payload` is JSON text at all, for callers that treat text that is
+/// not JSON as invalid input rather than a finding. Only UTF-8 and grammar
+/// errors count; duplicate keys, nesting depth, and number range are
+/// [`codes::INVALID_PAYLOAD`] or budget findings of [`check_agent`].
+///
+/// # Errors
+///
+/// The parser's message when the text is not JSON.
+pub fn agent_payload_syntax(payload: &str) -> Result<(), String> {
+    match norn_canonical::parse_json_verbatim(payload) {
+        Ok(_)
+        | Err(
+            CanonicalJsonError::DuplicateKey { .. }
+            | CanonicalJsonError::NumberTooLarge { .. }
+            | CanonicalJsonError::NestingTooDeep { .. },
+        ) => Ok(()),
+        Err(
+            error @ (CanonicalJsonError::InvalidUtf8 { .. }
+            | CanonicalJsonError::InvalidJson { .. }
+            | CanonicalJsonError::NonFiniteNumber { .. }
+            | CanonicalJsonError::InvalidDecimal { .. }
+            | CanonicalJsonError::LegacyParse { .. }
+            | CanonicalJsonError::LegacySerialize { .. }
+            | CanonicalJsonError::Serialize { .. }),
+        ) => Err(error.to_string()),
+    }
 }
 
 /// Decode an agent payload from its JSON text, at most
@@ -645,6 +673,24 @@ mod tests {
         assert_eq!(
             with(|a| a["prompt"] = json!("p".repeat(MAX_PROMPT_BYTES))),
             Vec::new()
+        );
+    }
+
+    #[test]
+    fn only_text_that_is_not_json_is_a_syntax_error() {
+        assert!(agent_payload_syntax("{").is_err());
+        assert!(agent_payload_syntax("not json").is_err());
+        let deep = format!("{}1{}", "[".repeat(300), "]".repeat(300));
+        assert!(agent_payload_syntax(&deep).is_ok());
+        assert_eq!(findings_of(&deep), one(codes::INVALID_PAYLOAD, ""));
+        let deep_budget = agent().to_string().replace(
+            "\"maxRuns\":100",
+            &format!("\"maxRuns\":{}1{}", "[".repeat(200), "]".repeat(200)),
+        );
+        assert!(agent_payload_syntax(&deep_budget).is_ok());
+        assert_eq!(
+            findings_of(&deep_budget),
+            one(codes::BUDGET_UNBOUNDED, "/budgets/maxRuns")
         );
     }
 
