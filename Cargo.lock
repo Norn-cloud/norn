@@ -1602,6 +1602,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "tempfile",
  "utoipa",
 ]
 
@@ -1663,6 +1664,8 @@ dependencies = [
  "norn-cell",
  "norn-checker",
  "norn-ir",
+ "norn-kernel",
+ "norn-projections",
  "serde",
  "serde_json",
  "wasm-bindgen",
