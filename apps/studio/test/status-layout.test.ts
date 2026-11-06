@@ -19,7 +19,7 @@ test("tidy up draws the sales order with no more crossings than it opens with, a
   expect(after).toBeLessThan(before)
 })
 
-test("the main row is the longest run from the initial state; side states sit in a band off it", () => {
+test("the main row is what every way to Completed passes through; side states sit in a band off it", () => {
   const tidied = tidyLifecycle(opened)
   const y = new Map(tidied.nodes.map(({ id, position }) => [id, position.y]))
   for (const id of ["draft", "submitted", "approved", "invoiced", "completed"]) expect(y.get(id)).toBe(0)

@@ -27,9 +27,16 @@ export function handlesOf(graph: g.Graph): ReadonlyMap<string, { readonly source
   }))
 }
 
-/** Which side of its row a step back along the row loops: away from the row's side states (above when level). */
+/**
+ * Which side of its row a step back along the row loops. On the main row (the row with the most states), away from
+ * the side states (above when level); on a side row, toward the main row, so it shares the lane between them.
+ */
 export function backSide(graph: g.Graph, rowY: number): number {
   const centres = graph.nodes.map(({ position }) => position.y + middle)
+  const rows = new Map<number, number>()
+  for (const y of centres) rows.set(Math.round(y), (rows.get(Math.round(y)) ?? 0) + 1)
+  const mainY = [...rows].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? rowY
+  if (Math.abs(rowY - mainY) > 2) return mainY < rowY ? -1 : 1
   const above = centres.filter((y) => y < rowY - 2).length, below = centres.filter((y) => y > rowY + 2).length
   return above > below ? 1 : -1
 }

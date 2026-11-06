@@ -42,7 +42,7 @@ export function tidy(graph: Graph, spacing: Spacing): Graph {
 }
 
 /**
- * Tidy up for a status canvas: the main row is the longest run of steps from the initial state; every other state
+ * Tidy up for a status canvas: the main row is the states every way to the final state passes through; every other state
  * (a terminal or side state such as Cancelled or On hold) sits in a band above or below it, at the column of the
  * main-row states it connects to. Each side state's band is chosen to draw the fewest crossings (what the router
  * would draw, counted), and steps back along the row loop on the side away from the side states. Deterministic:
@@ -53,15 +53,27 @@ export function tidyLifecycle(graph: Graph, spacing: Spacing = STATE_SPACING): G
   const out = new Map(graph.nodes.map(({ id }) => [id, graph.edges.filter(({ source, target }) => source === id && target !== id).map(({ target }) => target)]))
   const incoming = new Set(graph.edges.map(({ target }) => target))
   const start = graph.nodes.find(({ config }) => config.initial === "yes")?.id ?? graph.nodes.find(({ id }) => !incoming.has(id))?.id ?? graph.nodes[0]!.id
-  // The main row: the longest simple path from the start (small graphs; bounded so a large one still answers).
-  let best: string[] = [start]
-  let budget = 20_000
-  const walk = (path: string[]) => {
-    if ((budget -= 1) < 0) return
-    if (path.length > best.length) best = [...path]
-    for (const next of out.get(path.at(-1)!) ?? []) if (!path.includes(next)) walk([...path, next])
+  // The main row: the states every way from the start to its final state must pass through (that state's
+  // dominators), in the order they are reached. A side state such as On hold, which the row can skip, stays off it.
+  const ids = graph.nodes.map(({ id }) => id)
+  const preds = new Map(ids.map((id) => [id, graph.edges.filter(({ target, source }) => target === id && source !== id).map(({ source }) => source)]))
+  const distance = new Map<string, number>([[start, 0]])
+  for (const queue = [start]; queue.length;) { const at = queue.shift()!; for (const next of out.get(at) ?? []) if (!distance.has(next)) { distance.set(next, distance.get(at)! + 1); queue.push(next) } }
+  const reached = ids.filter((id) => distance.has(id))
+  const dominators = new Map(reached.map((id) => [id, new Set(id === start ? [start] : reached)]))
+  for (let changed = true; changed;) {
+    changed = false
+    for (const id of reached) {
+      if (id === start) continue
+      const inherited = (preds.get(id) ?? []).filter((p) => dominators.has(p)).map((p) => dominators.get(p)!)
+      const next = new Set([id, ...inherited.length ? [...inherited[0]!].filter((d) => inherited.every((set) => set.has(d))) : []])
+      if (next.size !== dominators.get(id)!.size) { dominators.set(id, next); changed = true }
+    }
   }
-  walk([start])
+  // The final state: a terminal whose dominator chain is longest (the happy path), else the farthest state reached.
+  const terminals = reached.filter((id) => graph.nodes.find((node) => node.id === id)?.config.terminal === "yes")
+  const end = [...terminals.length ? terminals : reached].sort((a, b) => dominators.get(b)!.size - dominators.get(a)!.size || distance.get(b)! - distance.get(a)! || ids.indexOf(a) - ids.indexOf(b))[0]!
+  const best = [...dominators.get(end)!].sort((a, b) => distance.get(a)! - distance.get(b)!)
   const pitch = spacing.width + spacing.gap
   const column = new Map(best.map((id, index) => [id, index]))
   const side = graph.nodes.map(({ id }) => id).filter((id) => !column.has(id))
