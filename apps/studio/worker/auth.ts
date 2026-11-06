@@ -77,6 +77,8 @@ export function authOptions(config: AuthConfig) {
       },
     },
     advanced: {
+      // Explicit: Better Auth otherwise turns its origin (CSRF) check off whenever NODE_ENV is "test".
+      disableOriginCheck: false,
       useSecureCookies: true,
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
       // Cloudflare sets this header itself; X-Forwarded-For is client-controlled.
