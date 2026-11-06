@@ -158,22 +158,34 @@ pub fn get_object_page<E: SqlEngine>(
         scanned_through: None,
     };
     // The cell lock is held per batch, never for the whole scan, and row
-    // authorization runs without it. Each locked section reads the commit head
-    // before and after its reads and both must equal the head the page started
-    // at: heads only grow, so the reads saw that one snapshot and a page is never
-    // assembled from two.
+    // authorization runs without it. Each locked section reads the cell's
+    // version before and after its reads, and both must equal the version the
+    // page started at. The version is the receipt head together with the
+    // engine's database revision, which changes on every write by any
+    // connection, receipt-less evidence (mapping conflicts, identity) included.
+    // An engine without a revision is the Durable Object's storage: its cell is
+    // the only connection and a page runs in one synchronous call, so nothing
+    // can write between two sections there.
     let mut snapshot = None;
     let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
         let cell = host.cell()?;
         let reader = cell.store().read();
-        let head = || reader.head_commit_seq().map_err(Refusal::host);
-        let start = *snapshot.get_or_insert(head()?);
-        if head()? != start {
+        let version = || {
+            Ok::<_, Refusal>((
+                reader.head_commit_seq().map_err(Refusal::host)?,
+                reader.database_revision().map_err(Refusal::host)?,
+            ))
+        };
+        let start = match snapshot {
+            Some(start) => start,
+            None => *snapshot.insert(version()?),
+        };
+        if version()? != start {
             return Err(snapshot_moved());
         }
         access.within_snapshot();
         read(&reader)?;
-        if head()? != start {
+        if version()? != start {
             return Err(snapshot_moved());
         }
         Ok(())

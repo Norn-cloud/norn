@@ -522,3 +522,74 @@ fn a_commit_inside_a_read_section_refuses_the_page() {
         );
     }
 }
+
+/// Writes through a second connection without a receipt (as receipt-less
+/// evidence such as mapping conflicts does) inside the `nth` locked section.
+struct WritesWithoutReceipt {
+    path: std::path::PathBuf,
+    model: Model,
+    nth: usize,
+    sections: std::sync::atomic::AtomicUsize,
+    heads: std::sync::Mutex<Vec<u64>>,
+}
+impl ObjectAccess for WritesWithoutReceipt {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        Mapping.access(scope, actor, capability, object_type, row)
+    }
+    fn within_snapshot(&self) {
+        let section = self
+            .sections
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            .saturating_add(1);
+        if section == self.nth {
+            let mut store = CellStore::open(
+                &self.path,
+                self.model.clone(),
+                norn_cell::StoreOptions::default(),
+            )
+            .expect("second connection");
+            let before = store.read().head_commit_seq().expect("head");
+            store
+                .bind("probe", "receipt-less")
+                .expect("write without a receipt");
+            let after = store.read().head_commit_seq().expect("head");
+            self.heads.lock().expect("heads").extend([before, after]);
+        }
+    }
+}
+
+/// The receipt head does not move for receipt-less writes; the database
+/// revision does, so such a write inside either section refuses the page.
+#[test]
+fn a_write_without_a_receipt_inside_a_section_refuses_the_page() {
+    for (nth, section) in [(1, "batch read"), (2, "quarantine reads")] {
+        let (host, dir) = host();
+        let writes = WritesWithoutReceipt {
+            path: dir.path().join("cell.sqlite"),
+            model: quality_model().0,
+            nth,
+            sections: std::sync::atomic::AtomicUsize::new(0),
+            heads: std::sync::Mutex::new(Vec::new()),
+        };
+        let refused =
+            get_object_page(&host, &scope(), Some("reader"), TYPE, None, 100, &writes).unwrap_err();
+        assert_eq!(
+            (refused.status, refused.code.as_str(), refused.retryable),
+            (409, "object.snapshot_moved", true),
+            "{section}"
+        );
+        let heads = writes.heads.lock().unwrap().clone();
+        assert_eq!(heads.len(), 2, "{section}: the write happened");
+        assert_eq!(
+            heads[0], heads[1],
+            "{section}: the receipt head did not move"
+        );
+    }
+}
