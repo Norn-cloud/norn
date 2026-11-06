@@ -25,7 +25,7 @@ test("corners are rounded, never past half of the shorter leg", () => {
 })
 
 // The sales order's lifecycle as laid out: Draft, Submitted, Approved, Invoiced on the main row; Cancelled and On hold below.
-const at = { draft: { x: 0, y: 0 }, submitted: { x: 280, y: 0 }, approved: { x: 560, y: 0 }, invoiced: { x: 840, y: 0 }, cancelled: { x: 280, y: 110 }, on_hold: { x: 560, y: 110 } } as const
+const at = { draft: { x: 0, y: 0 }, submitted: { x: 280, y: 0 }, approved: { x: 560, y: 0 }, invoiced: { x: 840, y: 0 }, cancelled: { x: 280, y: 150 }, on_hold: { x: 560, y: 150 } } as const
 const step = (id: string, source: keyof typeof at, target: keyof typeof at) => ({ id, source: at[source], target: at[target] })
 const steps = [
   step("submit", "draft", "submitted"), step("approve", "submitted", "approved"), step("invoice", "approved", "invoiced"),

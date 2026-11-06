@@ -14,7 +14,7 @@ export interface Routed {
 }
 
 /** Row pitch of the lifecycle layout, the horizontal stub before a turn, and the corner radius. */
-export const LANE = { pitch: 110, stub: 18, radius: 10 } as const
+export const LANE = { pitch: 150, stub: 18, radius: 10 } as const
 
 /** A polyline through the points with each corner rounded (radius clamped to half of its shorter leg). */
 export function rounded(points: readonly Point[], radius: number = LANE.radius): string {
@@ -101,9 +101,11 @@ const LABEL_HEIGHT = 18, LABEL_CLEAR = 6
  * label takes the first place on its own run (from its turn toward its target) clear of every label placed before
  * it (past the run's end only when the run is full). `width` is each label's drawn width.
  */
-export function placeLabels(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly width: number }[], rails: ReadonlyMap<string, Rail>, lane = LANE): ReadonlyMap<string, Rail> {
+export function placeLabels(steps: readonly { readonly id: string; readonly source: Point; readonly target: Point; readonly width: number }[], rails: ReadonlyMap<string, Rail>, lane = LANE, states: readonly { readonly x: number; readonly y: number; readonly width: number; readonly height: number }[] = []): ReadonlyMap<string, Rail> {
   const placed: { x1: number; x2: number; y: number }[] = []
-  const clear = (x1: number, x2: number, y: number) => placed.every((box) => x2 + LABEL_CLEAR <= box.x1 || x1 >= box.x2 + LABEL_CLEAR || Math.abs(y - box.y) >= LABEL_HEIGHT)
+  // States are obstacles too: a label never sits on a card.
+  const onState = (x1: number, x2: number, y: number) => states.some((s) => x1 < s.x + s.width + LABEL_CLEAR && x2 > s.x - LABEL_CLEAR && y + LABEL_HEIGHT / 2 > s.y - 2 && y - LABEL_HEIGHT / 2 < s.y + s.height + 2)
+  const clear = (x1: number, x2: number, y: number) => !onState(x1, x2, y) && placed.every((box) => x2 + LABEL_CLEAR <= box.x1 || x1 >= box.x2 + LABEL_CLEAR || Math.abs(y - box.y) >= LABEL_HEIGHT)
   const runs = steps.flatMap((step) => {
     const rail = rails.get(step.id)
     if (!rail) return []

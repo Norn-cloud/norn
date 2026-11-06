@@ -55,7 +55,7 @@ const railOf = (graph: g.Graph, id: string): Rail | undefined => {
       const source = at.get(edge.source), target = at.get(edge.target)
       return source && target ? [{ id: edge.id, source: { x: source.x + CARD.state, y: source.y + middle }, target: { x: target.x, y: target.y + middle }, width: labelWidth(words(edge.config.transition || edge.id)) }] : []
     })
-    rails = placeLabels(steps, railsOf(steps))
+    rails = placeLabels(steps, railsOf(steps), LANE, graph.nodes.map(({ position }) => ({ ...position, width: CARD.state, height: middle * 2 })))
     railCache.set(graph, rails)
   }
   return rails.get(id)
