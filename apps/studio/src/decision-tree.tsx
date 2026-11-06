@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { GitBranch, Wrench } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { Unavailable } from "./canvas-frame.tsx"
 import type { DecisionView } from "./lib/canvas/decision.ts"
 
 /** Why the answer cannot be sent from here yet. */
@@ -34,6 +34,7 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
                 </span>
                 <span className="mt-1 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                   <span>{option.scope || "No scope stated"}</span>
+                  {option.effect && <span className="font-mono text-xs">{"action" in option.effect ? `action ${option.effect.action}` : `binding ${option.effect.binding}`}</span>}
                   {tools.map((tool) => <span key={tool} className="inline-flex items-center gap-1 font-mono text-xs"><Wrench className="size-3" />{tool}</span>)}
                 </span>
               </button>
@@ -66,12 +67,13 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
       <div className="flex items-center gap-2 text-sm"><GitBranch className="size-4 text-primary" /><span className="font-medium">Decision preview</span><span className="text-muted-foreground">as the decider will see it</span></div>
       <div className="flex items-center gap-6 overflow-x-auto pb-2">
         <div className="w-64 shrink-0 space-y-2">
-          <Badge className={cn("border-transparent capitalize", RISK_TONE[view.risk])}>{view.risk} risk</Badge>
+          <Badge className={cn("border-transparent", RISK_TONE[view.risk])}>{`${view.risk.charAt(0).toUpperCase()}${view.risk.slice(1)} risk`}</Badge>
           <div className="space-y-2 rounded-xl border bg-card p-4 shadow-xs">
             <div className="text-meta text-muted-foreground">{agent ? `${agent.title} · ${agent.model}` : "Asked by this automation"}</div>
             <p className="font-medium">{view.question || "No question yet"}</p>
             <p className="text-meta text-muted-foreground">Context numbers and money at risk come from the cell's admitted questions when it asks.</p>
-            <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}</p>
+            <p className="text-meta text-muted-foreground">Decided by: {view.deciderRoles.join(", ") || "no role named"}{view.law ? ` · under ${view.law}` : ""}</p>
+            {view.expiresInMs !== undefined && <p className="text-meta text-muted-foreground">Expires {Math.round(view.expiresInMs / 3_600_000)} h after it is asked; then it is withdrawn, not decided.</p>}
           </div>
         </div>
         {view.options.length > 0 ? <Level view={view} path={path} depth={0} choose={choose} /> : <p className="text-sm text-muted-foreground">No options yet.</p>}
@@ -82,7 +84,7 @@ export function DecisionTree({ view, agent, initialPath = [] }: { readonly view:
           <span key={index} className="flex items-center gap-1">{index > 0 && <span className="text-muted-foreground">–</span>}<span className="rounded border px-1.5 font-mono text-xs">{number}</span></span>
         ))}
         {numbers.length > 1 && <span className="text-meta text-muted-foreground" data-testid="pre-answered">Steps after the first are pre-answered: the cell checks them again when the run reaches them, and they have not run.</span>}
-        <Button size="sm" className="ms-auto" disabled title={DECIDE_BLOCKED}>Approve this path</Button>
+        <Unavailable className="ms-auto" reason={DECIDE_BLOCKED}>Approve this path</Unavailable>
       </div>
     </div>
   )

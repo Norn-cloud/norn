@@ -18,9 +18,9 @@ const graph: Graph = {
   nodes: [
     node("start", "start"),
     node("load", "perform", { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
-    node("chase", "decide", { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", agentPick: "o1", options: options({ id: "o1", label: "Send a reminder", scope: "Email · customer" }, { id: "o2", label: "Leave it", scope: "Nothing sent" }) }),
+    node("chase", "decide", { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", deciderLaw: "billing.reminder_needs_a_person", expiresInMs: "14400000", agentPick: "o1", options: options({ id: "o1", label: "Send a reminder", scope: "Email · customer", effect: { binding: "billing.notify" } }, { id: "o2", label: "Leave it", scope: "Nothing sent", effect: { action: "billing.leave_open" } }) }),
     node("remind", "perform", { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
-    node("escalate", "decide", { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", options: options({ id: "o1", label: "Yes", scope: "#accounts" }, { id: "o2", label: "No", scope: "Nothing more" }) }),
+    node("escalate", "decide", { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", options: options({ id: "o1", label: "Yes", scope: "#accounts", effect: { binding: "billing.notify" } }, { id: "o2", label: "No", scope: "Nothing more", effect: { binding: "billing.notify" } }) }),
     node("reminded", "succeed", { outcome: "reminded" }),
     node("escalated", "succeed", { outcome: "escalated" }),
     node("left", "succeed", { outcome: "left" }),
@@ -38,8 +38,12 @@ test("an ask step lowers to a wait for norn.decision and a route on the choice",
   expect(problems).toEqual([])
   expect(lowered?.states.get("chase")).toContain("awaiting_perform_ask_chase")
   expect(lowered?.states.get("escalate")).toContain("awaiting_perform_ask_escalate")
-  const rule = JSON.stringify(lowered?.artifacts.find(({ kind }) => kind === "rule"))
+  // The rule without the canvas layout extension (which carries the drawing's own config).
+  const rule = JSON.stringify(lowered?.artifacts.find(({ kind }) => kind === "rule"), (key, value: unknown) => key === "extensions" ? undefined : value)
   expect(rule).toContain("norn.decision")
+  // The relayed contract: decider {roles, law?}, options with effect {action} | {binding}, optional expiresInMs.
+  for (const text of ["decider", "billing.reminder_needs_a_person", "expiresInMs", "14400000", "billing.leave_open"]) expect(rule).toContain(text)
+  expect(rule).not.toContain("deciderRoles")
 })
 
 test("the decider's tree: question, options with the agent's pick and their tools, and the follow-up", () => {
@@ -60,7 +64,7 @@ test("removing an option removes its exit and clears the agent's pick when it wa
 
 test("the canvas names a decision without a question, options or deciders, and an option that leads nowhere", () => {
   const bare: Graph = { nodes: [node("start", "start"), node("ask", "decide", { options: options({ id: "o1", label: "Go", scope: "" }) })], edges: [edge("start", "next", "ask")] }
-  expect(lower(bare, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.no_decider", "canvas.decision.no_question", "canvas.decision.option_leads_nowhere"])
+  expect(lower(bare, tools, meta, scope).problems.map(({ code }) => code).sort()).toEqual(["canvas.decision.no_decider", "canvas.decision.no_question", "canvas.decision.option_leads_nowhere", "canvas.decision.option_without_effect"])
 })
 
 // The real checker over what an automation with decisions lowers to (built into worker/checker or src/checker on Boat).

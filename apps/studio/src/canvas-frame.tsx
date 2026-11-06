@@ -5,6 +5,7 @@ import { CircleAlert, Copy, Redo2, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
+import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
@@ -190,7 +191,7 @@ function Frame(props: CanvasFrameProps) {
           <Button size="sm" variant="outline" title="Save a draft (⌘S)" onClick={saveDraft}><Save />Save draft</Button>
           {props.save
             ? <Button size="sm" title="Save to the cell (⌘S): it checks again and decides" disabled={saving} onClick={() => void saveServer()}>{saving ? "Saving…" : "Save to server"}</Button>
-            : <Button size="sm" disabled title={props.saveBlocked}>Save to server</Button>}
+            : <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>}
           {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
@@ -247,6 +248,18 @@ function Frame(props: CanvasFrameProps) {
 /** The editing frame every canvas surface shares, so each verb exists everywhere once. */
 export function CanvasFrame(props: CanvasFrameProps) {
   return <ReactFlowProvider><Frame {...props} /></ReactFlowProvider>
+}
+
+/**
+ * An action that exists but cannot run yet: drawn dashed and muted so it reads as unavailable, with its reason on
+ * hover (on the wrapper, because a disabled button takes no pointer events) and in its accessible name.
+ */
+export function Unavailable({ reason, children, className }: { readonly reason: string; readonly children: string; readonly className?: string }) {
+  return (
+    <span title={reason} className={cn("inline-flex cursor-not-allowed", className)}>
+      <Button size="sm" variant="outline" disabled className="border-dashed text-muted-foreground">{children}<span className="sr-only">: {reason}</span></Button>
+    </span>
+  )
 }
 
 /** A finding in a side panel. */

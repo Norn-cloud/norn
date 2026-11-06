@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
-import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
-import { SAVE_BLOCKED } from "./canvas.tsx"
+import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
+import { NotConnected } from "./lib/definitions.ts"
 import { api, type Binding } from "./lib/connectors.ts"
 import { AGENT_NODE, OFFERED_MODELS, agentGraph, agentKinds, agentOf, emptyAgent, lawNodeId, toolNodeId, wiredParts, type AgentDefinition } from "./lib/canvas/agent.ts"
 import { loadAgentChecker } from "./lib/canvas/checker.ts"
@@ -17,6 +17,7 @@ import * as g from "./lib/canvas/graph.ts"
 import { kindStore, type KindStore } from "./lib/canvas/store.ts"
 import { words } from "./lib/format.ts"
 
+export const AGENT_SAVE_BLOCKED = "Saving agents needs the cell's definition routes, which aren't live yet (queued after F2b). Your agent is kept as a draft in this browser until then."
 export const AGENT_RUN_BLOCKED = "An agent's runs are flow runs in the cell, with a receipt for every tool call; the run route is not live yet."
 
 type AgentPartNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[] }, "part">
@@ -43,8 +44,17 @@ export function AgentPart({ data, selected }: NodeProps<AgentPartNode>) {
 const NODE_TYPES = { part: AgentPart }
 
 /** Where a finding about the payload lands: the i-th wired tool or law its pointer names, else the agent. */
+/** The binding as CONNECT pins it: the connector it runs on and the digest of its tool manifest. */
+type PinnedBinding = Binding & { readonly manifestDigest?: string; readonly connector?: { readonly gateway: string; readonly origin: string; readonly app: string; readonly tool: string; readonly version: string } }
+
+/** The agent check's binding entry, or null for a binding not pinned yet. The connector is named gateway:app/tool@version. */
+export function pinOf(binding: Binding): { readonly id: string; readonly connector: string; readonly manifestDigest: string } | null {
+  const { manifestDigest, connector } = binding as PinnedBinding
+  return manifestDigest && connector ? { id: binding.id, connector: `${connector.gateway}:${connector.app}/${connector.tool}@${connector.version}`, manifestDigest } : null
+}
+
 function issueOf(graph: g.Graph, agent: AgentDefinition, code: string, message: string, pointer: string | null): Issue {
-  const parts = wiredParts(graph)
+  const parts = { ...wiredParts(graph), tools: wiredParts(graph).tools.filter(({ config }) => agent.tools.includes(config.binding ?? "")) }
   const at = /^\/(tools|laws|decisionPolicy\/laws)\/(\d+)/.exec(pointer ?? "")
   const index = Number(at?.[2])
   const law = at?.[1] === "decisionPolicy/laws" ? agent.decisionPolicy.laws?.[index] : undefined
@@ -110,7 +120,7 @@ function Inspector({ editing, issues, bindings, laws }: { readonly editing: Edit
 const bindingsQuery = () => api<{ bindings: readonly Binding[] }>("/bindings").then(({ bindings }) => bindings)
 
 /** One agent on the canvas: wire tools and laws, set its policy; the checker runs on every edit, the cell decides on save. */
-function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[] }) {
+function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: { readonly id: string; readonly stored: { readonly version: number; readonly payload: AgentDefinition } | null; readonly store: KindStore<AgentDefinition>; readonly onSaved: (message: string) => void; readonly bindings: readonly Binding[]; readonly laws: readonly string[]; readonly saveLive: boolean }) {
   const checker = useQuery({ queryKey: ["checker", "agent"], queryFn: () => loadAgentChecker(), staleTime: Infinity, retry: false })
   const [cellIssues, setCellIssues] = useState<readonly Issue[]>([])
   const initial = useMemo(() => agentGraph(stored?.payload ?? emptyAgent(id)), [stored, id])
@@ -119,17 +129,15 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
     if (!agent) return { issues: [{ code: "canvas.agent.missing", message: "The agent node is missing" }], status: <Badge variant="destructive">1 finding</Badge> }
     if (checker.isError) return { issues: cellIssues, status: <span className="text-destructive" role="alert">{checker.error.message}: no live agent checks</span> }
     if (!checker.data) return { issues: cellIssues, status: <span role="status">Loading the checker…</span> }
-    // The host checks tools against bindings resolved to connector manifests by digest. Until the gateway's binding
-    // list carries those digests, the browser leaves tools to the cell rather than calling every tool unbound.
-    const resolved = bindings.flatMap((binding) => {
-      const digest = (binding as Binding & { readonly manifestDigest?: string }).manifestDigest
-      return digest ? [{ id: binding.id, connector: binding.app, manifestDigest: digest }] : []
-    })
-    const toolsChecked = resolved.length === bindings.length
-    const result = checker.data(toolsChecked ? agent : { ...agent, tools: [] }, { models: [...OFFERED_MODELS], bindings: resolved, laws })
-    const found = [...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, agent, code, message, span?.pointer ?? null)), ...cellIssues]
-    const badge = found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge>
-    return { issues: found, status: toolsChecked ? badge : <span className="flex items-center gap-2">{badge}<span className="text-meta text-muted-foreground">Tools are checked by the cell</span></span> }
+    // Tools are checked against bindings the gateway pinned to a connector manifest by digest (CONNECT's pin).
+    // A binding saved before pinning cannot be checked here: it is named as such, not called unbound.
+    const pinned = bindings.flatMap((binding) => { const pin = pinOf(binding); return pin ? [pin] : [] })
+    const unpinned = new Set(bindings.filter((binding) => !pinOf(binding)).map(({ id: binding }) => binding))
+    const parts = wiredParts(graph)
+    const notPinned: Issue[] = parts.tools.filter(({ config }) => unpinned.has(config.binding ?? "")).map(({ id: node, config }) => ({ code: "canvas.agent.unpinned_binding", message: `Binding ${config.binding} has no pinned tool manifest yet; save it again on Connections so its tool can be checked`, node }))
+    const result = checker.data({ ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, { models: [...OFFERED_MODELS], bindings: pinned, laws })
+    const found = [...notPinned, ...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, { ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, code, message, span?.pointer ?? null)), ...cellIssues]
+    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
   }, [checker.isError, checker.error, checker.data, bindings, laws, cellIssues])
 
   const save = async (graph: g.Graph) => {
@@ -150,7 +158,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
   }
 
   const props: CanvasFrameProps = {
-    draftKey: `agent:${id}:${stored?.version ?? "new"}`, label: `Agent: ${id}`, initial, kinds: agentKinds, nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED, save,
+    draftKey: `agent:${id}:${stored?.version ?? "new"}`, label: `Agent: ${id}`, initial, kinds: agentKinds, nodeTypes: NODE_TYPES, issues, saveBlocked: AGENT_SAVE_BLOCKED, ...saveLive ? { save } : {},
     empty: "The agent node is missing; undo to bring it back.", fixed: (node) => node.id === AGENT_NODE,
     toNode: (node, found, selected): AgentPartNode => ({
       id: node.id, type: "part", position: node.position, selected,
@@ -177,7 +185,7 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws }: { readonly 
   return (
     <div className="space-y-2">
       <CanvasFrame {...props} />
-      <div className="flex justify-end"><Button size="sm" disabled title={AGENT_RUN_BLOCKED}>Run the agent</Button></div>
+      <div className="flex justify-end"><Unavailable reason={AGENT_RUN_BLOCKED}>Run the agent</Unavailable></div>
     </div>
   )
 }
@@ -194,6 +202,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
   const stored = useQuery({ queryKey: ["definitions", "agent", open?.copyOf ?? open?.id], // A query may not resolve to undefined: a definition the cell does not have yet is null (a new agent).
     queryFn: async () => (await store.get(open?.copyOf ?? open?.id ?? "")) ?? null, enabled: open !== null, retry: false })
   const [newName, setNewName] = useState("")
+  // Until the cell's definition routes answer, agents are drafts in this browser: say so, and offer no server save.
+  const routesDown = list.error instanceof NotConnected
   const [notice, setNotice] = useState<string | null>(null)
   const refresh = () => void client.invalidateQueries({ queryKey: ["definitions", "agent"] })
   const retire = async (id: string, version: number) => {
@@ -209,7 +219,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
       <Panel icon={Bot} label="Agents" action={list.data ? `${list.data.items.length}` : undefined}>
         <Well className="space-y-2 p-3 text-sm">
           {list.isPending && <p role="status" className="text-muted-foreground">Reading agents…</p>}
-          {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
+          {routesDown && <p role="status" className="text-muted-foreground">{AGENT_SAVE_BLOCKED}</p>}
+          {list.isError && !routesDown && <p role="alert" className="text-destructive">{list.error.message}</p>}
           {list.data?.items.length === 0 && <EmptyState icon={Bot}>No agents yet. Name one below to start.</EmptyState>}
           {list.data?.items.map((item) => (
             <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border bg-background p-2">
@@ -230,8 +241,8 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
         </Well>
       </Panel>
       {open && (stored.isPending ? <p role="status" className="text-muted-foreground">Opening {open.id}…</p>
-        : stored.isError ? <p role="alert" className="text-destructive">{stored.error.message}</p>
-          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} />)}
+        : stored.isError && !(stored.error instanceof NotConnected) ? <p role="alert" className="text-destructive">{stored.error.message}</p>
+          : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} saveLive={!routesDown} />)}
     </div>
   )
 }

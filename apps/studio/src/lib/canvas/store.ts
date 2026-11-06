@@ -52,6 +52,7 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
     list: async (cursor) => {
       const { status, body } = await call(`/v1/definitions:list?${new URLSearchParams({ kind, limit: "50", ...cursor ? { cursor } : {} })}`)
       const b = body as { items?: unknown; cursor?: unknown } | null
+      if (status === 404) throw new NotConnected(`The cell's definition routes aren't live yet, so ${kind} definitions can't be listed or saved there.`)
       if (status !== 200 || !Array.isArray(b?.items)) throw new CellUnavailable(status)
       return {
         items: b.items.map((row: { id: string; title?: string; version: number; lifecycle?: string; updatedAtMs?: number }) => ({ id: row.id, title: row.title ?? "", version: row.version, lifecycle: row.lifecycle ?? "", updatedAtMs: row.updatedAtMs ?? 0 })),
@@ -62,6 +63,7 @@ export function kindStore<T>(kind: string, fetcher: Fetch = (input, init) => fet
       const { status, body } = await call(`/v1/definitions/${encodeURIComponent(id)}`)
       const b = body as { id?: unknown; kind?: unknown; version?: unknown; payload?: T; code?: unknown } | null
       if (status === 404 && b?.code === "definition.not_found") return undefined
+      if (status === 404) throw new NotConnected(`The cell's definition routes aren't live yet, so this ${kind} can only be a draft in this browser.`)
       if (status !== 200 || typeof b?.version !== "number" || b.payload === undefined || b.kind !== kind) throw new CellUnavailable(status)
       return { id: String(b.id ?? id), version: b.version, payload: b.payload }
     },
