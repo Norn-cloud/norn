@@ -394,7 +394,7 @@ fn lifecycle_string_enums_are_admitted_in_rule_ir_schemas_only() {
     );
 }
 
-/// The SalesOrder entity with a plain (non-lifecycle) enum property.
+/// The `SalesOrder` entity with a plain (non-lifecycle) enum property.
 fn valued_sales_order() -> Value {
     let mut entity = read_json("ir/entity-v2/artifact-set/commerce-sales-order.entity.json");
     entity["payload"]["objectType"]["properties"]
@@ -406,7 +406,7 @@ fn valued_sales_order() -> Value {
     entity
 }
 
-/// An upsert of SalesOrder taking `field` with `schema` as an input.
+/// An upsert of `SalesOrder` taking `field` with `schema` as an input.
 fn upsert_with_input(field: &str, schema: Value) -> Value {
     let mut action = read_json("ir/artifact-set/action-invalid-write-mode.action.json");
     let payload = &mut action["payload"];
