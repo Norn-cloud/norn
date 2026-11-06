@@ -1245,11 +1245,11 @@ fn set_millis(r: &mut norn_ir::deontic::StructuredRequirement, millis: &str) {
     });
 }
 
-/// LAW-WITHIN-1 admits one exact shape and refuses every variation with a typed reason.
+/// LAW-WITHIN-1 admits its exact shape, round-trips and renders the window.
 #[test]
 fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
     use norn_checker::deontic::RequirementRefusal as R;
-    use norn_ir::deontic::{CalendarPin, RequirementTiming, StructuredRequirement};
+    use norn_ir::deontic::StructuredRequirement;
     let env = requirement_env();
     let ok = within_requirement();
     check_requirement(&ok, &env).expect("structural within obligation");
@@ -1258,13 +1258,44 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
     let decoded: StructuredRequirement = serde_json::from_value(wire).expect("typed");
     assert_eq!(decoded, ok);
     let view = norn_ir::requirement_display::RequirementView {
-        requirement: ok.clone(),
+        requirement: ok,
         locale: "en".into(),
     };
     let rendered = view.slots().expect("rendered").remove(4).text;
     assert!(rendered.contains("2592000000 ms; post"), "{rendered}");
-    type Case = (fn(&mut StructuredRequirement), R);
-    let cases: [Case; 14] = [
+    let mut missing = within_requirement();
+    if let Some(w) = missing.wording.0.values_mut().last() {
+        w.terms.within = None;
+    }
+    assert_eq!(
+        check_requirement(&missing, &env),
+        Err(R::Wording("law.wording.incomplete_locale"))
+    );
+    let view = norn_ir::requirement_display::RequirementView {
+        requirement: missing,
+        locale: "en".into(),
+    };
+    assert_eq!(view.slots().err(), Some("law.wording.incomplete_locale"));
+    // A timed safety wrapper never becomes a deadline, and lowering stays closed.
+    let ok = within_requirement();
+    assert_eq!(
+        norn_checker::deontic::lower_theorem_candidate(&ok.norm),
+        Err(LawLoweringRefusal::UnsupportedProofFragment)
+    );
+}
+
+type WithinCase = (
+    fn(&mut norn_ir::deontic::StructuredRequirement),
+    norn_checker::deontic::RequirementRefusal,
+);
+
+/// Every variation of the LAW-WITHIN-1 shape refuses with a typed reason.
+#[test]
+fn within_refuses_every_variation_with_a_typed_reason() {
+    use norn_checker::deontic::RequirementRefusal as R;
+    use norn_ir::deontic::{CalendarPin, RequirementTiming};
+    let env = requirement_env();
+    let cases: [WithinCase; 14] = [
         (|r| set_millis(r, "0"), R::InvalidDuration),
         (|r| set_millis(r, "030"), R::InvalidDuration),
         (
@@ -1342,23 +1373,4 @@ fn within_admits_only_an_untimed_free_obligation_to_eventually_respond() {
         mutate(&mut r);
         assert_eq!(check_requirement(&r, &env), Err(refusal), "case {index}");
     }
-    let mut missing = within_requirement();
-    if let Some(w) = missing.wording.0.values_mut().last() {
-        w.terms.within = None;
-    }
-    assert_eq!(
-        check_requirement(&missing, &env),
-        Err(R::Wording("law.wording.incomplete_locale"))
-    );
-    let view = norn_ir::requirement_display::RequirementView {
-        requirement: missing,
-        locale: "en".into(),
-    };
-    assert_eq!(view.slots().err(), Some("law.wording.incomplete_locale"));
-    // A timed safety wrapper never becomes a deadline, and lowering stays closed.
-    let ok = within_requirement();
-    assert_eq!(
-        norn_checker::deontic::lower_theorem_candidate(&ok.norm),
-        Err(LawLoweringRefusal::UnsupportedProofFragment)
-    );
 }

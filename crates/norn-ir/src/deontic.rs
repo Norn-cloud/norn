@@ -125,6 +125,26 @@ impl TimingShapeError {
 }
 
 impl StructuredRequirement {
+    /// LAW-WORDING-LOCALE-1 for this requirement: every locale is complete,
+    /// including the optional terms its root (`pack`) and timing (`within`) render.
+    ///
+    /// # Errors
+    /// The wording's own refusal, or `law.wording.incomplete_locale`.
+    pub fn validate_wording(&self) -> Result<(), &'static str> {
+        self.wording.validate()?;
+        let pack = matches!(self.norm.law.scope.root, crate::LawRoot::Pack(_));
+        let within = matches!(self.timing, RequirementTiming::Within(_));
+        if self
+            .wording
+            .0
+            .values()
+            .any(|w| (pack && w.terms.pack.is_none()) || (within && w.terms.within.is_none()))
+        {
+            return Err("law.wording.incomplete_locale");
+        }
+        Ok(())
+    }
+
     /// LAW-WITHIN-1 shape. `within` pairs only with an obligation to eventually
     /// respond under `law.timing = within {millis}`, returning the window in
     /// milliseconds; every other requirement timing is the untimed

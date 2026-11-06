@@ -49,17 +49,8 @@ impl RequirementView {
 
     // LAW-WORDING-LOCALE-1 applies to every declared locale before either view.
     fn wording(&self) -> Result<&LocalizedRequirement, &'static str> {
-        let wording = self.requirement.wording.locale(&self.locale)?;
-        let r = &self.requirement;
-        let entries = || r.wording.0.values();
-        if (matches!(r.norm.law.scope.root, LawRoot::Pack(_))
-            && entries().any(|entry| entry.terms.pack.is_none()))
-            || (matches!(r.timing, RequirementTiming::Within(_))
-                && entries().any(|entry| entry.terms.within.is_none()))
-        {
-            return Err("law.wording.incomplete_locale");
-        }
-        Ok(wording)
+        self.requirement.validate_wording()?;
+        self.requirement.wording.locale(&self.locale)
     }
 
     /// All locales expose identical semantic slots in identical order.
