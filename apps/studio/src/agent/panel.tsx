@@ -15,6 +15,10 @@ import { EXAMPLES, SUGGESTIONS, sessionId, settleExample, tabStorage, timeline, 
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
+/** Enter sends; Shift+Enter is a new line, and Enter that confirms an IME composition is the input method's, not a send. */
+export const sendsOnEnter = (event: { readonly key: string; readonly shiftKey: boolean; readonly nativeEvent: { readonly isComposing?: boolean } }) =>
+  event.key === "Enter" && !event.shiftKey && event.nativeEvent.isComposing !== true
+
 /** The server's refusal text, when the Worker sent one (`{"error": "..."}`), else the transport's own message. */
 function reason(error: Error): string {
   try {
@@ -163,7 +167,7 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         </div>
         <form onSubmit={submit} className="flex items-end gap-2">
           <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask for a change, e.g. record each melt's purity" rows={2} className="min-h-0 resize-none"
-            onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(input) } }} />
+            onKeyDown={(event) => { if (sendsOnEnter(event)) { event.preventDefault(); send(input) } }} />
           {busy
             ? <Button type="button" variant="outline" onClick={() => void stop()}>Stop</Button>
             : <Button type="submit" disabled={input.trim() === ""}>Send</Button>}
