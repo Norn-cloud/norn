@@ -46,3 +46,21 @@ test("the tool gateway reaches the Worker only whole, as an https origin with St
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_CLIENT_SECRET: "" })).toThrow("non-empty")
   expect(() => celldStudio({ ...BASE, ...tool, TOOL_GATEWAY_URL: "http://127.0.0.1:9878" })).toThrow("https origin")
 })
+
+test("the secret-bearing config is created exclusively, readable by its owner only", async () => {
+  const { mkdtempSync, statSync, writeFileSync, readFileSync, chmodSync } = await import("node:fs")
+  const { join } = await import("node:path")
+  const { tmpdir } = await import("node:os")
+  const { writeSecretConfig } = await import("../celld-config.ts")
+  const dir = mkdtempSync(join(tmpdir(), "celld-config-"))
+  const path = join(dir, "wrangler.json")
+  writeSecretConfig(path, { vars: { BETTER_AUTH_SECRET: SECRET } })
+  expect(statSync(path).mode & 0o777).toBe(0o600)
+  expect(JSON.parse(readFileSync(path, "utf8")).vars.BETTER_AUTH_SECRET).toBe(SECRET)
+  // A stale file is never reused, whatever its permissions; its mode and contents stay as they were.
+  chmodSync(path, 0o644)
+  writeFileSync(path, "{}")
+  expect(() => writeSecretConfig(path, { vars: { BETTER_AUTH_SECRET: SECRET } })).toThrow("already exists")
+  expect(statSync(path).mode & 0o777).toBe(0o644)
+  expect(readFileSync(path, "utf8")).toBe("{}")
+})

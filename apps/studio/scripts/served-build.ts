@@ -22,15 +22,18 @@ export async function awaitServed(origin: string, expected: string, timeoutMs: n
   const deadline = Date.now() + timeoutMs
   let served: string | undefined
   for (;;) {
+    // Each request and its body read end by the deadline: a stalled origin is a mismatch, not a hang.
+    const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()))
     try {
-      const response = await fetcher(`${origin}/?served-build=${Date.now()}`, { headers: { "cache-control": "no-cache", "user-agent": "norn-served-build/1" } })
+      const response = await fetcher(`${origin}/?served-build=${Date.now()}`, { headers: { "cache-control": "no-cache", "user-agent": "norn-served-build/1" }, signal })
       served = response.ok ? entryChunk(await response.text()) : undefined
     } catch {
       served = undefined
     }
     if (served === expected) return { served, matched: true }
-    if (Date.now() >= deadline) return { served, matched: false }
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return { served, matched: false }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(3000, remaining)))
   }
 }
 

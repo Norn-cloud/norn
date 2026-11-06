@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { celldConfig, celldStudio } from "../celld-config.ts"
+import { celldConfig, celldStudio, writeSecretConfig } from "../celld-config.ts"
 import { awaitServed, entryChunk } from "./served-build.ts"
 
 // Deploy the self-hosted Studio to a celld fleet from exactly one commit, then prove the fleet
@@ -91,7 +91,7 @@ async function main(argv: readonly string[]) {
     deploy: () => {
       // The config carries secrets: written mode 0600, ignored by git, removed after the deploy.
       const config = join(app, "wrangler.json")
-      writeFileSync(config, `${JSON.stringify(celldConfig(studio), null, 2)}\n`, { mode: 0o600 })
+      writeSecretConfig(config, celldConfig(studio))
       try {
         execFileSync("celld", ["deploy", ".", "--json"], { cwd: app, stdio: ["ignore", "inherit", "inherit"] })
       } finally {
