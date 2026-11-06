@@ -27,7 +27,7 @@ const mayRun = (actor: NornActor, binding: Binding) => permits(actor, binding.ru
 
 export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
-  readonly GATEWAY_URL?: string
+  readonly TOOL_GATEWAY_URL?: string
   readonly BETTER_AUTH_URL: string
 }
 
@@ -116,7 +116,7 @@ export async function connectors(request: Request, env: ConnectorEnv, auth: Auth
     return (await removeBinding(db, actor.orgId, id)) ? ok({ removed: id }) : refusal(404, "connectors.binding_not_found", "No such tool binding.")
   }
 
-  const gatewayOrigin = env.GATEWAY_URL
+  const gatewayOrigin = env.TOOL_GATEWAY_URL
   if (route === "GET /status" && gatewayOrigin === undefined) return ok({ gateway: null, linked: false })
   if (gatewayOrigin === undefined) return refusal(503, "connectors.not_configured", "No tool gateway is configured for this deployment.")
   if (route === "POST /link") {
