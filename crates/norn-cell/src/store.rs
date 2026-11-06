@@ -2128,7 +2128,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn init_schema(conn: &E, model: &Model) -> Result<(), CellError> {
         validate_store_format(conn)?;
-        for statement in SYSTEM_DDL {
+        for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
             conn.execute_batch(statement)?;
         }
         crate::system::intern_marking_subjects(conn)?;
@@ -2873,6 +2873,7 @@ impl<E: SqlEngine> CellStore<E> {
                 writer.admit_created_identities()?;
             }
             let written = writer.apply_writes()?;
+            crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

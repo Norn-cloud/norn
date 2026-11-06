@@ -36,6 +36,7 @@ pub mod compute;
 pub mod engine;
 pub mod error;
 pub mod export;
+pub mod flow_run;
 mod export_journal;
 mod history;
 mod history_selection;
