@@ -75,7 +75,7 @@ function RailItem({ section, active }: { readonly section: Section; readonly act
  */
 export function Submenu({ section }: { readonly section: Section }) {
   // Navigating closes the phone sheet the submenu sits in.
-  const { setOpenMobile } = useSidebar()
+  const { setOpenMobile, state, isMobile } = useSidebar()
   const [search, setSearch] = useState("")
   const all = (section.useMenu ?? none)() ?? []
   const query = search.trim().toLowerCase()
@@ -112,7 +112,7 @@ export function Submenu({ section }: { readonly section: Section }) {
         {groups.map((group) => (
           <SidebarGroup key={group}>
             <SidebarGroupLabel asChild className="text-xs font-normal text-muted-foreground">
-              <button type="button" aria-expanded={groupOpen(closed, group, query)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
+              <button type="button" tabIndex={hiddenLabelTabIndex(state, isMobile)} aria-expanded={groupOpen(closed, group, query)} onClick={() => setClosed((set) => toggle(set, group))} className="w-full gap-1 hover:text-foreground">
                 {group}<ChevronDown className={cn("size-3.5! transition-transform", !groupOpen(closed, group, query) && "-rotate-90")} />
               </button>
             </SidebarGroupLabel>
@@ -149,6 +149,9 @@ export function Submenu({ section }: { readonly section: Section }) {
 }
 
 /** A group shows its entries unless the user closed it; a search opens every group so its matches stay visible. */
+/** A collapsed desktop sidebar fades its group labels out; their buttons leave the tab order with them. The phone sheet always shows them. */
+export const hiddenLabelTabIndex = (state: "expanded" | "collapsed", isMobile: boolean): -1 | undefined => state === "collapsed" && !isMobile ? -1 : undefined
+
 export const groupOpen = (closed: ReadonlySet<string>, group: string, query: string) => query !== "" || !closed.has(group)
 
 /** "Search or add… ⌘K": every section and every entry the sections list. */
