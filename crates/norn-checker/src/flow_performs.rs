@@ -47,7 +47,7 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
                                 "/graph/nodes/{n}/content/rules/{r}/{}",
                                 output.replace('~', "~0").replace('/', "~1")
                             );
-                            scan(source, pointer, &mut found)?;
+                            scan(source, &pointer, &mut found)?;
                         }
                     }
                 }
@@ -59,7 +59,7 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
                 for (e, expression) in expressions.iter().enumerate() {
                     if let Some(source) = expression["value"].as_str() {
                         let pointer = format!("/graph/nodes/{n}/content/expressions/{e}/value");
-                        scan(source, pointer, &mut found)?;
+                        scan(source, &pointer, &mut found)?;
                     }
                 }
             }
@@ -69,18 +69,15 @@ pub fn perform_refs(payload: &Value) -> Result<Vec<PerformRef>, (String, String)
     Ok(found)
 }
 
-fn scan(
-    source: &str,
-    pointer: String,
-    found: &mut Vec<PerformRef>,
-) -> Result<(), (String, String)> {
+fn scan(source: &str, pointer: &str, found: &mut Vec<PerformRef>) -> Result<(), (String, String)> {
     if source.trim().is_empty() {
         return Ok(());
     }
-    let objects = object_literals(source).map_err(|error| (pointer.clone(), error.to_string()))?;
+    let objects =
+        object_literals(source).map_err(|error| (pointer.to_owned(), error.to_string()))?;
     for object in objects.iter().filter(|object| is_perform(object)) {
         found.push(PerformRef {
-            pointer: pointer.clone(),
+            pointer: pointer.to_owned(),
             name: literal_name(object),
         });
     }

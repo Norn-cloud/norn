@@ -996,6 +996,10 @@ fn receipt<E: SqlEngine>(
 
 /// Append `definition` (compare-and-set on `expected`) through the governed
 /// definitions install, at host time `now_ms`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the version check, kernel admission and the one governed commit run under one lock"
+)]
 fn append<E: SqlEngine>(
     host: &DevHost<E>,
     mut definition: RetainedDefinition,
@@ -1303,6 +1307,10 @@ fn cursor_invalid() -> Refusal {
 /// # Errors
 /// A denied caller (403), a missing kind, a bad limit or cursor (400).
 #[utoipa::path(get, path = "/v1/definitions:list", params(ListDefinitionsQuery), responses((status = 200, body = DefinitionPage), (status = 400, body = Refusal), (status = 403, body = Refusal), (status = 500, body = Refusal)))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the query's checks, the filtered page walk and the bound cursor stay together"
+)]
 pub fn list_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     query: &ListDefinitionsQuery,

@@ -115,6 +115,10 @@ fn error(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> 
 /// against the registered built-ins and the active bindings' versions, and
 /// the flow when there are none.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one flow's shape, ownership, scope and perform rules, checked together in payload order"
+)]
 pub fn check(
     id: &str,
     canonical: &str,
