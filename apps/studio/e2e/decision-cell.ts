@@ -70,6 +70,8 @@ export function fixtures(now = START) {
   const step = (id: string, kind: Step["kind"], status: Step["status"], label: string | null = null, extra: Partial<Step> = {}): Step =>
     ({ id, label, kind, status, startedAtMs: status === "pending" ? null : now - 2 * HOUR, endedAtMs: status === "done" ? now - 2 * HOUR + 4000 : null, receipts: [], error: null, ...extra })
   const runs = new Map<string, StoredRun>([
+    ["run_count_3", { id: "run_count_3", generation: 1, flow: { ruleId: "canon.cycle_count.flow.rule", version: 2, title: "Cycle count" }, version: 6, createdAtMs: now - 30 * HOUR, reads: 0, decision: null,
+      steps: [step("count", "perform", "done", "Count the bin"), step("done", "succeed", "done", "Done")] }],
     ["run_restock_7", { id: "run_restock_7", generation: 1, flow: { ruleId: "canon.restock.flow.rule", version: 3, title: "Restock gold" }, version: 3, createdAtMs: now - 2 * HOUR, reads: 0, decision: { id: "dec_UmVsZWFzZS1nb2xk", expiresAtMs: now + 45 * 60_000 },
       steps: [
         step("check_stock", "perform", "done", "Check stock", { receipts: [{ kind: "function", receiptHash: hash(901), commitSeq: 901, recordedAtMs: now - 2 * HOUR + 3000, executor: "the cell" }] }),
@@ -180,8 +182,9 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       run.version += 1
     }
     if (options.legacy) {
+      // RUNS's first cut: no steps, no decision, no ETag; `terminal` says when the run has ended.
       const { steps: _steps, decision: _decision, ...first } = document(run)
-      return route.fulfill({ json: first })
+      return route.fulfill({ json: { ...first, terminal: run.steps.every((s) => s.status === "done" || s.status === "skipped" || s.status === "failed") } })
     }
     const etag = `"${run.generation}:${run.version}"`
     if (route.request().headers()["if-none-match"] === etag) return route.fulfill({ status: 304, headers: { etag } })

@@ -95,6 +95,12 @@ test("a run's phase comes from its steps, and sets how often it is read again", 
   expect(phaseOf({ state: "awaiting_perform_ask", decision: undefined })).toBe("active")
   expect(phaseOf({ state: null })).toBe("ended")
   expect(refreshEvery("active")).toBe(5_000)
+  // `terminal` is the cell's word that the run has ended: no more reads, with or without steps.
+  expect(phaseOf({ state: "succeeded", terminal: true })).toBe("ended")
+  expect(phaseOf({ state: "awaiting_perform_ask", terminal: false })).toBe("active")
+  expect(phaseOf({ state: "x", terminal: true, decision: null, steps: [step("done"), step("done", "succeed")] })).toBe("succeeded")
+  expect(phaseOf({ state: "x", terminal: true, decision: null, steps: [step("failed"), step("skipped", "succeed")] })).toBe("failed")
+  expect(refreshEvery(phaseOf({ state: "x", terminal: true }))).toBe(false)
   expect(runTitle({ flow: { ruleId: "canon.cycle_count.flow.rule", version: 1, title: null } })).toBe("Cycle count")
   expect(newRunId()).toMatch(/^run_[0-9a-f-]{36}$/)
 })

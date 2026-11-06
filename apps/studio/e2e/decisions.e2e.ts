@@ -194,6 +194,18 @@ test("run view, first cut: without steps the run shows its state, flow and gener
   await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(1)
 })
 
+test("run view, first cut: a run the cell calls terminal reads as ended and is not read again", async ({ page }) => {
+  await session(page)
+  await decisionCell(page, { legacy: true })
+  let reads = 0
+  page.on("request", (request) => { if (request.url().includes("/api/host/v1/runs/run_count_3")) reads += 1 })
+  await page.goto("/runs/run_count_3")
+  await expect(page.getByText("Ended", { exact: true })).toBeVisible()
+  await expect(page.getByText("Live")).toHaveCount(0)
+  await page.waitForTimeout(7_000) // longer than the 5 s beat of a run still in progress
+  expect(reads).toBe(1)
+})
+
 test("not served and no cell: the inbox and the run view say why, and call nothing", async ({ page }) => {
   await session(page)
   await page.route("**/api/host/v1/decisions**", (route) => route.fulfill({ status: 404, body: "" }))

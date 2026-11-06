@@ -46,6 +46,8 @@ export interface Run {
   readonly createdCommitSeq: number
   readonly updatedAtMs: number
   readonly updatedCommitSeq: number
+  /** The run has ended and will not change; Studio stops reading it again. Absent from older cells. */
+  readonly terminal?: boolean
   /** Absent until RUNS's follow-up serves the timeline. */
   readonly steps?: readonly RunStep[]
   /** Absent until the follow-up; null when the run waits on no decision this actor can read. */
@@ -70,11 +72,14 @@ export const runTitle = (run: Pick<Run, "flow">) => run.flow.title ?? humanize(r
 export type Phase = "running" | "waiting" | "succeeded" | "failed" | "ended" | "active"
 
 /** Where the run stands: from its steps when the cell sends them, else from its state alone. */
-export function phaseOf(run: Pick<Run, "steps" | "decision" | "state">): Phase {
+export function phaseOf(run: Pick<Run, "steps" | "decision" | "state" | "terminal">): Phase {
   const steps = run.steps
-  if (steps === undefined) {
-    // No timeline yet: a deleted run object (state null) has ended; any other state may still move.
-    return run.state === null ? "ended" : "active"
+  // The cell's own word that the run has ended wins; a deleted run object (state null) has ended too.
+  const ended = run.terminal === true || run.state === null
+  if (steps === undefined) return ended ? "ended" : "active"
+  if (ended) {
+    if (steps.some((s) => s.status === "failed") || steps.some((s) => s.kind === "fail" && s.status === "done")) return "failed"
+    return steps.some((s) => s.kind === "succeed" && s.status === "done") ? "succeeded" : "ended"
   }
   if (steps.some((s) => s.status === "running")) return "running"
   if ((run.decision ?? null) !== null || steps.some((s) => s.status === "waiting")) return "waiting"
