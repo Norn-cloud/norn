@@ -394,7 +394,7 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
       </Well></Panel>
     )}
     <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
-      <p className="text-sm">This page shows a recorded snapshot. Live reads return the access decision and receipt for your account.</p>
+      <p className="text-sm">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>
       <dl className="space-y-1 text-sm">
         <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Viewing as</dt><dd>{viewer.name}{viewer.role !== null && <span className="text-muted-foreground"> · {viewer.role}</span>}</dd></div>
         <div className="flex flex-col gap-x-3 sm:flex-row"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">Access decision</dt><dd className="flex items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", STATUS.unknown.dot)} />Not in the recorded snapshot</dd></div>
@@ -415,7 +415,11 @@ export function summaryOf(concept: Concept, reads: ObjectReads, concepts: readon
   const stored = reads.links.document.items.filter((edge) => (edge.source === id && edge.sourceType === objectType) || (edge.target === id && edge.targetType === objectType)).length
   const declared = concept.relationships.length + incomingOf(concept, concepts).length
   const from = source ? `, read from ${systemName(source.sourceRecordRef.system)} by mapping ${source.mappingPin.artifactId}` : ""
-  const links = declared === 0 ? "Its type declares no relations." : stored === 0 ? (declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`) : `${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
+  // Only the first page of links may have been returned; then the count is a floor, not the whole.
+  const more = reads.links.document.hasMore
+  const links = declared === 0 ? "Its type declares no relations."
+    : stored === 0 ? (more ? "No stored link appears on the first page the server returned; more may exist." : declared === 1 ? "Its one declared relation has no stored link in this snapshot." : `None of the ${declared} relations its type declares has a stored link in this snapshot.`)
+    : `${more ? "At least " : ""}${stored} stored ${stored === 1 ? "link connects" : "links connect"} it to other records.`
   return `${recordName(reads.object.document)} is ${/^[aeiou]/i.test(concept.title) ? "an" : "a"} ${concept.title.toLowerCase()} record${from}. ${links}`
 }
 
