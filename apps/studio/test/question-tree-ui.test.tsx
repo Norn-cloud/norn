@@ -60,3 +60,13 @@ test("the tree shows the four columns, the recommended path and keeps Run closed
   expect(html).toContain("Run opens once you have signed off on the question in plain words.")
   expect(html).not.toContain(">Run<")
 })
+
+test("choosing Another condition stays custom even when its filter equals an offered condition", () => {
+  const draft = recommendedDraft(tree)
+  const offered = tree.conditions.find(({ id }) => id !== "every") ?? tree.conditions[0]
+  const filters = (offered?.value as { filter?: readonly { path: { property: string }; operator: string; value: unknown }[] }).filter ?? []
+  const same = { ...draft, filters: filters.map(({ path, operator, value }) => ({ property: path.property, operator, value: String(value) })) }
+  expect(selection(tree, same).condition).toBe(offered?.id)
+  expect(selection(tree, same, true).condition).toBe("custom")
+  expect(selection(tree, { ...draft, filters: [] }, true).condition).toBe("custom")
+})
