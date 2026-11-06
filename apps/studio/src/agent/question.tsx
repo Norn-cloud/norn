@@ -26,7 +26,8 @@ export function questionVerdictOf(output: unknown): QuestionVerdict | undefined 
 }
 
 const words = (property: string | undefined) => (property ?? "").replaceAll("_", " ")
-const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", lte: "is at most", gt: "is above", gte: "is at least" }
+// The IR's filter operators (`norn_ir::metric::FilterOperator`).
+const OPERATORS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", le: "is at most", gt: "is above", ge: "is at least" }
 
 /** The checked plan in Business words: what it measures, of what, by what, for which records and over which window. */
 export function planWords(plan: NonNullable<QuestionVerdict["plan"]>): readonly [string, string][] {

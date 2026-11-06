@@ -12,6 +12,7 @@ import { StatusPage } from "./status.tsx"
 import { GuaranteesPage, useGuaranteesMenu } from "./guarantees.tsx"
 import { WorkflowsPage, useWorkflowsMenu } from "./workflows.tsx"
 import { SourcesItemPage } from "./objects.tsx"
+import { QuestionBuilderPage } from "./builder.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
@@ -47,6 +48,7 @@ const router = createRouter({
     })),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage }),
+    createRoute({ getParentRoute: () => root, path: "/questions/new", component: QuestionBuilderPage }),
     createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage }),
   ]),
 })

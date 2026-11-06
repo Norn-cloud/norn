@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { useState } from "react"
-import { ChartLine, Clock, Rows3, Sigma } from "lucide-react"
+import { ChartLine, Clock, Plus, Rows3, Sigma } from "lucide-react"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
@@ -213,6 +214,7 @@ export function QuestionsPage() {
       <div className="space-y-2">
         <h1 className="text-title font-medium">Questions</h1>
         <p className="max-w-2xl text-muted-foreground">Business questions answered exactly by the server. Every number opens to the records it was added up from.</p>
+        <Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question</Link></Button>
       </div>
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}
