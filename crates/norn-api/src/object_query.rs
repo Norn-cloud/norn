@@ -220,6 +220,7 @@ impl Findings {
             code: code.to_owned(),
             severity: "error".to_owned(),
             message: message.into(),
+            law: None,
             span: Some(RefusalSpan {
                 pointer: pointer.into(),
             }),
@@ -245,6 +246,7 @@ pub(crate) fn cursor_invalid() -> Refusal {
         code: "query.cursor_invalid".to_owned(),
         severity: "error".to_owned(),
         message: "the cursor does not continue this query for this caller".to_owned(),
+        law: None,
         span: Some(RefusalSpan {
             pointer: "/after".to_owned(),
         }),
