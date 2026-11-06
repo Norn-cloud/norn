@@ -3,7 +3,7 @@ import { CellUnavailable, StudioScopeError, scopedHostFetch, type ScopeProvider 
 
 const summary = z.object({ id: z.string(), title: z.string(), version: z.number(), lifecycle: z.string() })
 const page = z.object({ items: z.array(summary), cursor: z.string().nullable().optional() })
-const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown(), restatement: z.string(), restatementSha256: z.string().regex(/^[0-9a-f]{64}$/), signoff: z.object({ signer: z.string().min(1), signedAtMs: z.number().int().nonnegative(), restatementSha256: z.string().regex(/^[0-9a-f]{64}$/) }).nullable().optional() })
+const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown(), restatement: z.string(), restatementSha256: z.string().regex(/^[0-9a-f]{64}$/), signoff: z.object({ signer: z.string().min(1), displayName: z.string().min(1).optional(), signedAtMs: z.number().int().nonnegative(), restatementSha256: z.string().regex(/^[0-9a-f]{64}$/) }).nullable().optional() })
 const admission = z.object({ admitted: z.boolean(), restatement: z.string().optional(), restatementSha256: z.string().regex(/^[0-9a-f]{64}$/).optional() })
 const result = z.object({ installed: z.literal(true), id: z.string(), version: z.number() })
 const refusal = z.object({ code: z.string(), message: z.string().optional(), detail: z.string().optional(), restatement: z.string().optional(), restatementSha256: z.string().optional() })

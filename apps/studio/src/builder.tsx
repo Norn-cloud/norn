@@ -47,7 +47,7 @@ export function buildQuestion(draft: Draft, catalog: QuestionCatalog) {
   const value = (property: string, text: string) => NUMERIC.has(kind(property) ?? "") && text.trim() !== "" && Number.isFinite(Number(text)) ? Number(text) : text
   return {
     irVersion: catalog.example.irVersion,
-    name: `studio.${slug(draft.title)}`,
+    name: /^studio\.[a-z0-9_]+$/.test(draft.title) ? draft.title : `studio.${slug(draft.title)}`,
     objectSet: catalog.objectSet,
     aggregate: draft.measures.map((metric) => ({ metric })),
     groupBy: draft.by === "" ? [] : [{ path: { property: draft.by }, ...kind(draft.by) === "timestamp" && draft.grain !== "" ? { grain: draft.grain } : {} }],

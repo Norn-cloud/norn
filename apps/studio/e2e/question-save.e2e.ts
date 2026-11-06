@@ -64,7 +64,7 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
       stored = { ...stored, version: stored.version + 1, retired: true }
       return route.fulfill({ json: { installed: true, id: stored.id, version: stored.version } })
     }
-    if (stored) return route.fulfill({ json: { id: stored.id, kind: "question", version: stored.version, payload: stored.payload, restatement: returnedWords ?? stored.text, restatementSha256: digest(returnedWords ?? stored.text), signoff: { signer: "analyst@demo.norn.cloud", signedAtMs: 1794000000000, restatementSha256: stored.sha256 } } })
+    if (stored) return route.fulfill({ json: { id: stored.id, kind: "question", version: stored.version, payload: stored.payload, restatement: returnedWords ?? stored.text, restatementSha256: digest(returnedWords ?? stored.text), signoff: { signer: "user:analyst-id", displayName: "you", signedAtMs: 1794000000000, restatementSha256: stored.sha256 } } })
     return route.fulfill({ status: 404, json: { code: "definition.not_found" } })
   })
   await page.goto("/questions/build")
@@ -97,12 +97,18 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await page.getByRole("button", { name: "This is what I asked for" }).click()
   await page.getByRole("button", { name: "Save question" }).click()
   await expect(page.getByText("Saved · version 2")).toBeVisible()
-  await expect(page.getByText("Yield weekly · version 2")).toBeVisible()
+  await expect(page.getByText("studio.yield_weekly · version 2")).toBeVisible()
   await expect(page.getByText("studio.yield_weekly", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Open", exact: true }).click()
   await expect(page.getByTestId("restatement")).toHaveText(newWords)
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled()
+  await expect(page.locator("main")).not.toContainText("user:analyst-id")
+  await expect(page.locator(`span[title="${newHash}"]`)).toHaveCount(0)
+  await page.getByRole("radio", { name: "Technical" }).click()
+  await expect(page.locator("main")).toContainText("user:analyst-id")
+  await expect(page.locator(`span[title="${newHash}"]`)).toBeVisible()
+  await page.getByRole("radio", { name: "Business" }).click()
   // A later cell restatement cannot inherit the old sign-off.
   returnedWords = currentWords = "The cell now reads the question differently."
   await page.getByRole("button", { name: "Open", exact: true }).click()
@@ -111,23 +117,23 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
   await expect(page.getByRole("button", { name: "Run", exact: true })).toHaveCount(0)
   returnedWords = undefined; currentWords = newWords
   await page.getByRole("button", { name: "Open", exact: true }).click()
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await page.getByLabel("Question name").fill("Changed")
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await expect(page.getByRole("button", { name: "Save question" })).toBeEnabled()
   await press(page, "z")
-  await expect(page.getByLabel("Question name")).toHaveValue("yield weekly")
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByLabel("Question name")).toHaveValue("studio.yield_weekly")
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await press(page, "Shift+z")
   await expect(page.getByLabel("Question name")).toHaveValue("Changed")
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await page.getByRole("button", { name: /metal is gold/ }).click()
   await expect(page.getByTestId("restatement")).toHaveText("The filtered question.")
   await expect(page.getByRole("button", { name: "This is what I asked for" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
   await page.getByRole("button", { name: "Open", exact: true }).click()
-  await expect(page.getByLabel("Question name")).toHaveValue("yield weekly")
-  await expect(page.getByText(/Signed off by analyst@demo.norn.cloud on/)).toBeVisible()
+  await expect(page.getByLabel("Question name")).toHaveValue("studio.yield_weekly")
+  await expect(page.getByText(/Signed off by you on/)).toBeVisible()
   await page.getByRole("button", { name: "Remove question" }).click()
   await expect(page.getByRole("button", { name: "Undo removal" })).toBeVisible()
   await page.getByRole("button", { name: "Undo removal" }).click()
@@ -152,4 +158,36 @@ test("a workspace without a data cell cannot call definitions", async ({ page })
   await expect(page.getByRole("button", { name: "This is what I asked for" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
   expect(requests).toBe(0)
+})
+
+test("live signed question is retired after the row", async ({ page }) => {
+  test.skip(!process.env.E2E_BASE, "this row runs against a deployed cell")
+  const title = `E2E question ${Date.now()} ${Math.floor(Math.random() * 1_000_000)}`
+  const id = `studio.${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
+  try {
+    await page.goto("/questions/build")
+    await page.getByLabel("Question name").fill(title)
+    await page.getByRole("button", { name: "This is what I asked for" }).click()
+    await page.getByRole("button", { name: "Save question" }).click()
+    await expect(page.getByText("Saved · version 1")).toBeVisible()
+    await page.getByText(id, { exact: true }).locator("..").locator("..").getByRole("button", { name: "Open", exact: true }).click()
+    await expect(page.getByText(/Signed off by you on/)).toBeVisible()
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled()
+  } finally {
+    // The list and retire use the signed-in actor and the server-resolved scope.
+    const me = await page.request.get("/api/me")
+    if (!me.ok()) throw new Error(`Cleanup could not read Studio scope (${me.status()})`)
+    const scope = await me.json() as { organization: { id: string } | null; environmentId: string | null }
+    if (!scope.organization || !scope.environmentId) throw new Error("Cleanup has no data cell")
+    const query = new URLSearchParams({ orgId: scope.organization.id, environmentId: scope.environmentId })
+    const response = await page.request.get(`/api/host/v1/definitions/${encodeURIComponent(id)}?${query}`)
+    if (response.status() !== 404) {
+      if (!response.ok()) throw new Error(`Cleanup could not read ${id} (${response.status()})`)
+      const definition = await response.json() as { version: number; lifecycle: string }
+      if (definition.lifecycle !== "retired") {
+        const retired = await page.request.post(`/api/host/v1/definitions/${encodeURIComponent(id)}:retire?${query}`, { headers: { origin: process.env.E2E_BASE ?? "" }, data: { expectedVersion: definition.version } })
+        if (!retired.ok()) throw new Error(`Cleanup could not retire ${id} (${retired.status()})`)
+      }
+    }
+  }
 })
