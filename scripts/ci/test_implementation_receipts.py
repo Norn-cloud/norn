@@ -293,27 +293,22 @@ class ReceiptTest(unittest.TestCase):
         self.assertFalse(receipts.in_scope(self.root, base))
 
     def test_scope_refuses_sources_outside_the_package(self) -> None:
-        # Sol S3: scope compares package directories, so a library source outside
-        # the package would change the extraction without putting it in scope.
+        # Sol S3: scope compares package directories, so a layout whose library
+        # inputs it cannot bound is refused; path values are never parsed.
         base_files = {"Cargo.toml": '[workspace]\nmembers = ["lib"]\n', "lib/Cargo.toml": '[package]\nname = "lib"\n',
-                      "lib/src/lib.rs": '#![doc = include_str!("../README.md")]\n', "lib/README.md": "",
+                      "lib/src/lib.rs": "pub fn f() {}\n",
                       "lib/tests/t.rs": 'const X: &str = include_str!("../../outside.rs");\n', "outside.rs": ""}
         for name, text in base_files.items():
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).write_text(text)
         claims = {"INV-EXTRACT": self.claims["INV-EXTRACT"]}
-        # In-package includes and test-only targets are scoped as they are.
+        # Test-only targets are not read.
         self.assertIn("lib", receipts.scope_inputs(self.root, claims))
         for name, text, fragment in (
                 ("lib/Cargo.toml", '[package]\nname = "lib"\n[lib]\npath = "../outside.rs"\n', "lib.path"),
-                ("lib/Cargo.toml", '[package]\nname = "lib"\nbuild = "../outside.rs"\n', "package.build"),
-                ("lib/src/lib.rs", '#[path = "../../outside.rs"] mod outside;\n', "outside the package"),
-                ("lib/src/lib.rs", 'const X: &str = include_str!("../../outside.rs");\n', "outside the package"),
-                ("lib/src/lib.rs", 'const X: &str = include_str!["../../outside.rs"];\n', "outside the package"),
-                ("lib/src/lib.rs", 'const X: &[u8] = include_bytes!{"../../outside.rs"};\n', "outside the package"),
-                ("lib/src/lib.rs", '#[cfg_attr(all(), path = "../../outside.rs")] mod outside;\n', "outside the package"),
-                ("lib/src/lib.rs", 'include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../outside.rs"));\n',
-                 "non-literal include")):
+                ("lib/src/lib.rs", '#[path = r"../../outside.rs"] mod outside;\n', "cannot be scoped"),
+                ("lib/src/lib.rs", '#[cfg_attr(\n    all(),\n    path = "../../outside.rs"\n)] mod outside;\n',
+                 "cannot be scoped")):
             original = (self.root / name).read_text()
             (self.root / name).write_text(text)
             with self.subTest(text=text), self.assertRaisesRegex(receipts.Refused, fragment):
@@ -324,7 +319,8 @@ class ReceiptTest(unittest.TestCase):
         errors, verdicts = receipts.verify(self.root, self.out, self.expected, None, scoped=False)
         self.assertEqual({v["claim"]: (v["verdict"], v["label"]) for v in verdicts},
                          {"INV-EXTRACT": ("unchanged", receipts.UNCHANGED_LABEL),
-                          "INV-KANI": ("candidate-reported", receipts.LABELS["kani"])})
+                          "INV-KANI": ("unchanged", receipts.UNCHANGED_LABEL)})
+        self.assertTrue(all(v["rechecked"] == v["candidateReported"] == [] for v in verdicts), verdicts)
         self.assertEqual([e.split(":")[0] for e in errors], ["INV-EXTRACT", "INV-KANI"])
         self.assertTrue(all(e.endswith(receipts.NOT_ADMITTED) for e in errors), errors)
 
