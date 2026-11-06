@@ -596,14 +596,25 @@ fn a_signoff_is_verified_against_the_recomputed_restatement_and_recorded_by_the_
 
     // Without a generator the cell cannot verify a sign-off, so it refuses.
     let unverifiable = cell(DefinitionKinds::default());
-    let (status, refused) = signed(&unverifiable, &right, None);
-    assert_eq!(status, 422, "{refused}");
-    assert_eq!(refused["code"], json!("definition.signoff_unavailable"));
+    let (status, unverifiable_refusal) = signed(&unverifiable, &right, None);
+    assert_eq!(status, 422, "{unverifiable_refusal}");
+    assert_eq!(
+        unverifiable_refusal["code"],
+        json!("definition.signoff_unavailable")
+    );
 
     let cell = cell(DefinitionKinds::default().with_restater(stub_restate));
     let (status, refused) = signed(&cell, &sha256("something else"), None);
     assert_eq!(status, 422, "{refused}");
     assert_eq!(refused["code"], json!("definition.signoff_mismatch"));
+    // The server's words for the caller's own payload come back to be signed.
+    assert_eq!(
+        refused["restatement"],
+        json!(r#"A dashboard titled "Signed""#)
+    );
+    assert_eq!(refused["restatementSha256"], json!(right));
+    // Other refusals carry no restatement.
+    assert!(unverifiable_refusal.get("restatement").is_none());
     assert_eq!(
         get(&cell, "/v1/definitions/studio.dashboard.signed", "", VIEWER).0,
         404

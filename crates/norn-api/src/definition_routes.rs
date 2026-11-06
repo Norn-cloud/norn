@@ -32,7 +32,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::authz::{AccessRequest, Operation, read_denied};
 use crate::host::DevHost;
 use crate::question_routes::{AdHocQuestions, check_ad_hoc};
-use crate::refusal::{Refusal, RefusalDiagnostic};
+use crate::refusal::{Refusal, RefusalDiagnostic, RefusalRestatement};
 use crate::scope::ScopeQuery;
 
 /// The largest canonical payload a definition may carry, in bytes.
@@ -1023,12 +1023,19 @@ fn verify_signoff(
     let restatement = restate(kind, canonical, metrics).map_err(unavailable)?;
     let recomputed = payload_sha256(&restatement);
     if recomputed != claimed.restatement_sha256 {
-        return Err(Refusal::new(
+        // The caller's own admitted payload, restated: it discloses nothing
+        // the caller did not submit, and lets them sign these exact words.
+        let mut refusal = Refusal::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             codes::SIGNOFF_MISMATCH,
             "the sign-off does not match the definition",
-            "the restatement the signer read is not the one this definition restates to; reread it and sign again",
-        ));
+            "the restatement the signer read is not the one this definition restates to; read the returned restatement and sign it",
+        );
+        refusal.restatement = Some(Box::new(RefusalRestatement {
+            restatement,
+            restatement_sha256: recomputed,
+        }));
+        return Err(refusal);
     }
     Ok(recomputed)
 }
