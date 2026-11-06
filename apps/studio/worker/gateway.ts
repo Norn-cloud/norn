@@ -32,9 +32,22 @@ export interface Inventory {
   readonly links: readonly { readonly app: string; readonly account: string }[]
 }
 
-/** A refusal from the gateway, with its own error tag when it sent one. */
+/** One of the user's accounts linked to an app's requirement. */
+export interface RequirementLink {
+  readonly requirement: string
+  readonly account: string | null
+  /** The gateway's sign-in state for it, e.g. `connected` or `reconnect_required`. */
+  readonly state: string | null
+}
+
+/** A refusal from the gateway: its error tag, and the identity fields it names (never credentials). */
 export class GatewayError extends Error {
-  constructor(readonly status: number, readonly tag: string, message: string) {
+  constructor(
+    readonly status: number,
+    readonly tag: string,
+    message: string,
+    readonly detail: { readonly reason?: string; readonly account?: string; readonly app?: string; readonly requirement?: string; readonly upstreamCode?: string } = {},
+  ) {
     super(message)
   }
 }
@@ -47,14 +60,19 @@ const segment = (value: string) => encodeURIComponent(value)
 export class Gateway {
   constructor(private readonly origin: string, private readonly token: string, private readonly fetcher: typeof fetch = fetch) {}
 
-  private async request(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  private async request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> {
     const headers = new Headers({ authorization: `Bearer ${this.token}`, accept: "application/json" })
     if (body !== undefined) headers.set("content-type", "application/json")
     const response = await this.fetcher(`${this.origin}${path}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } })
     const parsed: unknown = await response.json().catch(() => null)
     if (!response.ok) {
       const error = record(parsed)
-      throw new GatewayError(response.status, text(error._tag) ?? text(error.tag) ?? "GatewayError", text(error.message) ?? `The gateway answered ${response.status}.`)
+      const upstream = record(error.upstream)
+      const detail = Object.fromEntries(Object.entries({
+        reason: text(error.reason), account: text(error.accountId) ?? text(error.account), app: text(error.app),
+        requirement: text(error.requirement), upstreamCode: text(upstream.code),
+      }).filter(([, value]) => value !== null)) as GatewayError["detail"]
+      throw new GatewayError(response.status, text(error._tag) ?? text(error.tag) ?? "GatewayError", text(error.message) ?? `The gateway answered ${response.status}.`, detail)
     }
     return parsed
   }
@@ -100,6 +118,45 @@ export class Gateway {
   async tool(organization: string, app: string, name: string): Promise<GatewayTool> {
     const tool = record(await this.request("GET", `/api/organizations/${segment(organization)}/apps/${segment(app)}/tools/${segment(name)}`))
     return { app, name, description: text(tool.description), inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }
+  }
+
+  /** The user's links for each of an app's per-user account requirements. */
+  async requirements(organization: string, app: string): Promise<readonly RequirementLink[]> {
+    const body = await this.request("GET", `/api/organizations/${segment(organization)}/apps/${segment(app)}/accounts/user`)
+    return list(body).map(record).flatMap((link) => {
+      const requirement = text(link.requirement)
+      return requirement === null ? [] : [{ requirement, account: text(link.account) ?? text(record(link.account).id), state: text(link.state) ?? text(record(link.signIn).state) }]
+    })
+  }
+
+  /**
+   * Start connecting an account for a requirement, or replacing `account`'s credentials. The
+   * person finishes in the gateway's own form at the returned URL, so credentials never pass Norn.
+   */
+  async connect(organization: string, app: string, requirement: string, account?: string): Promise<string> {
+    const body = record(await this.request("POST", `/api/organizations/${segment(organization)}/apps/${segment(app)}/accounts/user/${segment(requirement)}/connections`, {
+      destination: { kind: "personal" }, ...account === undefined ? {} : { account },
+    }))
+    const url = text(body.url)
+    if (url === null) throw new GatewayError(502, "GatewayShape", "The gateway did not return a connection link.")
+    return url
+  }
+
+  async account(organization: string, account: string): Promise<GatewayAccount & { readonly apps: readonly string[]; readonly health: string | null }> {
+    const body = record(await this.request("GET", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`))
+    const detail = record(body.account)
+    return {
+      id: text(detail.id) ?? account, provider: text(record(body.provider).name) ?? text(detail.provider) ?? "", label: text(detail.label) ?? account,
+      apps: list(body.apps).map(record).flatMap((app) => text(app.id) ?? []), health: text(record(body.health).status) ?? text(body.health),
+    }
+  }
+
+  async rename(organization: string, account: string, label: string): Promise<void> {
+    await this.request("PATCH", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`, { label })
+  }
+
+  async disconnect(organization: string, account: string): Promise<void> {
+    await this.request("DELETE", `/api/organizations/${segment(organization)}/accounts/${segment(account)}`)
   }
 
   /** Call a tool as the grant's user; the gateway applies its own approval rules first. */

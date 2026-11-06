@@ -1,17 +1,19 @@
 import { originAllowed, resolveActor, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
+import { getBinding, listBindings, readDraft, removeBinding, runInput, saveBinding, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
- * `/api/connectors/*` (#772): the signed-in Norn user's tool gateway. The Worker links the user's
- * gateway grant through Better Auth (stored encrypted server-side, never sent to the browser),
- * lists apps and tools with their JSON Schemas, and calls a tool only when the organization's
- * connector policy allows it. Norn stores only that policy; credentials stay in the gateway.
+ * `/api/connectors/*` (#772): the signed-in person's tool gateway, and the organization's tool
+ * bindings. The Worker links the person's gateway grant through Better Auth (encrypted at rest,
+ * refreshed server-side, never sent to the browser). Accounts are connected in the gateway's own
+ * form. A tool runs only through a binding the organization made (default deny). Every refusal is
+ * typed and, where the person can fix it, names the fix.
  */
 
 export const GATEWAY_PROVIDER = "executor"
 
-/** Studio capabilities, as declared in `studio.workspace.access` (#984): read, propose (run), approve (policy). */
+/** Studio capabilities, as declared in `studio.workspace.access` (#984): read, propose (run), approve (manage). */
 type Capability = "studio.read" | "studio.propose" | "studio.approve"
 const ROLE_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> = {
   viewer: ["studio.read"],
@@ -19,11 +21,9 @@ const ROLE_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> = {
   admin: ["studio.read", "studio.propose", "studio.approve"],
   owner: ["studio.read", "studio.propose", "studio.approve"],
 }
-/**
- * The same role table the host's AccessIR policy declares. It stays here only until the host
- * serves connector capabilities from its PDP; then this asks the host instead.
- */
+/** The host's AccessIR role table; it moves to a host PDP decision once the host serves connector capabilities. */
 export const permits = (actor: NornActor, capability: Capability) => (ROLE_CAPABILITIES[actor.role] ?? []).includes(capability)
+const mayRun = (actor: NornActor, binding: Binding) => permits(actor, binding.runRole === "admin" ? "studio.approve" : "studio.propose")
 
 export interface ConnectorEnv {
   /** The gateway origin, e.g. https://gateway.example; absent when this stage has no gateway. */
@@ -31,53 +31,34 @@ export interface ConnectorEnv {
   readonly BETTER_AUTH_URL: string
 }
 
-/** What the routes reach outside the request: the policy table, the user's grant and the network. */
+/** What the routes reach outside the request: the bindings table, the person's grant and the network. */
 export interface ConnectorDeps {
   readonly db: D1Database
   readonly grant?: (auth: Auth, request: Request) => Promise<string | null>
   readonly fetch?: typeof fetch
 }
 
-/** A typed refusal: `code` is stable, `error` is for people. */
-export const refusal = (status: number, code: string, error: string) =>
-  Response.json({ code, error }, { status, headers: { "cache-control": "no-store" } })
-const ok = (body: unknown) => Response.json(body, { headers: { "cache-control": "no-store" } })
+/** How the person fixes a refusal; the page renders one button per kind. */
+export type FixAction =
+  | { readonly kind: "sign_in_gateway" }
+  | { readonly kind: "connect_account"; readonly app: string; readonly requirement: string }
+  | { readonly kind: "reconnect_account"; readonly app: string | null; readonly account: string }
+  | { readonly kind: "ask_admin" }
 
-export interface PolicyEntry {
-  readonly app: string
-  /** A tool name, or `*` for every tool of the app. */
-  readonly tool: string
-}
+const NO_STORE = { "cache-control": "no-store" }
+/** A typed refusal: `code` is stable, `error` is for people, `action` is the fix when there is one. */
+export const refusal = (status: number, code: string, error: string, action?: FixAction, field?: string) =>
+  Response.json({ code, error, ...field === undefined ? {} : { field }, ...action === undefined ? {} : { action } }, { status, headers: NO_STORE })
+const ok = (body: unknown) => Response.json(body, { headers: NO_STORE })
+const forbidden = (error: string) => refusal(403, "connectors.forbidden", error, { kind: "ask_admin" })
 
-export async function policy(db: D1Database, orgId: string): Promise<readonly PolicyEntry[]> {
-  const { results } = await db.prepare("SELECT app, tool FROM connector_policy WHERE org_id = ? ORDER BY app, tool").bind(orgId).all<PolicyEntry>()
-  return results
-}
-
-export const allowed = (entries: readonly PolicyEntry[], app: string, tool: string) =>
-  entries.some((entry) => entry.app === app && (entry.tool === tool || entry.tool === "*"))
-
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
-const isEntry = (value: unknown): value is PolicyEntry => {
-  const entry = value as Partial<PolicyEntry> | null
-  return typeof entry?.app === "string" && NAME.test(entry.app) && typeof entry.tool === "string" && (entry.tool === "*" || NAME.test(entry.tool))
-}
-
-async function replacePolicy(db: D1Database, actor: NornActor, entries: readonly PolicyEntry[]) {
-  const now = Date.now()
-  await db.batch([
-    db.prepare("DELETE FROM connector_policy WHERE org_id = ?").bind(actor.orgId),
-    ...entries.map((entry) => db.prepare("INSERT OR IGNORE INTO connector_policy (org_id, app, tool, granted_by, granted_at) VALUES (?, ?, ?, ?, ?)").bind(actor.orgId, entry.app, entry.tool, actor.subjectId, now)),
-  ])
-}
-
-/** The Better Auth row of the user's linked gateway account, if any. */
+/** The Better Auth row of the person's linked gateway account, if any. */
 async function gatewayAccount(auth: Auth, request: Request): Promise<string | null> {
   const accounts = await auth.api.listUserAccounts({ headers: request.headers })
   return accounts.find((account) => account.providerId === GATEWAY_PROVIDER)?.id ?? null
 }
 
-/** The user's gateway grant, refreshed by Better Auth when it has expired; null when not linked. */
+/** The person's gateway grant, refreshed by Better Auth when it has expired; null when not linked. */
 async function grant(auth: Auth, request: Request): Promise<string | null> {
   const accountId = await gatewayAccount(auth, request)
   if (accountId === null) return null
@@ -90,78 +71,136 @@ async function grant(auth: Auth, request: Request): Promise<string | null> {
   }
 }
 
-const gatewayRefusal = (error: unknown) => {
+/** A gateway refusal as a Norn one, with the fix the person can make. */
+export function gatewayRefusal(error: unknown, app: string | null = null): Response {
   if (!(error instanceof GatewayError)) throw error
-  if (error.tag === "ToolApprovalRequired") return refusal(409, "connectors.approval_required", "The gateway needs this call approved first. Approve it in the gateway, then run it again.")
-  if (error.tag === "InputInvalid") return refusal(422, "connectors.input_invalid", error.message)
-  if (error.status === 401) return refusal(409, "connectors.not_linked", "Your gateway sign-in has expired. Sign in to the gateway again.")
-  if (error.status === 403) return refusal(403, "connectors.gateway_forbidden", error.message)
-  if (error.status === 404) return refusal(404, "connectors.not_found", error.message)
-  return refusal(502, "connectors.gateway", `The gateway refused (${error.tag}): ${error.message}`)
+  const { tag, status, detail } = error
+  const account = detail.account
+  if (status === 401) return refusal(401, "connectors.reauth", "Your gateway sign-in has expired. Sign in to the gateway again.", { kind: "sign_in_gateway" })
+  if (detail.reason === "insufficient_scope") return refusal(403, "connectors.missing_scope", "Studio's gateway sign-in does not include this permission. Sign in to the gateway again and allow it.", { kind: "sign_in_gateway" })
+  if (detail.upstreamCode?.toLowerCase() === "insufficient_scope" && account !== undefined) return refusal(403, "connectors.account_missing_scope", "The connected account does not grant a permission this tool needs. Reconnect it and allow that permission.", { kind: "reconnect_account", app: detail.app ?? app, account })
+  if ((tag === "OAuthReconnectRequired" || tag === "OAuthRenewalFailed") && account !== undefined) return refusal(409, "connectors.account_reconnect", "The connected account's sign-in has expired. Reconnect it.", { kind: "reconnect_account", app: detail.app ?? app, account })
+  if (tag === "AccountRequired" && detail.requirement !== undefined) return refusal(409, "connectors.account_required", "This tool needs an account you have not connected yet.", { kind: "connect_account", app: detail.app ?? app ?? "", requirement: detail.requirement })
+  if (tag === "ToolApprovalRequired") return refusal(409, "connectors.approval_required", "The gateway needs this call approved first. Approve it in the gateway, then run it again.")
+  if (tag === "InputInvalid") return refusal(422, "connectors.input_invalid", error.message)
+  if (status === 403) return refusal(403, "connectors.gateway_forbidden", error.message)
+  if (status === 404) return refusal(404, "connectors.not_found", error.message)
+  return refusal(502, "connectors.gateway", `The gateway refused (${tag}): ${error.message}`)
 }
+
+const json = async (request: Request): Promise<Record<string, unknown> | null> => {
+  const body: unknown = await request.json().catch(() => null)
+  return typeof body === "object" && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : null
+}
+const part = (match: RegExpExecArray, index: number) => decodeURIComponent(match[index] ?? "")
+const label = (value: unknown) => (typeof value === "string" && value.trim() !== "" && value.length <= 120 ? value.trim() : null)
 
 /** Route one `/api/connectors/*` request; `path` is what follows `/api/connectors`. */
 export async function connectors(request: Request, env: ConnectorEnv, auth: Auth, path: string, deps: ConnectorDeps): Promise<Response> {
-  const db = deps.db
+  const { db } = deps
   const actor = await resolveActor(request, auth)
   if (actor === null) return refusal(401, "connectors.sign_in", "Sign in first.")
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
   if (!originAllowed(request, actor, env.BETTER_AUTH_URL)) return refusal(403, "connectors.origin", "Cross-origin request refused.")
-  if (!permits(actor, "studio.read")) return refusal(403, "connectors.forbidden", "Your role cannot use connectors.")
-  const gatewayOrigin = env.GATEWAY_URL
+  if (!permits(actor, "studio.read")) return forbidden("Your role cannot use connectors.")
   const route = `${request.method} ${path}`
+  const manage = permits(actor, "studio.approve")
+  const bindingRoute = /^\/bindings\/([^/]+)$/.exec(path)
 
-  if (route === "GET /policy") return ok({ entries: await policy(db, actor.orgId), editable: permits(actor, "studio.approve") })
-  if (route === "PUT /policy") {
-    if (!permits(actor, "studio.approve")) return refusal(403, "connectors.forbidden", "Only an organization admin can change which tools may be bound.")
-    const body = (await request.json().catch(() => null)) as { entries?: unknown } | null
-    const entries = body?.entries
-    if (!Array.isArray(entries) || entries.length > 500 || !entries.every(isEntry)) return refusal(400, "connectors.invalid_request", "Send {entries: [{app, tool}]}, with at most 500 entries; tool may be \"*\".")
-    await replacePolicy(db, actor, entries)
-    return ok({ entries: await policy(db, actor.orgId), editable: true })
+  // Bindings are Norn's own records: viewing and removing them needs no gateway.
+  if (route === "GET /bindings") return ok({ bindings: await listBindings(db, actor.orgId), manage })
+  if (request.method === "DELETE" && bindingRoute !== null) {
+    if (!manage) return forbidden("Only an organization admin can remove a tool binding.")
+    const id = part(bindingRoute, 1)
+    return (await removeBinding(db, actor.orgId, id)) ? ok({ removed: id }) : refusal(404, "connectors.binding_not_found", "No such tool binding.")
   }
 
+  const gatewayOrigin = env.GATEWAY_URL
   if (route === "GET /status" && gatewayOrigin === undefined) return ok({ gateway: null, linked: false })
   if (gatewayOrigin === undefined) return refusal(503, "connectors.not_configured", "No tool gateway is configured for this deployment.")
   if (route === "POST /link") {
-    // The generic OAuth provider is a social provider to Better Auth; linking needs the session.
+    // Connect and reconnect: the generic OAuth provider is a social provider to Better Auth; linking needs the session.
     const { url } = await auth.api.linkSocialAccount({ body: { provider: GATEWAY_PROVIDER, callbackURL: "/connections" }, headers: request.headers })
     return ok({ url })
   }
-  const token = await (deps.grant ?? grant)(auth, request)
-  if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
   if (route === "POST /unlink") {
     const accountId = await gatewayAccount(auth, request)
     if (accountId !== null) await auth.api.unlinkAccount({ body: { accountId }, headers: request.headers })
     return ok({ linked: false })
   }
-  if (token === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.")
+  const token = await (deps.grant ?? grant)(auth, request)
+  if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
+  if (token === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.", { kind: "sign_in_gateway" })
   const gateway = new Gateway(gatewayOrigin, token, deps.fetch ?? fetch)
+  let app: string | null = null
 
   try {
     const organization = await gateway.organization()
     if (route === "GET /inventory") return ok(await gateway.inventory(organization))
+
+    const requirementsRoute = /^\/apps\/([^/]+)\/accounts$/.exec(path)
+    if (request.method === "GET" && requirementsRoute !== null) return ok({ requirements: await gateway.requirements(organization, (app = part(requirementsRoute, 1))) })
+    const connectRoute = /^\/apps\/([^/]+)\/accounts\/([^/]+)\/connect$/.exec(path)
+    if (request.method === "POST" && connectRoute !== null) {
+      // A new account, or with `account`, a reconnect that replaces its credentials.
+      const account = (await json(request))?.account
+      if (account !== undefined && typeof account !== "string") return refusal(400, "connectors.invalid_request", "account must be an account id.")
+      return ok({ url: await gateway.connect(organization, (app = part(connectRoute, 1)), part(connectRoute, 2), account) })
+    }
+    const accountRoute = /^\/accounts\/([^/]+)$/.exec(path)
+    if (accountRoute !== null) {
+      const account = part(accountRoute, 1)
+      if (request.method === "GET") return ok(await gateway.account(organization, account))
+      if (request.method === "PATCH") {
+        const renamed = label((await json(request))?.label)
+        if (renamed === null) return refusal(400, "connectors.invalid_request", "Send {label}, 1–120 characters.", undefined, "label")
+        await gateway.rename(organization, account, renamed)
+        return ok(await gateway.account(organization, account))
+      }
+      if (request.method === "DELETE") {
+        await gateway.disconnect(organization, account)
+        return ok({ disconnected: account })
+      }
+    }
+
     const toolsRoute = /^\/apps\/([^/]+)\/tools$/.exec(path)
     if (request.method === "GET" && toolsRoute !== null) {
-      const app = decodeURIComponent(toolsRoute[1] ?? "")
+      app = part(toolsRoute, 1)
       const cursor = new URL(request.url).searchParams.get("cursor") ?? undefined
-      const entries = await policy(db, actor.orgId)
-      const page = await gateway.tools(organization, app, cursor)
-      return ok({ next: page.next, tools: page.tools.map((tool) => ({ ...tool, bindable: allowed(entries, app, tool.name) })) })
+      const [page, bindings] = await Promise.all([gateway.tools(organization, app, cursor), listBindings(db, actor.orgId)])
+      return ok({ next: page.next, tools: page.tools.map((tool) => ({ ...tool, bindings: bindings.filter((b) => b.app === tool.app && b.tool === tool.name).map((b) => b.id) })) })
     }
-    const callRoute = /^\/apps\/([^/]+)\/tools\/([^/]+)\/call$/.exec(path)
-    if (request.method === "POST" && callRoute !== null) {
-      const app = decodeURIComponent(callRoute[1] ?? "")
-      const tool = decodeURIComponent(callRoute[2] ?? "")
-      if (!permits(actor, "studio.propose")) return refusal(403, "connectors.forbidden", "Your role can browse tools but not run them.")
-      if (!allowed(await policy(db, actor.orgId), app, tool)) return refusal(403, "connectors.tool_not_allowed", `Your organization's connector policy does not allow ${app}.${tool}.`)
-      const body = (await request.json().catch(() => null)) as { input?: unknown } | null
-      if (body === null || typeof body.input !== "object" || body.input === null || Array.isArray(body.input)) return refusal(400, "connectors.invalid_request", "Send {input: {…}} matching the tool's input schema.")
-      return ok({ app, tool, result: await gateway.call(organization, app, tool, body.input) })
+
+    // Adding or editing a binding checks its input mapping against the tool's live input schema.
+    if (route === "POST /bindings" || (request.method === "PATCH" && bindingRoute !== null)) {
+      if (!manage) return forbidden("Only an organization admin can add or edit tool bindings.")
+      const existing = bindingRoute === null ? undefined : await getBinding(db, actor.orgId, part(bindingRoute, 1))
+      if (existing === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+      const body = await json(request)
+      const target = { app: existing?.app ?? body?.app, tool: existing?.tool ?? body?.tool }
+      if (typeof target.app !== "string" || typeof target.tool !== "string") return refusal(400, "connectors.binding_invalid", "Send {app, tool, label?, inputMapping?, runRole?}.", undefined, "tool")
+      app = target.app
+      const tool = await gateway.tool(organization, target.app, target.tool)
+      const draft = readDraft(body, tool.inputSchema, existing)
+      if ("error" in draft) return refusal(400, "connectors.binding_invalid", draft.error, undefined, draft.field)
+      return ok({ binding: await saveBinding(db, actor.orgId, actor.subjectId, draft, existing?.id) })
+    }
+
+    const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
+    if (request.method === "POST" && runRoute !== null) {
+      const binding = await getBinding(db, actor.orgId, part(runRoute, 1))
+      if (binding === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+      if (!mayRun(actor, binding)) return forbidden(`Running ${binding.label} needs the ${binding.runRole} role or above.`)
+      const input = (await json(request))?.input
+      if (typeof input !== "object" || input === null || Array.isArray(input)) return refusal(400, "connectors.invalid_request", "Send {input: {…}} for the fields the binding does not fix.", undefined, "input")
+      const merged = runInput(binding, input as Record<string, unknown>)
+      if (!merged.ok) return refusal(400, "connectors.binding_invalid", merged.problem.error, undefined, merged.problem.field)
+      app = binding.app
+      return ok({ binding: binding.id, result: await gateway.call(organization, binding.app, binding.tool, merged.input) })
     }
   } catch (error) {
-    return gatewayRefusal(error)
+    return gatewayRefusal(error, app)
   }
   return refusal(404, "connectors.not_found", "No such connectors endpoint.")
 }
