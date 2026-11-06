@@ -1,17 +1,18 @@
 import { expect, test } from "@playwright/test"
-import { catalog, cell } from "../test/support/definitions.ts"
 import { press, session } from "./canvas.ts"
 
 test("question row: create, validate, sign, save, reopen, edit, undo, redo, remove and undo removal", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "this row uses a deterministic definitions cell stand-in")
   await session(page)
   page.on("dialog", (dialog) => void dialog.accept())
+  const window = { start: "2026-07-06T00:00:00Z", end: "2026-10-26T00:00:00Z" }
+  const catalog = { objectSet: "demo.Conversion", properties: [{ name: "occurred_at", kind: "timestamp", unit: null }], metrics: [{ name: "demo.yield", label: "Yield", type: "decimal" }], grains: ["week"], operators: ["eq"], example: { irVersion: "0.1", calendar: "utc", freshness: {} }, declarations: { metrics: [], objectType: null } }
   const tree = {
     basis: "From the catalogue", measures: [{ id: "demo.yield", label: "Yield", detail: "yield", recommended: true, value: {} }],
     groupBy: [{ id: "occurred_at", label: "occurred at", detail: "time", recommended: true, value: {} }],
     grains: { occurred_at: [{ id: "week", label: "Week", detail: "weekly", recommended: true, value: {} }] },
     conditions: [{ id: "every", label: "Every record", detail: "all", recommended: true, value: { filter: [] } }],
-    filterable: [], windows: [{ id: "cell", label: "This window", detail: "dates", recommended: true, value: { window: cell.window } }],
+    filterable: [], windows: [{ id: "cell", label: "This window", detail: "dates", recommended: true, value: { window } }],
   }
   let stored: { id: string; version: number; payload: unknown; retired: boolean } | undefined
   let unavailable = true
