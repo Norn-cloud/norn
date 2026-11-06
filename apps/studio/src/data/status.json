@@ -1,0 +1,51 @@
+{
+  "verdict": "Thesis: working, not stitched. One definition drives runtime law enforcement and the generated proof models; guarantees pin each proof to the definition hash. Gaps are scope, not the idea. Today the proof side covers a narrow profile (create-only events, one law per subject); extending it to workflows is the next engineering unit.",
+  "areas": [
+    {
+      "area": "Thesis core",
+      "percent": 55,
+      "detail": "Working end to end on the demo profile; proofs don't yet cover workflow (lifecycle) subjects or multiple laws per subject. That extension is next; re-proof at admission inside Workers (#757) in review."
+    },
+    {
+      "area": "Engine core",
+      "percent": 70,
+      "detail": "Values, identity, queries/IVM, lineage, restatement, as-of; exact decimals everywhere."
+    },
+    {
+      "area": "Safety & authz",
+      "percent": 65,
+      "detail": "Cedar, default-deny, writer authz, structured laws, refusals with reasons, identical on API/MCP/CLI. Studio shows recorded refusals; it has no live action path yet."
+    },
+    {
+      "area": "Proofs",
+      "percent": 45,
+      "detail": "Lean kernel, Kani, generated Quint→Apalache, binder on main; demo recording landing; workflow/multi-law lowering not built yet."
+    },
+    {
+      "area": "Workflows & actions",
+      "percent": 55,
+      "detail": "Native receive→transfer→FIFO-sell runs and matches ERPNext 7/7; UI action wiring open."
+    },
+    {
+      "area": "Studio UI",
+      "percent": 55,
+      "detail": "Live: two-island shell, object types → records, questions, corrections, workflows as decision trees, guarantees; recorded data"
+    },
+    {
+      "area": "Connectors & live data",
+      "percent": 20,
+      "detail": "ERPNext/Shopify definitions; real ERPNext on Boat; Shopify store unavailable (402); no live ingestion yet."
+    },
+    {
+      "area": "Production",
+      "percent": 15,
+      "detail": "Better Auth deferred (#817); cell host not deployed."
+    },
+    {
+      "area": "Agent + canvas",
+      "percent": 20,
+      "detail": "On the demo deployment only: propose a definition change to a synthetic world → the server-side checker admits it or refuses it with the law and reason → you decide; its code is in review (#948, #949), not on main. Canvas editing and NornQL answers not built yet."
+    }
+  ],
+  "footnote": "Estimates of alpha scope from merged PRs vs open issues, 2026-11-04."
+}
