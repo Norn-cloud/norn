@@ -46,6 +46,19 @@ test("an edit undoes and redoes; a drag undoes as one step", () => {
   expect(g.undo(dragged).present).toBe(added.present)
 })
 
+test("configuring a value it already has is no edit, so it records no undo step", () => {
+  const graph = decompile(orderEnvelope, order)
+  expect(g.configureNode(graph, "draft", { initial: "yes" })).toBe(graph)
+  expect(g.configureEdges(graph, ["submit:draft"], { transition: "submit" })).toBe(graph)
+  const start = g.history(graph)
+  expect(g.commit(start, g.configureEdges(graph, ["submit:draft"], { guards: "" }))).toBe(start)
+})
+
+test("a renamed step's edge keeps its id, and a new edge takes a free one", () => {
+  const renamed = g.configureEdges(decompile(orderEnvelope, order), ["submit:draft"], { transition: "send" })
+  expect(g.freshName(renamed.edges.map(({ id }) => id), "submit:draft")).toBe("submit:draft_2")
+})
+
 test("renaming a state carries its steps; removing a state removes its steps", () => {
   const graph = g.renameNode(decompile(orderEnvelope, order), "on_hold", "paused")
   expect(graph.edges.filter(({ source, target }) => source === "paused" || target === "paused").map(({ config }) => config.transition).sort()).toEqual(["amend", "approve", "cancel", "hold", "hold"])

@@ -70,11 +70,20 @@ export function remove(graph: Graph, nodes: readonly string[], edges: readonly s
   }
 }
 
-export const configureNode = (graph: Graph, id: string, config: Record<string, string>): Graph =>
-  ({ ...graph, nodes: graph.nodes.map((node) => node.id === id ? { ...node, config: { ...node.config, ...config } } : node) })
+const changes = (current: Readonly<Record<string, string>>, config: Record<string, string>) =>
+  Object.entries(config).some(([key, value]) => current[key] !== value)
 
+/** Configure a node; an unchanged value returns the same graph, so no empty undo step is recorded. */
+export const configureNode = (graph: Graph, id: string, config: Record<string, string>): Graph =>
+  graph.nodes.some((node) => node.id === id && changes(node.config, config))
+    ? { ...graph, nodes: graph.nodes.map((node) => node.id === id ? { ...node, config: { ...node.config, ...config } } : node) }
+    : graph
+
+/** Configure edges; an unchanged value returns the same graph. */
 export const configureEdges = (graph: Graph, ids: readonly string[], config: Record<string, string>): Graph =>
-  ({ ...graph, edges: graph.edges.map((edge) => ids.includes(edge.id) ? { ...edge, config: { ...edge.config, ...config } } : edge) })
+  graph.edges.some((edge) => ids.includes(edge.id) && changes(edge.config, config))
+    ? { ...graph, edges: graph.edges.map((edge) => ids.includes(edge.id) ? { ...edge, config: { ...edge.config, ...config } } : edge) }
+    : graph
 
 export const moveNode = (graph: Graph, id: string, position: CanvasNode["position"]): Graph =>
   ({ ...graph, nodes: graph.nodes.map((node) => node.id === id ? { ...node, position } : node) })
