@@ -1,15 +1,16 @@
 import { expect, test } from "bun:test"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Database } from "lucide-react"
+import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { Shell, Submenu, sectionOf, target, type Section } from "../src/shell.tsx"
 
-const section: Section = {
+const sources: Section = {
   path: "/sources", label: "Sources", icon: Database, summary: "",
-  useMenu: () => [{ href: "/sources/canon.Holding", label: "Holding", group: "Object types" }, { href: "#concept-canon.Party", label: "Party" }],
+  useMenu: () => [{ href: "/sources/canon.Holding", label: "Holding", group: "Object types" }],
 }
+const questions: Section = { path: "/questions", label: "Questions", icon: ChartLine, summary: "" }
 
 /** Renders a node at a route, the way the app's router would. */
 async function at(pathname: string, node: () => ReactNode) {
@@ -19,30 +20,32 @@ async function at(pathname: string, node: () => ReactNode) {
 }
 
 test("a submenu shows its title, data context and entries, and no action the server has not declared", async () => {
-  const html = await at("/sources", () => <SidebarProvider><Submenu section={section} /></SidebarProvider>)
+  const html = await at("/sources/canon.Holding", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
   expect(html).toContain("Sources")
   expect(html).toContain("Recorded · synthetic world")
-  expect(html).toContain("Holding")
+  expect(html).toContain('href="/sources/canon.Holding"')
+  expect(html).toContain('data-active="true"')
   expect(html).not.toContain('data-slot="button"')
 })
 
-test("a record page under a section keeps that section current", () => {
-  const questions: Section = { path: "/questions", label: "Questions", icon: Database, summary: "" }
-  expect(sectionOf([section, questions], "/sources")).toBe(section)
-  expect(sectionOf([section, questions], "/sources/canon.Item")).toBe(section)
-  expect(sectionOf([section, questions], "/sources/canon.Item/demo/item/gold")).toBe(section)
-  expect(sectionOf([section, questions], "/sourcesx")).toBeUndefined()
+test("a record page belongs to the section above it", () => {
+  expect(sectionOf([sources, questions], "/sources")).toBe(sources)
+  expect(sectionOf([sources, questions], "/sources/canon.Holding")).toBe(sources)
+  expect(sectionOf([sources, questions], "/sourcesx")).toBeUndefined()
 })
 
-test("an anchor entry links to its section's page, so it navigates from a record page", async () => {
-  expect(target(section, "#concept-canon.Party")).toEqual({ to: "/sources", hash: "concept-canon.Party" })
-  expect(target(section, "/sources/canon.Holding")).toEqual({ to: "/sources/canon.Holding" })
-  const html = await at("/sources/canon.Item/demo%2Fitem%2Fgold", () => <SidebarProvider><Submenu section={section} /></SidebarProvider>)
-  expect(html).toContain('href="/sources#concept-canon.Party"')
+test("an entry is a route, or an anchor on its section's page", () => {
+  expect(target(sources, "/sources/canon.Holding")).toEqual({ to: "/sources/canon.Holding" })
+  expect(target(questions, "#corrections")).toEqual({ to: "/questions", hash: "corrections" })
+})
+
+test("a submenu offers a search over its entries", async () => {
+  const html = await at("/sources", () => <SidebarProvider><Submenu section={sources} /></SidebarProvider>)
+  expect(html).toContain('placeholder="Find in Sources"')
 })
 
 test("the rail and submenu sit in one row that does not depend on the outer sidebar's classes", async () => {
-  const html = await at("/sources", () => <Shell sections={[section]} />)
+  const html = await at("/sources", () => <Shell sections={[sources]} />)
   expect(html).toContain("flex size-full min-h-0 flex-row")
   expect(html).toContain("w-[calc(4rem+1px)]!")
 })
