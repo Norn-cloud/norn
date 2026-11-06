@@ -8,6 +8,16 @@ use std::collections::BTreeMap;
 use utoipa::ToSchema;
 use utoipa::openapi::schema::{Array, Object, Ref, Schema, SchemaType, Type};
 
+/// Current or authenticated historical answer, matching the native service envelope.
+#[derive(Debug, ToSchema)]
+#[serde(untagged)]
+pub enum NornQuestionAnswer {
+    /// Current answer.
+    Live(NornQueryResult),
+    /// Historical answer.
+    Historical(NornHistoricalQuestionResult),
+}
+
 /// One exact answer to an admitted typed question.
 #[derive(Debug, Clone, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -208,7 +218,7 @@ fn totals_schema() -> Schema {
     decimal_list(false, "One sum, or numerator then denominator.")
 }
 
-fn amounts_schema() -> Schema {
+pub(crate) fn amounts_schema() -> Schema {
     decimal_list(
         true,
         "Operand contributions, in `totals` order; null means a predicate excluded the operand.",
