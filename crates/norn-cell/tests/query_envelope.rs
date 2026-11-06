@@ -23,6 +23,7 @@ fn query_envelope_preserves_exact_contributions_and_unavailable_ratios() {
                 restricted: false,
             },
         )]),
+        suppressed: false,
     };
     let wire = serde_json::to_string(&row).expect("exact transport");
     assert!(wire.contains("9007199254740993.125"));
