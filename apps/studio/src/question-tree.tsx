@@ -98,6 +98,8 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [signOff, setSignOff] = useState<(SignOff & { readonly revision: object })>()
   const [saved, setSaved] = useState<{ readonly id: string; readonly version: number }>()
   const [saving, setSaving] = useState(false)
+  const [verified, setVerified] = useState(false)
+  const [removed, setRemoved] = useState<{ readonly id: string; readonly version: number; readonly draft: Draft; readonly question: ReturnType<typeof buildQuestion>; readonly sha256: string; readonly revision: object }>()
   const [saveError, setSaveError] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   const [pageCursor, setPageCursor] = useState<string>()
@@ -129,7 +131,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       if (!parsed.success) throw new QuestionDefinitionError("definition.shape", "This question uses fields this builder cannot edit.")
       const next = draftOf(parsed.data)
       if (stable(buildQuestion(next, catalog)) !== stable(parsed.data)) throw new QuestionDefinitionError("definition.unsupported", "This question cannot be reopened without changing it.")
-      editor.open(next); setSaved({ id: stored.id, version: stored.version }); setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setRejectedHash(undefined); setSaveError(undefined)
+      editor.open(next); setSaved({ id: stored.id, version: stored.version }); setVerified(Boolean(stored.signoff)); setRemoved(undefined); setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setRejectedHash(undefined); setSaveError(undefined)
     } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
   }
   const save = async () => {
@@ -138,22 +140,34 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     setSaving(true); setSaveError(undefined)
     try {
       const result = await definitions.install(saved?.id ?? question.name, question, restated.sha256, saved?.version)
-      setSaved({ id: result.id, version: result.version }); editor.markSaved(draft); setRefresh((n) => n + 1)
+      setSaved({ id: result.id, version: result.version }); setVerified(true); setRemoved(undefined); editor.markSaved(draft); setRefresh((n) => n + 1)
     } catch (error) {
       if (error instanceof QuestionDefinitionError && error.code === "definition.signoff_mismatch") {
         setSignOff(undefined); setChecked(undefined); setCheckedKey(undefined); setRejectedHash(restated.sha256)
         setSaveError("The cell's restatement changed. Check the words again and sign off before saving.")
-        try { const next = await checkQuestion(question); if (revision.current === at) { setChecked(next); setCheckedKey(questionKey); setCheckedRevision(at) } } catch { setSaveError("The restatement changed and could not be refreshed. Try again.") }
+        try { const next = await checkQuestion(question); if (revision.current === at && next.restatement?.sha256 !== restated.sha256) { setChecked(next); setCheckedKey(questionKey); setCheckedRevision(at) } else if (revision.current === at) setSaveError("The cell rejected these words, but its updated restatement is not available yet. Your question was not saved.") } catch { setSaveError("The restatement changed and could not be refreshed. Try again.") }
       } else if (error instanceof QuestionDefinitionError && error.code === "definition.signoff_unavailable") {
         setSaveError("The cell cannot verify sign-off yet. Your question has not been saved.")
       } else setSaveError(error instanceof Error ? error.message : String(error))
     } finally { setSaving(false) }
   }
   const remove = async () => {
-    if (!saved || saving || !globalThis.confirm("Remove this saved question?")) return
+    if (!saved || saving || !signed || !restated || !verified || editor.dirty || !globalThis.confirm("Remove this saved question?")) return
     setSaving(true)
-    try { await definitions.retire(saved.id, saved.version); setSaved(undefined); editor.open(recommendedDraft(tree)); setSignOff(undefined); setRefresh((n) => n + 1); setSaveError(undefined) }
-    catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
+    try {
+      const result = await definitions.retire(saved.id, saved.version)
+      setRemoved({ id: saved.id, version: result.version, draft, question, sha256: restated.sha256, revision: editor.revision })
+      setSaved(undefined); setVerified(false); setRefresh((n) => n + 1); setSaveError(undefined)
+    } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
+    finally { setSaving(false) }
+  }
+  const undoRemove = async () => {
+    if (!removed || saving) return
+    setSaving(true)
+    try {
+      const result = await definitions.install(removed.id, removed.question, removed.sha256, removed.version)
+      setSaved({ id: result.id, version: result.version }); setVerified(true); editor.markSaved(removed.draft); setRemoved(undefined); setRefresh((n) => n + 1); setSaveError(undefined)
+    } catch (error) { setSaveError(error instanceof Error ? error.message : String(error)) }
     finally { setSaving(false) }
   }
   const chosen = selection(tree, draft)
@@ -181,7 +195,8 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
       <div className="flex flex-wrap items-end gap-3">
         <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
         <Button type="button" onClick={save} disabled={!signed || !draft.title.trim() || saving}>{saving ? "Saving…" : "Save question"}</Button>
-        {saved && <Button type="button" variant="outline" disabled={saving} onClick={remove}>Remove question</Button>}
+        {saved && <Button type="button" variant="outline" disabled={saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
+        {removed && <Button type="button" variant="outline" disabled={saving} onClick={undoRemove}>Undo removal</Button>}
       </div>
       {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
       <Panel icon={ChartLine} label="Saved questions">

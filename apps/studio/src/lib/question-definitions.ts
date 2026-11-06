@@ -4,7 +4,7 @@ import { CellUnavailable } from "./definitions.ts"
 const scope = { orgId: "org_demo", environmentId: "analytics" }
 const summary = z.object({ id: z.string(), title: z.string(), version: z.number(), lifecycle: z.string() })
 const page = z.object({ items: z.array(summary), cursor: z.string().nullable().optional() })
-const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown() })
+const document = z.object({ id: z.string(), kind: z.literal("question"), version: z.number(), payload: z.unknown(), signoff: z.object({ restatementSha256: z.string() }).nullable().optional() })
 const result = z.object({ installed: z.literal(true), id: z.string(), version: z.number() })
 const refusal = z.object({ code: z.string(), message: z.string().optional(), detail: z.string().optional() })
 
