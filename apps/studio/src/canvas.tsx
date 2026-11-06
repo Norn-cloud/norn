@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, Panel, Well } from "@/components/panel"
-import { InspectorHead, KindChip, NodeCard } from "@/components/canvas/node-card"
+import { CARD, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { loadChecker } from "./lib/canvas/checker.ts"
 import { introduced, place, type Finding } from "./lib/canvas/diagnostics.ts"
@@ -27,7 +27,7 @@ const recordedDefinitions = async () => (await import("./lib/transport.ts")).rec
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (
     <div title={data.issues.map(({ message }) => message).join("\n")}>
-      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-36">
+      <NodeCard testId={`node-${data.label}`} kind="state" kindLabel={data.flags || "State"} title={data.label} problems={data.issues.length} selected={selected} className="w-[144px]">
         <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />
         <Handle className="canvas-pill" type="source" position={Position.Right} id="out" />
       </NodeCard>
@@ -103,6 +103,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
     initial: decompile(envelope, lifecycle), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
+    nodeSize: () => ({ width: CARD.state, height: cardHeight({}) }),
     toNode: (node, found, selected): StateNode => ({ id: node.id, type: "state", position: node.position, selected, data: { label: words(node.id), flags: FLAGS.filter((flag) => node.config[flag] === "yes").join(" · "), issues: found } }),
     toEdge: (edge, found, selected): Edge => ({
       id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourcePort, targetHandle: edge.targetPort, selected,

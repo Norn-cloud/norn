@@ -16,6 +16,11 @@ export const NODE_KINDS: Readonly<Record<string, { readonly icon: LucideIcon; re
   law: { icon: Scale, label: "Law", tint: "--tint-law" },
 }
 
+/** Card geometry, so a canvas knows each node's size before it renders: fixed widths, and a height from its lines. */
+export const CARD = { state: 144, step: 208 } as const
+export const cardHeight = ({ kindLine = true, subtitle = false }: { readonly kindLine?: boolean; readonly subtitle?: boolean }) =>
+  22 + (kindLine ? 16 : 0) + 20 + (subtitle ? 16 : 0)
+
 /** A small tinted icon chip for a kind; the tint is mixed into a pale fill so it reads as a hint. */
 export function KindChip({ kind, className }: { readonly kind: string; readonly className?: string }) {
   const entry = NODE_KINDS[kind] ?? NODE_KINDS.state!
@@ -48,7 +53,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   // The kind line names what the card is; it is left out when the title already says it (a start called Start).
   const name = kindLabel ?? NODE_KINDS[kind]?.label ?? kind
   return (
-    <div data-testid={testId} className={cn("canvas-node group relative w-52 rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
+    <div data-testid={testId} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
       selected && "canvas-node-selected", problems > 0 && "canvas-node-failing", className)}>
       {children}
       <div className="flex items-start gap-2.5">

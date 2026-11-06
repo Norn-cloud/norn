@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, useStore, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
+import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { CircleAlert, Copy, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
+import { READABLE, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
 export interface Issue {
@@ -38,6 +39,8 @@ export interface CanvasFrameProps {
   readonly initial: g.Graph
   readonly kinds: g.Kinds
   readonly nodeTypes: NodeTypes
+  /** A node's card size, known from its kind and content (cards have fixed widths), for the opening viewport. */
+  readonly nodeSize?: (node: g.CanvasNode) => { readonly width: number; readonly height: number }
   /** Custom edge renderers (an automation's exit labels), when a surface needs them. */
   readonly edgeTypes?: EdgeTypes
   readonly issues: (graph: g.Graph) => { readonly issues: readonly Issue[]; readonly status: ReactNode }
@@ -100,10 +103,6 @@ function Frame(props: CanvasFrameProps) {
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const surface = useRef<HTMLDivElement>(null)
-  // Whether React Flow has measured every node. Its own nodes-initialized reading also asks the nodes we pass for sizes,
-  // which they never carry (they are rebuilt from the graph each render), so read the measured sizes it keeps itself.
-  const initialized = useStore((store) => store.nodeLookup.size > 0 && [...store.nodeLookup.values()].every(({ measured }) => measured.width !== undefined && measured.height !== undefined))
-  const [framed, setFramed] = useState(false)
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
   const canvasActive = useRef(false)
@@ -203,24 +202,16 @@ function Frame(props: CanvasFrameProps) {
   // Below the rail width the inspector is a drawer: selecting something opens it, clearing the selection closes it.
   const selected = selection.nodes.length + selection.edges.length > 0
   useEffect(() => { setDrawer(selected) }, [selected, selection])
-  // Open readable: fit the whole graph only when that keeps nodes at READABLE or larger; otherwise frame where it starts and let the user pan.
-  useEffect(() => {
-    if (framed) return
-    if (graph.nodes.length === 0) { setFramed(true); return }
-    if (!initialized) return
-    setFramed(true)
+  // Where the canvas opens, from the layout and the container's size: no measurement, so nothing is hidden or reframed.
+  const [opening, setOpening] = useState<Viewport | null>(null)
+  useLayoutEffect(() => {
     const box = surface.current?.getBoundingClientRect()
-    if (!box) return
-    const bounds = flow.getNodesBounds(graph.nodes.map(({ id }) => id))
-    const fits = Math.min(box.width / (bounds.width * (1 + 2 * PADDING)), box.height / (bounds.height * (1 + 2 * PADDING)))
-    if (fits >= READABLE) { void flow.fitView({ padding: PADDING, minZoom: READABLE, maxZoom: 1 }); return }
-    const anchor = graph.nodes.find(({ kind }) => kind === "start") ?? graph.nodes.find(({ config }) => config.initial === "yes")
-      ?? [...graph.nodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y)[0]
-    const at = (anchor && flow.getInternalNode(anchor.id)?.internals.positionAbsolute) ?? anchor?.position ?? { x: 0, y: 0 }
-    const top = 88, free = box.height - top - 24
-    const y = bounds.height * READABLE <= free ? top + (free - bounds.height * READABLE) / 2 - bounds.y * READABLE : box.height / 2 - at.y * READABLE
-    void flow.setViewport({ x: 56 - at.x * READABLE, y, zoom: READABLE })
-  }, [framed, initialized, flow, graph.nodes])
+    const boxes = graph.nodes.map((node) => ({ ...node.position, ...(props.nodeSize?.(node) ?? DEFAULT_SIZE) }))
+    // Framed on where it starts: an automation's start, else a lifecycle's initial state.
+    const start = graph.nodes.findIndex(({ kind }) => kind === "start")
+    const at = start >= 0 ? start : graph.nodes.findIndex(({ config }) => config.initial === "yes")
+    setOpening(openingViewport(boxes, { width: box?.width ?? 0, height: box?.height ?? 0 }, boxes[at]))
+  }, []) // Once, for the graph the canvas opened with.
   // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
@@ -252,9 +243,9 @@ function Frame(props: CanvasFrameProps) {
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div ref={surface} data-canvas-surface className={cn("relative h-[38rem] w-full transition-opacity duration-150", !framed && "opacity-0")}>
+          <div ref={surface} data-canvas-surface className="relative h-[38rem] w-full">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
-            <ReactFlow
+            {opening && <ReactFlow defaultViewport={opening}
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
               edges={graph.edges.map(look)} className="bg-canvas-surface"
               nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
@@ -295,7 +286,7 @@ function Frame(props: CanvasFrameProps) {
                   <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
                 </div>
               </FlowPanel>
-            </ReactFlow>
+            </ReactFlow>}
           </div>
         </Well>
         {props.below && <div className="px-1.5 pt-3">{props.below(editing)}</div>}
@@ -315,9 +306,9 @@ export function CanvasFrame(props: CanvasFrameProps) {
  * An action that exists but cannot run yet: drawn dashed and muted so it reads as unavailable, with its reason on
  * hover (on the wrapper, because a disabled button takes no pointer events) and in its accessible name.
  */
-/** Nodes never open smaller than this: titles stay at 12px or more on screen. */
-export const READABLE = 0.85
 const PADDING = 0.14
+/** A node's size on the canvas when a surface does not say: an automation step card. */
+const DEFAULT_SIZE = { width: 208, height: 74 }
 /** At this width and wider the inspector is a rail beside the canvas; narrower, it is a drawer. */
 export const RAIL_MIN_WIDTH = 1440
 const WIDE = `(min-width: ${RAIL_MIN_WIDTH}px)`

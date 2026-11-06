@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { InspectorHead, InspectorSection, KindChip, NodeCard } from "@/components/canvas/node-card"
+import { CARD, InspectorHead, InspectorSection, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
@@ -239,6 +239,7 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
     draftKey: `automation:${META.id}`, label: "Automation", initial, kinds: automationKinds, nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
+    nodeSize: (node) => ({ width: CARD.step, height: cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }) }),
     toNode: (node, found, selected): StepNode => ({
       id: node.id, type: "step", position: node.position, selected,
       data: {
