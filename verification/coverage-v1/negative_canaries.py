@@ -739,6 +739,36 @@ def workflow_superseded_canaries(source: str) -> None:
             rejected(f"superseded resolution mutation {before}", document)
 
 
+def workflow_sccache_canaries(source: str) -> None:
+    """A dead cache backend never fails a build: without a server, jobs compile with plain rustc."""
+    workflow = yaml.safe_load(source)
+    for name in ("core", "test"):
+        job = workflow["jobs"][name]
+        if "RUSTC_WRAPPER" in job.get("env", {}) or job["env"].get("SCCACHE_IGNORE_SERVER_IO_ERROR") != "1":
+            raise AssertionError(f"{name}: sccache must be opt-in per run and tolerate server IO errors")
+        start = next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")
+        for runner, starts, expected in (("github-hosted", True, {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache"}),
+                                         ("github-hosted", False, {"SCCACHE_GHA_ENABLED": "true"}),
+                                         ("self-hosted", True, {"SCCACHE_GHA_ENABLED": "false", "RUSTC_WRAPPER": "sccache"}),
+                                         ("self-hosted", False, {"SCCACHE_GHA_ENABLED": "false"})):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fake = root / "bin" / "sccache"
+                fake.parent.mkdir()
+                # The dead backend: ServerBusy (egress over the account limit) at server start.
+                fake.write_text("#!/bin/sh\n" + ("exit 0\n" if starts else
+                                "echo 'sccache: error: Server startup failed: ServerBusy: Egress is over the account limit' >&2\nexit 2\n"))
+                fake.chmod(0o755)
+                github_env = root / "env"
+                github_env.write_text("")
+                result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30, env={
+                    "PATH": f"{fake.parent}:{os.environ.get('PATH', '')}", "RUNNER_ENVIRONMENT": runner,
+                    "GITHUB_ENV": str(github_env)})
+                exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines() if line)
+                if result.returncode != 0 or exported != expected:
+                    raise AssertionError(f"{name}: sccache start drift on {runner}/{starts}: {result.returncode} {exported}")
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -1021,6 +1051,20 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             del document["jobs"][name]["steps"][boat]
             rejected(f"{name} without Boat reclaim", document)
+            for label, change in (
+                    ("unconditional wrapper", lambda job: job["env"].__setitem__("RUSTC_WRAPPER", "sccache")),
+                    ("fatal server IO", lambda job: job["env"].pop("SCCACHE_IGNORE_SERVER_IO_ERROR")),
+                    ("unbounded local cache", lambda job: job["env"].pop("SCCACHE_CACHE_SIZE")),
+                    ("shared cache on Boat", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("gha=false", "gha=true"))),
+                    ("fatal start", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
+                document = copy.deepcopy(workflow)
+                change(document["jobs"][name])
+                rejected(f"{name} sccache {label}", document)
         # The bundle may drop only the cargo target dir, between tasks, when disk is low.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
@@ -2267,6 +2311,7 @@ def main() -> int:
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        workflow_sccache_canaries(source)
         workflow_trusted_policy_canaries(source)
         workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)

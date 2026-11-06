@@ -100,6 +100,20 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+SCCACHE_START = """set -uo pipefail
+# Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
+# cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
+gha=false
+[ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
+export SCCACHE_GHA_ENABLED=$gha
+echo "SCCACHE_GHA_ENABLED=$gha" >> "$GITHUB_ENV"
+# A cache outage must never fail a build: without a running server, compile with plain rustc.
+if sccache --start-server; then
+  echo RUSTC_WRAPPER=sccache >> "$GITHUB_ENV"
+else
+  echo "::warning::sccache server unavailable; compiling with plain rustc"
+fi
+"""
 GATE_PROFILES = {"fast", "full"}
 QUINT_APALACHE_HARNESS = ROOT / "scripts/quint_apalache.py"
 NEGATIVE_CANARIES = ROOT / "verification/coverage-v1/negative_canaries.py"
@@ -447,7 +461,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         expected_runner = boat_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
-    cache_env = {"SCCACHE_GHA_ENABLED": "true", "RUSTC_WRAPPER": "sccache",
+    cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
                  "NORN_CI_HEAD": "${{ github.event.merge_group.head_sha || github.sha }}"}
     job_env = {
@@ -480,6 +494,8 @@ echo "$plan"''',
         {"uses": "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "with": {"bun-version": "1.3.14"}},
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0"}},
+        # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        {"name": "Start sccache or compile without it", "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
@@ -550,7 +566,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 3),
+        require(len([step for step in job_steps if "run" in step]) == (1 if name == "plan" else 4),
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
