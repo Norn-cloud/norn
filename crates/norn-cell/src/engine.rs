@@ -142,6 +142,13 @@ pub trait SqlEngine {
     /// The closure's error, or a backend begin/commit/rollback error.
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X>;
 
+    /// SQLite `GLOB` patterns of tables the host platform keeps in the same
+    /// database (Durable Object metadata, replication state). They are never
+    /// cell state: a database holding only them is fresh. Native SQLite has none.
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Optional connection-local revision for disposable verified read caches.
     /// Equal revisions must imply unchanged database contents on this connection,
     /// including local writes/rollbacks and commits by other connections.
