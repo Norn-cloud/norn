@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -671,6 +672,135 @@ context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:
     return json.loads(result.stdout)
 
 
+def workflow_bot_comment_canaries(source: str) -> None:
+    """Bot-authored comments skip capture; every human comment, however edited, is captured."""
+    workflow = yaml.safe_load(source)
+    capture = workflow["jobs"]["rights-capture"]
+    expression = capture["if"]
+    for event, author, sender, action in itertools.product(
+            ("issue_comment", "pull_request", "pull_request_target", "merge_group", "push"),
+            ("User", "Bot", "Organization"), ("User", "Bot"), ("created", "edited", "deleted")):
+        concrete = (expression.replace("github.event_name", repr(event))
+                    .replace("github.event.comment.user.type", repr(author))
+                    .replace("&&", " and ").replace("||", " or "))
+        # An edit or deletion of a human comment is captured whoever (or whatever) sends it.
+        if bool(eval(concrete, {"__builtins__": {}}, {})) != (event == "issue_comment" and author != "Bot"):
+            raise AssertionError(f"rights capture admission drift: {event}/{author}/{sender}/{action}")
+    marker = "github.event_name == 'issue_comment' && github.event.comment.user.type == 'Bot' && format('issue_comment bot {0}', github.event.comment.id) || "
+    if marker not in workflow["run-name"]:
+        raise AssertionError("bot comment run-name marker drifted")
+    validator = load_module("norn_bot_comment_canaries", VALIDATOR)
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"bot comment mutation passed: {label}")
+
+        for label, value in (
+                # Keyed on the sender, a bot's edit of a human acknowledgment would go unrecorded.
+                ("sender", expression.replace("github.event.comment.user.type", "github.event.sender.type")),
+                ("actor", expression.replace("github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'")),
+                ("login suffix", expression.replace("github.event.comment.user.type != 'Bot'",
+                                                    "!endsWith(github.event.comment.user.login, '[bot]')")),
+                ("inverted", expression.replace("!= 'Bot'", "== 'Bot'")),
+                ("dropped event", expression.replace("github.event_name == 'issue_comment' && ", ""))):
+            if value == expression:
+                raise AssertionError(f"bot capture mutation is a no-op: {label}")
+            document = copy.deepcopy(workflow)
+            document["jobs"]["rights-capture"]["if"] = value
+            rejected(f"rights capture {label}", document)
+        for label, before, after in (
+                ("sender", "github.event.comment.user.type == 'Bot'", "github.event.sender.type == 'Bot'"),
+                ("any comment", "github.event.comment.user.type == 'Bot' && ", ""),
+                ("unbound id", "github.event.comment.id", "github.run_id"),
+                ("renamed", "'issue_comment bot {0}'", "'bot {0}'")):
+            document = copy.deepcopy(workflow)
+            document["run-name"] = workflow["run-name"].replace(before, after)
+            if document["run-name"] == workflow["run-name"]:
+                raise AssertionError(f"bot run-name mutation is a no-op: {label}")
+            rejected(f"bot run-name {label}", document)
+        for job, step in (("trusted-policy", "Record admin approvals of the exact PR head"),):
+            for before, after in (("raw.length===1&&", ""), ("raw[0].conclusion==='skipped'&&", ""),
+                                  ("/^issue_comment bot \\d+$/", "/^issue_comment bot/"),
+                                  ("!captures.length&&", "")):
+                document = copy.deepcopy(workflow)
+                target = next(s for s in document["jobs"][job]["steps"] if s.get("name") == step)
+                if before not in target["with"]["script"]:
+                    raise AssertionError(f"bot walk canary target drifted: {before}")
+                target["with"]["script"] = target["with"]["script"].replace(before, after)
+                rejected(f"bot walk mutation {before}", document)
+def workflow_superseded_canaries(source: str) -> None:
+    """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
+    workflow = yaml.safe_load(source)
+    steps = workflow["jobs"]["trusted-policy"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve the pull request")
+
+    def outputs(script: str, event: str, payload: str, live: str) -> dict[str, str]:
+        harness = ("const out={};const core={setOutput:(k,v)=>{out[k]=v},notice:()=>{}};"
+                   f"const context={{eventName:{json.dumps(event)},repo:{{owner:'o',repo:'r'}},payload:{payload}}};"
+                   "const github={rest:{pulls:{get:async()=>({data:{number:7,base:{sha:'b'.repeat(40)},"
+                   "head:{sha:" + json.dumps(live) + ",repo:{full_name:'Norn-cloud/norn'}}}})}}};"
+                   "(async()=>{\n" + script + "\nconsole.log(JSON.stringify(out))})()"
+                   ".catch(error=>{console.error(error);process.exit(1)});")
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        return json.loads(result.stdout)
+
+    old, new = "a" * 40, "c" * 40
+    target = lambda head: "{pull_request:{number:7,head:{sha:'" + head + "'}}}"
+    for event, payload, live, expected in (
+            ("pull_request_target", target(old), new, "true"),
+            ("pull_request_target", target(new), new, "false"),
+            # Comment events re-evaluate the live head: approvals and revocations never skip.
+            ("issue_comment", "{issue:{number:7,pull_request:{}}}", new, "false"),
+            ("issue_comment", "{issue:{number:7,pull_request:{}},pull_request:{head:{sha:'" + old + "'}}}", new, "false")):
+        value = outputs(resolve["with"]["script"], event, payload, live)
+        if value.get("superseded") != expected or value.get("head_sha") != live:
+            raise AssertionError(f"superseded resolution drift: {event}/{payload}/{live}: {value}")
+
+    validator = load_module("norn_superseded_canaries", VALIDATOR)
+    guard = "steps.pr.outputs.superseded != 'true'"
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "ci-policy.yml"
+
+        def rejected(label: str, document: dict[str, Any]) -> None:
+            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate)
+            except validator.InvalidCoverage:
+                return
+            raise AssertionError(f"superseded mutation passed: {label}")
+
+        for index, step in enumerate(steps[1:-1], start=1):
+            label = step.get("name") or step.get("uses")
+            for value in (None, "always()", "!cancelled()", guard.replace("!=", "=="),
+                          guard.replace("superseded", "head_sha")):
+                if value == step.get("if"):
+                    continue
+                document = copy.deepcopy(workflow)
+                if value is None:
+                    document["jobs"]["trusted-policy"]["steps"][index].pop("if", None)
+                else:
+                    document["jobs"]["trusted-policy"]["steps"][index]["if"] = value
+                rejected(f"unguarded {label} after a superseded resolution: {value}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["trusted-policy"]["steps"].insert(2, {"name": "extra", "run": "true"})
+        rejected("unguarded step inserted after Resolve", document)
+        for before, after in (("context.eventName === 'pull_request_target' && ", ""),
+                              ("event.head.sha !== data.head.sha", "true"),
+                              ("String(superseded)", "'false'")):
+            if before not in resolve["with"]["script"]:
+                raise AssertionError(f"superseded canary target drifted: {before}")
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["steps"][0]
+            changed["with"]["script"] = changed["with"]["script"].replace(before, after)
+            rejected(f"superseded resolution mutation {before}", document)
+
+
 def workflow_trusted_policy_canaries(source: str) -> None:
     job = yaml.safe_load(source)["jobs"]["trusted-policy"]
     expression = " ".join(job["if"].split())
@@ -687,19 +817,22 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
     ):
-        for cancelled in (False, True):
+        # A bot-authored comment never re-evaluates; a human one does, whoever edits or
+        # deletes it (the condition keys on the author, so the sender is irrelevant).
+        for cancelled, author in itertools.product((False, True), ("User", "Bot", "Organization")):
             condition = expression
             for key, value in {
                 "github.event_name": event, "github.event.action": action,
                 "github.event.comment.body": body, "github.event.changes.body.from": previous,
-                "github.event.issue.pull_request": is_pr,
+                "github.event.issue.pull_request": is_pr, "github.event.comment.user.type": author,
             }.items():
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
             accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
-            if bool(accepted) != (expected and not cancelled):
-                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
+            bot = event == "issue_comment" and author == "Bot"
+            if bool(accepted) != (expected and not cancelled and not bot):
+                raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}/{author}")
 
     reporter = next(step for step in job["steps"]
                     if step.get("name") == "Report trusted policy on the exact PR head")
@@ -773,13 +906,14 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
-        # The merge queue ejects a group on any failing required status, so a
-        # verdict written before validation finishes must stay pending.
-        early = job["steps"][:job["steps"].index(validators[0])]
-        interim = [call for step in early for call in status_calls(step.get("with", {}).get("script", ""))
-                   if "context:'trusted-policy'" in call]
-        if len(interim) != 1 or "state:'pending'" not in interim[0]:
-            raise AssertionError("merge-group collector must write trusted-policy as pending before validation")
+        # The merge queue ejects a group on any failing required status, so only the
+        # final reporter, after its own evaluation, may write a non-pending verdict:
+        # every other trusted-policy write, before or after validation, is pending.
+        others = [step for step in job["steps"] if step.get("name") != "Report trusted policy on the group head"]
+        interim = [call for step in others for call in status_calls(step.get("with", {}).get("script", ""))
+                   if "trusted-policy" in call]
+        if len(interim) != 1 or "state:'pending'" not in interim[0] or "context:'trusted-policy'" not in interim[0]:
+            raise AssertionError("merge-group collector must write trusted-policy only as pending")
         reporters = [step for step in job["steps"] if step.get("name") == "Report trusted policy on the group head"]
         if len(reporters) != 1:
             raise AssertionError("merge-group required status publisher is missing")
@@ -913,6 +1047,17 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        bot_clause = "github.event.comment.user.type != 'Bot' && "
+        for label, before, after in (("sender", "github.event.comment.user.type", "github.event.sender.type"),
+                                     ("actor", "github.event.comment.user.type != 'Bot'", "github.actor != 'coderabbitai[bot]'"),
+                                     ("inverted", "!= 'Bot'", "== 'Bot'"),
+                                     ("dropped", bot_clause, "")):
+            document = copy.deepcopy(workflow)
+            changed = document["jobs"]["trusted-policy"]["if"].replace(before, after)
+            if changed == document["jobs"]["trusted-policy"]["if"]:
+                raise AssertionError(f"trusted-policy bot mutation is a no-op: {label}")
+            document["jobs"]["trusted-policy"]["if"] = changed
+            rejected(f"trusted-policy bot comment {label}", document)
         for change in ("concurrency", "if", "reporter"):
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
@@ -1946,6 +2091,17 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     await snapshot(prefix+'partial');assert.deepEqual(pending(evidence[prefix+'partial'].pr),[removedRun]);
     clock='2026-11-03T03:02:01Z';await record(removedRun,payloads.get(removedRun),2);
     await snapshot(prefix+'reconciled');assert.deepEqual(pending(evidence[prefix+'reconciled'].pr),[]);
+    // A lone queue entry survives: the queue ejects a group on its first failing required
+    // status, so one clean group evaluation must publish pending, then success, never failure.
+    {
+      const start=history.length;
+      await collect('group');
+      context.runId=admission;context.payload={workflow_run:{id:groupAdmission}};process.env.GITHUB_RUN_ATTEMPT='1';
+      await execute(programs.groupSuccess);
+      const verdicts=history.slice(start).filter(row=>row.sha===groupHead&&row.context==='trusted-policy').map(row=>row.state);
+      assert(verdicts.length>=2&&verdicts.slice(0,-1).every(state=>state==='pending'),'lone group must only see pending before its verdict: '+verdicts);
+      assert.equal(verdicts.at(-1),'success','a clean lone group must publish success');
+    }
     clock='2026-11-03T03:03:00Z';
     const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
     await snapshot(prefix+'fresh');
@@ -1981,6 +2137,51 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     history.find(s=>s.context.startsWith('rights-ledger/')).context=
       history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
     await snapshot(prefix+'case');
+    // Runs created in the same second can list (newest id first) in an order that
+    // disagrees with run_number. The walk accepts any order but no missing number.
+    const swapA=nextRun++,swapB=nextRun++;
+    await record(swapA,payload(comment(14,'ordinary text',clock)));
+    await record(swapB,payload(comment(15,'ordinary text',clock)));
+    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    const swapped=runs.find(r=>r.id===swapA);
+    runs=runs.filter(r=>r!==swapped);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
+    runs.splice(0,0,swapped);
+    await snapshot(prefix+'inverted');
+    // A run numbered above the cursor can also list after the cursor run itself (here
+    // a revocation whose ledger has not run). Each collector starts below its own one.
+    for(const [index,kind] of ['pr','group'].entries()){
+      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
+      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
+      assert.equal(runs[0].id,straddle);
+      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
+      // Its id sorts below the cursor run's id, as in a real id-ordered listing
+      // (harness ids start at 100, so 50 and 49 are unused).
+      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
+      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
+    }
+    await snapshot(prefix+'straddle');
+    // A complete first page is no upper bound: a run numbered above every run seen so
+    // far (here a revocation whose ledger has not run) can list on a later page.
+    paging=true;shifted=true;
+    for(const [index,kind] of ['pr','group'].entries()){
+      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
+      await record(lowA,payload(comment(ids,'ordinary text',clock)));
+      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
+      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
+      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
+      runs.splice(2,0,runs.shift());
+      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
+    }
+    paging=false;
+    // A repeated run_number must not stand in for a missing one.
+    const n=Math.max(...runs.map(r=>r.run_number));
+    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
+    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
+    runs.unshift(dupes[2],dupes[1],dupes[0]);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);
@@ -1993,6 +2194,31 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     jobs.get(removedRun).set(2,[original[0],{...original[1],conclusion:'skipped'}]);
     assert(pending(await collect('pr')).includes(removedRun));
     jobs.get(removedRun).set(2,original);
+    // A bot-authored comment run skips capture: the job keeps its unexpanded name, and
+    // only the run-name marker, evaluated at creation, lets the walk treat it as plain.
+    const rawCapture='Capture immutable rights event ${{ ((github.event.issue.pull_request && \'pull\') || \'issue\') }} ${{ raw }}';
+    const rawLedger='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
+    const botRun=nextRun++;runs.unshift({...makeRun(botRun),display_title:'issue_comment'});
+    jobs.set(botRun,new Map([[1,[{name:rawCapture,status:'completed',conclusion:'skipped'},{name:rawLedger,status:'completed',conclusion:'skipped'}]]]));
+    // Unmarked, or marked with a capture that was not skipped, the walk fails closed.
+    for(const [title,conclusion] of [['issue_comment','skipped'],['issue_comment bot','skipped'],['issue_comment bot 30 x','skipped'],
+        ['issue_comment bot 30','cancelled'],['issue_comment bot 30','success']]){
+      runs.find(r=>r.id===botRun).display_title=title;jobs.get(botRun).get(1)[0].conclusion=conclusion;
+      for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights capture incomplete/);assert(!fs.existsSync(path))}
+    }
+    jobs.get(botRun).get(1).push({name:rawCapture,status:'completed',conclusion:'skipped'});
+    runs.find(r=>r.id===botRun).display_title='issue_comment bot 30';
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights capture incomplete/);assert(!fs.existsSync(path))}
+    jobs.get(botRun).get(1).pop();jobs.get(botRun).get(1)[0].conclusion='skipped';
+    await snapshot(prefix+'bot');assert(!pending(evidence[prefix+'bot'].pr).includes(botRun));
+    // The marker never hides a captured rights event: an expanded capture is read as usual.
+    const markedRevoke=nextRun++;await record(markedRevoke,payload(comment(31,'/revoke-rights '+head,clock)),1,true);
+    runs.find(r=>r.id===markedRevoke).display_title='issue_comment bot 31';
+    await snapshot(prefix+'marked');assert(pending(evidence[prefix+'marked'].pr).includes(markedRevoke));
+    // No collector path, in any scenario above (refusals, throws, races), publishes a
+    // failing group verdict: only the final reporter, which carries target_url, may.
+    for(const row of history.filter(row=>row.sha===groupHead&&row.context==='trusted-policy'))
+      assert(row.target_url||row.state==='pending','collector published a non-pending group verdict: '+row.state);
   }
   console.log(JSON.stringify(evidence));
 })().catch(error=>{console.error(error);process.exit(1)});"""
@@ -2096,6 +2322,8 @@ def main() -> int:
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
         workflow_trusted_policy_canaries(source)
+        workflow_bot_comment_canaries(source)
+        workflow_superseded_canaries(source)
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
         rights_workflow_canaries()

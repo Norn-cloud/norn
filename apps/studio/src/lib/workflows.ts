@@ -19,36 +19,6 @@ export interface Workflow {
   readonly steps: readonly Step[]
   /** Laws scoped to the object type. */
   readonly laws: readonly Law["payload"][]
-  /** Each state's column (shortest declared path from an initial state) and row within that column. */
-  readonly layout: ReadonlyMap<string, { readonly column: number; readonly row: number }>
-}
-
-/** Columns by breadth-first distance from the initial states; unreachable states follow in a last column. */
-export function layout(lifecycle: Lifecycle): Map<string, { column: number; row: number }> {
-  const transitions = lifecycle.transitions ?? []
-  const depth = new Map<string, number>(lifecycle.initial.map((state) => [state, 0]))
-  for (let frontier = [...lifecycle.initial]; frontier.length > 0;) {
-    const next: string[] = []
-    for (const state of frontier) {
-      for (const { from, to } of transitions) {
-        if (from.includes(state) && !depth.has(to)) {
-          depth.set(to, (depth.get(state) ?? 0) + 1)
-          next.push(to)
-        }
-      }
-    }
-    frontier = next
-  }
-  const last = Math.max(0, ...depth.values()) + 1
-  for (const state of transitions.flatMap(({ from, to }) => [...from, to])) if (!depth.has(state)) depth.set(state, last)
-  const rows = new Map<number, number>()
-  const positions = new Map<string, { column: number; row: number }>()
-  for (const [state, column] of depth) {
-    const row = rows.get(column) ?? 0
-    rows.set(column, row + 1)
-    positions.set(state, { column, row })
-  }
-  return positions
 }
 
 /** Every lifecycle declared by an object type among the definitions, with its firing actions and governing laws. */
@@ -68,7 +38,6 @@ export function workflows(definitions: readonly Envelope[]): Workflow[] {
           && effectProgram.objectKind === name && effectProgram.lifecycle === lifecycle.property && effectProgram.transition === transition.id),
       })),
       laws: laws.filter(({ scope }) => scope.objectTypes.includes(name)),
-      layout: layout(lifecycle),
     }))
   })
 }

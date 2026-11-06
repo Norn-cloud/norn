@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
+import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Database, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile } from "@/components/kpi-tile"
@@ -7,10 +7,10 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { catalogOf, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { recordedTransport } from "./lib/transport.ts"
+import { ObjectRecords } from "./objects.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 /** The "dense, crisp" tier for data tables: theme radius, 13px tabular figures, hairlines, grey header, no zebra. */
@@ -49,10 +49,10 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
   )
 }
 
-function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly onOpen: () => void }) {
+function ConceptCard({ concept }: { readonly concept: Concept }) {
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
-    <button type="button" id={`concept-${concept.name}`} className="h-full scroll-mt-4 rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30" onClick={onOpen}>
+    <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
           <CardTitle>{concept.title}</CardTitle>
@@ -63,7 +63,7 @@ function ConceptCard({ concept, onOpen }: { readonly concept: Concept; readonly 
           {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
         </CardContent>
       </Card>
-    </button>
+    </Link>
   )
 }
 
@@ -113,68 +113,90 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
   )
 }
 
-function ConceptSheet({ catalog, name, onOpen }: { readonly catalog: Catalog; readonly name: string | undefined; readonly onOpen: (name: string | undefined) => void }) {
-  const concept = name === undefined ? undefined : catalog.byName.get(name)
+/** One object type as a record page: what it is, its fields, links, rules and where its records come from. */
+function ObjectTypeDetail({ catalog, concept }: { readonly catalog: Catalog; readonly concept: Concept }) {
   const link = (target: string) => catalog.byName.has(target)
-    ? <button type="button" className="font-medium underline-offset-4 hover:underline" onClick={() => onOpen(target)}>{conceptTitle(target)}</button>
+    ? <Link to="/sources/$concept" params={{ concept: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
     : <span>{conceptTitle(target)}</span>
+  const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   return (
-    <Sheet open={concept !== undefined} onOpenChange={(open) => { if (!open) onOpen(undefined) }}>
-      <SheetContent className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
-        {concept && <>
-          <SheetHeader>
-            <SheetTitle className="text-xl">{concept.title}</SheetTitle>
-            <SheetDescription>{concept.description ?? concept.name}</SheetDescription>
-            {concept.kind === "concept" && <Link to="/sources/$concept" params={{ concept: concept.name }} className="text-sm font-medium underline-offset-4 hover:underline">See the {concept.title.toLowerCase()} records →</Link>}
-            {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
-          </SheetHeader>
-          <div className="space-y-6 px-4 pb-6">
-            <section>
-              <h3 className="pb-2 font-medium">Facts recorded</h3>
-              <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
-                {concept.fields.map((field) => (
-                  <TableRow key={field.id}>
-                    <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
-                    <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
-                  </TableRow>
-                ))}
-              </DenseTable>
-            </section>
-            {concept.relationships.length > 0 && (
-              <section>
-                <h3 className="pb-2 font-medium">Links</h3>
-                <ul className="space-y-2 text-sm">
-                  {concept.relationships.map((relationship) => (
-                    <li key={relationship.id}>
-                      <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}
-                      {relationship.description && <p className="text-muted-foreground">{relationship.description}</p>}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-            <section>
-              <h3 className="pb-2 font-medium">Rules it must keep</h3>
-              {concept.rules.length > 0
-                ? <ul className="list-disc space-y-1 pl-5 text-sm">{concept.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
-                : <p className="text-sm text-muted-foreground">No rule is declared on this object type itself.</p>}
-            </section>
-            <section>
-              <h3 className="pb-2 font-medium">Where its records come from</h3>
-              {concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="text-sm text-muted-foreground">No connected system maps records into it directly.</p>}
-            </section>
-          </div>
-        </>}
-      </SheetContent>
-    </Sheet>
+    <article className="space-y-6">
+      <header className="space-y-2">
+        <h1 className="text-title font-medium">{concept.title}</h1>
+        <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+          <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
+          <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>
+          <span className="font-mono">{concept.name}</span>
+        </div>
+        <p className="max-w-2xl text-muted-foreground">{concept.description ?? "No description declared."}</p>
+        {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
+      </header>
+      <Panel icon={Shapes} label="Facts recorded">
+        <div className="p-1">
+          <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
+            {concept.fields.map((field) => (
+              <TableRow key={field.id}>
+                <TableCell className="font-medium">{field.id.replaceAll("_", " ")}{field.optional && <span className="text-muted-foreground"> (optional)</span>}</TableCell>
+                <TableCell className="whitespace-normal text-muted-foreground">{field.type}</TableCell>
+              </TableRow>
+            ))}
+          </DenseTable>
+        </div>
+      </Panel>
+      {concept.relationships.length > 0 && (
+        <Panel icon={Shapes} label="Links">
+          <Well className="divide-y">
+            {concept.relationships.map((relationship) => (
+              <div key={relationship.id} className="px-4 py-2.5 text-sm">
+                <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}
+                {relationship.description && <p className="text-meta text-muted-foreground">{relationship.description}</p>}
+              </div>
+            ))}
+          </Well>
+        </Panel>
+      )}
+      <Panel icon={Shapes} label="Rules it must keep">
+        <Well className="px-4 py-3 text-sm">
+          {concept.rules.length > 0
+            ? <ul className="list-disc space-y-1 ps-5">{concept.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul>
+            : <p className="text-muted-foreground">No rule is declared on this object type itself.</p>}
+        </Well>
+      </Panel>
+      <Panel icon={Database} label="Where its records come from">
+        <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-sm text-muted-foreground">No connected system maps records into it directly.</p>}</div>
+      </Panel>
+    </article>
   )
 }
 
-/** The object types the systems feed, for the submenu island. */
+/** One object type's page: its definition, then its records; the submenu lists the others. */
+export function ObjectTypePage() {
+  const { concept: type = "" } = useParams({ strict: false })
+  const { read, catalog } = useCatalog()
+  const concept = catalog?.byName.get(type)
+  return (
+    <div className="space-y-6">
+      {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
+      {read.isError && <p className="text-destructive">{read.error.message}</p>}
+      {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
+      {concept?.definition === "object type" && <ObjectRecords concept={concept} />}
+    </div>
+  )
+}
+
+/** The overview's groups: object types by whether a system feeds them, then shared interfaces. */
+const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept: Concept) => boolean }[] = [
+  { label: "Object types the systems feed", has: (concept) => concept.definition === "object type" && concept.kind === "concept" },
+  { label: "Other object types", has: (concept) => concept.definition === "object type" && concept.kind !== "concept" },
+  { label: "Shared interfaces", has: (concept) => concept.definition === "interface" },
+]
+
+/** The object types and shared interfaces, for the submenu island. */
 export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: recordedTransport.catalog })
   const catalog = useMemo(() => read.data && catalogOf(read.data.document), [read.data])
-  return catalog?.concepts.filter(({ kind }) => kind === "concept").map((concept) => ({ href: `#concept-${concept.name}`, label: concept.title, group: "Object types" }))
+  return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
+    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces" })))
 }
 
 /** The admitted catalog, indexed once per read. */
@@ -186,7 +208,6 @@ export function useCatalog() {
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
-  const [open, setOpen] = useState<string>()
   const [search, setSearch] = useState("")
   const matches = (concept: Concept) => `${concept.title} ${concept.description ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
   return (
@@ -196,7 +217,7 @@ export function SourcesPage() {
           <h1 className="text-title font-medium">Sources</h1>
           {read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         </div>
-        <p className="max-w-2xl text-muted-foreground">Three systems keep their own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
+        <p className="max-w-2xl text-muted-foreground">Each connected system keeps its own records. Each one is mapped into the same business model, so a holding, an order or a delivery means one thing, wherever it was entered.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
@@ -210,13 +231,13 @@ export function SourcesPage() {
               <Input type="search" placeholder="Find an object type" value={search} onChange={(event) => setSearch(event.target.value)}
                 className="border-border bg-background ps-9 dark:bg-background" />
             </label>
-            {(["concept", "core idea"] as const).map((kind) => (
-              <div key={kind} className="space-y-3">
-                <h3 className="text-meta font-medium text-muted-foreground">{kind === "concept" ? "Object types the systems feed" : "Shared interfaces"}</h3>
-                {catalog.concepts.some((concept) => concept.kind === kind && matches(concept))
+            {OVERVIEW_GROUPS.map(({ label, has }) => (
+              <div key={label} className="space-y-3">
+                <h3 className="text-meta font-medium text-muted-foreground">{label}</h3>
+                {catalog.concepts.some((concept) => has(concept) && matches(concept))
                   ? <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {catalog.concepts.filter((concept) => concept.kind === kind && matches(concept)).map((concept) => (
-                        <ConceptCard key={concept.name} concept={concept} onOpen={() => setOpen(concept.name)} />
+                      {catalog.concepts.filter((concept) => has(concept) && matches(concept)).map((concept) => (
+                        <ConceptCard key={concept.name} concept={concept} />
                       ))}
                     </div>
                   : <EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState>}
@@ -224,7 +245,6 @@ export function SourcesPage() {
             ))}
           </Well>
         </Panel>
-        <ConceptSheet catalog={catalog} name={open} onOpen={setOpen} />
       </>}
     </section>
   )

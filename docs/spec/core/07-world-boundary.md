@@ -88,6 +88,8 @@ after cell-owned recomputation matches the pinned bundle
 CP2 authoritative/governed non-main reads touching a source-disputed or NFC-quarantined subject refuse `core.world.source_dispute_unqualified` until Core 08 retains the source-evidence frontier; they never omit the overlay.
 OBS-EVIDENCE-1 uses NFC only for inbox lookup keys, preserves non-NFC spelling evidence as bytes in a durable “identity normalized; possible collision” finding, and refuses convergence, authoritative promotion and governed reads (rechecked at commit) of every mapped subject in that bucket pending the separate opaque/signed source-byte retention and byte-exact identity bridge.
 
+**MAPPING-PLAN-1:** a store may reuse the decoded mapping, source schema, compiled mapping, artifact pins, definitions digest and retained-model proof for one retained definition version. The reuse key is the version, the mapping id and a digest of every column of the installed definition row read on this call, so any changed column misses and repeats the full retained proof. Every evaluation, hit or miss, re-reads and verifies the export-journal record for the row's `commit_seq`, requires its installed row to equal the row read, requires the stored receipt at `commit_seq` to equal the journal's, and requires the journal model snapshot to equal the one the plan was proven on; the model-hash and governing-law checks are pure functions of that snapshot and the keyed row. A hit therefore refuses exactly what a cold store refuses, and bundles are identical to a cold derivation. Named scenario: **MAPPING-PLAN-REUSE** (warm and cold rechecks agree; changed row columns and tampered receipts or journal records refuse identically warm and cold).
+
 FEED-CONFLICT implements OBS-EVIDENCE-1 for mapped captures: compare the immutable
 `kind`, `source_version`, `payload_digest` and redaction record for the trusted
 connector/partition plus source/record/event identity, matching the ingress oracle.
@@ -255,6 +257,22 @@ OBS-LINK-CONTRIBUTION-1 recorded one-way supersession with prepared-support
 checks over the final claim set.
 Pending resolution, complete support enumeration and conflict quarantine
 require the subsequent runtime units.
+Unit 2 admits claims and resolves equal endpoints through the existing observed
+commit path. The consumed mapping-bundle journal retains pending claims and
+recomputable multi-source provenance; a transaction guard rechecks the planned
+links against that journal before admission. The planner records `supersedes`
+as every earlier-consumed claim of the contribution with a lower raw
+`source_version` (lexicographic, as the dataplane orders it), so a retained
+claim's identity recomputes exactly from the journal and a late older occurrence
+records no order over a newer one. It prepares every claim of each changed
+canonical source/role group and plans only the edge changes the kernel's
+final-set standing authorizes. A plan or link provenance read selects bundles
+naming its commit's objects or claim endpoints, then the bundles naming those
+claims' sources, so unrelated bundles spend no budget while every earlier claim
+of an affected contribution is read. The selected set refuses above 1,000
+bundles, 4 MiB of bundle evidence or 20,000 claims; budget exhaustion cannot
+silently omit a claim. Contradiction and horizon findings require the subsequent
+runtime unit.
 The claim's registry `evidence` scalar holds the exact canonical JSON of its
 typed preimage (`canonical_json_exact_of`: sorted object keys, verbatim strings
 and number tokens) as UTF-8 text; endpoint columns permit lookup without
@@ -270,6 +288,21 @@ Named acceptance scenarios:
 - **OBS-LINK-EXTENSION-DEFAULT:** an admitted extension default is included in
   both creation and retained-read seals. A later changed default cannot rewrite
   the existing claim through re-observation.
+- **OBS-LINK-RETARGET:** a superseding source contribution replaces its old
+  endpoint, retaining old evidence and preserving active corroborating claims
+  and unbacked authored edges. Redelivery of an already consumed older event
+  cannot roll the relation back.
+- **OBS-LINK-CLEAR-UNION:** a to-many clear withdraws only its own contribution;
+  another source's asserted endpoint stays present through repeated captures.
+- **OBS-LINK-CONCRETE-DEFAULT:** a pending claim from an admitted mapped subtype
+  resolves with its inherited effective link defaults, exactly as commit
+  normalization does. Redeclared subtype defaults and native type promotion
+  remain catalog/admission refusals.
+- **OBS-LINK-LATE-OCCURRENCE:** an older source version captured after a newer
+  one supersedes only older claims; the two stay contested, the newer edge stays,
+  and a later version records the order.
+- **OBS-LINK-CLOSED-SCOPE:** a target arrival reads the superseding claim of a
+  contribution even when that claim names a different target.
 - **OBS-LINK-CONVERGENCE:** three source claims about one delivery's `fulfils`
   relation produce one edge with three provenance entries.
 - **OBS-LINK-STALE-REVERSAL:** after a replacement, the retained stale claim and
