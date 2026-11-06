@@ -20,3 +20,10 @@ export const PAGES = {
 } as const
 
 export type PagePath = keyof typeof PAGES
+
+/**
+ * Pages another route serves on purpose: an object type's URL is matched by
+ * the record route's splat with nothing after it, and SourcesItemPage renders
+ * the object type page for it.
+ */
+export const SERVED_BY: Partial<Record<PagePath, PagePath>> = { "/sources/$concept": "/sources/$concept/$" }
