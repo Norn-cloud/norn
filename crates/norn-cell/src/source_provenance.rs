@@ -43,7 +43,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Resolve an immutable fact's consumed bundle under current host disclosure policy.
     /// The host must authorize source-provenance disclosure separately from numeric
     /// membership or canonical-value visibility. Call within its stable read snapshot.
-    /// `None` means withheld content or an instance without a retained bundle.
+    /// `None` means withheld content or an instance without direct mapped-source lineage.
     ///
     /// # Errors
     /// Exhausted budget, unproven fact/receipt/input, changed pins or mapping output.
@@ -66,6 +66,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Err(invalid());
         };
         if !reveal_source(&instance)? {
+            return Ok(None);
+        }
+        if instance.object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
             return Ok(None);
         }
         let receipt = self

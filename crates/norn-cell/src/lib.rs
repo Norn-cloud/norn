@@ -43,6 +43,7 @@ pub mod host;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
+mod mapping_links;
 mod mapping_process;
 mod migration;
 pub mod mining;
