@@ -8,7 +8,7 @@ use std::path::Path;
 ///
 /// # Errors
 /// An unreadable entry, a non-UTF-8 name or a symlink.
-pub fn files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub(crate) fn files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut files = Vec::new();
     walk(root, root, &mut files)?;
     Ok(files)
@@ -56,7 +56,7 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<(String, Vec<u8>)>) -> Result<(
 /// # Errors
 /// The walk fails, the pin names no `sourceTree`, or the pin is stale; the
 /// message names the digest to pin after review.
-pub fn check(root: &Path, pin: &str) -> Result<String, String> {
+pub(crate) fn check(root: &Path, pin: &str) -> Result<String, String> {
     let files = files(root)?;
     let actual = norn_ir::source_tree::source_tree_digest(
         files
