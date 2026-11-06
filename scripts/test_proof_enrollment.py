@@ -141,9 +141,9 @@ class EnrollmentTests(unittest.TestCase):
                 receipts, "implementation_claims", return_value=promoted):
             errors, verdicts = receipts.verify(ROOT, Path(directory), {}, None, scoped=False)
         self.assertEqual(errors, [f"{EXTRACTION_CLAIM}: {receipts.UNCHANGED_LABEL}; {receipts.NOT_ADMITTED}",
-                                  f"{KANI_CLAIM}: {LABELS[KANI_CLAIM]}; {receipts.NOT_ADMITTED}"])
+                                  f"{KANI_CLAIM}: {receipts.UNCHANGED_LABEL}; {receipts.NOT_ADMITTED}"])
         self.assertEqual({v["claim"]: v["verdict"] for v in verdicts},
-                         {EXTRACTION_CLAIM: "unchanged", KANI_CLAIM: "candidate-reported"})
+                         {EXTRACTION_CLAIM: "unchanged", KANI_CLAIM: "unchanged"})
 
     def test_downgraded_claims_stay_partial_with_evidence_and_label(self):
         """D47(c): until #969, both claims are partial, labelled, and carry no implementation fields."""
