@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { CanvasFrame, IssueCard, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
+import { CanvasFrame, IssueCard, Unavailable, type CanvasFrameProps, type Editing, type Issue } from "./canvas-frame.tsx"
 import { SAVE_BLOCKED } from "./canvas.tsx"
 import { automationKinds, branchesOf, inputsOf, lower, setBranches, type Condition } from "./lib/canvas/automation.ts"
 import { loadChecker } from "./lib/canvas/checker.ts"
@@ -182,7 +182,7 @@ export function AutomationEditor() {
   return (
     <div className="space-y-2">
       <CanvasFrame {...automationFrame(issues)} />
-      <div className="flex justify-end"><Button size="sm" disabled title={RUN_BLOCKED}>Run in the cell</Button></div>
+      <div className="flex justify-end"><Unavailable reason={RUN_BLOCKED}>Run in the cell</Unavailable></div>
     </div>
   )
 }
