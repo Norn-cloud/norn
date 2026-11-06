@@ -142,7 +142,7 @@ function DecisionBody({ decision, now, onDirty, onClose, onSettled, call }: {
   return (
     <>
       <SheetHeader className="px-6 pt-6 pb-4">
-        <SheetTitle className="text-base">{decision.question}</SheetTitle>
+        <SheetTitle className="pe-8 text-base">{decision.question}</SheetTitle>
         <SheetDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>{flowTitle(decision)} · {stepTitle(decision)}</span>
         </SheetDescription>
