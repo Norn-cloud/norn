@@ -38,7 +38,9 @@ pub struct NumericContribution {
     /// Stable versioned fact identity; never a catalog-enrichment edge.
     pub fact: FactRef,
     /// Sum operand, or numerator then denominator; no ratio attribution is invented.
-    pub amounts: Vec<Option<Decimal>>,
+    /// `None` when any member of the bucket is restricted (DATA-VALUES-1):
+    /// amounts are row values, and one withheld amount would follow from the totals.
+    pub amounts: Option<Vec<Option<Decimal>>>,
     /// Emitting receipt identity; a reference, not an independently verifiable proof.
     pub receipt_hash: String,
     /// Full-incarnation digest, disclosed only with the canonical property values.
@@ -83,6 +85,31 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         expected_lineage: &str,
         bucket: &str,
+        visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        disclosure: LineageDisclosure<'_>,
+    ) -> Result<NumericTrace, CellError> {
+        self.trace_question_matching(
+            plan,
+            context,
+            &|lineage| lineage == expected_lineage,
+            bucket,
+            visible,
+            disclosure,
+        )
+    }
+
+    /// [`Self::trace_question`] for a caller that holds a handle to the
+    /// result pin rather than the pin itself (D53: a keyed public handle,
+    /// [`keyed_lineage_handle`]): `matches` decides whether the recomputed
+    /// internal pin is the one the handle names.
+    /// # Errors
+    /// As [`Self::trace_question`].
+    pub fn trace_question_matching(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        matches: &dyn Fn(&str) -> bool,
+        bucket: &str,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         disclosure: LineageDisclosure<'_>,
     ) -> Result<NumericTrace, CellError> {
@@ -93,7 +120,7 @@ impl<E: SqlEngine> CellStore<E> {
             if !result.complete || result.freshness != Freshness::Exact {
                 return Err(refused("core.compute.stale_input"));
             }
-            if result.lineage_ref != expected_lineage {
+            if !matches(&result.lineage_ref) {
                 return Err(incomplete());
             }
             let row = result.rows.get(bucket).ok_or_else(incomplete)?;
@@ -167,6 +194,22 @@ impl<E: SqlEngine> CellStore<E> {
             if sums != row.totals {
                 return Err(incomplete());
             }
+            // DATA-VALUES-1 (D53): one restricted member withholds every
+            // value-bearing field of every member in the bucket: amounts,
+            // canonical values and the snapshot digest (a guessing oracle for
+            // the values). Otherwise the visible members subtracted from the
+            // totals would reconstruct the restricted one. Source provenance
+            // (document identities and digests) follows its own Sources grant.
+            if contributions
+                .iter()
+                .any(|contribution| contribution.restricted)
+            {
+                for contribution in &mut contributions {
+                    contribution.amounts = None;
+                    contribution.values = None;
+                    contribution.fact_digest = None;
+                }
+            }
             Ok(NumericTrace {
                 result,
                 bucket: bucket.to_owned(),
@@ -174,4 +217,40 @@ impl<E: SqlEngine> CellStore<E> {
             })
         })
     }
+}
+
+/// D53 (3): the public handle to a result pin. The internal `lineageRef` is a
+/// content hash of the unredacted rows, so publishing it would let a reader
+/// verify a guess of a withheld value offline. The handle is
+/// HMAC-SHA-256(`key`, pin) as lowercase hex: without the cell's key it says
+/// nothing about the rows, and the host maps it back by recomputing.
+#[must_use]
+pub fn keyed_lineage_handle(key: &[u8], lineage_ref: &str) -> String {
+    use transparency_sha2::{Digest, Sha256};
+    const BLOCK: usize = 64;
+    let mut block = [0_u8; BLOCK];
+    if key.len() > BLOCK {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let pad = |byte: u8| block.map(|k| k ^ byte);
+    let inner = Sha256::new()
+        .chain_update(pad(0x36))
+        .chain_update(lineage_ref.as_bytes())
+        .finalize();
+    let outer = Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize();
+    outer.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Whether `handle` is the keyed handle of `lineage_ref`, compared in constant time.
+#[must_use]
+pub fn lineage_handle_matches(key: &[u8], lineage_ref: &str, handle: &str) -> bool {
+    let expected = keyed_lineage_handle(key, lineage_ref);
+    expected.len() == handle.len()
+        && expected
+            .bytes()
+            .zip(handle.bytes())
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
 }

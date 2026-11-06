@@ -12,12 +12,13 @@ use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
         HistoricalQuestionResult, QueryContext, QueryResult,
-        lineage::{LineageDisclosure, NumericTrace},
+        lineage::{LineageDisclosure, NumericTrace, keyed_lineage_handle, lineage_handle_matches},
     },
     engine::SqlEngine,
 };
 use norn_checker::metric::compute::QuestionPlan;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use utoipa::IntoParams;
 
 /// Trusted per-request source frontier and authenticated history selection.
@@ -55,6 +56,26 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
         capability: ReadCapability,
         row: Option<&ObjectRecord>,
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal>;
+    /// DATA-VALUES-1 (D53): the smallest bucket whose aggregate a reader who
+    /// lacks Values on any of its members may see; smaller buckets come back
+    /// `suppressed`. Declared server policy, not a request parameter; the
+    /// default policy is 3. Values below 1 are read as 1.
+    fn min_disclosed_bucket(&self) -> usize;
+    /// D53: the cell's secret for keyed lineage handles, at least 32 bytes,
+    /// held by the host (Durable Object storage or a Worker secret), never
+    /// derived from cell data. A shorter key refuses every answer and trace.
+    fn handle_key(&self) -> &[u8];
+}
+
+/// The declared default minimum disclosed bucket size (D53).
+pub const DEFAULT_MIN_DISCLOSED_BUCKET: usize = 3;
+
+fn handle_key<E: SqlEngine>(runtime: &dyn QuestionRuntime<E>) -> Result<&[u8], Refusal> {
+    let key = runtime.handle_key();
+    if key.len() < 32 {
+        return Err(Refusal::host("the lineage handle key is shorter than 32 bytes"));
+    }
+    Ok(key)
 }
 
 /// Existing engine envelopes, serialized directly to preserve raw exact number tokens.
@@ -78,7 +99,7 @@ pub struct TraceQuery {
     /// Environment, matched against physical scope.
     #[param(required = true, nullable = false)]
     pub environment_id: Option<String>,
-    /// Previously returned complete exact result pin.
+    /// The `lineageRef` handle a complete exact answer returned (keyed, D53).
     #[param(required = true, nullable = false)]
     pub lineage_ref: Option<String>,
     /// Canonical bucket key from that result.
@@ -99,6 +120,7 @@ pub fn get_answer<E: SqlEngine>(
 ) -> Result<QuestionAnswer, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let access = mapped(host, runtime, actor, question, Population, None)?;
+    let key = handle_key(runtime)?;
     let _epoch = host.read_access(
         scope,
         &ReadRequest {
@@ -116,8 +138,9 @@ pub fn get_answer<E: SqlEngine>(
         return Err(read_denied());
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    let visible = |row: &ObjectRecord| permits(row, Population);
-    match snapshot.cutoff {
+    let mut withheld = BTreeSet::new();
+    let visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
+    let mut answer = match snapshot.cutoff {
         Some(cutoff) => cell
             .store()
             .evaluate_question_known_at(&plan, snapshot.context, cutoff, visible)
@@ -127,7 +150,37 @@ pub fn get_answer<E: SqlEngine>(
             .evaluate_question(&plan, snapshot.context, visible)
             .map(QuestionAnswer::Live),
     }
-    .map_err(Refusal::from_compute)
+    .map_err(Refusal::from_compute)?;
+    let result = match &mut answer {
+        QuestionAnswer::Live(result) => result,
+        QuestionAnswer::Historical(historical) => &mut historical.result,
+    };
+    withhold_values(result, &withheld, runtime.min_disclosed_bucket());
+    result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
+    Ok(answer)
+}
+
+/// Population decides membership; a member without Values is recorded so its
+/// bucket's amounts are withheld (DATA-VALUES-1).
+fn visible_recording(
+    row: &ObjectRecord,
+    permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
+    withheld: &mut BTreeSet<String>,
+) -> Result<bool, CellError> {
+    let member = permits(row, Population)?;
+    if member && !permits(row, Values)? {
+        withheld.insert(row.id.clone());
+    }
+    Ok(member)
+}
+
+/// DATA-VALUES-1 (D52/D53): per-member amounts are row values. A bucket with
+/// any member the reader may not see the values of withholds every amount, and
+/// discloses its aggregate only at `min_disclosed` members or more.
+fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_disclosed: usize) {
+    for row in result.rows.values_mut() {
+        row.withhold(|id| withheld.contains(id), min_disclosed.max(1));
+    }
 }
 
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
@@ -143,6 +196,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
 ) -> Result<NumericTrace, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let access = mapped(host, runtime, actor, question, Population, None)?;
+    let key = handle_key(runtime)?;
     let scope = ScopeQuery {
         org_id: query.org_id.clone(),
         environment_id: query.environment_id.clone(),
@@ -177,19 +231,24 @@ pub fn get_numeric_trace<E: SqlEngine>(
         )));
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    cell.store()
-        .trace_question(
+    let mut withheld = BTreeSet::new();
+    let mut trace = cell
+        .store()
+        .trace_question_matching(
             &plan,
             snapshot.context,
-            lineage,
+            &|internal| lineage_handle_matches(key, internal, lineage),
             bucket,
-            |row| permits(row, Population),
+            |row| visible_recording(row, &permits, &mut withheld),
             LineageDisclosure {
                 values: &mut |row| permits(row, Values),
                 source: &mut |row| permits(row, Sources),
             },
         )
-        .map_err(Refusal::from_compute)
+        .map_err(Refusal::from_compute)?;
+    withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
+    trace.result.lineage_ref = lineage.to_owned();
+    Ok(trace)
 }
 
 fn mapped<E: SqlEngine>(

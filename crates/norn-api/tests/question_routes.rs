@@ -23,7 +23,7 @@ use norn_api::{
 };
 use norn_cell::{
     CellStore, CommitBatch, KnowledgeCutoff, ObjectRecord,
-    compute::{Freshness, QueryContext},
+    compute::{Freshness, QueryContext, lineage::keyed_lineage_handle},
     engine::NativeEngine,
 };
 use norn_checker::metric::compute::QuestionPlan;
@@ -54,6 +54,8 @@ enum Mode {
     Historical,
     MissingCutoff,
     WrongCutoff,
+    /// WEEK keeps only SYN-MELT-15-1: its other members move a week earlier.
+    Singleton,
 }
 struct Runtime {
     bad_row: bool,
@@ -61,7 +63,10 @@ struct Runtime {
     context: QueryContext,
     cutoff: Option<KnowledgeCutoff>,
     resolved: Arc<AtomicUsize>,
+    min_disclosed: usize,
 }
+/// The fixture cell's lineage handle key (D53).
+const HANDLE_KEY: [u8; 32] = [7; 32];
 struct Policy;
 impl Authorizer for Policy {
     fn authorize(&self, _: &AccessRequest<'_>) -> Result<(), Refusal> {
@@ -71,10 +76,15 @@ impl Authorizer for Policy {
         let actor = request.access.principal.subject_id.as_str();
         let allowed = match request.capability {
             ReadCapability::Population => {
-                ["reader", "auditor", "partial"].contains(&actor)
+                ["reader", "auditor", "partial", "mixed"].contains(&actor)
                     && !(actor == "partial" && request.access.resource.id == "SYN-MELT-15-1")
             }
-            ReadCapability::Values | ReadCapability::Sources => actor == "auditor",
+            // `mixed` sees every member's values but one.
+            ReadCapability::Values => {
+                actor == "auditor"
+                    || (actor == "mixed" && request.access.resource.id != "SYN-MELT-15-1")
+            }
+            ReadCapability::Sources => actor == "auditor",
         };
         if allowed {
             Ok(())
@@ -155,6 +165,12 @@ impl QuestionRuntime<NativeEngine> for Runtime {
             delegation: Delegation::Direct,
         })
     }
+    fn min_disclosed_bucket(&self) -> usize {
+        self.min_disclosed
+    }
+    fn handle_key(&self) -> &[u8] {
+        &HANDLE_KEY
+    }
 }
 fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
     let (mut store, mut plan, mut context) = fixture();
@@ -213,6 +229,35 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
                 watermark.complete = false;
             }
         }
+        Mode::Singleton => {
+            let moved = include_str!("../../../fixtures/demo/scrap-yield-k1.csv")
+                .lines()
+                .skip(1)
+                .map(|line| line.split(',').collect::<Vec<_>>())
+                .filter(|fields| {
+                    fields[8].starts_with("2026-10-23") && fields[3] == "gold" && fields[2] != "SYN-MELT-15-1"
+                })
+                .map(|fields| {
+                    put(
+                        fields[2],
+                        fields[4].parse().expect("input"),
+                        fields[5].parse().expect("recovered"),
+                        "2026-10-14T12:00:00Z",
+                        fields[3],
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(moved.len(), 3, "WEEK has three other members");
+            store
+                .commit(&CommitBatch {
+                    world: WORLD.into(),
+                    scope: context.scope.clone(),
+                    logical_time: CLOCK + 1000,
+                    writes: moved,
+                    ..CommitBatch::default()
+                })
+                .expect("move");
+        }
         Mode::Live => {}
     }
     let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
@@ -226,6 +271,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             context,
             cutoff,
             resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
         },
     )
 }
@@ -642,4 +688,316 @@ fn sdk_fixture(contract: &serde_json::Value, documents: Vec<SdkDocument>) -> Str
         .expect("format fixture");
     }
     typescript
+}
+
+fn amounts_on_the_wire(document: &impl serde::Serialize) -> Vec<serde_json::Value> {
+    let wire = serde_json::to_value(document).expect("wire");
+    let mut found = Vec::new();
+    let mut stack = vec![&wire];
+    while let Some(value) = stack.pop() {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(amounts) = map.get("amounts") {
+                    found.push(amounts.clone());
+                }
+                stack.extend(map.values());
+            }
+            serde_json::Value::Array(items) => stack.extend(items),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+    found
+}
+
+/// DATA-VALUES-1: per-member amounts are row values. Population alone shows
+/// who is counted and the bucket's aggregate, never a member's amounts, in the
+/// answer or the trace; Values on every member shows them, and they sum to the
+/// totals the answer already discloses.
+#[test]
+fn member_amounts_are_values_and_follow_the_values_grant() {
+    let (host, runtime) = configured(Mode::Live);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let trace = |actor, answer: &norn_cell::compute::QueryResult| {
+        get_numeric_trace(
+            &host,
+            &trace_query(&answer.lineage_ref),
+            Some(actor),
+            QUESTION,
+            &runtime,
+        )
+        .expect("trace")
+    };
+    let (reader, auditor) = (live("reader"), live("auditor"));
+    // The aggregate is the answer's grant and is the same for both.
+    for (bucket, row) in &auditor.rows {
+        assert_eq!(reader.rows[bucket].totals, row.totals, "{bucket}");
+        assert_eq!(reader.rows[bucket].value, row.value, "{bucket}");
+        assert_eq!(
+            reader.rows[bucket].members.keys().collect::<Vec<_>>(),
+            row.members.keys().collect::<Vec<_>>()
+        );
+    }
+    // Population only: members are listed and restricted, with no amounts anywhere.
+    let viewer_trace = trace("reader", &reader);
+    assert!(
+        reader
+            .rows
+            .values()
+            .flat_map(|row| row.members.values())
+            .all(|m| m.restricted && m.amounts.is_none())
+    );
+    assert!(
+        viewer_trace
+            .contributions
+            .iter()
+            .all(|c| c.restricted && c.amounts.is_none() && c.values.is_none())
+    );
+    for document in [
+        amounts_on_the_wire(&reader),
+        amounts_on_the_wire(&viewer_trace),
+    ] {
+        assert!(
+            !document.is_empty() && document.iter().all(serde_json::Value::is_null),
+            "{document:?}"
+        );
+    }
+    // Values on every member: amounts are present and sum to the disclosed totals.
+    let audited_trace = trace("auditor", &auditor);
+    assert!(
+        auditor
+            .rows
+            .values()
+            .flat_map(|row| row.members.values())
+            .all(|m| !m.restricted && m.amounts.is_some())
+    );
+    assert!(
+        audited_trace
+            .contributions
+            .iter()
+            .all(|c| !c.restricted && c.amounts.is_some())
+    );
+    // The trace's amounts are the answer's member amounts, member by member.
+    for contribution in &audited_trace.contributions {
+        assert_eq!(
+            contribution.amounts,
+            auditor.rows[WEEK].members[&contribution.fact.key].amounts
+        );
+    }
+    for contribution in &viewer_trace.contributions {
+        assert_eq!(
+            contribution.amounts,
+            reader.rows[WEEK].members[&contribution.fact.key].amounts
+        );
+    }
+}
+
+/// One restricted member withholds every amount in its bucket, so it does not
+/// follow from the totals minus the others; buckets without one keep theirs.
+#[test]
+fn one_restricted_member_withholds_its_whole_bucket() {
+    let (host, runtime) = configured(Mode::Live);
+    let QuestionAnswer::Live(mixed) =
+        get_answer(&host, &scope(), Some("mixed"), QUESTION, &runtime).expect("answer")
+    else {
+        panic!("live")
+    };
+    let (hidden, open): (Vec<_>, Vec<_>) = mixed
+        .rows
+        .values()
+        .partition(|row| row.members.contains_key("SYN-MELT-15-1"));
+    assert_eq!(hidden.len(), 1);
+    let bucket = hidden[0];
+    assert!(bucket.members.values().all(|m| m.amounts.is_none()));
+    assert!(
+        bucket
+            .members
+            .iter()
+            .all(|(id, m)| m.restricted == (id == "SYN-MELT-15-1"))
+    );
+    assert!(
+        open.iter()
+            .flat_map(|row| row.members.values())
+            .all(|m| !m.restricted && m.amounts.is_some())
+    );
+    let trace = get_numeric_trace(
+        &host,
+        &trace_query(&mixed.lineage_ref),
+        Some("mixed"),
+        QUESTION,
+        &runtime,
+    )
+    .expect("trace");
+    assert!(trace.contributions.iter().all(|c| c.amounts.is_none()));
+    assert_eq!(
+        trace.contributions.iter().filter(|c| c.restricted).count(),
+        1
+    );
+    // In the trace's embedded answer too, only the hidden member's bucket is withheld.
+    assert!(
+        trace.result.rows[WEEK]
+            .members
+            .values()
+            .all(|m| m.amounts.is_none())
+    );
+    assert!(
+        trace
+            .result
+            .rows
+            .iter()
+            .filter(|(key, _)| key.as_str() != WEEK)
+            .all(|(_, row)| row.members.values().all(|m| m.amounts.is_some()))
+    );
+}
+
+fn value_tokens(document: &impl serde::Serialize) -> String {
+    serde_json::to_string(document).expect("wire")
+}
+
+/// Whether `token` appears in `wire` as a whole JSON value.
+fn carries(wire: &str, token: &str) -> bool {
+    [":", "[", ","].iter().any(|before| {
+        ["," , "]", "}"].iter().any(|after| wire.contains(&format!("{before}{token}{after}")))
+    })
+}
+
+/// D53 (1): in a bucket where the reader lacks Values on any member, no
+/// value-bearing field of any member reaches the wire, in the answer or the
+/// trace. A member's property cannot be reconstructed from the totals minus
+/// the others, because no other member's property is there.
+#[test]
+fn a_mixed_bucket_discloses_no_member_value_from_which_the_hidden_one_follows() {
+    let (host, runtime) = configured(Mode::Live);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let (mixed, auditor) = (live("mixed"), live("auditor"));
+    let trace = get_numeric_trace(
+        &host,
+        &trace_query(&mixed.lineage_ref),
+        Some("mixed"),
+        QUESTION,
+        &runtime,
+    )
+    .expect("trace");
+    assert_eq!(trace.contributions.len(), 4);
+    assert!(trace.contributions.iter().all(|c| c.amounts.is_none()
+        && c.values.is_none()
+        && c.fact_digest.is_none()));
+    assert_eq!(trace.contributions.iter().filter(|c| c.restricted).count(), 1);
+    // Not one member property of the bucket, visible or hidden, appears anywhere.
+    let audited = get_numeric_trace(
+        &host,
+        &trace_query(&auditor.lineage_ref),
+        Some("auditor"),
+        QUESTION,
+        &runtime,
+    )
+    .expect("auditor trace");
+    let wire = format!("{}{}", value_tokens(&mixed.rows[WEEK]), value_tokens(&trace));
+    for contribution in &audited.contributions {
+        for (property, value) in contribution.values.as_ref().expect("auditor values") {
+            let token = serde_json::to_string(value).expect("token");
+            assert!(!carries(&wire, &token), "{}.{property} = {token} on the wire", contribution.fact.key);
+        }
+        let digest = contribution.fact_digest.as_deref().expect("auditor digest");
+        assert!(!wire.contains(digest), "{} digest on the wire", contribution.fact.key);
+    }
+    // The aggregate stays: four members meet the default minimum of three.
+    assert!(!mixed.rows[WEEK].suppressed);
+    assert_eq!(mixed.rows[WEEK].totals, auditor.rows[WEEK].totals);
+}
+
+/// D53 (2): to a reader lacking Values on any of its members, a bucket with
+/// fewer members than the declared minimum discloses no aggregate: `value`
+/// null, no totals, `suppressed`. A reader with every Values grant sees it, and
+/// buckets at or above the minimum keep their aggregate.
+#[test]
+fn a_bucket_below_the_minimum_is_suppressed_for_a_reader_missing_values() {
+    let (host, runtime) = configured(Mode::Singleton);
+    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+        .expect("answer")
+    {
+        QuestionAnswer::Live(answer) => answer,
+        QuestionAnswer::Historical(_) => panic!("live"),
+    };
+    let auditor = live("auditor");
+    assert_eq!(auditor.rows[WEEK].members.len(), 1);
+    assert!(!auditor.rows[WEEK].suppressed && auditor.rows[WEEK].value.is_some());
+    for actor in ["mixed", "reader"] {
+        let answer = live(actor);
+        let row = &answer.rows[WEEK];
+        assert!(row.suppressed, "{actor}");
+        assert!(row.value.is_none() && row.totals.is_empty(), "{actor}");
+        assert!(row.members.values().all(|m| m.amounts.is_none()), "{actor}");
+        let wire = serde_json::to_value(row).expect("wire");
+        assert_eq!(wire["value"], serde_json::Value::Null);
+        assert_eq!(wire["suppressed"], serde_json::Value::Bool(true));
+        // The week the moved members joined has seven: its aggregate stays.
+        for (bucket, other) in answer.rows.iter().filter(|(key, _)| key.as_str() != WEEK) {
+            assert!(!other.suppressed && !other.totals.is_empty(), "{actor} {bucket}");
+        }
+        let trace = get_numeric_trace(&host, &trace_query(&answer.lineage_ref), Some(actor), QUESTION, &runtime)
+            .expect("trace");
+        assert!(trace.result.rows[WEEK].suppressed && trace.result.rows[WEEK].value.is_none());
+        assert!(trace.contributions.iter().all(|c| c.amounts.is_none() && c.values.is_none()));
+    }
+}
+
+/// D53 (3): the public `lineageRef` is a keyed handle, never the content hash
+/// of the rows. Recomputing the hash from restored (unredacted) rows does not
+/// produce it, the internal pin does not open a trace, and only this cell's
+/// key maps the handle back.
+#[test]
+fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
+    let (host, runtime) = configured(Mode::Live);
+    let QuestionAnswer::Live(answer) =
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("answer")
+    else {
+        panic!("live")
+    };
+    let cell = host.cell().expect("cell");
+    let snapshot = runtime.snapshot(cell.store(), &runtime.plan, "reader").expect("snapshot");
+    let internal = cell
+        .store()
+        .evaluate_question(&runtime.plan, snapshot.context, |_| Ok(true))
+        .expect("unredacted")
+        .lineage_ref;
+    drop(cell);
+    assert_ne!(answer.lineage_ref, internal, "the content hash is not published");
+    assert_eq!(answer.lineage_ref, keyed_lineage_handle(&HANDLE_KEY, &internal));
+    assert_ne!(answer.lineage_ref, keyed_lineage_handle(&[8; 32], &internal));
+    assert_eq!(answer.lineage_ref.len(), 64);
+    // The internal pin (what a guesser would compute) does not open a trace.
+    assert!(get_numeric_trace(&host, &trace_query(&internal), Some("reader"), QUESTION, &runtime).is_err());
+    let trace = get_numeric_trace(&host, &trace_query(&answer.lineage_ref), Some("reader"), QUESTION, &runtime)
+        .expect("the handle opens its trace");
+    assert_eq!(trace.result.lineage_ref, answer.lineage_ref);
+}
+
+/// A host whose handle key is shorter than 32 bytes refuses answers and traces.
+#[test]
+fn a_short_handle_key_refuses() {
+    struct Short(Runtime);
+    impl QuestionRuntime<NativeEngine> for Short {
+        fn plan(&self, q: &str) -> Result<QuestionPlan, Refusal> { self.0.plan(q) }
+        fn snapshot(&self, s: &CellStore, p: &QuestionPlan, a: &str) -> Result<QuestionSnapshot, Refusal> { self.0.snapshot(s, p, a) }
+        fn access(&self, s: &CellScope, a: &str, q: &str, c: ReadCapability, r: Option<&ObjectRecord>) -> Result<PdpRequest, Refusal> { self.0.access(s, a, q, c, r) }
+        fn min_disclosed_bucket(&self) -> usize { 3 }
+        fn handle_key(&self) -> &[u8] { &HANDLE_KEY[..31] }
+    }
+    let (host, runtime) = configured(Mode::Live);
+    let short = Short(runtime);
+    assert_eq!(get_answer(&host, &scope(), Some("auditor"), QUESTION, &short).expect_err("short key").status, 500);
+    assert_eq!(get_numeric_trace(&host, &trace_query(&"0".repeat(64)), Some("auditor"), QUESTION, &short).expect_err("short key").status, 500);
 }
