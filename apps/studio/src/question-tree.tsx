@@ -32,7 +32,7 @@ export interface CheckedQuestion { readonly verdict: QuestionVerdict; readonly r
 /** A sign-off: the person read exactly these words (by their hash) and said "This is what I asked for". */
 export interface SignOff { readonly sha256: string; readonly atMs: number; readonly signer?: string }
 
-async function readRecommendations(): Promise<Recommendations> {
+export async function readRecommendations(): Promise<Recommendations> {
   const response = await fetch("/api/questions/recommendations", { headers: { accept: "application/json" } })
   if (!response.ok) throw new Error(response.status === 401 ? "Sign in to build questions." : "The question tree is not available on this deployment.")
   return await response.json() as Recommendations
@@ -92,11 +92,17 @@ const savedQuestion = z.object({
   filter: z.array(z.object({ path: z.object({ property: z.string() }).strict(), operator: z.string(), value: z.union([z.string(), z.number()]) }).strict()),
   window: z.object({ start: z.string(), end: z.string() }).strict(), calendar: z.string(), freshness: z.unknown(),
 }).strict()
-const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
+export const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
 const definitions = questionDefinitions()
 
-export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
-  const editor = useEditor<Draft>({ initial: recommendedDraft(tree) })
+export function QuestionTree({ tree, catalog, guard, onUse, initial }: {
+  readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode
+  /** Building a question for somewhere else (a dashboard tile): once signed off, it is handed over instead of saved. */
+  readonly onUse?: (question: ReturnType<typeof buildQuestion>, title: string) => void
+  /** Open on this draft's picks (a tile's current question) instead of the recommended ones; onUse then updates in place. */
+  readonly initial?: Draft
+}) {
+  const editor = useEditor<Draft>({ initial: initial ?? recommendedDraft(tree) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
   const [checked, setChecked] = useState<CheckedQuestion>()
@@ -112,7 +118,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [pageCursor, setPageCursor] = useState<string>()
   const scope = useStudioScope()
   const cellAvailable = scope.isSuccess && scope.data !== null
-  const list = useQuery({ queryKey: ["saved-questions", scope.data?.orgId, scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable, retry: false })
+  const list = useQuery({ queryKey: ["saved-questions", scope.data?.orgId, scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable && onUse === undefined, retry: false })
   const revision = useRef(editor.revision)
   revision.current = editor.revision
   const question = buildQuestion(draft, catalog)
@@ -295,6 +301,15 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
           </div>
         </Panel>
       )}
+      {onUse ? (
+        <div className="space-y-2" data-testid="question-use-controls">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grid gap-1.5 text-sm">Tile title<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
+            <Button type="button" disabled={!signed || !draft.title.trim()} aria-describedby={!signed ? "question-use-reason" : undefined} onClick={() => onUse(question, draft.title.trim())}>{initial ? "Update tile" : "Add to dashboard"}</Button>
+          </div>
+          {!signed && <p id="question-use-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
+        </div>
+      ) : (
       <div className="space-y-2" data-testid="question-save-controls">
         <div className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
@@ -307,15 +322,16 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
         {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
         {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
       </div>
+      )}
       {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
-      <Panel icon={ChartLine} label="Saved questions">
+      {!onUse && <Panel icon={ChartLine} label="Saved questions">
         {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
         {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
         {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span><span>{questionTitle(item.title, item.id)} · version {item.version}</span><span className="block text-meta text-muted-foreground">{item.id}</span></span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
         {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
         {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
-      </Panel>
+      </Panel>}
     </div>
   )
 }
