@@ -129,6 +129,9 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect(masked(existing.text, "gi@example.com")).toBe(masked(fresh.text, "ha@example.com"))
   expect(masked(fresh.text, "ha@example.com")).toBe('{"token":null,"user":{"id":"ID","email":"EMAIL","name":"Gi","emailVerified":false}}')
   expect([existing.status, fresh.status, existing.cookies, fresh.cookies]).toEqual([200, 200, [], []])
+  // The registered path's matching writes leave nothing behind.
+  const db = env.AUTH_DB as unknown as Database
+  expect(db.query("select count(*) as n from verification where identifier like 'signup-pad:%'").get()).toEqual({ n: 0 })
   // The registered account keeps its original password, and the new one can sign in.
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "another horse battery" })).status).toBe(401)
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
