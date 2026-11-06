@@ -102,9 +102,9 @@ export function bundleRoute(sources: readonly Point[], target: Point, labelWidth
   // The drop into the target is drawn last, so the arrowhead lands on the target.
   const drop = rounded([{ x: into, y }, { x: into, y: target.y }, target], lane.radius)
   const nearest = [...joins].sort((a, b) => Math.abs(a.x - into) - Math.abs(b.x - into))[0]!
-  const side = nearest.x >= into ? 1 : -1
+  const toward = nearest.x >= into ? 1 : -1
   const room = Math.abs(nearest.x - into)
-  const x = room >= labelWidth + 16 ? (into + nearest.x) / 2 : nearest.x + side * (labelWidth / 2 + 10)
+  const x = room >= labelWidth + 16 ? (into + nearest.x) / 2 : nearest.x + toward * (labelWidth / 2 + 10)
   const lines = [...sources.map((source, index) => [source, { x: joins[index]!.x, y: source.y }, joins[index]!]), [{ x: Math.min(...xs), y }, { x: Math.max(...xs), y }], [{ x: into, y }, { x: into, y: target.y }, target]]
   return { path: [...branches, rail, drop].join(" "), ticks: joins, label: { x, y }, y, lines }
 }
