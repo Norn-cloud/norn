@@ -472,7 +472,10 @@ class ReceiptTest(unittest.TestCase):
         self.claims = {hidden["id"]: hidden}
         with self.assertRaisesRegex(receipts.Refused, "harness and predicate evidence only"):
             receipts.run(self.root, hidden, self.head, self.out, self.tmp / "tools")
-        self.rejected(hidden["id"], "candidate-reported")
+        # With no receipt the verifier reports no Kani result for it, and still rejects it.
+        self.assertEqual(receipts.kind_of(hidden), "kani")
+        errors, verdicts = receipts.verify(self.root, self.out, self.expected, self.fstar)
+        self.assertEqual((errors, verdicts), ([f"{hidden['id']}: no receipt from the base-owned wrapper"], []))
 
     def test_receipt_kind_must_be_the_wrapper_the_claim_needs(self) -> None:
         self.produce()
