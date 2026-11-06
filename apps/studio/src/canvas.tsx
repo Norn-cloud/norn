@@ -15,11 +15,14 @@ import * as g from "./lib/canvas/graph.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
-import { recordedTransport, type Envelope } from "./lib/transport.ts"
+import type { Envelope } from "./lib/transport.ts"
 
 export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
+
+/** The recorded definitions, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
+const recordedDefinitions = async () => (await import("./lib/transport.ts")).recordedTransport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   const failing = data.issues.length > 0
@@ -149,7 +152,7 @@ export interface DefinitionsRead {
 }
 
 export function CanvasPage() {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedTransport.definitions })
+  const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedDefinitions })
   const data = useMemo(() => definitions.data?.map(({ document }) => document), [definitions.data])
   return <CanvasPageView definitions={{ isPending: definitions.isPending, error: definitions.error, data }} />
 }
