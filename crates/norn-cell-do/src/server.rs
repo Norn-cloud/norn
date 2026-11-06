@@ -98,16 +98,7 @@ pub fn handle_with<E: SqlEngine>(
             "the host serves only its declared read routes",
         ))
     } else if ad_hoc {
-        if method == "POST" {
-            ad_hoc_question(host, questions, actor, path, query, body)
-        } else {
-            Err(Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "ad-hoc questions are submitted with POST",
-            ))
-        }
+        ad_hoc_question(host, questions, actor, method, path, query, body)
     } else if method != "GET" {
         Err(Refusal::new(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -131,7 +122,7 @@ pub fn handle_with<E: SqlEngine>(
                         &scope,
                         actor,
                         name,
-                        runtime as &dyn QuestionRuntime<E>,
+                        named(runtime),
                     )
                 })
                 .and_then(|document| document_json(&document)),
@@ -149,7 +140,7 @@ pub fn handle_with<E: SqlEngine>(
                             &query,
                             actor,
                             name,
-                            runtime as &dyn QuestionRuntime<E>,
+                            named(runtime),
                         )
                     })
                     .and_then(|document| document_json(&document))
@@ -175,15 +166,24 @@ pub fn handle_with<E: SqlEngine>(
 }
 
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
-/// string and carrying the QuestionIR in a JSON body.
+/// string and carrying the `QuestionIR` in a JSON body.
 fn ad_hoc_question<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,
     actor: Option<&str>,
+    method: &str,
     path: &str,
     query: &str,
     body: &str,
 ) -> Result<String, Refusal> {
+    if method != "POST" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "ad-hoc questions are submitted with POST",
+        ));
+    }
     let fields = parse(query, &["orgId", "environmentId"])?;
     let scope = ScopeQuery {
         org_id: fields.get("orgId").cloned(),
@@ -205,6 +205,11 @@ fn ad_hoc_question<E: SqlEngine>(
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
         document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
+}
+
+/// The named-question view of the cell's question runtime.
+fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
+    runtime
 }
 
 fn document_json(document: &impl serde::Serialize) -> Result<String, Refusal> {
