@@ -243,13 +243,25 @@ so they are never premises.
 
 Admission requires an untimed `always` law, a resolved target, a map over exactly
 the target's stored properties, and compiling expressions. The challenge adds one
-`translation_preserves` goal per law, Unknown until a backend lowers it.
+`translation_preserves` goal per law. `ApprovedContract::translation` lowers each
+goal from the reconstructed challenge to two `QF_UFLIA` SMT-LIB queries: a
+counterexample query and a non-vacuity query over `Valid_S and Admit`.
+
+The first fragment is linear arithmetic over fixed decimals sharing one scale and
+unit, as integer coefficients, plus text as an uninterpreted identity that can
+only be copied whole and compared for equality. Predicates are conjunctions of
+comparisons. Enums, nullable values, mixed scales, rounding, unit conversion,
+multiplication, property constraints, computed properties, target links, target
+lifecycles and interface invariants stay Unknown with a reason.
 
 Status is `proved_under_assumptions` only with `unsat` plus a non-vacuity
 witness. It is `refuted` with a counterexample model, `bounded` for a finite
 profile, and otherwise `unsupported`, which stays Unknown. A proof carries its
 modelling assumptions: values are exact and unbounded, and text has no structure.
-The law isn't enforced at commit: the kernel refuses it as unsupported.
+Lowering runs no solver. The law isn't enforced at commit: the kernel refuses it
+as unsupported.
+
+Named scenarios: `generated_translation_smt_*`.
 
 ### Declared-only normative resolution (D1, #767)
 
