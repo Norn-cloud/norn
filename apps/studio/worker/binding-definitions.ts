@@ -16,6 +16,9 @@ import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
 
 export const BINDING_KIND = "binding"
 
+/** The cell environment Studio's definitions use unless the stage names another (STUDIO's own calls use it too). */
+export const DEFAULT_ENVIRONMENT = "analytics"
+
 /** The definition payload DEFS admits for a binding. */
 export interface BindingPayload {
   readonly connector: ConnectorRef
@@ -71,7 +74,13 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor) {}
+  /** `environmentId` names the cell environment the definitions live in (DEFS's routes take it with orgId). */
+  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string = DEFAULT_ENVIRONMENT) {}
+
+  /** DEFS's scope query: the actor's server-resolved organization and the environment. */
+  private scoped(path: string): string {
+    return `${path}?${new URLSearchParams({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+  }
 
   private async post(path: string, body: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
     const { host } = this
@@ -79,7 +88,7 @@ export class BindingDefinitions {
     const headers = new Headers({ authorization: `Bearer ${await hostToken(this.auth, this.actor)}`, "content-type": "application/json", accept: "application/json" })
     let response: Response
     try {
-      response = await host.fetch(new Request(`https://norn-host${path}`, { method: "POST", headers, body: JSON.stringify(body) }))
+      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method: "POST", headers, body: JSON.stringify(body) }))
     } catch {
       throw new CellUnavailable("The cell could not be reached; the binding was not saved.")
     }

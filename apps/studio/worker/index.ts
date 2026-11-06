@@ -18,6 +18,8 @@ export interface Env {
   readonly TOOL_GATEWAY_URL?: string
   readonly TOOL_GATEWAY_CLIENT_ID?: string
   readonly TOOL_GATEWAY_CLIENT_SECRET?: string
+  /** The cell environment Studio's binding definitions go to; `analytics` when unset. */
+  readonly NORN_ENVIRONMENT_ID?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
