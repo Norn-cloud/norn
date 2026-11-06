@@ -1,0 +1,101 @@
+import type { Page, Route } from "@playwright/test"
+import { ACTIONS } from "./action-fixtures.ts"
+import type { ObjectCell } from "./object-cell.ts"
+
+/**
+ * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
+ * implements the proposed contract (apps/studio/src/lib/actions.ts) over the object stand-in's
+ * canon.Holding population: closed-schema validation with every violation pointed at, rule
+ * refusals without a pointer, idempotent replay, and commits that move the read snapshot.
+ */
+
+interface Problem { code: string; message: string; pointer: string | null }
+type Schema = { type?: unknown; properties?: Record<string, Schema>; required?: readonly string[]; enum?: readonly string[]; title?: string; additionalProperties?: boolean }
+
+function check(schema: Schema, value: unknown, at: string, problems: Problem[]) {
+  const types = Array.isArray(schema.type) ? schema.type.map(String) : [String(schema.type)]
+  if (value === null) { if (!types.includes("null")) problems.push({ code: "action.input_invalid", message: "A value is required.", pointer: at }); return }
+  const type = types.find((t) => t !== "null")
+  const name = schema.title ?? at.split("/").pop() ?? "value"
+  if (type === "object") {
+    if (typeof value !== "object" || Array.isArray(value)) return void problems.push({ code: "action.input_invalid", message: `${name} must be a record.`, pointer: at })
+    const record = value as Record<string, unknown>
+    for (const key of schema.required ?? []) if (!(key in record)) problems.push({ code: "action.input_missing", message: `${schema.properties?.[key]?.title ?? key} is required.`, pointer: `${at}/${key}` })
+    for (const [key, member] of Object.entries(record)) {
+      const child = schema.properties?.[key]
+      if (child === undefined) problems.push({ code: "action.input_unknown", message: `${key} is not an input of this action.`, pointer: `${at}/${key}` })
+      else check(child, member, `${at}/${key}`, problems)
+    }
+    return
+  }
+  if (type === "number" && typeof value !== "number") return void problems.push({ code: "action.input_invalid", message: `${name} must be an exact number, like 12.500.`, pointer: at })
+  if (type === "string") {
+    if (typeof value !== "string") return void problems.push({ code: "action.input_invalid", message: `${name} must be text.`, pointer: at })
+    if (value.trim() === "") return void problems.push({ code: "action.input_invalid", message: `${name} can't be empty.`, pointer: at })
+    if (schema.enum && !schema.enum.includes(value)) problems.push({ code: "action.input_invalid", message: `${value} is not one of ${schema.enum.join(", ")}.`, pointer: at })
+  }
+}
+
+/** The exact number token the caller sent for a member, as written (JSON.parse would round it). */
+const rawNumber = (body: string, member: string) => body.match(new RegExp(`"${member}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`))?.[1]
+
+export interface ActionCell {
+  /** Every call body the form sent, for assertions on what it asked. */
+  readonly calls: { readonly actionId: string; readonly body: string }[]
+  /** The next call fails as an outage (500, no refusal document). */
+  failNext(): void
+}
+
+export async function actionCell(page: Page, objects: ObjectCell): Promise<ActionCell> {
+  const calls: { actionId: string; body: string }[] = []
+  const keys = new Map<string, { actionId: string; input: string; receipt: unknown }>()
+  let seq = 100
+  let fail = false
+  await page.route("**/api/host/v1/actions**", async (route: Route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } })
+    if (request.method() === "GET") {
+      const kind = url.searchParams.get("objectKind")
+      return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+    }
+    const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
+    const body = request.postData() ?? ""
+    calls.push({ actionId, body })
+    if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
+    const action = ACTIONS.find((a) => a.actionId === actionId)
+    if (action === undefined) return route.fulfill({ status: 404, json: { code: "action.unknown", message: "No such action.", diagnostics: [] } })
+    const { input, idempotencyKey } = JSON.parse(body) as { input: Record<string, unknown>; idempotencyKey: string }
+    const inputText = JSON.stringify(input)
+    const known = keys.get(idempotencyKey)
+    if (known) {
+      if (known.actionId !== actionId || known.input !== inputText) return route.fulfill({ status: 409, json: { code: "action.idempotency_conflict", message: "That key was already used for a different call.", diagnostics: [{ code: "action.idempotency_conflict", message: "Key reused.", pointer: "/idempotencyKey" }] } })
+      return route.fulfill({ json: { ...(known.receipt as object), outcome: "replayed" } })
+    }
+    const problems: Problem[] = []
+    check(action.inputSchema as unknown as Schema, input, "/input", problems)
+    if (problems.length > 0) return route.fulfill({ status: 422, json: { code: "action.input_invalid", category: "input", message: "The cell refused this input.", diagnostics: problems } })
+    const id = String(input["id"])
+    const index = objects.rows.findIndex((row) => row.id === id)
+    const existing = objects.rows[index]
+    if (action.effect === "fire_transition") {
+      if (existing === undefined || existing.withheld) return route.fulfill({ status: 404, json: { code: "action.target_not_found", category: "not_found", message: "There is no such holding you can see.", diagnostics: [{ code: "action.target_not_found", message: "No such holding.", pointer: "/input/id" }] } })
+      if (existing.values["retired"] === "true") return route.fulfill({ status: 422, json: { code: "action.precondition_failed", category: "rule", message: "This holding is retired; it can't change any more.", diagnostics: [{ code: "action.precondition_failed", message: "The holding is retired.", pointer: null }] } })
+    }
+    const version = (existing?.version ?? 1) + (existing ? 1 : 0)
+    const values = { ...(existing?.values ?? {}) }
+    if (actionId === "canon.holding.open") {
+      Object.assign(values, { resource_code: String(input["resource_code"]), quantity: rawNumber(body, "quantity") ?? String(input["quantity"]), unit: "g", currency: "USD", valuation_method: String(input["valuation_method"]), location: String((input["location"] as { site: string }).site), quantity_basis: "on_hand", stock_cost: "0.000000", cost_currency: "USD" })
+    } else if (actionId === "canon.holding.adjust") values["quantity"] = rawNumber(body, "quantity") ?? String(input["quantity"])
+    else if (actionId === "canon.holding.retire") values["retired"] = "true"
+    const row = { id, withheld: false, withheldProperties: [], values, version }
+    if (existing) objects.rows[index] = row
+    else objects.rows.push(row)
+    objects.commit()
+    seq += 1
+    const receipt = { outcome: "committed", objectType: "canon.Holding", objectId: id, version, receipt: { receiptHash: seq.toString(16).padStart(64, "c"), commitSeq: seq, recordedAtMs: 1_762_430_400_000 + seq } }
+    keys.set(idempotencyKey, { actionId, input: inputText, receipt })
+    return route.fulfill({ json: receipt })
+  })
+  return { calls, failNext: () => { fail = true } }
+}

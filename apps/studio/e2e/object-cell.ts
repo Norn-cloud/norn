@@ -6,7 +6,7 @@ import type { Page, Route } from "@playwright/test"
  * It exists so the grid's rows run before the cell deploys the route; it is not a client policy.
  */
 
-export interface Holding { readonly id: string; readonly withheld: boolean; readonly withheldProperties: readonly string[]; readonly values: Readonly<Record<string, string>> }
+export interface Holding { readonly id: string; readonly withheld: boolean; readonly withheldProperties: readonly string[]; readonly values: Readonly<Record<string, string>>; readonly version?: number }
 
 const METHODS = ["fifo", "moving_average"] as const
 const BASES = ["on_hand", "available"] as const
@@ -121,10 +121,13 @@ export interface ObjectCell {
   commit(): void
   /** The next read fails as a cell outage (500, no refusal document). */
   failNext(): void
+  /** The population, which the action stand-in writes to. */
+  readonly rows: Holding[]
 }
 
 /** Serve `rows` as canon.Holding on the Studio Worker's host route, as CELL-DO will. */
-export async function objectCell(page: Page, rows: readonly Holding[]): Promise<ObjectCell> {
+export async function objectCell(page: Page, initial: readonly Holding[]): Promise<ObjectCell> {
+  const rows = [...initial]
   const requests: URL[] = []
   let snapshot = 1
   let fail = false
@@ -159,11 +162,11 @@ export async function objectCell(page: Page, rows: readonly Holding[]): Promise<
     const slice = ordered.slice(offset, offset + limit)
     const next = offset + limit < ordered.length ? btoa(JSON.stringify({ offset: offset + limit, shape, snapshot })) : null
     // Exact decimals go out as JSON number tokens, as the cell writes them.
-    const records = slice.map((row) => `{"objectType":"canon.Holding","id":${JSON.stringify(row.id)},"scope":"org_demo/analytics","version":1,"withheld":${row.withheld},"withheldProperties":${JSON.stringify(row.withheld ? [] : row.withheldProperties)},"values":${row.withheld ? "null" : `{${Object.entries(row.values).filter(([k]) => !row.withheldProperties.includes(k)).map(([k, v]) => `${JSON.stringify(k)}:${KINDS[k] === "decimal" ? v : JSON.stringify(v)}`).join(",")}}`}}`)
+    const records = slice.map((row) => `{"objectType":"canon.Holding","id":${JSON.stringify(row.id)},"scope":"org_demo/analytics","version":${row.version ?? 1},"withheld":${row.withheld},"withheldProperties":${JSON.stringify(row.withheld ? [] : row.withheldProperties)},"values":${row.withheld ? "null" : `{${Object.entries(row.values).filter(([k]) => !row.withheldProperties.includes(k)).map(([k, v]) => `${JSON.stringify(k)}:${KINDS[k] === "decimal" ? v : JSON.stringify(v)}`).join(",")}}`}}`)
     const body = `{"objectType":"canon.Holding","records":[${records.join(",")}],"quarantineCount":0,"scannedThrough":null,"query":${JSON.stringify({ sort, filter })},"next":${JSON.stringify(next)},"total":{"count":${ordered.length},"approximate":false}}`
     return route.fulfill({ status: 200, contentType: "application/json", body })
   })
-  return { requests, commit: () => { snapshot += 1 }, failNext: () => { fail = true } }
+  return { requests, rows, commit: () => { snapshot += 1 }, failNext: () => { fail = true } }
 }
 
 export async function session(page: Page, environmentId: string | null = "analytics") {

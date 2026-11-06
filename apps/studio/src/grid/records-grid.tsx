@@ -1,13 +1,13 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3, ExternalLink, Filter, RefreshCw, Rows3 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,6 +18,8 @@ import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
+import { ACTIONS_UNAVAILABLE, type ActionSummary } from "../lib/actions.ts"
+import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 
@@ -69,6 +71,13 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [acting, setActing] = useState<OpenAction | null>(null)
+  const catalog = useActions(name)
+  const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
+  const creates = actions.filter((a) => a.effect === "upsert_input_object")
+  // Off with the reason while the cell takes no actions; absent when it offers this reader none.
+  const actionsOff = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
+    : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
   const query: RecordsQuery = { sort, filter, limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
@@ -207,6 +216,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           </div>
           <span className="flex-1" />
           {page?.origin === "recorded" && <Badge variant="outline" className="border-node-border" title={RECORDED}>Recorded</Badge>}
+          <NewRecord title={concept.title} creates={creates} off={actionsOff} pending={catalog.isPending} onPick={(action) => setActing({ action })} />
           <span className="text-meta tabular-nums text-muted-foreground" aria-live="polite">
             {page?.total ? totalText(page.total) : page ? `${rows.length} on this page` : ""}
           </span>
@@ -280,14 +290,36 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
             onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
         </nav>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} onClose={() => setOpened(null)} />
+      <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
+        onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} />
     </Shell>
   )
 }
 
 /** One record, from the page that listed it; its links come from the object read when the cell serves it. */
-function RecordDrawer({ concept, fields, row, origin, onClose }: {
+/** "New …": the upsert actions the cell offers this reader for the type. One opens directly; several are a menu. */
+function NewRecord({ title, creates, off, pending, onPick }: {
+  readonly title: string; readonly creates: readonly ActionSummary[]; readonly off: string | undefined; readonly pending: boolean; readonly onPick: (action: ActionSummary) => void
+}) {
+  const label = `New ${title.toLowerCase()}`
+  if (off !== undefined) return <Button size="sm" className="h-8 rounded-lg" disabled title={off}><Plus /> {label}</Button>
+  if (pending || creates.length === 0) return null
+  const [only] = creates
+  if (creates.length === 1 && only) return <Button size="sm" className="h-8 rounded-lg shadow-node" onClick={() => onPick(only)}><Plus /> {label}</Button>
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild><Button size="sm" className="h-8 rounded-lg shadow-node"><Plus /> {label}<ChevronDown /></Button></DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="rounded-node border-node-border shadow-float">
+        {creates.map((action) => <DropdownMenuItem key={action.actionId} onSelect={() => onPick(action)}>{action.title}</DropdownMenuItem>)}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClose, onAction }: {
   readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly onClose: () => void
+  readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
   const object = useQuery({
@@ -324,6 +356,18 @@ function RecordDrawer({ concept, fields, row, origin, onClose }: {
                         <Link to="/sources/$concept/$" params={{ concept: type, _splat: id }} className="underline-offset-4 hover:underline">{id}</Link></li>
                     })}</ul>}
             </section>}
+            <section className="grid gap-2" aria-label="Actions">
+              <h3 className="text-sm font-medium">Actions</h3>
+              {actionsOff !== undefined
+                ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
+                : actions.length === 0
+                  ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
+                  : <div className="flex flex-wrap gap-2">{actions.map((action) => (
+                    <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
+                      <Play /> {action.effect === "upsert_input_object" ? `${action.title} (edit)` : action.title}
+                    </Button>
+                  ))}</div>}
+            </section>
             <Button asChild variant="outline" size="sm" className="justify-self-start">
               <Link to="/sources/$concept/$" params={{ concept: record.objectType, _splat: record.id }}><ExternalLink /> Open full record</Link>
             </Button>
