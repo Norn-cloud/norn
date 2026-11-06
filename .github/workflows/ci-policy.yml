@@ -27,13 +27,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
+    # Boat: merge groups, and same-repository pull requests whose author, actor and
+    # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
+    # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
@@ -89,7 +92,7 @@ jobs:
   # bundles, and full fails until the pull request targets main.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref != 'main')
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -121,7 +124,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -180,7 +183,7 @@ jobs:
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:
       - env:

@@ -441,7 +441,7 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
             "(github.event.action == 'edited' && (contains(github.event.changes.body.from, '/approve-gates') || contains(github.event.changes.body.from, '/ack-rights') || contains(github.event.changes.body.from, '/revoke-rights'))))))",
             "trusted-policy: approval and rights creation, editing and deletion must re-evaluate")
     # Complete reporter byte/execution pins are enforced by validate_rights_contract above.
-    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+    boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
         expected_runner = boat_runner if name in {"core", "plan", "test", "full"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,

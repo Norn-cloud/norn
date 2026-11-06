@@ -26,8 +26,10 @@ const GATE_FILES: [&str; 11] = [
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
 /// Boat runs merge groups, and pull requests only from this repository's own branches:
-/// a fork head never reaches a Boat VM.
-const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
+/// a fork head never reaches a Boat VM. The pull-request arm also requires Boat CI's
+/// public-repository allowlist (`boat ci public`): author, actor and re-runner must be
+/// that user, so Dependabot or another user's pull request falls back to hosted.
+const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
@@ -550,6 +552,9 @@ mod tests {
                 "github.event_name == 'pull_request' && ",
                 "github.event.pull_request.head.repo.full_name == github.repository && ",
                 " && vars.NORN_PR_RUNNER == 'boat'",
+                " && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                " && github.actor == 'Youssef-Tarek-Ali-26'",
+                " && github.triggering_actor == 'Youssef-Tarek-Ali-26'",
             ] {
                 let changed = super::BOAT_RUNNER.replace(removed, "");
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
@@ -579,6 +584,11 @@ mod tests {
                 ("|| 'ubuntu-24.04'", "|| 'boat'"),
                 ("== github.repository", "!= ''"),
                 ("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                ("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
+                (
+                    "github.actor == 'Youssef-Tarek-Ali-26'",
+                    "github.actor != 'dependabot[bot]'",
+                ),
             ] {
                 let changed = super::BOAT_RUNNER.replace(before, after);
                 assert!(!super::runner_is_admitted(path, job, Some(&changed)));
