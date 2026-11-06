@@ -3,7 +3,7 @@ use crate::entity_artifacts::{Decoded, Layer, decode_v2};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
-use norn_expr::env::FieldSource;
+use norn_expr::env::{FieldSource, RecordKind};
 use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
@@ -877,6 +877,7 @@ impl LawContext<'_> {
         let stored: Option<std::collections::BTreeSet<_>> = self
             .env
             .and_then(|env| env.record(target_type))
+            .filter(|record| record.kind == RecordKind::Object)
             .map(|record| {
                 record
                     .fields
@@ -890,7 +891,7 @@ impl LawContext<'_> {
                 codes::UNKNOWN_BINDING,
                 artifact,
                 "/payload/response",
-                "translation must assign exactly the target object type's properties",
+                "translation target must be a concrete object type, assigned exactly its properties",
             ));
         }
         for source in assignments

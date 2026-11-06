@@ -189,11 +189,24 @@ fn translation_admission_requires_a_total_map_to_a_declared_target() {
         .remove("ref");
     let mut unknown = fixture();
     unknown[2]["payload"]["response"]["targetType"] = json!("test.Absent");
+    let mut interface = fixture();
+    let mut shape = entity("test.Shape", &json!([]), "true");
+    shape["artifactId"] = json!("test.Shape.entity");
+    shape["payload"] = json!({"entityVersion":"2.0","interface":{"name":"test.Shape",
+        "properties":[text("ref"),decimal("gross")]}});
+    interface.push(shape);
+    assert_eq!(
+        check(&interface),
+        vec![],
+        "the interface itself is admitted"
+    );
+    interface[2]["payload"]["response"]["targetType"] = json!("test.Shape");
     let mut eventual = fixture();
     eventual[2]["payload"]["modality"] = json!({"kind":"eventually"});
     for (artifacts, code) in [
         (partial, "law.model.unknown_binding"),
         (unknown, "law.model.unknown_binding"),
+        (interface, "law.model.unknown_binding"),
         (eventual, "law.validation.unsupported_temporal"),
     ] {
         let diagnostics = check(&artifacts);
