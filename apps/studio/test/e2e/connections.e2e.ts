@@ -16,7 +16,7 @@ type Page = {
   on(event: "dialog", listener: (dialog: { accept(): Promise<void> }) => void): void
   request: { get(url: string): Promise<{ status(): number; json(): Promise<{ code?: string; action?: { kind: string } }> }> }
 }
-type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
+type Locator = { click(): Promise<void>; fill(value: string): Promise<void>; getByText: Page["getByText"]; first(): Locator; waitFor(o?: { timeout?: number; state?: string }): Promise<void>; count(): Promise<number>; textContent(): Promise<string | null>; getByRole: Page["getByRole"] }
 
 const env = (name: string) => {
   const value = process.env[name]
