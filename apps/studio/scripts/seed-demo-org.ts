@@ -47,6 +47,14 @@ export async function seedDemoOrg(
   catch (error) { throw new Error("Demo provisioning failed or its result is unknown; check the D1 error and ensure every account has a verified email.", { cause: error }) }
 }
 
+/** The same REST batch path used by the seed and its real-D1 regression. */
+export async function executeSeedBatch(api: (path: string, body?: unknown) => Promise<{ success: boolean; result: unknown; errors: unknown }>, databaseId: string, batch: readonly Statement[]): Promise<void> {
+  const result = await api(`/${databaseId}/query`, { batch })
+  if (!result.success || !Array.isArray(result.result) || result.result.length !== batch.length || result.result.some((row: { success?: boolean }) => row.success !== true)) {
+    throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
+  }
+}
+
 /** `email=role` pairs, each role one the organization plugin knows. */
 export function parseMembers(args: readonly string[]): { email: string; role: OrgRole }[] {
   return args.map((arg) => {
@@ -73,12 +81,7 @@ async function main(argv: readonly string[]) {
   if (!found.success) throw new Error(`could not list D1 databases: ${JSON.stringify(found.errors)}`)
   const database = (found.result as { uuid: string; name: string }[]).find((db) => db.name === name)
   if (database === undefined) throw new Error(`no D1 database ${name}`)
-  await seedDemoOrg(members, new Date(), async (batch) => {
-    const result = await api(`/${database.uuid}/query`, { batch })
-    if (!result.success || !Array.isArray(result.result) || result.result.length !== batch.length || result.result.some((row: { success?: boolean }) => row.success !== true)) {
-      throw new Error(`seed failed: ${JSON.stringify(result.errors)}`)
-    }
-  })
+  await seedDemoOrg(members, new Date(), (batch) => executeSeedBatch(api, database.uuid, batch))
   const check = await api(`/${database.uuid}/query`, { sql: `select "user"."email" as email, "member"."role" as role from "member" join "user" on "user"."id" = "member"."userId" where "organizationId" = ?`, params: [DEMO_ORG.id] })
   const stored = (check.result as { results?: unknown }[] | null)?.[0]?.results
   if (!check.success || stored === undefined) throw new Error(`could not read ${DEMO_ORG.id}'s members back: ${JSON.stringify(check.errors)}`)
