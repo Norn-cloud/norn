@@ -64,13 +64,15 @@ test("sheet: exit labels stay in the gap before the next card", async ({ page })
   }
 })
 
-// Sibling exits of one step read differently at a glance: distinct text, and none cut short at the default view.
+// Sibling exits of one step read differently at a glance: distinct text, none cut short, at the default view.
 test("sheet: sibling exit labels are distinct and drawn whole", async ({ page }) => {
   await page.goto("/sheet.html?state=automation%2Froute-selected")
   await expect(page.locator("[data-exit-label]").first()).toBeVisible()
   const labels = await page.locator("[data-exit-label]").evaluateAll((all) => all.map((one) => ({ source: one.getAttribute("data-exit-source"), text: one.textContent ?? "", cut: one.scrollWidth > one.clientWidth + 1 })))
   for (const source of new Set(labels.map(({ source }) => source))) {
     const siblings = labels.filter((label) => label.source === source)
+    // A lone exit may be cut at the 200px cap (in full on hover); siblings must be told apart, so they are drawn whole.
+    if (siblings.length < 2) continue
     expect(new Set(siblings.map(({ text }) => text)).size).toBe(siblings.length)
     for (const { text, cut } of siblings) expect(cut, `"${text}" is cut short`).toBe(false)
   }
