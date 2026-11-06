@@ -67,6 +67,10 @@ pub const EVALUATION_FORMAT: &str = "norn-checker-abi/evaluation@1";
 /// Format tag of the [`function_contract_json`] document.
 pub const FUNCTION_FORMAT: &str = "norn-checker-abi/function@1";
 
+/// Format tag of the [`restate_question_json`] and [`restate_dashboard_json`]
+/// documents.
+pub const RESTATEMENT_FORMAT: &str = "norn-checker-abi/restatement@1";
+
 /// How deeply `list<…>` and `?` may nest in an expected type.
 const MAX_TYPE_DEPTH: u32 = 16;
 
@@ -968,4 +972,50 @@ pub fn version_json() -> String {
         "exprProfile": EXPR_PROFILE,
     })
     .to_string()
+}
+
+fn metric_declarations(metrics_json: &str) -> Result<Vec<norn_ir::MetricDefinition>, AbiError> {
+    serde_json::from_str(metrics_json).map_err(|error| invalid("metrics", error.to_string()))
+}
+
+fn restatement_document(text: String) -> String {
+    let sha256 = norn_checker::metric::restate::restatement_sha256(&text);
+    json!({ "format": RESTATEMENT_FORMAT, "text": text, "sha256": sha256 }).to_string()
+}
+
+/// A question in plain words, for sign-off
+/// (`norn_checker::metric::restate::restate_question`).
+///
+/// `question_json` is a QuestionIR; `metrics_json` is the array of metric
+/// declarations it is read with. Returns `{"format", "text", "sha256"}`,
+/// `sha256` being lower-case hex SHA-256 of the text's UTF-8 bytes.
+///
+/// # Errors
+///
+/// Invalid JSON, or a question selecting an undeclared metric.
+pub fn restate_question_json(question_json: &str, metrics_json: &str) -> Result<String, AbiError> {
+    let question: norn_ir::QuestionIR = serde_json::from_str(question_json)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    let metrics = metric_declarations(metrics_json)?;
+    let text = norn_checker::metric::restate::restate_question(&question, &metrics)
+        .map_err(|error| invalid("question", error.to_string()))?;
+    Ok(restatement_document(text))
+}
+
+/// A dashboard in plain words, for sign-off
+/// (`norn_checker::metric::restate::restate_dashboard`): its title, then one
+/// numbered line per tile.
+///
+/// `payload_json` is the dashboard definition's payload; `metrics_json` as
+/// for [`restate_question_json`]. Returns `{"format", "text", "sha256"}`.
+///
+/// # Errors
+///
+/// Invalid JSON, a payload of another shape, or an undeclared metric.
+pub fn restate_dashboard_json(payload_json: &str, metrics_json: &str) -> Result<String, AbiError> {
+    let payload = parse_json("payload", payload_json)?;
+    let metrics = metric_declarations(metrics_json)?;
+    let text = norn_checker::metric::restate::restate_dashboard(&payload, &metrics)
+        .map_err(|error| invalid("payload", error.to_string()))?;
+    Ok(restatement_document(text))
 }

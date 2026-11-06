@@ -1,0 +1,264 @@
+{
+  "note": "Golden restatements (D59 sign-off). The question cases are the outputs of Studio's first generator (worker/question-tree.ts), byte for byte; the dashboard case follows the dashboard rule. restatementSha256 is lower-case hex SHA-256 of the restatement's UTF-8 bytes. A change here changes every signed hash.",
+  "metrics": "fixtures/demo/answers/scrap-yield.metrics.json",
+  "questions": [
+    {
+      "name": "the cell's weekly yield question",
+      "question": {
+        "irVersion": "0.1",
+        "name": "demo.yield_week",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          }
+        ],
+        "filter": [
+          {
+            "path": {
+              "property": "metal"
+            },
+            "operator": "eq",
+            "value": "gold"
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
+      "restatementSha256": "6130c1d5a42fd5baaf82f23405db098354a795d79b5620e54679ae62cd6cec67"
+    },
+    {
+      "name": "two measures, in total, every record",
+      "question": {
+        "irVersion": "0.1",
+        "name": "studio.inputs",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.input"
+          },
+          {
+            "metric": "demo.recovered"
+          }
+        ],
+        "groupBy": [],
+        "filter": [],
+        "window": {
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Input (sum of input) and Recovered (sum of recovered) of Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
+      "restatementSha256": "5e3d57fc5602a135c08945a495d5abe9ee1dbb5d0c7bf0ac499f468d02d8291e"
+    },
+    {
+      "name": "two conditions, a number and a negation",
+      "question": {
+        "irVersion": "0.1",
+        "name": "studio.heavy",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          }
+        ],
+        "filter": [
+          {
+            "path": {
+              "property": "input"
+            },
+            "operator": "ge",
+            "value": 50
+          },
+          {
+            "path": {
+              "property": "metal"
+            },
+            "operator": "ne",
+            "value": "silver"
+          }
+        ],
+        "window": {
+          "start": "2026-07-06T00:00:00Z",
+          "end": "2026-10-26T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where input is at least 50 and metal is not silver, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
+      "restatementSha256": "658df17166d364584ac865e4bf2543763586a45a777af84f3344b9000e382737"
+    },
+    {
+      "name": "a window across a year end",
+      "question": {
+        "irVersion": "0.1",
+        "name": "studio.year_end",
+        "objectSet": "demo.Conversion",
+        "aggregate": [
+          {
+            "metric": "demo.yield"
+          }
+        ],
+        "groupBy": [
+          {
+            "path": {
+              "property": "occurred_at"
+            },
+            "grain": "week"
+          }
+        ],
+        "filter": [
+          {
+            "path": {
+              "property": "metal"
+            },
+            "operator": "eq",
+            "value": "gold"
+          }
+        ],
+        "window": {
+          "start": "2025-12-29T00:00:00Z",
+          "end": "2026-01-05T00:00:00Z"
+        },
+        "calendar": "iso_utc",
+        "freshness": {
+          "kind": "live",
+          "maxAgeMs": 5000
+        }
+      },
+      "restatement": "Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 29 Dec 2025 to 5 Jan 2026 (5 Jan not included)",
+      "restatementSha256": "d2f73e14ea0bf221e6ace09d92329b1aff11c7f96e42353c139d0da88e94b748"
+    }
+  ],
+  "dashboards": [
+    {
+      "name": "two tiles in order",
+      "payload": {
+        "title": "Refinery weekly",
+        "tiles": [
+          {
+            "id": "t1",
+            "title": "Gold Yield, weekly",
+            "question": {
+              "irVersion": "0.1",
+              "name": "demo.yield_week",
+              "objectSet": "demo.Conversion",
+              "aggregate": [
+                {
+                  "metric": "demo.yield"
+                }
+              ],
+              "groupBy": [
+                {
+                  "path": {
+                    "property": "occurred_at"
+                  },
+                  "grain": "week"
+                }
+              ],
+              "filter": [
+                {
+                  "path": {
+                    "property": "metal"
+                  },
+                  "operator": "eq",
+                  "value": "gold"
+                }
+              ],
+              "window": {
+                "start": "2026-07-06T00:00:00Z",
+                "end": "2026-10-26T00:00:00Z"
+              },
+              "calendar": "iso_utc",
+              "freshness": {
+                "kind": "live",
+                "maxAgeMs": 5000
+              }
+            },
+            "view": {
+              "kind": "chart",
+              "chart": "line"
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "w": 2,
+              "h": 1
+            }
+          },
+          {
+            "id": "t2",
+            "title": "Input in total",
+            "question": {
+              "irVersion": "0.1",
+              "name": "studio.inputs",
+              "objectSet": "demo.Conversion",
+              "aggregate": [
+                {
+                  "metric": "demo.input"
+                },
+                {
+                  "metric": "demo.recovered"
+                }
+              ],
+              "groupBy": [],
+              "filter": [],
+              "window": {
+                "start": "2026-07-06T00:00:00Z",
+                "end": "2026-10-26T00:00:00Z"
+              },
+              "calendar": "iso_utc",
+              "freshness": {
+                "kind": "live",
+                "maxAgeMs": 5000
+              }
+            },
+            "view": {
+              "kind": "table"
+            },
+            "layout": {
+              "x": 0,
+              "y": 1,
+              "w": 1,
+              "h": 1
+            }
+          }
+        ]
+      },
+      "restatement": "Refinery weekly\n1. Gold Yield, weekly: Yield (recovered ÷ input) of Conversion records, by week of occurred at, where metal is gold, from 6 Jul to 26 Oct 2026 (26 Oct not included)\n2. Input in total: Input (sum of input) and Recovered (sum of recovered) of Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included)",
+      "restatementSha256": "ca6a3e772097c553e7405fcdd94629de7c489dd98f1b9452d6eec1d33f38ff93"
+    }
+  ]
+}
