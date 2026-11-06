@@ -112,7 +112,7 @@ function TileCard({ tile, index, count, invalid, onChange, onEdit, onMove, onDup
 }
 
 /** One dashboard: title and tiles, each an admitted question with its view. The cell admits and keeps it. */
-export function DashboardEditor({ store, catalog, stored, guard, onSaved }: {
+export function DashboardEditor({ store, catalog, stored, guard, onSaved, onReload }: {
   readonly store: DefinitionStore; readonly catalog: QuestionCatalog; readonly stored?: StoredDashboard
   readonly guard?: (dirty: boolean) => ReactNode; readonly onSaved?: (saved: { readonly id: string; readonly version: number }) => void
   /** Reopen the stored version, dropping this one (after a conflict). */
