@@ -22,9 +22,19 @@ import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, systemName, type Concept } from "./lib/catalog.ts"
 import { member } from "./lib/exact.ts"
+<<<<<<< HEAD
 import { collect, compareDecimals, exactPretty, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
 import { transport, type LinkPage, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
+||||||| 33c29eef4f
+import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
+import { transport, type LinkPage, type SourceLineage } from "./lib/transport.ts"
+import { DenseTable, RECORDED_HINT, useCatalog } from "./sources.tsx"
+=======
+import { collect, compareDecimals, factText, nextAfter, readProblem, recordName, shouldReadNext, type PageRow } from "./lib/objects.ts"
+import { transport, type LinkPage, type SourceLineage } from "./lib/transport.ts"
+import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources.tsx"
+>>>>>>> studio/elite-object
 
 /** Pages read per concept before the list is shown as incomplete. */
 const MAX_PAGES = 50
@@ -171,6 +181,15 @@ export function ObjectRecords({ concept }: { readonly concept: Concept }) {
             : records(<ObjectTable concept={concept} collected={collected.rows} />))}
     </section>
   )
+}
+
+/**
+ * `/sources/$concept/$`: a record, its id the rest of the path. The splat also
+ * matches the object type's own URL with an empty id, which is the type's page.
+ */
+export function SourcesItemPage() {
+  const { _splat: id = "" } = useParams({ strict: false })
+  return id === "" ? <ObjectTypePage /> : <ObjectPage />
 }
 
 /** Everything known about one record, tab by tab; each value opens where it came from. */
