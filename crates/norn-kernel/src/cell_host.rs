@@ -992,7 +992,7 @@ pub trait CellHost {
     ///
     /// # Errors
     /// A typed binding refusal (unknown, replayed, mismatched, not accepted,
-    /// result type), or [`ReceiptBindingError::Store`] for a host failure.
+    /// result type), or [`crate::receipt_binding::ReceiptBindingError::Store`] for a host failure.
     fn resolve_accepted_receipt(
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,

@@ -27,17 +27,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
+    # Boat: merge groups, and same-repository pull requests whose author, actor and
+    # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
+    # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
       NORN_CI_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
-        if: ${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           set -euo pipefail
           minimum=$((12 * 1024 * 1024))
@@ -119,7 +122,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -357,16 +360,24 @@ jobs:
             core.setOutput('base_sha', data.base.sha);
             core.setOutput('head_sha', data.head.sha);
             core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+            // A pull_request_target event for an older head: the newer head has its own
+            // queued pull_request_target evaluation, so this run writes nothing.
+            const superseded = context.eventName === 'pull_request_target' && event.head.sha !== data.head.sha;
+            core.setOutput('superseded', String(superseded));
+            if (superseded) core.notice(`Head ${event.head.sha} superseded by ${data.head.sha}; its own evaluation decides`);
       - name: Require durable revocation recording
+        if: steps.pr.outputs.superseded != 'true'
         env:
           RESULT: ${{ needs.rights-revocation.result }}
         run: test "$RESULT" = success || test "$RESULT" = skipped
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pr.outputs.superseded != 'true'
         with:
           repository: ${{ steps.pr.outputs.head_repository }}
           ref: ${{ steps.pr.outputs.head_sha }}
@@ -378,6 +389,7 @@ jobs:
       # Without this evidence such changes fail closed; data-only PRs
       # never need it.
       - name: Record admin approvals of the exact PR head
+        if: steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
@@ -671,9 +683,10 @@ jobs:
             fs.writeFileSync(prefix+'/maintainer-approval.json',JSON.stringify(evidence));
             fs.writeFileSync(prefix+'/rights-decision.json',JSON.stringify(evidence.publication));
       - name: Validate candidate as data with base-owned policy
+        if: steps.pr.outputs.superseded != 'true'
         run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ steps.pr.outputs.head_sha }}" --repository "${{ github.repository }}"
       - name: Report trusted policy on the exact PR head
-        if: always()
+        if: always() && steps.pr.outputs.superseded != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3
