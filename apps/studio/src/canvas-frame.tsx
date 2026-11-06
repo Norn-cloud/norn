@@ -91,6 +91,13 @@ function Frame(props: CanvasFrameProps) {
   const [notice, setNotice] = useState<{ readonly tone: "refusal" | "info"; readonly text: string } | null>(props.initialNotice
     ?? (restored.current ? { tone: "info", text: `Restored your unsaved draft from ${new Date(restored.current.at).toLocaleString()}.` } : null))
   const flow = useReactFlow()
+  // Whether the last pointer-down was on the canvas: its shortcuts apply only then.
+  const canvasActive = useRef(false)
+  useEffect(() => {
+    const track = (event: PointerEvent) => { canvasActive.current = event.target instanceof Element && event.target.closest("[data-canvas-surface]") !== null }
+    window.addEventListener("pointerdown", track, true)
+    return () => window.removeEventListener("pointerdown", track, true)
+  }, [])
   const graph = state.present
   const dirty = JSON.stringify(graph) !== JSON.stringify(initial)
 
@@ -144,7 +151,11 @@ function Frame(props: CanvasFrameProps) {
       const act = (run: () => void) => { event.preventDefault(); run() }
       if (key === "z" && !event.shiftKey) act(() => setState(g.undo))
       else if ((key === "z" && event.shiftKey) || key === "y") act(() => setState(g.redo))
+      // Copy, paste, duplicate and select-all belong to the canvas only while it is in use, and never take over
+      // copying text the reader has selected elsewhere (a finding's message in Problems).
+      else if (["c", "v", "d", "a"].includes(key) && (!canvasActive.current || (key === "c" && (window.getSelection()?.toString() ?? "") !== ""))) return
       else if (key === "d") act(() => duplicate(g.subgraph(graph, copyable(selection.nodes))))
+      else if (key === "c" && copyable(selection.nodes).length === 0) return
       else if (key === "c") act(() => { clipboard = g.subgraph(graph, copyable(selection.nodes)); setNotice({ tone: "info", text: `Copied ${clipboard.nodes.length} ${clipboard.nodes.length === 1 ? "item" : "items"}.` }) })
       else if (key === "v" && clipboard) act(() => clipboard && duplicate(clipboard))
       else if (key === "a") act(() => setSelection({ nodes: graph.nodes.map(({ id }) => id), edges: graph.edges.map(({ id }) => id) }))
@@ -180,7 +191,7 @@ function Frame(props: CanvasFrameProps) {
         </div>
         {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
         <Well>
-          <div className="relative h-[36rem] w-full">
+          <div data-canvas-surface className="relative h-[36rem] w-full">
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
             <ReactFlow
               nodes={graph.nodes.map((node) => props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)))}
