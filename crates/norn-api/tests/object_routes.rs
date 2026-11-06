@@ -593,3 +593,59 @@ fn a_write_without_a_receipt_inside_a_section_refuses_the_page() {
         );
     }
 }
+
+/// A forwarding wrapper that declares `Revisioned` but inherits the default
+/// `read_cache_revision` (`None`): the declared guarantee is missing.
+struct NoRevision(NativeEngine);
+impl norn_cell::engine::SqlEngine for NoRevision {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.0.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.0.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.0.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.0.transaction(f)
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        norn_cell::engine::ReadIsolation::Revisioned
+    }
+}
+
+/// An engine that declares revisions but returns none refuses the page: a
+/// missing revision is never read as a stable snapshot.
+#[test]
+fn a_revisioned_engine_without_a_revision_refuses_the_page() {
+    let (_native, dir) = host();
+    let engine = NoRevision(
+        NativeEngine::open(
+            &dir.path().join("cell.sqlite"),
+            norn_cell::StoreOptions::default(),
+        )
+        .unwrap(),
+    );
+    let store = CellStore::from_engine(engine, quality_model().0).unwrap();
+    let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    let refused =
+        get_object_page(&host, &scope(), Some("reader"), TYPE, None, 100, &Mapping).unwrap_err();
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (503, "object.snapshot_unavailable")
+    );
+}

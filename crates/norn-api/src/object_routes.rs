@@ -22,7 +22,10 @@ use crate::{
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
-use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
+use norn_cell::{
+    MAIN_WORLD, ObjectRecord, StoreReader,
+    engine::{ReadIsolation, SqlEngine},
+};
 
 /// Largest page a caller may ask for.
 pub const MAX_PAGE: usize = 100;
@@ -134,7 +137,8 @@ fn collection<'h, E: SqlEngine>(
 ///
 /// # Errors
 /// A denied gate (one opaque 403), an undeclared type (404), an oversized
-/// page (400), a commit while the page was read (409 `object.snapshot_moved`,
+/// page (400), an engine that cannot prove one snapshot (503
+/// `object.snapshot_unavailable`), a commit while the page was read (409 `object.snapshot_moved`,
 /// `retryable`: the client repeats the read with bounded backoff; the host
 /// never retries internally) or a host failure. Unreadable rows never refuse a page: a bound on raw rows would
 /// reveal how many exist.
@@ -163,18 +167,24 @@ pub fn get_object_page<E: SqlEngine>(
     // page started at. The version is the receipt head together with the
     // engine's database revision, which changes on every write by any
     // connection, receipt-less evidence (mapping conflicts, identity) included.
-    // An engine without a revision is the Durable Object's storage: its cell is
-    // the only connection and a page runs in one synchronous call, so nothing
-    // can write between two sections there.
+    // Only an engine that declares `ExclusiveSynchronous` (the Durable Object's,
+    // the only connection to its storage, serving each page in one synchronous
+    // call) may go without a revision; any other engine without one refuses.
     let mut snapshot = None;
     let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
         let cell = host.cell()?;
         let reader = cell.store().read();
         let version = || {
-            Ok::<_, Refusal>((
-                reader.head_commit_seq().map_err(Refusal::host)?,
-                reader.database_revision().map_err(Refusal::host)?,
-            ))
+            let revision = match reader.read_isolation() {
+                ReadIsolation::Revisioned => Some(
+                    reader
+                        .database_revision()
+                        .map_err(Refusal::host)?
+                        .ok_or_else(snapshot_unavailable)?,
+                ),
+                ReadIsolation::ExclusiveSynchronous => None,
+            };
+            Ok::<_, Refusal>((reader.head_commit_seq().map_err(Refusal::host)?, revision))
         };
         let start = match snapshot {
             Some(start) => start,
@@ -243,6 +253,15 @@ pub fn get_object_page<E: SqlEngine>(
             return Ok(page);
         }
     }
+}
+
+fn snapshot_unavailable() -> Refusal {
+    Refusal::new(
+        http::StatusCode::SERVICE_UNAVAILABLE,
+        "object.snapshot_unavailable",
+        "the cell cannot read a consistent page",
+        "this engine offers no database revision, so a page cannot prove it saw one snapshot",
+    )
 }
 
 fn snapshot_moved() -> Refusal {

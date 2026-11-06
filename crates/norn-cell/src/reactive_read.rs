@@ -789,6 +789,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.conn.read_cache_revision()
     }
 
+    /// How reads on this engine know they saw one snapshot.
+    #[must_use]
+    pub fn read_isolation(&self) -> crate::engine::ReadIsolation {
+        self.conn.read_isolation()
+    }
+
     /// Scan metadata lengths and charge bytes before fetching owned IDs/types.
     /// Both passes read the same committed cell view; only the admitted prefix
     /// is fetched. Sibling rows consume the same row/byte budget. Exhaustion
