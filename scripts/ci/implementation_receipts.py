@@ -558,30 +558,12 @@ def git_object(root: Path, path: str) -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def scope_inputs(root: Path, claims: dict[str, dict]) -> list[str]:
-    """Claim manifests and declared proof inputs, without reading Rust sources."""
-    paths = {"verification/coverage-v1/manifest"}
-    for claim in claims.values():
-        if kind_of(claim) == "kani":
-            plan = kani_plan(claim)
-            paths |= {plan["harness"], plan["source"]}
-        else:
-            plan = extraction_plan(claim, "")
-            paths |= {plan["proofRoot"], *plan["inputs"]}
-    return sorted(paths)
-
-
 def in_scope(root: Path, base: Path) -> bool:
-    """Run receipts on any Rust, Cargo, toolchain, config or proof-input change.
+    """Run receipts on every change except added or edited text docs/Markdown.
 
-    Compare committed inventories only. Rust syntax and package membership do
-    not bound the inputs: over-running is safe, under-running is not.
+    Any file can be a proof input. Deletions, renames, binary files, gitlinks
+    and mode changes therefore never qualify for the docs-only exemption.
     """
-    claims = implementation_claims(root)
-    base_claims = implementation_claims(base)
-    if claims != base_claims:
-        return True
-    inputs = scope_inputs(root, claims)
     trees = []
     for checkout in (root, base):
         entries = git(checkout, "ls-tree", "-r", "-z", "HEAD").split("\0")
@@ -589,14 +571,23 @@ def in_scope(root: Path, base: Path) -> bool:
                       for metadata, path in [entry.split("\t", 1)]})
     candidate, previous = trees
     for path in candidate.keys() | previous.keys():
-        if candidate.get(path) == previous.get(path):
+        current, old = candidate.get(path), previous.get(path)
+        if current == old:
             continue
-        parts = Path(path).parts
-        name = parts[-1]
-        if (name.endswith(".rs") or name in {"Cargo.toml", "Cargo.lock", "build.rs"}
-                or name.startswith("rust-toolchain") or ".cargo" in parts
-                or any(path == source or path.startswith(source + "/") for source in inputs)):
+        if (current is None or (old is not None and current.split()[0] != old.split()[0])
+                or current.split()[0] != "100644"
+                or not (path.startswith("docs/") or path.endswith(".md"))):
             return True
+        for checkout, entry in ((root, current), (base, old)):
+            if entry is not None:
+                content = subprocess.run(["git", "-C", str(checkout), "cat-file", "blob", entry.split()[2]],
+                                         check=True, capture_output=True).stdout
+                try:
+                    content.decode("utf-8")
+                except UnicodeDecodeError:
+                    return True
+                if b"\0" in content:
+                    return True
     return False
 
 
