@@ -1953,6 +1953,51 @@ def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -
     history.find(s=>s.context.startsWith('rights-ledger/')).context=
       history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
     await snapshot(prefix+'case');
+    // Runs created in the same second can list (newest id first) in an order that
+    // disagrees with run_number. The walk accepts any order but no missing number.
+    const swapA=nextRun++,swapB=nextRun++;
+    await record(swapA,payload(comment(14,'ordinary text',clock)));
+    await record(swapB,payload(comment(15,'ordinary text',clock)));
+    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
+    [runs[0],runs[1]]=[runs[1],runs[0]];
+    const swapped=runs.find(r=>r.id===swapA);
+    runs=runs.filter(r=>r!==swapped);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
+    runs.splice(0,0,swapped);
+    await snapshot(prefix+'inverted');
+    // A run numbered above the cursor can also list after the cursor run itself (here
+    // a revocation whose ledger has not run). Each collector starts below its own one.
+    for(const [index,kind] of ['pr','group'].entries()){
+      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
+      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
+      assert.equal(runs[0].id,straddle);
+      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
+      // Its id sorts below the cursor run's id, as in a real id-ordered listing
+      // (harness ids start at 100, so 50 and 49 are unused).
+      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
+      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
+    }
+    await snapshot(prefix+'straddle');
+    // A complete first page is no upper bound: a run numbered above every run seen so
+    // far (here a revocation whose ledger has not run) can list on a later page.
+    paging=true;shifted=true;
+    for(const [index,kind] of ['pr','group'].entries()){
+      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
+      await record(lowA,payload(comment(ids,'ordinary text',clock)));
+      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
+      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
+      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
+      runs.splice(2,0,runs.shift());
+      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
+    }
+    paging=false;
+    // A repeated run_number must not stand in for a missing one.
+    const n=Math.max(...runs.map(r=>r.run_number));
+    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
+    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
+    runs.unshift(dupes[2],dupes[1],dupes[0]);
+    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
+    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
     const complete=[...runs];
     for(const id of [revokeRun,admission,firstRun]){
       runs=complete.filter(r=>r.id!==id);

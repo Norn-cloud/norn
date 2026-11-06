@@ -97,6 +97,10 @@ pub const DEMO_GRANTS: GrantTable = GrantTable {
     ],
 };
 
+/// RUN-ROUTES-1: the declared roles that may start flow runs; a change is a
+/// new version.
+pub const RUN_STARTERS: (&str, &[&str]) = ("norn-cell-do-run-grants/1", &["admin", "owner"]);
+
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
@@ -235,10 +239,23 @@ impl ReadPolicy {
 
 impl Authorizer for ReadPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
-        let granted = matches!(request.operation, Operation::ReadDefinitions)
-            && request
+        let caller = || {
+            self.caller
+                .current()
+                .filter(|caller| Some(caller.subject_id.as_str()) == request.actor)
+        };
+        let granted = match &request.operation {
+            Operation::ReadDefinitions => request
                 .actor
-                .is_some_and(|actor| self.pdp_for(actor).is_some());
+                .is_some_and(|actor| self.pdp_for(actor).is_some()),
+            Operation::StartRun(_) => caller().is_some_and(|caller| {
+                caller
+                    .roles
+                    .iter()
+                    .any(|role| RUN_STARTERS.1.contains(&role.as_str()))
+            }),
+            Operation::CallAction(_) => false,
+        };
         if granted {
             Ok(())
         } else {

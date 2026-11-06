@@ -16,6 +16,7 @@ use norn_api::question_routes::{
 };
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
+use norn_api::run_routes::{RunsQuery, StartRunRequest, get_run, list_runs, start_run};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 
@@ -86,10 +87,17 @@ pub fn handle_with<E: SqlEngine>(
         .strip_prefix("/v1/questions/")
         .and_then(|rest| rest.split_once('/'))
         .filter(|(name, _)| !name.is_empty() && !name.contains('/'));
+    let run = path
+        .strip_prefix("/v1/runs/")
+        .filter(|id| !id.is_empty() && !id.contains('/'));
     let ad_hoc = matches!(path, "/v1/questions:evaluate" | "/v1/questions:trace");
     let known = path == "/v1/definitions"
         || ad_hoc
         || question.is_some_and(|(_, leaf)| leaf == "answer" || leaf == "trace");
+    if path == "/v1/runs" || run.is_some() {
+        // A new run answers 201 and an exact retry 200.
+        return respond(runs(host, actor, method, query, body, run));
+    }
     let result = if !known {
         Err(Refusal::new(
             StatusCode::NOT_FOUND,
@@ -141,9 +149,13 @@ pub fn handle_with<E: SqlEngine>(
             )),
         }
     };
+    respond(result.map(|body| (StatusCode::OK, body)))
+}
+
+fn respond(result: Result<(StatusCode, String), Refusal>) -> Response {
     match result {
-        Ok(body) => Response {
-            status: StatusCode::OK.as_u16(),
+        Ok((status, body)) => Response {
+            status: status.as_u16(),
             body,
         },
         Err(refused) => Response {
@@ -153,6 +165,76 @@ pub fn handle_with<E: SqlEngine>(
     }
 }
 
+/// RUN-ROUTES-1: `POST /v1/runs`, `GET /v1/runs` and `GET /v1/runs/{id}`.
+/// Every run read passes the cell's `values` read gate on the run's type.
+fn runs<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    method: &str,
+    query: &str,
+    body: &str,
+    run: Option<&str>,
+) -> Result<(StatusCode, String), Refusal> {
+    let subject = actor.unwrap_or_default();
+    let access = |capability, object_type: &str| {
+        collection_access(host.scope(), subject, capability, object_type)
+    };
+    let scope_of = |fields: &mut BTreeMap<&'static str, String>| ScopeQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+    };
+    match (method, run) {
+        ("GET", Some(id)) => {
+            let mut fields = parse(query, &["orgId", "environmentId"])?;
+            get_run(host, &scope_of(&mut fields), id, &access)
+                .and_then(|document| document_json(&document))
+                .map(|body| (StatusCode::OK, body))
+        }
+        ("GET", None) => {
+            let mut fields = parse(
+                query,
+                &["orgId", "environmentId", "flow", "state", "cursor", "limit"],
+            )?;
+            let limit = fields
+                .remove("limit")
+                .map(|limit| {
+                    limit
+                        .parse::<u32>()
+                        .map_err(|error| Refusal::invalid(format!("limit: {error}")))
+                })
+                .transpose()?;
+            let query = RunsQuery {
+                scope: scope_of(&mut fields),
+                flow: fields.remove("flow"),
+                state: fields.remove("state"),
+                cursor: fields.remove("cursor"),
+                limit,
+            };
+            list_runs(host, &query, &access)
+                .and_then(|document| document_json(&document))
+                .map(|body| (StatusCode::OK, body))
+        }
+        ("POST", None) => {
+            if body.len() > MAX_BODY_BYTES {
+                return Err(Refusal::invalid("the body exceeds the host bound"));
+            }
+            let mut fields = parse(query, &["orgId", "environmentId"])?;
+            let start: StartRunRequest = serde_json::from_str(body)
+                .map_err(|error| Refusal::invalid(format!("body: {error}")))?;
+            start_run(host, &scope_of(&mut fields), actor, &start, &access)
+                .and_then(|(status, document)| Ok((status, document_json(&document)?)))
+        }
+        _ => Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "use GET to read runs and POST /v1/runs to start one",
+        )),
+    }
+}
+
+/// Longest accepted request body, in bytes.
+pub const MAX_BODY_BYTES: usize = 4096;
 /// F2b: `POST /v1/questions:evaluate` and `:trace`, scoped by the query
 /// string and carrying the `QuestionIR` in a JSON body.
 fn ad_hoc_question<E: SqlEngine>(
