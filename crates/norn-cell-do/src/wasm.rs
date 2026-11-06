@@ -31,6 +31,20 @@ enum Principals {
     Fixtures(crate::principal::FixturePrincipals),
 }
 
+#[allow(
+    clippy::infallible_destructuring_match,
+    reason = "the fixture variant exists only in fixture builds"
+)]
+impl Principals {
+    fn resolver(&self) -> &dyn PrincipalResolver {
+        match self {
+            Self::Tokens(tokens) => tokens,
+            #[cfg(feature = "fixtures")]
+            Self::Fixtures(fixtures) => fixtures,
+        }
+    }
+}
+
 /// One opened tenant cell.
 #[wasm_bindgen]
 pub struct NornCell {
@@ -154,11 +168,7 @@ impl NornCell {
             .questions
             .as_ref()
             .map(|questions| -> &dyn QuestionRuntime<WorkersEngine> { questions });
-        let resolver: &dyn PrincipalResolver = match &self.principals {
-            Principals::Tokens(tokens) => tokens,
-            #[cfg(feature = "fixtures")]
-            Principals::Fixtures(fixtures) => fixtures,
-        };
+        let resolver = self.principals.resolver();
         let request = server::Request {
             method,
             path,

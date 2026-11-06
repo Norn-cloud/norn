@@ -106,8 +106,7 @@ impl TokenPrincipals {
     pub fn take_unknown_kid(&self) -> bool {
         self.unknown_kid
             .lock()
-            .map(|mut seen| std::mem::take(&mut *seen))
-            .unwrap_or(false)
+            .is_ok_and(|mut seen| std::mem::take(&mut *seen))
     }
 
     fn verify(&self, token: &str, now: u64) -> Option<Caller> {
