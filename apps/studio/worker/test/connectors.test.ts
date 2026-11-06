@@ -62,7 +62,7 @@ function stage(gatewayClient = false) {
     return { status: response.status, body: JSON.parse(text) as Record<string, unknown>, cookies: response.headers.getSetCookie() }
   }
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
-  const signUp = async (email: string, role = "owner", colleagueOf?: string) => {
+  const signUp = async (email: string, role = "owner", colleagueOf?: string, environment = true) => {
     const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
     const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
     await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
@@ -70,6 +70,8 @@ function stage(gatewayClient = false) {
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
     const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
+    // The organization's cell environment, as the demo organization's metadata declares it.
+    if (environment) db.query(`UPDATE organization SET metadata = ? WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND metadata IS NULL`).run('{"environmentId":"analytics"}', email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
   return { send, signUp, calls, answer: (next: (request: Request) => Response) => { answer = next } }
@@ -355,6 +357,9 @@ test("a refused or conflicting definition saves nothing; a stage without the rou
   // The cell's authority says no: a typed denial with the admin fix, never a fallback and never "unavailable".
   const denying = cellHost(() => Response.json({ format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized" }, { status: 403 }))
   expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: denying.host })).body).toMatchObject({ code: "connectors.binding_denied", action: { kind: "ask_admin" } })
+  // The cell does not serve the binding kind yet (422 kind_unknown): kept locally, like a 404.
+  const unknownKind = cellHost(() => Response.json({ code: "definition.kind_unknown", message: "no such kind: binding" }, { status: 422 }))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: unknownKind.host })).body.binding).toMatchObject({ definition: null })
   const noRoute = cellHost(() => Response.json({ code: "route.not_found" }, { status: 404 }))
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host: noRoute.host })).body.binding
   expect(local).toMatchObject({ definition: null, connectorRef: "executor:github/list_issues@dpl_1" })
@@ -416,4 +421,24 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   } finally {
     globalThis.fetch = real
   }
+})
+
+test("every definitions call carries the session's orgId and environmentId; no environment, no call", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const { host, seen } = cellHost((path, body) => Response.json({ installed: true, id: path.endsWith(":retire") ? "x" : body.id, version: seen.length, receipt: {} }))
+  const added = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner }, { host })).body.binding as { id: string }
+  await send(`/bindings/${added.id}`, { ...body("PATCH", { label: "Edited" }), cookie: owner }, { host })
+  await send(`/bindings/${added.id}`, { method: "DELETE", cookie: owner }, { host })
+  expect(seen.map((r) => r.path)).toEqual(["/v1/definitions:install", "/v1/definitions:install", `/v1/definitions/studio.binding.${added.id}:retire`])
+  for (const call of seen) {
+    const query = new URLSearchParams(call.query)
+    expect(query.get("orgId")).toMatch(/.+/)
+    expect(query.get("environmentId")).toBe("analytics")
+  }
+  // An organization that names no environment: refused before the cell is called, never defaulted.
+  const lone = await signUp("lone@example.com", "owner", undefined, false)
+  const other = cellHost(() => Response.json({}))
+  expect((await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: lone }, { host: other.host })).body).toMatchObject({ code: "connectors.no_environment", action: { kind: "ask_admin" } })
+  expect(other.seen).toEqual([])
 })

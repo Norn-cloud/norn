@@ -16,9 +16,6 @@ import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
 
 export const BINDING_KIND = "binding"
 
-/** The cell environment Studio's definitions use unless the stage names another (STUDIO's own calls use it too). */
-export const DEFAULT_ENVIRONMENT = "analytics"
-
 /** The definition payload DEFS admits for a binding. */
 export interface BindingPayload {
   readonly connector: ConnectorRef
@@ -74,8 +71,8 @@ export class CellUnavailable extends Error {}
 
 /** The cell's definition writes, as one actor, over the NORN_HOST service binding. */
 export class BindingDefinitions {
-  /** `environmentId` names the cell environment the definitions live in (DEFS's routes take it with orgId). */
-  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string = DEFAULT_ENVIRONMENT) {}
+  /** `environmentId` is the cell environment of the actor's active organization (`activeEnvironment`). */
+  constructor(private readonly host: Fetcher | undefined, private readonly auth: Auth, private readonly actor: NornActor, private readonly environmentId: string) {}
 
   /** DEFS's scope query: the actor's server-resolved organization and the environment. */
   private scoped(path: string): string {
@@ -100,6 +97,8 @@ export class BindingDefinitions {
     const { status, body } = answer
     const b = body as { installed?: unknown; id?: unknown; version?: unknown; code?: unknown } | null
     if (status === 200 && b?.installed === true && typeof b.id === "string" && typeof b.version === "number") return { kind: "installed", id: b.id, version: b.version }
+    // The cell does not serve the binding kind yet: keep the local record, like a missing route.
+    if (status === 422 && b?.code === "definition.kind_unknown") return { kind: "local" }
     if (status === 422 && b?.code === "definition.refused") {
       const findings = findingsOf(b)
       // Until DEFS takes label, inputMapping and runRole, that refusal keeps the local record, like a 404.
@@ -121,4 +120,21 @@ export class BindingDefinitions {
   async retire(id: string, expectedVersion: number): Promise<Install> {
     return BindingDefinitions.outcome(await this.post(`/v1/definitions/${encodeURIComponent(id)}:retire`, { expectedVersion }))
   }
+}
+
+/**
+ * The active Studio scope's cell environment: the `environmentId` in the active organization's
+ * metadata (`{"environmentId": "analytics"}` for the demo organization). Null when the
+ * organization names none; the caller refuses rather than guess, as the cell does.
+ */
+export async function activeEnvironment(auth: Auth, orgId: string): Promise<string | null> {
+  const { adapter } = await auth.$context
+  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
+  const raw = org?.metadata
+  let metadata: unknown = raw
+  if (typeof raw === "string") {
+    try { metadata = JSON.parse(raw) } catch { return null }
+  }
+  const environmentId = (metadata as { environmentId?: unknown } | null)?.environmentId
+  return typeof environmentId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(environmentId) ? environmentId : null
 }
