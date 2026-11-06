@@ -1,0 +1,35 @@
+namespace Norn {
+  entity Actor in [Role] = {
+    represents?: { type: String, key: String },
+    scope: Scope
+  };
+}
+
+namespace studio {
+  entity Workspace = {
+    scope: Norn::Scope
+  };
+}
+namespace Norn {
+  action "studio.read" appliesTo {
+    principal: [Actor],
+    resource: [studio::Workspace],
+    context: {
+      scope: Scope
+    }
+  };
+  action "studio.propose" appliesTo {
+    principal: [Actor],
+    resource: [studio::Workspace],
+    context: {
+      scope: Scope
+    }
+  };
+  action "studio.approve" appliesTo {
+    principal: [Actor],
+    resource: [studio::Workspace],
+    context: {
+      scope: Scope
+    }
+  };
+}

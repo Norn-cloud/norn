@@ -208,12 +208,11 @@ fn three_systems_object_reads_are_the_cells_exact_documents() {
     }
     let mut cell =
         norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
-    // Mapped records with links refuse until the processing profile admits relations (#823).
-    let processed = captured
-        .iter()
-        .filter(|id| cell.process_mapping_bundle(id).is_ok())
-        .count();
-    assert!(processed > 0, "no three-systems record became an object");
+    // Every snapshot row, including those with declared links, becomes an object (#877).
+    for id in &captured {
+        cell.process_mapping_bundle(id)
+            .unwrap_or_else(|error| panic!("{id} was refused: {error}"));
+    }
 
     let reader = cell.store().read();
     let mut index = BTreeMap::new();
