@@ -1,7 +1,7 @@
 //! Retained definitions: Studio dashboards and agents saved in the cell.
 //!
 //! These are not kernel artifacts (the IR has no kind for them). Each kind
-//! has a host validator ([`DefinitionKinds`]) whose context comes only from
+//! has a host validator ([`DefinitionKinds`](crate::definition_routes::DefinitionKinds)) whose context comes only from
 //! the host. `:admit` runs it without side effects; `:install` and `:retire`
 //! re-admit, then append one revision through the governed definitions
 //! install ([`norn_cell::SqliteCell::install_retained_definition`]), which
