@@ -108,7 +108,8 @@ test("route branches: create, edit, delete, reorder, undo/redo, validate, reopen
   await page.getByRole("button", { name: "Move b1 up" }).click()
   await expect(page.getByLabel("Branch b0")).toHaveValue("invoice.status == draft")
   // The exit is labelled with its branch's own condition, not b0/b1.
-  await expect(page.locator('[data-exit-label="settled.b1"]')).toContainText("status == draft")
+  // Sibling exits read by what differs; the full condition is on hover.
+  await expect(page.locator('[data-exit-label="settled.b1"]')).toHaveText("draft")
   await expect(page.locator('[data-exit-label="settled.b1"]')).toHaveAttribute("title", "invoice.status == draft")
   await expect(page.getByText("Checker: no findings")).toBeVisible()
   await press(page, "z")

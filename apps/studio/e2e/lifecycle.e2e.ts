@@ -153,6 +153,10 @@ test("problems panel: lists each finding and jumps to the state it is on", async
 
 test("tidy up: lays the lifecycle out from its initial state, as one step undo puts back", async ({ page }) => {
   await open(page)
+  // The person moves a state somewhere of their own; that layout is what undo must bring back.
+  const moved = await (await shown(page, "approved")).boundingBox()
+  await node(page, "approved").hover()
+  await page.mouse.down(); await page.mouse.move((moved?.x ?? 0) + 60, (moved?.y ?? 0) + 160, { steps: 8 }); await page.mouse.up()
   const before = await placed(page)
   await page.getByRole("button", { name: "Tidy up" }).click()
   await expect.poll(async () => JSON.stringify(await placed(page))).not.toBe(JSON.stringify(before))

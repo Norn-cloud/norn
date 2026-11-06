@@ -39,7 +39,7 @@ export function KindChip({ kind, className }: { readonly kind: string; readonly 
  * border and a top highlight; hover lifts it a little, selection is an accent ring, a finding a destructive one.
  * The handles are its children, so each canvas keeps its own ports.
  */
-export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selected = false, className, children, testId }: {
+export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selected = false, className, minHeight, children, testId }: {
   readonly kind: string
   /** Overrides the kind's name (a lifecycle state's flags read better than "State"). */
   readonly kindLabel?: string
@@ -48,13 +48,15 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   readonly problems?: number
   readonly selected?: boolean
   readonly className?: string
+  /** Taller than its content when its exits need the room (they sit a fixed pitch apart). */
+  readonly minHeight?: number
   readonly children?: ReactNode
   readonly testId?: string
 }) {
   // The kind line names what the card is; it is left out when the title already says it (a start called Start).
   const name = kindLabel ?? NODE_KINDS[kind]?.label ?? kind
   return (
-    <div data-testid={testId} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
+    <div data-testid={testId} style={minHeight ? { minHeight } : undefined} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
       selected && "canvas-node-selected", problems > 0 && "canvas-node-failing", className)}>
       {children}
       <div className="flex items-start gap-2.5">

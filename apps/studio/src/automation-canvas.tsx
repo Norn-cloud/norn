@@ -25,13 +25,19 @@ export const RUN_BLOCKED = "Running happens in the cell with receipts; the run r
 
 type StepNode = Node<{ kind: string; title: string; detail: string; issues: readonly Issue[]; outs: readonly { readonly id: string; readonly label: string }[] }, "step">
 
+/** Exits sit this far apart down a step's right edge, so their labels (18px tall) never touch. */
+const EXIT_PITCH = 22
+/** The height a step needs for its exits: one pitch per exit plus one, when it has several. */
+const exitsHeight = (outs: number) => outs > 1 ? (outs + 1) * EXIT_PITCH : undefined
+const outsOf = (node: g.CanvasNode) => (automationKinds[node.kind]?.(node) ?? []).filter(({ side }) => side === "out").length
+
 export function StepBox({ data, selected }: NodeProps<StepNode>) {
   return (
     <div title={data.issues.map(({ message }) => message).join("\n")}>
-      <NodeCard kind={data.kind} kindLabel={STEP_KINDS[data.kind as keyof typeof STEP_KINDS]} title={data.title} subtitle={data.detail} problems={data.issues.length} selected={selected}>
+      <NodeCard kind={data.kind} kindLabel={STEP_KINDS[data.kind as keyof typeof STEP_KINDS]} title={data.title} subtitle={data.detail} problems={data.issues.length} selected={selected} minHeight={exitsHeight(data.outs.length)}>
         {data.kind !== "start" && <Handle className="canvas-pill" type="target" position={Position.Left} id="in" />}
         {data.outs.map((port, index) => (
-          <Handle key={port.id} className="canvas-pill" type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `${((index + 1) / (data.outs.length + 1)) * 100}%` }} />
+          <Handle key={port.id} className="canvas-pill" type="source" position={Position.Right} id={port.id} title={port.label} style={{ top: `calc(50% + ${(index - (data.outs.length - 1) / 2) * EXIT_PITCH}px)` }} />
         ))}
       </NodeCard>
     </div>
@@ -57,7 +63,7 @@ export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourc
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} data-exit-source={source} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-px text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
+          <div data-exit-label={id} data-exit-source={source} title={data.full} className="nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
             style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
@@ -237,7 +243,7 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
     saveBlocked: SAVE_BLOCKED, empty: "This automation has no steps. Add one; its start comes with it.",
     fixed: (node) => node.kind === "start",
     tidy: (graph) => tidy(graph, STEP_SPACING),
-    nodeSize: (node) => ({ width: CARD.step, height: cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }) }),
+    nodeSize: (node) => ({ width: CARD.step, height: Math.max(cardHeight({ kindLine: node.kind !== "start", subtitle: node.kind !== "start" }), exitsHeight(outsOf(node)) ?? 0) }),
     toNode: (node, found, selected): StepNode => ({
       id: node.id, type: "step", position: node.position, selected,
       data: {
