@@ -234,7 +234,7 @@ export function AgentsView({ store = kindStore<AgentDefinition>("agent") }: { re
         </Well>
       </Panel>
       {open && (stored.isPending ? <p role="status" className="text-muted-foreground">Opening {open.id}…</p>
-        : stored.isError ? <p role="alert" className="text-destructive">{stored.error.message}</p>
+        : stored.isError && !(stored.error instanceof NotConnected) ? <p role="alert" className="text-destructive">{stored.error.message}</p>
           : <AgentEditor key={`${open.id}:${payload?.version ?? "new"}`} id={open.id} stored={payload} store={store} onSaved={(message) => { setNotice(message); setOpen({ id: open.id }); refresh(); void client.invalidateQueries({ queryKey: ["definitions", "agent", open.id] }) }} bindings={bindings.data ?? []} laws={laws.data ?? []} saveLive={!routesDown} />)}
     </div>
   )
