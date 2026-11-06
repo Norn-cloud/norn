@@ -26,7 +26,7 @@ const tree: Recommendations = {
     { id: "every", label: "Every record", detail: "no condition", recommended: false, value: { filter: [] } },
   ],
   filterable: [{ name: "metal", kind: "text", unit: null, values: [] }, { name: "input", kind: "decimal", unit: "g", values: [] }],
-  windows: [{ id: "cell", label: "from 6 Jul to 26 Oct 2026 (26 Oct not included)", detail: "the cell's admitted window", recommended: true, value: { window: cell.window } }],
+  windows: [{ id: "cell", label: "6 Jul – 26 Oct 2026", detail: "the cell's admitted window", recommended: true, value: { window: cell.window } }],
 }
 
 test("the tree opens on the top pick of every column, which is exactly the cell's admitted question", () => {

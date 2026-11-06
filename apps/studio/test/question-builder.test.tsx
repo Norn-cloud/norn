@@ -41,7 +41,7 @@ test("the builder writes what was picked and judges nothing: grains only on time
 test("the form offers the catalogue in Business words and starts on the time property by week", () => {
   expect(initialDraft(catalog)).toMatchObject({ measures: ["demo.input"], by: "occurred_at", grain: "week", filters: [] })
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} /></QueryClientProvider>)
-  for (const text of [">Input<", ">Recovered<", ">Yield<", ">occurred at<", ">Week<", ">Quarter<", "Check with the server", "Nothing is run yet", 'aria-label="Undo"', 'aria-label="Redo"', "All changes saved", "Add measure", "Add condition", 'aria-label="Duplicate measure 1"', 'data-field="window"']) expect(html).toContain(text)
+  for (const text of [">Input<", ">Recovered<", ">Yield<", ">occurred at<", ">Week<", ">Quarter<", "Check with the server", "Nothing is run yet", 'aria-label="Undo"', 'aria-label="Redo"', "Not saved", "Add measure", "Add condition", 'aria-label="Duplicate measure 1"', 'data-field="window"']) expect(html).toContain(text)
   // Ids stay in option values; the reader sees labels.
   expect(html).not.toMatch(/>demo\.[a-z_]+</)
 })

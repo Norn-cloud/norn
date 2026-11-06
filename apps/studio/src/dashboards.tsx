@@ -4,7 +4,6 @@ import { ChartLine, Copy, LayoutDashboard, Pencil, Plus, Table2, Trash2 } from "
 import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -156,8 +155,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
   return (
     <div className="space-y-4">
       {guard?.(editor.dirty)}
-      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending}>
-        {at && <Badge variant="outline">Version {at.version}</Badge>}
+      <EditorToolbar editor={editor} onSave={() => save.mutate({ dashboard })} saving={save.isPending} version={at?.version}>
       </EditorToolbar>
       {save.isError && <p role="alert" className="text-destructive">{failure(save.error).startsWith("Not saved") ? failure(save.error) : `Not saved. ${failure(save.error)}`}</p>}
       {conflict && (

@@ -118,7 +118,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
     <div className="space-y-5">
       {guard?.(editor.dirty)}
       <EditorToolbar editor={editor} />
-      <div className="flex items-start gap-6 overflow-x-auto pb-2" data-testid="question-tree">
+      <div className="flex flex-wrap items-start gap-6 pb-2" data-testid="question-tree">
         <ChoiceColumn title="Measure" field="measures" invalid={invalid("measure") || invalid("measures")} options={measureOptions} selected={chosen.measure} onSelect={(id) => patch({ measures: [id] })} />
         <div className="flex flex-col gap-4">
           <ChoiceColumn title="Group by" field="by" invalid={invalid("by")} options={groupOptions} selected={chosen.by}
