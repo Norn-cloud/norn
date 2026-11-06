@@ -92,11 +92,33 @@ const json = async (request: Request): Promise<Record<string, unknown> | null> =
   const body: unknown = await request.json().catch(() => null)
   return typeof body === "object" && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : null
 }
-const part = (match: RegExpExecArray, index: number) => decodeURIComponent(match[index] ?? "")
+/** A path segment that is not valid percent-encoding. */
+class BadPath extends Error {}
+const part = (match: RegExpExecArray, index: number) => {
+  try {
+    return decodeURIComponent(match[index] ?? "")
+  } catch {
+    throw new BadPath(match[index] ?? "")
+  }
+}
 const label = (value: unknown) => (typeof value === "string" && value.trim() !== "" && value.length <= 120 ? value.trim() : null)
 
-/** Route one `/api/connectors/*` request; `path` is what follows `/api/connectors`. */
+/** Route one `/api/connectors/*` request; `path` is what follows `/api/connectors`. Every answer is JSON. */
 export async function connectors(request: Request, env: ConnectorEnv, auth: Auth, path: string, deps: ConnectorDeps): Promise<Response> {
+  try {
+    return await route(request, env, auth, path, deps)
+  } catch (error) {
+    if (error instanceof BadPath) return refusal(400, "connectors.invalid_request", "The path is not valid percent-encoding.")
+    if (error instanceof GatewayError) return gatewayRefusal(error)
+    // Better Auth's own refusals (an expired session during link or unlink) carry an HTTP status.
+    const status = (error as { statusCode?: unknown } | null)?.statusCode
+    if (typeof status === "number" && status >= 400 && status < 500) return refusal(status, "connectors.auth_refused", error instanceof Error ? error.message : "The sign-in service refused.", status === 401 ? { kind: "sign_in_gateway" } : undefined)
+    console.error("connectors: unexpected failure", error)
+    return refusal(500, "connectors.internal", "Connectors failed unexpectedly; nothing was changed in the gateway.")
+  }
+}
+
+async function route(request: Request, env: ConnectorEnv, auth: Auth, path: string, deps: ConnectorDeps): Promise<Response> {
   const { db } = deps
   const actor = await resolveActor(request, auth)
   if (actor === null) return refusal(401, "connectors.sign_in", "Sign in first.")

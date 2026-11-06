@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, manifestDigest, toolManifest } from "../bindings.ts"
+import { canonicalJson, manifestDigest, readDraft, toolManifest } from "../bindings.ts"
+import { Gateway } from "../gateway.ts"
 import worker, { type Env } from "../index.ts"
 
 const ORIGIN = "https://studio-next.norn.cloud"
@@ -239,4 +240,34 @@ test("the manifest digest is over canonical JSON: key order does not change it, 
   const changed = await manifestDigest(toolManifest({ app: "github", name: "t", inputSchema: { type: "object", properties: { x: { type: "integer" } } }, outputSchema: null }))
   expect(a).toBe(reordered)
   expect(a).not.toBe(changed)
+})
+
+test("the gateway calls fetch without a receiver, as workerd requires", async () => {
+  // workerd's native fetch throws "Illegal invocation" when called as a method of another object.
+  const strict = function (this: unknown, _input: RequestInfo | URL) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation")
+    return Promise.resolve(Response.json({ organization: "gw-org" }))
+  } as unknown as typeof fetch
+  expect(await new Gateway(GATEWAY, TOKEN, strict).organization()).toBe("gw-org")
+})
+
+test("an unreachable gateway, a malformed path and a third-party sign-in are typed refusals", async () => {
+  const { send, signUp } = stage()
+  const owner = await signUp("ada@example.com")
+  const down = (async () => { throw new TypeError("fetch failed") }) as unknown as typeof fetch
+  expect((await send("/inventory", { cookie: owner }, { fetch: down })).body).toMatchObject({ code: "connectors.gateway", error: expect.stringContaining("could not be reached") })
+  expect(await send("/bindings/%E0%A4%A", { method: "DELETE", cookie: owner })).toMatchObject({ status: 400, body: { code: "connectors.invalid_request" } })
+  const db = new Database(":memory:")
+  db.exec(migration("0001_better_auth.sql"))
+  const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
+  for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
+    const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
+    expect(response.status).toBe(403)
+  }
+})
+
+test("a fixed value for a property without a declared type is left to the gateway", () => {
+  const schema = { type: "object", properties: { filter: {}, choice: { anyOf: [{ type: "string" }, { type: "integer" }] }, n: { type: "integer" } } }
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { filter: { fixed: { any: "thing" } }, choice: { fixed: 3 } } }, schema)).toMatchObject({ inputMapping: { filter: { fixed: { any: "thing" } } } })
+  expect(readDraft({ app: "github", tool: "t", inputMapping: { n: { fixed: "x" } } }, schema)).toMatchObject({ field: "inputMapping.n" })
 })

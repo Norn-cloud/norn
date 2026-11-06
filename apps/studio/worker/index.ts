@@ -24,6 +24,9 @@ export const refuse = (status: number, reason: string, headers: HeadersInit = {}
   Response.json({ error: reason }, { status, headers: { "cache-control": "no-store", ...headers } })
 
 /** Identity reaches Norn only from the verified session; a client-supplied actor header is refused on every stage. */
+/** Better Auth's third-party sign-in endpoints: Studio offers none of them. */
+export const SIGN_IN_ELSEWHERE = new Set(["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"])
+
 export const ACTOR_HEADERS = ["x-norn-actor", "x-norn-principal", "x-norn-roles"] as const
 
 // One Better Auth instance per database binding (per isolate in production).
@@ -72,6 +75,9 @@ export default {
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    // The gateway provider is link-only: refuse every sign-in that could start from it (social and
+    // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
+    if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.

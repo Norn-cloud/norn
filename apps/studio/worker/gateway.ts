@@ -59,13 +59,24 @@ const record = (value: unknown): Record<string, unknown> => (typeof value === "o
 const list = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [])
 const segment = (value: string) => encodeURIComponent(value)
 
+/** How long one gateway call may take before it is a typed timeout. */
+export const GATEWAY_TIMEOUT_MS = 20_000
+
 export class Gateway {
   constructor(private readonly origin: string, private readonly token: string, private readonly fetcher: typeof fetch = fetch) {}
 
   private async request(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> {
     const headers = new Headers({ authorization: `Bearer ${this.token}`, accept: "application/json" })
     if (body !== undefined) headers.set("content-type", "application/json")
-    const response = await this.fetcher(`${this.origin}${path}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } })
+    // Called without a receiver: workerd's native fetch throws "Illegal invocation" when called as a method.
+    const { fetcher } = this
+    let response: Response
+    try {
+      response = await fetcher(`${this.origin}${path}`, { method, headers, signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS), ...body === undefined ? {} : { body: JSON.stringify(body) } })
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+      throw new GatewayError(timedOut ? 504 : 502, timedOut ? "GatewayTimeout" : "GatewayUnreachable", timedOut ? `The gateway did not answer within ${GATEWAY_TIMEOUT_MS / 1000} s.` : "The gateway could not be reached.")
+    }
     const parsed: unknown = await response.json().catch(() => null)
     if (!response.ok) {
       const error = record(parsed)

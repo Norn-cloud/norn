@@ -117,6 +117,8 @@ const jsonType = (value: unknown) => (value === null ? "null" : Array.isArray(va
 /** Whether a fixed value fits a property's declared JSON type or string enum (the gateway checks the whole input again). */
 function fits(schema: Record<string, unknown>, value: unknown): boolean {
   if (Array.isArray(schema.enum)) return schema.enum.includes(value)
+  // No `type` (e.g. `{}`, anyOf, oneOf, $ref): nothing to check here; the gateway validates the whole input.
+  if (schema.type === undefined) return true
   const types = Array.isArray(schema.type) ? schema.type : [schema.type]
   const actual = jsonType(value)
   return types.some((type) => type === actual || (type === "number" && actual === "integer"))
