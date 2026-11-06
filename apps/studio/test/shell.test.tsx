@@ -84,9 +84,12 @@ test("a section's count sits in the theme's destructive pair", async () => {
   expect(badge).not.toContain("text-white")
 })
 
-test("a malformed escape in a record path is shown as written, not thrown", () => {
+test("a malformed escape in a record path is shown as written, not thrown", async () => {
   expect(decoded("demo%2Fitem")).toBe("demo/item")
   expect(decoded("%E0%A4%A")).toBe("%E0%A4%A")
+  // Through the whole shell: the breadcrumbs render the segment as written.
+  const html = await at("/sources/canon.Holding/%E0%A4%A", () => <Shell sections={[sources, questions]} />)
+  expect(html).toContain("%E0%A4%A")
 })
 
 test("a browser that throws on storage still renders, in the business view", () => {
