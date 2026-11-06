@@ -39,9 +39,9 @@ export const DECISION_EXAMPLE: Graph = {
   nodes: [
     node("start", "start", 0, 120),
     node("load", "perform", 200, 120, { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
-    node("chase", "decide", 420, 120, { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", agentPick: "o1", options: JSON.stringify([{ id: "o1", label: "Send a reminder", scope: "Email · the customer" }, { id: "o2", label: "Leave it", scope: "Nothing sent" }]) }),
+    node("chase", "decide", 420, 120, { question: "Invoice is overdue: what should I do?", risk: "high", deciderRoles: "admin", agentPick: "o1", deciderLaw: "billing.reminder_needs_a_person", expiresInMs: String(4 * 3_600_000), options: JSON.stringify([{ id: "o1", label: "Send a reminder", scope: "Email · the customer", effect: { binding: "billing.notify" } }, { id: "o2", label: "Leave it", scope: "Nothing sent", effect: { action: "billing.leave_open" } }]) }),
     node("remind", "perform", 660, 60, { tool: "billing.notify", input: JSON.stringify({ invoiceId: "invoice.id", outcome: "overdue" }) }),
-    node("escalate", "decide", 880, 60, { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", agentPick: "o2", options: JSON.stringify([{ id: "o1", label: "Tell the owner", scope: "#accounts · internal" }, { id: "o2", label: "Only the reminder", scope: "Nothing more" }]) }),
+    node("escalate", "decide", 880, 60, { question: "Tell the account owner too?", risk: "low", deciderRoles: "admin", agentPick: "o2", options: JSON.stringify([{ id: "o1", label: "Tell the owner", scope: "#accounts · internal", effect: { binding: "billing.notify" } }, { id: "o2", label: "Only the reminder", scope: "Nothing more", effect: { action: "billing.leave_open" } }]) }),
     node("escalated", "succeed", 1100, 0, { outcome: "escalated" }),
     node("reminded", "succeed", 1100, 120, { outcome: "reminded" }),
     node("left", "succeed", 660, 220, { outcome: "left" }),
