@@ -44,8 +44,17 @@ export function AgentPart({ data, selected }: NodeProps<AgentPartNode>) {
 const NODE_TYPES = { part: AgentPart }
 
 /** Where a finding about the payload lands: the i-th wired tool or law its pointer names, else the agent. */
+/** The binding as CONNECT pins it: the connector it runs on and the digest of its tool manifest. */
+type PinnedBinding = Binding & { readonly manifestDigest?: string; readonly connector?: { readonly gateway: string; readonly origin: string; readonly app: string; readonly tool: string; readonly version: string } }
+
+/** The agent check's binding entry, or null for a binding not pinned yet. The connector is named gateway:app/tool@version. */
+export function pinOf(binding: Binding): { readonly id: string; readonly connector: string; readonly manifestDigest: string } | null {
+  const { manifestDigest, connector } = binding as PinnedBinding
+  return manifestDigest && connector ? { id: binding.id, connector: `${connector.gateway}:${connector.app}/${connector.tool}@${connector.version}`, manifestDigest } : null
+}
+
 function issueOf(graph: g.Graph, agent: AgentDefinition, code: string, message: string, pointer: string | null): Issue {
-  const parts = wiredParts(graph)
+  const parts = { ...wiredParts(graph), tools: wiredParts(graph).tools.filter(({ config }) => agent.tools.includes(config.binding ?? "")) }
   const at = /^\/(tools|laws|decisionPolicy\/laws)\/(\d+)/.exec(pointer ?? "")
   const index = Number(at?.[2])
   const law = at?.[1] === "decisionPolicy/laws" ? agent.decisionPolicy.laws?.[index] : undefined
@@ -120,17 +129,15 @@ function AgentEditor({ id, stored, store, onSaved, bindings, laws, saveLive }: {
     if (!agent) return { issues: [{ code: "canvas.agent.missing", message: "The agent node is missing" }], status: <Badge variant="destructive">1 finding</Badge> }
     if (checker.isError) return { issues: cellIssues, status: <span className="text-destructive" role="alert">{checker.error.message}: no live agent checks</span> }
     if (!checker.data) return { issues: cellIssues, status: <span role="status">Loading the checker…</span> }
-    // The host checks tools against bindings resolved to connector manifests by digest. Until the gateway's binding
-    // list carries those digests, the browser leaves tools to the cell rather than calling every tool unbound.
-    const resolved = bindings.flatMap((binding) => {
-      const digest = (binding as Binding & { readonly manifestDigest?: string }).manifestDigest
-      return digest ? [{ id: binding.id, connector: binding.app, manifestDigest: digest }] : []
-    })
-    const toolsChecked = resolved.length === bindings.length
-    const result = checker.data(toolsChecked ? agent : { ...agent, tools: [] }, { models: [...OFFERED_MODELS], bindings: resolved, laws })
-    const found = [...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, agent, code, message, span?.pointer ?? null)), ...cellIssues]
-    const badge = found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge>
-    return { issues: found, status: toolsChecked ? badge : <span className="flex items-center gap-2">{badge}<span className="text-meta text-muted-foreground">Tools are checked by the cell</span></span> }
+    // Tools are checked against bindings the gateway pinned to a connector manifest by digest (CONNECT's pin).
+    // A binding saved before pinning cannot be checked here: it is named as such, not called unbound.
+    const pinned = bindings.flatMap((binding) => { const pin = pinOf(binding); return pin ? [pin] : [] })
+    const unpinned = new Set(bindings.filter((binding) => !pinOf(binding)).map(({ id: binding }) => binding))
+    const parts = wiredParts(graph)
+    const notPinned: Issue[] = parts.tools.filter(({ config }) => unpinned.has(config.binding ?? "")).map(({ id: node, config }) => ({ code: "canvas.agent.unpinned_binding", message: `Binding ${config.binding} has no pinned tool manifest yet; save it again on Connections so its tool can be checked`, node }))
+    const result = checker.data({ ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, { models: [...OFFERED_MODELS], bindings: pinned, laws })
+    const found = [...notPinned, ...result.diagnostics.diagnostics.map(({ code, message, span }) => issueOf(graph, { ...agent, tools: agent.tools.filter((tool) => !unpinned.has(tool)) }, code, message, span?.pointer ?? null)), ...cellIssues]
+    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: admitted</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
   }, [checker.isError, checker.error, checker.data, bindings, laws, cellIssues])
 
   const save = async (graph: g.Graph) => {

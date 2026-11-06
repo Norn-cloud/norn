@@ -10,8 +10,9 @@ async function cell(page: Page) {
   if (process.env.E2E_BASE) return
   const saved = new Map<string, { version: number; payload: unknown; retired: boolean }>()
   await page.route("**/api/connectors/bindings", (route) => route.fulfill({ json: { manage: true, bindings: [
-    { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0 },
-    { id: "bind_chat", app: "chat", tool: "post_message", label: "Post to #support", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0 },
+    { id: "bind_tickets", app: "helpdesk", tool: "list_tickets", label: "Read tickets", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"a".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "helpdesk", tool: "list_tickets", version: "v1" } },
+    { id: "bind_chat", app: "chat", tool: "post_message", label: "Post to #support", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0, manifestDigest: `sha256:${"b".repeat(64)}`, connector: { gateway: "executor", origin: "https://gateway.example", app: "chat", tool: "post_message", version: "v1" } },
+    { id: "bind_legacy", app: "chat", tool: "old_post", label: "Saved before pinning", inputMapping: {}, runRole: "member", updatedBy: "u", updatedAt: 0 },
   ] } }))
   await page.route("**/api/host/v1/definitions**", async (route) => {
     const url = new URL(route.request().url())
@@ -112,4 +113,31 @@ test("agent, before the cell's definition routes are live: the panel says so, sa
   await page.getByLabel("New agent name").fill("Draft only")
   await page.getByRole("button", { name: "New agent" }).click()
   await expect(node(page, "agent")).toContainText("Kept as a draft")
+})
+
+test("agent live check: the browser runs the checker's agent admission on every edit, with pinned bindings", async ({ page }) => {
+  await cell(page)
+  await open(page)
+  await page.getByRole("button", { name: "Agents", exact: true }).click()
+  await page.getByLabel("New agent name").fill("Live check")
+  await page.getByRole("button", { name: "New agent" }).click()
+  // A new agent has no title or prompt yet: the checker says so on the agent, alongside everything else.
+  await expect(page.getByText("title must not be blank").first()).toBeVisible()
+  await expect(page.getByText("prompt must not be blank").first()).toBeVisible()
+  await node(page, "agent").click()
+  await page.getByLabel("Title").fill("Live check")
+  await page.getByLabel("Title").blur()
+  await page.getByLabel("Prompt").fill("Check things.")
+  await page.getByLabel("Prompt").blur()
+  // A pinned binding is bound: no finding.
+  await page.getByRole("button", { name: "Tool", exact: true }).click()
+  await expect(page.getByText("Checker: admitted")).toBeVisible()
+  // A binding saved before pinning is named as such, on its node.
+  await page.getByRole("combobox", { name: "Tool binding" }).selectOption("bind_legacy")
+  await expect(page.getByText("canvas.agent.unpinned_binding").first()).toBeVisible()
+  // A budget that is not a whole number is the checker's budget finding.
+  await node(page, "agent").click()
+  await page.getByLabel("Most runs").fill("0")
+  await page.getByLabel("Most runs").blur()
+  await expect(page.getByText("agent.validation.budget_unbounded").first()).toBeVisible()
 })
