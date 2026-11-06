@@ -41,14 +41,17 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
       if (mode === "email-link") {
         await authApi.emailLink(value("email"))
         setMessage({ tone: "info", text: "If that address has an account, a sign-in link is on its way. It expires in 10 minutes." })
+        setPending(false)
         return
       }
-      await refresh()
     } catch (error) {
-      setMessage({ tone: "error", text: error instanceof AuthRefusal ? error.message : "The sign-in service did not answer. Try again." })
-    } finally {
       setPending(false)
+      setMessage({ tone: "error", text: error instanceof AuthRefusal ? error.message : "The sign-in service did not answer. Try again." })
+      return
     }
+    setPending(false)
+    // Signed in: the root re-reads the account and shows its own retry if that read fails.
+    await refresh()
   }
 
   return (

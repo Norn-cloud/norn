@@ -37,7 +37,10 @@ export const authApi = {
   signOut: () => call("/sign-out", {}),
 }
 
-/** Re-read the session after signing in or out. */
+/**
+ * Re-read the session after signing in or out. A failed re-read never throws: the
+ * sign-in itself succeeded, and the root shows the failure with a retry.
+ */
 export function useRefreshAccount() {
   const client = useQueryClient()
   return () => client.invalidateQueries({ queryKey: SESSION })
