@@ -2,7 +2,7 @@ import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Bot, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useMemo, useState, type FormEvent } from "react"
+import { useMemo, useRef, useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { DecisionCard, VerdictCard } from "./cards.tsx"
-import { EXAMPLES, SUGGESTIONS, sessionId, verdictOf, type Verdict } from "./verdict.ts"
+import { EXAMPLES, SUGGESTIONS, sessionId, settleExample, timeline, verdictOf, type ExampleRun, type Verdict } from "./verdict.ts"
 
 const ALTERNATIVE = "Suggest a different change that keeps the intent but that the checker would admit, and propose it."
 
@@ -58,10 +58,12 @@ export function AgentPanel() {
   const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
   const last = messages.at(-1)
   // Example proposals are checked by the server as recorded, without the model.
-  const [examples, setExamples] = useState<readonly { readonly chip: string; readonly verdict: Verdict | "pending" | string }[]>([])
+  const [examples, setExamples] = useState<readonly ExampleRun[]>([])
+  const nextExample = useRef(0)
   const runExample = async (chip: string) => {
-    setExamples((list) => [...list, { chip, verdict: "pending" }])
-    const settle = (verdict: Verdict | string) => setExamples((list) => list.map((entry) => entry.chip === chip && entry.verdict === "pending" ? { chip, verdict } : entry))
+    const id = nextExample.current++
+    setExamples((list) => [...list, { id, chip, after: messages.length, verdict: "pending" }])
+    const settle = (verdict: Verdict | string) => setExamples((list) => settleExample(list, id, verdict))
     try {
       const response = await fetch("/api/agent/example", { method: "POST", headers: { "content-type": "application/json", "x-norn-session": sessionId(globalThis.sessionStorage) }, body: JSON.stringify({ chip }) })
       const body: unknown = await response.json().catch(() => null)
@@ -74,14 +76,6 @@ export function AgentPanel() {
     <div className="flex h-full min-h-0 flex-col">
       <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log">
         <StickToBottom.Content className="flex flex-col gap-4 p-4">
-          {examples.map(({ chip, verdict }, index) => (
-            <div key={`${chip}:${index}`} className="flex flex-col gap-2 text-sm">
-              <div className="ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2"><Badge variant="outline" className="me-2">Example proposal</Badge>{chip}</div>
-              {verdict === "pending"
-                ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
-                : typeof verdict === "string" ? <p className="text-sm text-destructive">{verdict}</p> : <VerdictCard verdict={verdict} />}
-            </div>
-          ))}
           {messages.length === 0 && examples.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-10 text-center">
               <Bot className="size-8 text-muted-foreground" />
@@ -89,11 +83,21 @@ export function AgentPanel() {
               <p className="max-w-xs text-sm text-muted-foreground">Ask in plain words. The checker on the server admits or refuses every proposal, and names the law when it refuses. Nothing is installed.</p>
             </div>
           )}
-          {messages.map((message) => (
-            <div key={message.id} className={cn("flex flex-col gap-2 text-sm", message.role === "user" ? "ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2" : "max-w-full")}>
-              <Parts message={message} />
-            </div>
-          ))}
+          {/* Examples and chat messages in the order they were sent, so a new result lands at the bottom. */}
+          {timeline(messages, examples).map((entry) => entry.kind === "message"
+            ? (
+              <div key={entry.message.id} className={cn("flex flex-col gap-2 text-sm", entry.message.role === "user" ? "ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2" : "max-w-full")}>
+                <Parts message={entry.message} />
+              </div>
+            )
+            : (
+              <div key={`example:${entry.example.id}`} className="flex flex-col gap-2 text-sm">
+                <div className="ms-auto max-w-[85%] rounded-2xl bg-muted px-3 py-2"><Badge variant="outline" className="me-2">Example proposal</Badge>{entry.example.chip}</div>
+                {entry.example.verdict === "pending"
+                  ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Asking the checker…</p>
+                  : typeof entry.example.verdict === "string" ? <p className="text-sm text-destructive">{entry.example.verdict}</p> : <VerdictCard verdict={entry.example.verdict} />}
+              </div>
+            ))}
           {last?.role === "assistant" && !busy && refused(last) && !stopped.has(last.id) && (
             <DecisionCard disabled={busy} onStop={() => setStopped((set) => new Set(set).add(last.id))} onAlternative={() => send(ALTERNATIVE)} />
           )}

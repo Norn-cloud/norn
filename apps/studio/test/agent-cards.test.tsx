@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { DecisionCard, VerdictCard, reasons } from "../src/agent/cards.tsx"
-import { sessionId, verdictOf } from "../src/agent/verdict.ts"
+import { sessionId, settleExample, timeline, verdictOf, type ExampleRun } from "../src/agent/verdict.ts"
 
 const proposal = { artifact: "stress.purchase_positive.law", pointer: "/payload/response/expression", value: "self.unseen > 0" }
 const refusal = {
@@ -61,4 +61,15 @@ test("a verdict leads with the law in words; ids, pointers and codes are folded 
     expect(folded).toContain("/payload/response/expression")
   }
   expect(renderToStaticMarkup(<VerdictCard verdict={refused} />)).toContain("Stopped at: what the law means")
+})
+
+test("each example request settles its own entry, even for the same chip sent twice", () => {
+  const pending: ExampleRun[] = [{ id: 0, chip: "a", after: 0, verdict: "pending" }, { id: 1, chip: "a", after: 0, verdict: "pending" }]
+  expect(settleExample(pending, 1, "The checker could not be reached.").map(({ verdict }) => verdict)).toEqual(["pending", "The checker could not be reached."])
+})
+
+test("examples sit among chat messages in the order they were sent, a new one after the conversation", () => {
+  const examples: ExampleRun[] = [{ id: 0, chip: "first", after: 0, verdict: "pending" }, { id: 1, chip: "later", after: 2, verdict: "pending" }]
+  const order = timeline(["m0", "m1"], examples).map((entry) => entry.kind === "message" ? entry.message : entry.example.chip)
+  expect(order).toEqual(["first", "m0", "m1", "later"])
 })
