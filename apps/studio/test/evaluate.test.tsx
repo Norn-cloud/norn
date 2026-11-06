@@ -21,7 +21,7 @@ const answer = (status: number, body: string) => async (path: string, init?: Req
 
 test("an admitted question is answered with the server's document, its numbers read exactly as written", async () => {
   const result = await evaluateQuestion(question, answer(200, answerText))
-  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:evaluate", body: { question } })
+  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:evaluate?orgId=org_demo&environmentId=analytics", body: { question } })
   if (result.kind !== "answer") throw new Error(result.kind)
   expect(result.read.origin).toBe("live")
   expect(result.read.document.lineageRef).toBe(JSON.parse(answerText).lineageRef)
@@ -29,13 +29,17 @@ test("an admitted question is answered with the server's document, its numbers r
   expect(result.read.numbers.get(`/rows/${key?.replaceAll("~", "~0").replaceAll("/", "~1")}/value`)).toBeDefined()
 })
 
-test("the cell's checker refusal names the law and the field; the read gates' refusal is the host's own; anything else is unavailable", async () => {
-  expect(await evaluateQuestion(question, answer(422, JSON.stringify({ format: "norn/refusal@2", code: "question.refused", diagnostics: [{ code: "metric.unknown", law: "metric.declared", message: "No metric demo.purity", span: { pointer: "/aggregate/0/metric" } }] }))))
-    .toEqual({ kind: "not-a-question", findings: [{ code: "metric.unknown", law: "metric.declared", message: "No metric demo.purity", pointer: "/aggregate/0/metric" }] })
+test("the cell's checker refusal gives each finding's code, message and field; the read gates' refusal is the host's own; anything else is unavailable", async () => {
+  expect(await evaluateQuestion(question, answer(422, JSON.stringify({ format: "norn/refusal@2", code: "question.refused", diagnostics: [{ code: "question.window_order", severity: "error", message: "The time window must be an ordered half-open UTC interval.", span: { pointer: "/question/window" } }] }))))
+    .toEqual({ kind: "not-a-question", findings: [{ code: "question.window_order", severity: "error", message: "The time window must be an ordered half-open UTC interval.", pointer: "/question/window" }] })
   expect(await evaluateQuestion(question, answer(403, '{"code":"authz.denied","message":"the read request is not authorized"}')))
     .toEqual({ kind: "refused", refusal: { code: "authz.denied", message: "the read request is not authorized" } })
   expect(await evaluateQuestion(question, answer(403, '{"error":"Cross-origin request refused."}'))).toEqual({ kind: "unavailable", status: 403 })
   expect(await evaluateQuestion(question, answer(404, "{}"))).toEqual({ kind: "unavailable", status: 404 })
+  // Bounds: a typed "too large", never a partial answer; an unknown body member is the request's own refusal.
+  expect(await evaluateQuestion(question, answer(413, '{"code":"core.compute.bound_exceeded","message":"the question reads more than 100000 rows"}'))).toEqual({ kind: "too-large", code: "core.compute.bound_exceeded", message: "the question reads more than 100000 rows" })
+  expect(await evaluateQuestion(question, answer(413, '{"code":"question.bucket_bound_exceeded"}'))).toEqual({ kind: "too-large", code: "question.bucket_bound_exceeded", message: "" })
+  expect(await evaluateQuestion(question, answer(400, '{"error":"unknown field `extra`"}'))).toEqual({ kind: "bad-request", message: "unknown field `extra`" })
   expect(await evaluateQuestion(question, answer(200, "<html>gateway</html>"))).toEqual({ kind: "unavailable", status: 200 })
   expect(await evaluateQuestion(question, async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable", status: 0 })
 })
@@ -44,7 +48,7 @@ test("a built question's records are traced with its lineage handle passed back 
   const handle = "lin:v2/AbC+/=~opaque"
   const trace = `{"result":${answerText},"bucket":"2026-W28","contributions":[]}`
   const read = await traceQuestion(question, handle, "2026-W28", answer(200, trace))
-  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:trace", body: { question, lineageRef: handle, bucket: "2026-W28" } })
+  expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:trace?orgId=org_demo&environmentId=analytics", body: { question, lineageRef: handle, bucket: "2026-W28" } })
   expect(read.kind).toBe("read")
 })
 
