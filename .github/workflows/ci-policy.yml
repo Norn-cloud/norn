@@ -355,7 +355,9 @@ jobs:
   # compile candidate code, so this job is candidate-influenced: it holds no
   # secrets, a read-only token, no OIDC token and no cache (a cached tool
   # directory would let one candidate poison the tools of the next run), and
-  # every receipt it writes is candidate-reported. The trusted bootstrap
+  # every receipt it writes is candidate-reported. Candidate builds share
+  # this runner's UID with the wrapper and the receipt writer; isolating them,
+  # and the runner token, is #969. The trusted bootstrap
   # installs the pinned tools only when the pull request changes an
   # implementation claim or an input of one.
   implementation-receipts:
@@ -408,8 +410,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
   # A fresh runner that executes no candidate code re-checks what it can
-  # itself (F* over the uploaded extraction, with its own pinned F*), labels
-  # the rest candidate-reported, and reports the verdict on the head. A
+  # itself (F* over the uploaded model, with its own pinned F*), labels the
+  # rest candidate-reported, and reports the verdict on the head. No claim is
+  # admitted as implementation_proved until #969 isolates the producer. A
   # producer that did not succeed fails this check.
   implementation-receipt-check:
     name: implementation receipt check
