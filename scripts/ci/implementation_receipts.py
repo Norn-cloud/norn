@@ -559,36 +559,9 @@ def git_object(root: Path, path: str) -> str | None:
 
 
 def in_scope(root: Path, base: Path) -> bool:
-    """Run receipts on every change except added or edited text docs/Markdown.
+    """Any changed committed tree can change a build or proof input."""
+    return git(root, "rev-parse", "HEAD^{tree}") != git(base, "rev-parse", "HEAD^{tree}")
 
-    Any file can be a proof input. Deletions, renames, binary files, gitlinks
-    and mode changes therefore never qualify for the docs-only exemption.
-    """
-    trees = []
-    for checkout in (root, base):
-        entries = git(checkout, "ls-tree", "-r", "-z", "HEAD").split("\0")
-        trees.append({path: metadata for entry in entries if entry
-                      for metadata, path in [entry.split("\t", 1)]})
-    candidate, previous = trees
-    for path in candidate.keys() | previous.keys():
-        current, old = candidate.get(path), previous.get(path)
-        if current == old:
-            continue
-        if (current is None or (old is not None and current.split()[0] != old.split()[0])
-                or current.split()[0] != "100644"
-                or not (path.startswith("docs/") or path.endswith(".md"))):
-            return True
-        for checkout, entry in ((root, current), (base, old)):
-            if entry is not None:
-                content = subprocess.run(["git", "-C", str(checkout), "cat-file", "blob", entry.split()[2]],
-                                         check=True, capture_output=True).stdout
-                try:
-                    content.decode("utf-8")
-                except UnicodeDecodeError:
-                    return True
-                if b"\0" in content:
-                    return True
-    return False
 
 
 def verify(root: Path, receipts: Path, expected: dict, fstar: Path | None,

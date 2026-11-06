@@ -313,15 +313,22 @@ class ReceiptTest(unittest.TestCase):
             'macro_rules! m { ($a:ident) => { #[$a = "../../outside.rs"] mod external; } }\n'
             'm!(path);\n')
 
-    def test_scope_exempts_only_docs_and_markdown(self) -> None:
+    def test_scope_out_only_for_identical_trees(self) -> None:
         base = self.tmp / "base"
         subprocess.run(["git", "clone", "-q", str(self.root), str(base)], check=True)
-        (self.root / "README.md").write_text("Documentation change\n")
-        (self.root / "docs").mkdir()
-        (self.root / "docs/guide.txt").write_text("Documentation change\n")
-        (self.root / "src/notes.md").write_text("Markdown change\n")
-        self.commit()
         self.assertFalse(receipts.in_scope(self.root, base))
+        for path in ("code.md", "docs/code.rs", "Docs/code.md"):
+            with self.subTest(path=path):
+                (self.root / "src/lib.rs").write_text('include!("../code.md");\n')
+                target = self.root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("// initial input\n")
+                self.commit()
+                subprocess.run(["git", "-C", str(base), "fetch", "-q", "origin"], check=True)
+                subprocess.run(["git", "-C", str(base), "reset", "--hard", "origin/HEAD"], check=True, capture_output=True)
+                target.write_text("// changed input\n")
+                self.commit()
+                self.assertTrue(receipts.in_scope(self.root, base))
 
     def test_scope_covers_nonstandard_build_inputs(self) -> None:
         for path, consumer in (
