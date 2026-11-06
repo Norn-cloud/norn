@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import { LoginPage, type Mode } from "../src/login.tsx"
+import { LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
 
 const render = (initial: Mode) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LoginPage initial={initial} /></QueryClientProvider>)
 
@@ -25,4 +25,9 @@ test("an email link needs only the address", () => {
   const html = render("email-link")
   expect(html).not.toContain('type="password"')
   expect(html).toContain("Send link")
+})
+
+test("after sign-up the page says to check email or sign in, never whether the address was new", () => {
+  expect(SIGNED_UP).toBe("Check your email, or sign in with your email and password.")
+  expect(SIGNED_UP).not.toMatch(/already|exists|registered|taken/i)
 })

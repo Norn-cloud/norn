@@ -7,6 +7,9 @@ import { cn } from "@/lib/utils"
 
 export type Mode = "sign-in" | "sign-up" | "email-link"
 
+/** Shown after sign-up whether or not the address already had an account. */
+export const SIGNED_UP = "Check your email, or sign in with your email and password."
+
 const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
   { mode: "sign-in", label: "Sign in" },
   { mode: "sign-up", label: "Create account" },
@@ -37,7 +40,14 @@ export function LoginPage({ initial = "sign-in" }: { readonly initial?: Mode }) 
     setMessage(null)
     try {
       if (mode === "sign-in") await authApi.signIn(value("email"), value("password"))
-      if (mode === "sign-up") await authApi.signUp(value("name"), value("email"), value("password"))
+      if (mode === "sign-up") {
+        // Sign-up answers the same whether or not the address is registered, and starts no session.
+        await authApi.signUp(value("name"), value("email"), value("password"))
+        setMode("sign-in")
+        setMessage({ tone: "info", text: SIGNED_UP })
+        setPending(false)
+        return
+      }
       if (mode === "email-link") {
         await authApi.emailLink(value("email"))
         setMessage({ tone: "info", text: "If that address has an account, a sign-in link is on its way. It expires in 10 minutes." })
