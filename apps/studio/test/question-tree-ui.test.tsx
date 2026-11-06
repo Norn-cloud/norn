@@ -66,7 +66,7 @@ test("choosing Another condition stays custom even when its filter equals an off
   const offered = tree.conditions.find(({ id }) => id !== "every") ?? tree.conditions[0]
   const filters = (offered?.value as { filter?: readonly { path: { property: string }; operator: string; value: unknown }[] }).filter ?? []
   const same = { ...draft, filters: filters.map(({ path, operator, value }) => ({ property: path.property, operator, value: String(value) })) }
-  expect(selection(tree, same).condition).toBe(offered?.id)
+  expect(selection(tree, same).condition).toBe("metal:eq:gold")
   expect(selection(tree, same, true).condition).toBe("custom")
   expect(selection(tree, { ...draft, filters: [] }, true).condition).toBe("custom")
 })
