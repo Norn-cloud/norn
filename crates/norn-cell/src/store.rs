@@ -28,7 +28,7 @@ use tokio::sync::Notify;
 use crate::codec::{canonical_json, hash_json};
 #[cfg(feature = "native")]
 use crate::engine::NativeEngine;
-use crate::engine::{DefaultEngine, SqlEngine, params};
+use crate::engine::{DefaultEngine, SqlEngine, SqlValue, params};
 use crate::error::CellError;
 use crate::export_journal;
 use crate::model::{Model, ModelDefinitionSnapshot};
@@ -1954,12 +1954,13 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// SQL failures; existing metadata, ledger or history returns false.
     pub fn engine_is_fresh(engine: &E) -> Result<bool, CellError> {
-        engine
-            .query(
-                "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 1",
-                &[],
-            )
-            .map(|schema| schema.is_empty())
+        let platform = engine.platform_table_globs();
+        let filter = " AND name NOT GLOB ?".repeat(platform.len());
+        let sql = format!(
+            "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'{filter} LIMIT 1"
+        );
+        let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
+        engine.query(&sql, &globs).map(|schema| schema.is_empty())
     }
 
     /// Initialize this store over an already-open engine.

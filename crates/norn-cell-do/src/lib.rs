@@ -13,3 +13,5 @@
 pub mod principal;
 pub mod seed;
 pub mod server;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
